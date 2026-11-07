@@ -20,6 +20,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 ts-rs = { version = "11", features = ["serde-json-impl"] }
 inventory = "0.3"
 getrandom = "0.3"
+keyring = "4"
 semver = "1"
 base64 = "0.22"
 hmac = "0.12"

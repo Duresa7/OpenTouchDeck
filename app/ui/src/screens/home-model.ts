@@ -12,6 +12,12 @@ export function statusOf(state: string) {
   }
 }
 
+/** The link in words, naming Wi-Fi when that's the Carrier. */
+export function deviceStatus(device: Pick<DeviceSummary, 'link' | 'carrier'>) {
+  const status = statusOf(device.link.state);
+  return status.live && device.carrier === 'wifi' ? { ...status, words: 'Connected over Wi-Fi' } : status;
+}
+
 export const NEEDS_SEND = 'Controls need Send to Device';
 export const CHECKING_CONTROLS = 'Checking controls…';
 
