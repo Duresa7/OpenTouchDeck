@@ -497,10 +497,12 @@ time counts toward the task it interrupted.
 
 The radio build is an opt-in second Firmware configuration with Wi-Fi, lwIP
 and NimBLE. The installer's Firmware is the normal build, and it stays
-radio-free. A release also ships the radio build as a separate file,
-`touchdeck-radio-<version>.tdfw`, and the Companion carries both. Device
-settings in the app switches a Device between them, both ways; an update keeps
-the build the Device runs. Build the radio build into a directory of its own.
+radio-free. A release can also ship the radio build as a separate file,
+`touchdeck-radio-<version>.tdfw`, with the Companion carrying both; then Device
+settings in the app switches a Device between them, both ways. Whether it does
+is set in `app/release-options.json` (see
+[packaging](packaging.md#the-radio-build-in-a-release)). An update keeps the
+build the Device runs. Build the radio build into a directory of its own.
 From `firmware/`:
 
 ```sh

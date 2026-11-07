@@ -33,10 +33,15 @@ export interface BuildChoice {
 
 const TURNS_ON = 'Wi-Fi and Bluetooth, both off until you set them up';
 
-export function buildChoice(device: Pick<DeviceSummary, 'firmware'>, bundled: FirmwareBuild | null, name: string): BuildChoice {
+/**
+ * The build switch for a Device, or null when there is nothing to show: a Device on the normal build sees no switch
+ * unless this Companion carries the radio build. Releases leave it out until it is ready (app/release-options.json).
+ */
+export function buildChoice(device: Pick<DeviceSummary, 'firmware'>, bundled: FirmwareBuild | null, name: string): BuildChoice | null {
   const current = channelOf(device);
   const target: FirmwareChannel = current === 'radio' ? 'normal' : 'radio';
   const available = bundledVersion(bundled, target) !== null;
+  if (current === 'normal' && !available) return null;
   if (current === 'radio') {
     return {
       current,
@@ -55,8 +60,8 @@ export function buildChoice(device: Pick<DeviceSummary, 'firmware'>, bundled: Fi
     target,
     title: 'Normal build',
     note: `The radio build adds ${TURNS_ON}. You can switch back any time.`,
-    action: available ? 'Install the radio build' : null,
-    missing: available ? null : "This copy of Open TouchDeck doesn't include the radio build.",
+    action: 'Install the radio build',
+    missing: null,
     confirmTitle: `Install the radio build on ${name}?`,
     confirmNote: `It adds ${TURNS_ON}. ${name} restarts once.`,
     warn: false,

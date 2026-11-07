@@ -24,6 +24,16 @@ RADIO_BUNDLE = "touchdeck-radio.tdfw"
 # The radio build is embedded in the Companion and published as a release asset; the installer copies only the normal
 # bundle into resources, so the radio bundle stays out of the payload.
 RADIO_FOLDER = Path("build/radio-firmware")
+# Whether a release builds and ships the opt-in radio build. The release workflow reads the same file at the tagged
+# commit and refuses a release whose assets disagree with it.
+RELEASE_OPTIONS = APP / "release-options.json"
+
+
+def ships_radio_build(path=RELEASE_OPTIONS):
+    value = json.loads(path.read_text(encoding="utf-8")).get("radio_build")
+    if not isinstance(value, bool):
+        raise ValueError(f"{path.name}: radio_build must be true or false")
+    return value
 
 
 def build_environment(env=None):
@@ -130,6 +140,8 @@ def firmware(out, revision, lock_path):
         bundle, manifest = pack(build, folder, BUNDLE, radio=False)
         normal = {"source_revision": revision, "bundle": bundle.name,
                   "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": audit}
+        if not ships_radio_build():
+            return normal, None
         # The radio build needs a build folder of its own; firmware/CMakeLists.txt refuses it anywhere else.
         build = out / "build/firmware-radio"
         run([sys.executable, idf, "-C", ROOT / "firmware", "-B", build, "-DTD_RADIO_BUILD=1", "build"])

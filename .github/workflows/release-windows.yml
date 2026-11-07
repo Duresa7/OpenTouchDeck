@@ -124,18 +124,26 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = tag ]; then
             [ "$version" = "${GITHUB_REF_NAME#v}" ]
           fi
-          # The installer carries the normal build; the opt-in radio build ships beside it as its own file.
+          # The installer carries the normal build. The opt-in radio build ships beside it as its own file only when
+          # app/release-options.json at the tagged commit says so; otherwise no radio file or record may be there.
           # A missing firmware record refuses: its manifest must be there, without the radio mark.
+          ships_radio=$(git show "$SOURCE_REVISION:app/release-options.json" | jq -r '.radio_build | if type == "boolean" then . else error("radio_build must be a boolean") end')
           radio="touchdeck-radio-$version.tdfw"
-          jq -e --arg sha "$EXPECTED_SHA256" --arg revision "$SOURCE_REVISION" --arg radio "$radio" '
+          jq -e --arg sha "$EXPECTED_SHA256" --arg revision "$SOURCE_REVISION" --arg radio "$radio" --argjson ships "$ships_radio" '
             .test_signing == false and .source_revision == $revision and
             ((has("installer_sha256") | not) or .installer_sha256 == $sha) and
             .firmware.bundle == "touchdeck.tdfw" and (.firmware.manifest | type) == "object" and
             (.firmware.manifest.radio // false) == false and
-            .radio_firmware.asset == $radio and .radio_firmware.manifest.radio == true
+            if $ships then .radio_firmware.asset == $radio and .radio_firmware.manifest.radio == true
+            else .radio_firmware == null end
           ' release-assets/release-manifest.json >/dev/null
           echo "$(jq -r .firmware.sha256 release-assets/release-manifest.json)  release-assets/touchdeck.tdfw" | sha256sum --strict -c -
-          echo "$(jq -r .radio_firmware.sha256 release-assets/release-manifest.json)  release-assets/$radio" | sha256sum --strict -c -
+          if [ "$ships_radio" = true ]; then
+            echo "$(jq -r .radio_firmware.sha256 release-assets/release-manifest.json)  release-assets/$radio" | sha256sum --strict -c -
+          elif compgen -G 'release-assets/touchdeck-radio*' >/dev/null; then
+            echo "::error::This release ships no radio build, but the build holds a radio file"
+            exit 1
+          fi
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
       - name: Sign the checked installer
         env:
@@ -231,15 +239,21 @@ jobs:
             .version == $version and .test_signing == false and .installer == $installer and
             .source_revision == $revision and .installer_sha256 == $sha and .updater_public_key == $key
           ' release-manifest.json >/dev/null
-          # The normal build stays the installer's Firmware, and the radio build is a separate, named asset.
+          # The normal build stays the installer's Firmware. A radio build, when the release ships one, is a separate,
+          # named asset; when it ships none, no radio file may be there.
           radio="touchdeck-radio-$version.tdfw"
           jq -e --arg radio "$radio" '
             .firmware.bundle == "touchdeck.tdfw" and (.firmware.manifest | type) == "object" and
             (.firmware.manifest.radio // false) == false and
-            .radio_firmware.asset == $radio and .radio_firmware.manifest.radio == true
+            (.radio_firmware == null or (.radio_firmware.asset == $radio and .radio_firmware.manifest.radio == true))
           ' release-manifest.json >/dev/null
           echo "$(jq -r .firmware.sha256 release-manifest.json)  touchdeck.tdfw" | sha256sum --strict -c -
-          echo "$(jq -r .radio_firmware.sha256 release-manifest.json)  $radio" | sha256sum --strict -c -
+          if jq -e '.radio_firmware != null' release-manifest.json >/dev/null; then
+            echo "$(jq -r .radio_firmware.sha256 release-manifest.json)  $radio" | sha256sum --strict -c -
+          elif compgen -G 'touchdeck-radio*' >/dev/null; then
+            echo "::error::The manifest records no radio build, but a radio file is there"
+            exit 1
+          fi
           cp "../signed-assets/$INSTALLER.sig" "$INSTALLER.sig"
           [ -s "$INSTALLER.sig" ]
           tag=$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG")
@@ -288,7 +302,11 @@ jobs:
             diff <(echo "$expected") <(echo "$uploaded") || true
             exit 1
           fi
-          for name in "$INSTALLER" "$INSTALLER.sig" latest.json "touchdeck-radio-${RELEASE_TAG#v}.tdfw"; do
+          required=("$INSTALLER" "$INSTALLER.sig" latest.json)
+          if jq -e '.radio_firmware != null' release-assets/release-manifest.json >/dev/null; then
+            required+=("touchdeck-radio-${RELEASE_TAG#v}.tdfw")
+          fi
+          for name in "${required[@]}"; do
             grep -qx "$name [0-9]*" <<< "$uploaded" || { echo "::error::Release lacks $name"; exit 1; }
           done
           gh release view "$RELEASE_TAG" --json url,isDraft,tagName

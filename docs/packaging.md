@@ -9,10 +9,10 @@ The installer is built with [electron-builder](https://www.electron.build/nsis) 
 | Path | What it is |
 |---|---|
 | `Open TouchDeck.exe` | The Electron window |
-| `td-companion.exe` | The Companion, with the UI and both Firmware bundles built in: the normal build and the opt-in radio build, so switching works offline |
+| `td-companion.exe` | The Companion, with the UI and the normal Firmware bundle built in. When the release ships the opt-in radio build (see [The radio build in a release](#the-radio-build-in-a-release)), it is built in too, so switching works offline |
 | `resources\app.asar` | The window's code |
 | `resources\firmware\touchdeck.tdfw` | The same normal-build bundle the Companion carries, for picking by hand. The radio build has no copy here. |
-| `resources\install-manifest.json` | Source revision, version, and both Firmware bundles' hashes; the radio build is recorded as embedded in `td-companion.exe` |
+| `resources\install-manifest.json` | Source revision, version, and each Firmware bundle's hash; a radio build is recorded as embedded in `td-companion.exe` |
 | `resources\LICENSE.txt`, `resources\licenses\` | Licenses |
 | `Uninstall Open TouchDeck.exe` | The uninstaller |
 
@@ -43,15 +43,26 @@ OpenTouchDeck-windows-x64-setup.exe.sig
 latest.json
 release-manifest.json
 touchdeck.tdfw
-touchdeck-radio-X.Y.Z.tdfw
+touchdeck-radio-X.Y.Z.tdfw   (only when the release ships the radio build)
 SHA256SUMS
 ```
 
 `touchdeck.tdfw` is the normal, radio-free build the installer carries. `touchdeck-radio-X.Y.Z.tdfw` is the opt-in radio build, a separate file. The sign and publish jobs refuse a release that:
 
 - has no Firmware record, or whose installer Firmware is the radio build
-- lacks the radio file, or whose radio file is the normal build
+- ships the radio build but lacks the radio file, or whose radio file is the normal build
+- ships no radio build but holds a radio file or record
 - has a bundle whose hash differs from `release-manifest.json`
+
+### The radio build in a release
+
+`app/release-options.json` decides whether a release builds and ships the radio build:
+
+```json
+{ "radio_build": false }
+```
+
+With `false`, the recipe builds only the normal Firmware, the Companion carries no radio build, and Device settings shows no build switch to a Device on the normal build. A Device already on the radio build still sees its build and can switch back if the Companion carries the normal build. The sign job reads the file at the tagged commit and refuses assets that disagree with it. Set it to `true` once the radio build is ready to ship. Releases leave it out until the Wi-Fi link's open security work is done (#318).
 
 What protects each Firmware bundle:
 
@@ -124,9 +135,9 @@ python scripts/package_windows.py build --out E:/touchdeck-artifacts/build-001 `
   --notes-file E:/touchdeck-artifacts/release-notes.md
 ```
 
-The recipe builds the Firmware and audits it radio-free, then builds the radio build in `build/firmware-radio` and holds it to `radio_guard.py radio` and the static internal RAM ceiling. It builds the UI, builds the Companion with `cargo build --release --locked -p td-companion` and both bundles embedded (`TOUCHDECK_FIRMWARE_BUNDLE` and `TOUCHDECK_RADIO_FIRMWARE_BUNDLE`, each pinned to its recorded SHA-256), keeps the radio bundle out of the installer payload, refuses a Companion with test hooks, builds the Electron code with the updater public key, packages it with electron-builder. Durable releases leave the signature empty until the separate signing job; use the workflow to produce verified release assets.
+The recipe builds the Firmware and audits it radio-free, then, when `app/release-options.json` ships it, builds the radio build in `build/firmware-radio` and holds it to `radio_guard.py radio` and the static internal RAM ceiling. It builds the UI, builds the Companion with `cargo build --release --locked -p td-companion` and both bundles embedded (`TOUCHDECK_FIRMWARE_BUNDLE` and `TOUCHDECK_RADIO_FIRMWARE_BUNDLE`, each pinned to its recorded SHA-256), keeps the radio bundle out of the installer payload, refuses a Companion with test hooks, builds the Electron code with the updater public key, packages it with electron-builder. Durable releases leave the signature empty until the separate signing job; use the workflow to produce verified release assets.
 
-For an unpublished candidate, pass `--test-signing` instead of `--public-key-file`, with no signing environment. It generates a throwaway key, builds the installer named `OpenTouchDeck-windows-x64-TEST-ONLY-setup.exe` and the next-patch installer for the lifecycle check, and deletes the private key. Never publish these assets. On a PC without ESP-IDF, a test-signed candidate can reuse a checked bundle with `--firmware-bundle <file.tdfw>`, and the radio build with `--radio-firmware-bundle <file.tdfw>` next to it. Each refuses the other build, and without `--radio-firmware-bundle` the candidate carries the normal build alone. Releases always build both.
+For an unpublished candidate, pass `--test-signing` instead of `--public-key-file`, with no signing environment. It generates a throwaway key, builds the installer named `OpenTouchDeck-windows-x64-TEST-ONLY-setup.exe` and the next-patch installer for the lifecycle check, and deletes the private key. Never publish these assets. On a PC without ESP-IDF, a test-signed candidate can reuse a checked bundle with `--firmware-bundle <file.tdfw>`, and the radio build with `--radio-firmware-bundle <file.tdfw>` next to it. Each refuses the other build, and without `--radio-firmware-bundle` the candidate carries the normal build alone. Releases build the radio build only when `app/release-options.json` says so.
 
 The recipe holds the shared `.verify/m3-build.lock` while it compiles both Firmware builds and removes only its own lock. Never delete another owner's lock.
 

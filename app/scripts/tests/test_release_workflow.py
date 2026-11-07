@@ -25,6 +25,22 @@ def workflow_shell(step):
     return '\n'.join(body)
 
 
+# The tagged commit's files as the build check reads them: the app version and the release options.
+GIT_STUB = '''git() {
+  if [ "$1" = fetch ]; then return 0; fi
+  if [ "$1" != show ]; then return 1; fi
+  case "$2" in
+    *:app/release-options.json) printf '%s' "$RELEASE_OPTIONS" ;;
+    *) printf '%s' '{"version":"1.0.0"}' ;;
+  esac
+}'''
+
+
+def reset(assets):
+    for path in assets.iterdir():
+        path.unlink()
+
+
 @unittest.skipUnless(shutil.which('bash') and shutil.which('jq'), 'bash and jq required')
 class ReleaseWorkflowTests(unittest.TestCase):
     def setUp(self):
@@ -49,12 +65,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
                         SOURCE_REVISION='a' * 40, TAGGED_SHA='a' * 40, RELEASE_TAG='v1.0.0',
                         GITHUB_EVENT_NAME='push', GITHUB_REF_TYPE='tag', GITHUB_REF_NAME='v1.0.0',
                         GITHUB_ENV='github-env', RUNNER_TEMP=self.root.as_posix(),
-                        UPDATER_PUBLIC_KEY='public', GH_REPO='example/project')
+                        UPDATER_PUBLIC_KEY='public', GH_REPO='example/project',
+                        RELEASE_OPTIONS='{"radio_build": true}')
+        self.radio_file = True
 
     def prepare(self):
         (self.assets / NAME).write_bytes(self.data)
         (self.assets / 'touchdeck.tdfw').write_bytes(self.normal)
-        (self.assets / RADIO).write_bytes(self.radio)
+        if self.radio_file:
+            (self.assets / RADIO).write_bytes(self.radio)
         (self.assets / 'release-manifest.json').write_text(json.dumps(self.manifest))
         (self.assets / 'latest.json').write_text('{"notes":"untrusted build feed"}')
         (self.assets / (NAME + '.sig')).write_text('unsigned placeholder')
@@ -70,10 +89,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                               capture_output=True, text=True)
 
     def test_signer_rejects_invalid_identity_before_signing(self):
-        prelude = '''git() {
-          if [ "$1" = fetch ]; then return 0; fi
-          if [ "$1" = show ]; then printf '%s' '{"version":"1.0.0"}'; else return 1; fi
-        }'''
+        prelude = GIT_STUB
         radio_in_installer = dict(self.manifest['firmware'], manifest=dict(version='1.0.0', radio=True))
         normal_as_radio = dict(self.manifest['radio_firmware'], manifest=dict(version='1.0.0'))
         for field, value in [(None, None), ('version', '9.9.9'), ('test_signing', True),
@@ -113,6 +129,30 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(self.run_shell('Check build hash and version', prelude).returncode, 0)
         self.env['GITHUB_REF_NAME'] = 'v2.0.0'
         self.assertNotEqual(self.run_shell('Check build hash and version', prelude).returncode, 0)
+
+    def test_signer_follows_the_release_options_at_the_tagged_commit(self):
+        step = 'Check build hash and version'
+        record = self.manifest['radio_firmware']
+        self.env['RELEASE_OPTIONS'] = '{"radio_build": false}'
+        # Without the radio build: no record and no file passes; either one alone refuses.
+        for has_record, has_file, passes in [(False, False, True), (True, True, False), (False, True, False), (True, False, False)]:
+            with self.subTest(radio_build=False, record=has_record, file=has_file):
+                self.manifest['radio_firmware'] = record if has_record else None
+                self.radio_file = has_file
+                reset(self.assets)
+                self.prepare()
+                result = self.run_shell(step, GIT_STUB)
+                self.assertEqual(result.returncode == 0, passes, result.stdout + result.stderr)
+        # A release that ships the radio build refuses to go out without it.
+        self.env['RELEASE_OPTIONS'] = '{"radio_build": true}'
+        reset(self.assets)
+        self.prepare()
+        self.assertNotEqual(self.run_shell(step, GIT_STUB).returncode, 0)
+        # Options that don't say true or false refuse.
+        for options in ['{}', '{"radio_build": "no"}', 'not json']:
+            with self.subTest(options=options):
+                self.env['RELEASE_OPTIONS'] = options
+                self.assertNotEqual(self.run_shell(step, GIT_STUB).returncode, 0)
 
     def test_publish_assembles_from_original_artifacts(self):
         self.prepare()
@@ -160,7 +200,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             'the installer firmware is the radio build': ('firmware', dict(original['firmware'], manifest=dict(radio=True))),
             'no firmware record': ('firmware', None),
             'a firmware record without its manifest': ('firmware', dict(original['firmware'], manifest=None)),
-            'no radio build': ('radio_firmware', None),
+            'a radio file without its record': ('radio_firmware', None),
             'the radio file is the normal build': ('radio_firmware', dict(original['radio_firmware'], manifest={})),
             'the radio file has another name': ('radio_firmware', dict(original['radio_firmware'], asset='touchdeck-radio.tdfw')),
             'the radio file is not the one built': ('radio_firmware', dict(original['radio_firmware'], sha256='b' * 64)),
@@ -179,12 +219,25 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.prepare()
         (self.assets / RADIO).unlink()
         self.assertNotEqual(self.run_shell(step, prelude).returncode, 0)
-
-    def test_draft_check_requires_the_radio_asset(self):
+        # A release without the radio build has neither the record nor the file.
+        self.manifest['radio_firmware'] = None
+        self.radio_file = False
+        reset(self.assets)
         self.prepare()
-        for name, expect in [(None, 0), (RADIO, 1)]:
+        result = self.run_shell(step, prelude)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(RADIO, (self.assets / 'SHA256SUMS').read_text())
+
+    def test_draft_check_requires_the_radio_asset_when_the_release_ships_one(self):
+        self.prepare()
+        for name, expect in [(None, 0), (RADIO, 1), ('no radio build', 0)]:
             with self.subTest(missing=name):
-                if name:
+                if name == 'no radio build':
+                    self.manifest['radio_firmware'] = None
+                    self.radio_file = False
+                    reset(self.assets)
+                    self.prepare()
+                elif name:
                     (self.assets / name).unlink()
                 # What the draft release lists: the same files and sizes as the build, as gh prints them.
                 (self.root / 'listing.txt').write_text(''.join(
