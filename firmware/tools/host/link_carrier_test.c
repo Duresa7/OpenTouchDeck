@@ -809,6 +809,61 @@ static void test_unknown_carrier_dropped(void)
     CHECK(g_fake.frames == 0 && g_usb_len == 0);
 }
 
+static int g_extension_calls;
+
+static void extension_handle(const cJSON *request, cJSON *reply)
+{
+    (void)request;
+    g_extension_calls++;
+    cJSON_AddBoolToObject(reply, "handled", true);
+}
+
+static void extension_caps(cJSON *caps)
+{
+    cJSON_AddNumberToObject(caps, "ble_hid", 4);
+}
+
+/* A message family added with td_link_extend runs only over USB: on the fake carrier it is refused with usb-only and
+ * its handler never runs. Its caps join the v2 hello on every carrier. */
+static void test_extension_is_usb_only(void)
+{
+    static const td_link_extension_t ble = { .prefix = "ble.", .handle = extension_handle, .caps = extension_caps };
+    static const td_link_extension_t bad_prefix = { .prefix = "ble", .handle = extension_handle };
+    static const td_link_extension_t v2 = { .prefix = "v2.ble.", .handle = extension_handle };
+    static const td_link_extension_t no_handler = { .prefix = "wifi." };
+    static const td_link_extension_t other = { .prefix = "wifi.", .handle = extension_handle };
+    static const td_link_extension_t third = { .prefix = "net.", .handle = extension_handle };
+    /* Runs last: the extensions it adds stay for the rest of the process, as they do on the Device. */
+    CHECK(td_link_extend(NULL) == ESP_ERR_INVALID_ARG);
+    CHECK(td_link_extend(&bad_prefix) == ESP_ERR_INVALID_ARG);
+    CHECK(td_link_extend(&v2) == ESP_ERR_INVALID_ARG);
+    CHECK(td_link_extend(&no_handler) == ESP_ERR_INVALID_ARG);
+    CHECK(td_link_extend(&ble) == ESP_OK);
+    CHECK(td_link_extend(&ble) == ESP_ERR_INVALID_STATE);
+    CHECK(td_link_extend(&other) == ESP_OK);
+    CHECK(td_link_extend(&third) == ESP_ERR_NO_MEM);
+
+    start(true);
+    g_extension_calls = 0;
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    over_usb("{\"m\":\"ble.state\"}", 1);
+    CHECK(usb_take(&frame, payload) && frame.seq == 1);
+    CHECK(has(payload, "\"m\":\"ble.state\"") && has(payload, "\"ok\":true") && has(payload, "\"handled\":true"));
+    CHECK(g_extension_calls == 1);
+
+    over_fake("{\"m\":\"ble.forget\"}", 2);
+    CHECK(g_fake.frames == 1 && g_fake.last.seq == 2);
+    CHECK(has(g_fake.payload, "\"ok\":false") && has(g_fake.payload, "\"reason\":\"usb-only\""));
+    CHECK(has(g_fake.payload, "\"error\":\"Only over USB\"") && !has(g_fake.payload, "handled"));
+    CHECK(g_extension_calls == 1);
+
+    over_fake("{\"m\":\"hello\",\"proto\":2}", 3);
+    CHECK(g_fake.frames == 2 && has(g_fake.payload, "\"ble_hid\":4"));
+    over_usb("{\"m\":\"hello\"}", 4);
+    CHECK(usb_take(&frame, payload) && !has(payload, "ble_hid"));
+}
+
 /* ---- Device names: the shared vectors in schema/protocol/name-vectors-v2.json ---- */
 
 static cJSON *g_names;
@@ -950,12 +1005,13 @@ int main(int argc, char **argv)
     test_frame_body_encoder();
     test_name_vectors_in_the_validator();
     test_name_set_refuses_vectors_with_args();
+    test_extension_is_usb_only();
     test_hello_marks_the_radio_build();
     reset();
     if (g_failures) {
         fprintf(stderr, "%d checks failed\n", g_failures);
         return 1;
     }
-    printf("link carrier%s: 16 tests passed\n", CONFIG_TD_RADIO_BUILD ? " (radio build)" : "");
+    printf("link carrier%s: 17 tests passed\n", CONFIG_TD_RADIO_BUILD ? " (radio build)" : "");
     return 0;
 }

@@ -751,7 +751,7 @@ Companion sends; Device events such as `press`, `key.report`, `v2.input` and
 |---|---|
 | Allowed | `hello`, `ping`, `link.state`, `layout.get`, `layout.put`, `icon.put`, `icon.list`, `icon.rm`, `settings.get`, `settings.put`, `store.stat`, `xfer.end`, `widget.set`, `dashboard.set`, `v2.name.get`, `v2.name.set`, `v2.asset.stat`, `v2.asset.list`, `v2.asset.put`, `v2.asset.end`, `v2.asset.delete`, `v2.live.set`, `v2.photo.put`, `v2.photo.end`, `v2.idle.get`, `v2.idle.set`, `v2.clock.set`, `net.state` |
 | Confirmed on the Device | `update.begin`, then the update's chunks and `update.end` as usual |
-| USB only | `net.pair`, `net.list`, `net.forget`, every `wifi.*` message, and every message not named above |
+| USB only | `net.pair`, `net.list`, `net.forget`, every `wifi.*` message, every `ble.*` message (link-v2.md, Bluetooth keyboard), and every message not named above |
 
 Chunks and acks are allowed only for a transfer this session opened. A
 USB-only request gets `ok:false`, `reason:"usb-only"` and

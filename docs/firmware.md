@@ -524,6 +524,12 @@ What the radio build does:
 - Wi-Fi and lwIP buffers come from PSRAM where ESP-IDF allows it
   (`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP`), and the internal buffers are sized
   small. The Wi-Fi driver stores nothing in NVS.
+- Static `.bss` goes to PSRAM where ESP-IDF allows it
+  (`CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY`): the Wi-Fi driver's, lwIP's
+  and wpa_supplicant's, and the link's four frame buffers (`EXT_RAM_BSS_ATTR`
+  in `td_link.c`, which is empty in the normal build). That frees about
+  18.6 KB of static internal RAM, more than the 4.3 KB that linking the BLE
+  controller and NimBLE costs.
 - NVS stays unencrypted, and no build burns an eFuse or enables flash
   encryption. Both NVS encryption schemes on the ESP32-S3 are irreversible, so
   the radio build waits for an operator decision
@@ -541,9 +547,11 @@ What the radio build does:
   network and doesn't scan: no network is set, and nothing calls
   `esp_wifi_connect` or `esp_wifi_scan_start`.
 - NimBLE is compiled in, with the controller in flash and NimBLE's memory in
-  PSRAM. It stays dormant. Nothing starts the controller or the host, so the
-  Device never advertises, scans or connects. No observer or central role is
-  compiled in.
+  PSRAM. BLE is off until the person turns on the Bluetooth keyboard (see
+  [Bluetooth keyboard](#bluetooth-keyboard-radio-build)). A fresh Device never
+  starts the controller or the host, so it never advertises. No observer or
+  central role is compiled in, so the Device can never scan or start a
+  connection.
 - The net-v2 service (`td_netlink`, with the protocol in `td_netlink_core`)
   listens on TCP port 47820 and adds the `wifi` carrier to the link. It pairs
   and opens sessions as [net-v2](../schema/protocol/net-v2.md) describes, with
@@ -570,9 +578,12 @@ What the radio build does:
   floor, it logs that line as an error with `below floor`. When the station
   did not start, the floor is not measured: the line is an error, and
   `floor_ok` stays false.
-- The console gets one more command, after `update`: `radio state` replies with
+- The console gets two more commands, after `update`: `ble` (see
+  [Bluetooth keyboard](#bluetooth-keyboard-radio-build)) and `radio state`,
+  which replies with
   `build`, `wifi` (`started`, `failed` with `wifi_error`, or `off`), `joined`,
-  `ble` (`dormant`), `free_internal`, `largest_internal`, `floor`, `floor_ok`,
+  `ble` (`off`, `starting`, `on` or `failed`), `free_internal`,
+  `largest_internal`, `floor`, `floor_ok`,
   `steady`, and, after the steady-state report, `steady_free_internal` and
   `steady_largest_internal`. `heap` and, in a perf build, `perf mem` work as in
   the normal build.
@@ -601,19 +612,26 @@ python firmware/tools/radio_guard.py radio <build dir>
   and any netlink or mDNS component. The release recipe's audit runs the same
   check.
 - `radio` requires the radio options and components, and fails when one of
-  those options is missing or the floor is set below 24576. With
+  those options is missing or the floor is set below 24576. The options include
+  the Bluetooth keyboard's: LE Secure Connections only, privacy (the resolving
+  list), bonds in NVS, one connection, four bonds, no extended advertising, and the Peripheral Preferred
+  Connection Parameters. With
   `--size-json <file>`, the output of `idf.py size --format json2`, it fails
   when static internal RAM (DIRAM) is over 153,600 bytes. On the board, 151,083
   bytes left 28,815 free in steady state, so raise that ceiling only with a new
-  board measurement. It also reads the linked
+  board measurement. With the Bluetooth keyboard and `.bss` in PSRAM, the build
+  uses about 136,800 bytes. It also reads the linked
   image with the toolchain's `nm`, and fails when the image contains any
-  function that starts the BLE controller or host, advertises, scans or
-  connects, or joins or scans a Wi-Fi network. The linker drops every function
-  that nothing calls, so a name missing from the image is a call that cannot
-  happen.
+  function that scans or starts a connection over BLE, advertises in extended
+  mode, or joins or scans a Wi-Fi network, or when it lacks `td_ble_boot`. The
+  linker drops every function that nothing calls, so a name missing from the
+  image is a call that cannot happen.
 
 `python -B firmware/tools/test_radio_guard.py` tests both checks, and checks
-the Firmware sources for those calls. With `TD_GUARD_NORMAL_BUILD` or
+the Firmware sources for those calls. It also checks that only
+`td_ble_nimble.c` calls what starts BLE, advertises or writes the accept list
+(`nimble_port_init`, `ble_gap_adv_start`, `ble_gap_wl_set` and the rest of
+`BLE_START_SYMBOLS`). With `TD_GUARD_NORMAL_BUILD` or
 `TD_GUARD_RADIO_BUILD` set to a build directory, it also checks that real
 build. CI builds both configurations on every Firmware change. It uploads the
 normal bundle as `firmware-tdfw` and the radio bundle as `firmware-radio-tdfw`,
@@ -649,6 +667,127 @@ USB-only messages are refused, and checks that a second connection gets `busy`.
 It needs `qemu-system-xtensa` (`idf_tools.py install qemu-xtensa`) and Node 22
 or later. The image is never flashed or packed: `radio_guard.py radio` fails any
 build with `TD_QEMU_TEST`, `ETH_USE_OPENETH` or their code.
+
+## Bluetooth keyboard (radio build)
+
+The radio build can be a Bluetooth LE keyboard with media keys for a phone, a
+tablet or another computer: a HID-over-GATT peripheral (`td_ble`) on NimBLE.
+It is off by default. The setting persists in NVS (namespace `td_ble`, key
+`enabled`), and only a stored `1` starts the controller and the host at boot. A
+fresh Device, or one whose setting is off, never starts BLE. The person turns it
+on and off, opens the pairing window, lists bonded hosts and forgets them over
+USB only: the link's `ble.*` messages
+([link-v2.md](../schema/protocol/link-v2.md#bluetooth-keyboard-radio-build))
+or the console:
+
+- `ble state`: the setting, the stack (`off`, `starting`, `on`, `failed`), the
+  pairing window, whether a passkey is on screen, the advertising (`off`,
+  `pairing`, `fast`, `slow`), and the bonded hosts, with the connected ones.
+- `ble on` / `ble off`: stores the setting, then starts or stops the stack.
+- `ble pair` / `ble close`: opens the pairing window for 120 seconds, or closes
+  it.
+- `ble forget [aa:bb:cc:dd:ee:ff]`: forgets one bonded host, or all of them.
+
+Until Tiles choose their target (#277), every key report also goes to the
+bonded host that is connected and subscribed. With no host connected, BLE sends
+nothing.
+
+What a host sees:
+
+- A HID Service with a keyboard report (ID 1: modifiers, a reserved byte, six
+  keys), its LED output report (ID 1, one byte), and a consumer report (ID 2:
+  one 16-bit usage, 0 to 0x03FF), plus the boot keyboard reports. Every HID
+  characteristic (the report map, the reports, Protocol Mode, the Control Point
+  and HID Information) needs an encrypted, authenticated link with a bonded
+  host to read, write or subscribe: NimBLE checks the `_AUTHEN` flags and the
+  access callback checks the bond. Report values carry no Report ID byte. Each
+  connection starts in Report Protocol.
+- A Battery Service with a fixed level of 100: the board runs from USB and
+  can't measure a battery. The level needs the same authenticated link.
+- A Device Information Service with the PnP ID: the vendor ID source is the
+  Bluetooth SIG, the vendor is Espressif, and the product version is the GATT
+  version (`TD_BLE_GATT_VERSION`, now 3). A Device that boots with a new GATT
+  version raises Service Changed for its bonded hosts. The PnP ID is the only
+  characteristic open to a link that isn't authenticated.
+
+How it behaves on the air, from the crash analysis in #275:
+
+- Pairing happens only inside the window. It uses LE Secure Connections only,
+  with MITM protection and bonding, and keeps at most four bonds. The window
+  refuses to open with four. While it is open the Device advertises as general
+  discoverable at 30-50 ms with its name in the scan response. A new bond closes
+  the window. A host outside the window that isn't bonded is dropped.
+- The Device is display-only (`BLE_HS_IO_DISPLAY_ONLY`), so a host with a
+  keyboard pairs by passkey entry: the Device shows a random six-digit code
+  over the Page and the idle face, and the person types it on the host. The
+  code comes from the hardware random generator, never leaves the screen (no
+  log, no link message), and goes when pairing completes or fails, its link
+  drops, the window closes, Bluetooth turns off, or 60 seconds pass, which also
+  drops the link. If the screen is dark, a touch lights it without pressing
+  anything.
+- Passkey entry was chosen over numeric comparison because it keeps the Device
+  output-only: confirming a comparison would need a touch path from the UI into
+  pairing, where a stray tap or a press still held could confirm. A host that
+  can't type (no keyboard, or display and yes/no only) ends up in Just Works,
+  and a host that offers only legacy pairing is refused by Secure Connections
+  Only mode.
+- A link whose keys aren't authenticated Secure Connections keys with a 16-byte
+  key (a Just Works or legacy bond, or an old bond made that way) is dropped
+  and its bond deleted, whether it just paired or reconnects with stored keys.
+  `ble state` counts these in the stats as refused.
+- Reconnect advertising is for bonded hosts only (the controller's accept
+  list), carries no name, runs at 20-30 ms for 30 seconds and then at 1-2.5 s
+  until a host connects. It starts only from an event: the host syncing, a
+  disconnect, advertising ending, or a command. Never while the host stack holds
+  a connection object, which exists before NimBLE delivers the late `CONNECT`
+  event. The accept list is written only after the stack starts and when the
+  bonds change. A failed start backs off 1, 2, 4, then 8 seconds.
+- Phones and computers reconnect from resolvable private addresses. With
+  `CONFIG_BT_NIMBLE_HS_PVCY` the controller resolves them before the accept
+  list, using the IRK each host gave when it bonded, so the accept list matches
+  the host's identity address. NimBLE loads the stored IRKs when the stack
+  starts and adds a new bond's IRK as it stores it. td_ble writes the resolving
+  list again from the bond store each time it writes the accept list, removing
+  each entry first so none is doubled. A failure there is counted and doesn't
+  stop advertising: a host on its identity address still gets in.
+- Every event is handled by its own connection handle. A Security Request goes
+  out only on a link that isn't encrypted yet. After encryption the Device asks
+  once for 7.5-50 ms, latency 0 and a 4-second supervision timeout, the same
+  values as its Peripheral Preferred Connection Parameters, and never asks
+  again.
+
+The logic lives in `td_ble_core.c`, which has no NimBLE in it, and
+`td_ble_nimble.c` is the only file that starts the stack, advertises or writes
+the accept list. `python -B firmware/tools/test_ble.py` compiles the core, the
+messages and the GATT table with a fake radio and runs two host tests:
+
+- `tools/host/ble_hid_test.c` decodes the report map and checks the Report IDs,
+  every Logical Minimum against its Maximum under the signed rule, each
+  report's length against what is sent, one Report characteristic per report,
+  authenticated encryption on every HID characteristic, the Battery Level and
+  every Report Reference (the NimBLE flags themselves, which
+  `td_ble_nimble.c` asserts match NimBLE's), the Battery Service, the 512-byte
+  limit, and the GATT layout's fingerprint against the version it is pinned to.
+  A change to the report map or the table without a new `TD_BLE_GATT_VERSION`
+  fails it.
+- `tools/host/ble_core_test.c` replays the reboot order (Connection Complete,
+  then encryption, then a late `CONNECT`) and a connect that races the end of
+  advertising, and checks that nothing retries, the accept list isn't
+  rewritten, no Security Request goes out on an encrypted link, and one
+  parameter request does. It also checks that BLE stays off unless the stored
+  setting is on, the backoff, the fast and slow phases, the pairing window, the
+  passkey (an unbiased six-digit draw, on screen until pairing completes, fails,
+  times out, its link drops, the window closes or Bluetooth turns off, and
+  refused outside the window or for any other pairing method), that Just Works,
+  legacy and short-key bonds are refused and deleted, that the resolving list
+  follows the bond store before advertising, forgetting, and the `ble.*`
+  messages.
+
+It needs a C compiler and one firmware build first, which fetches cJSON, like
+`test_link_carrier.py`.
+
+Real radio checks wait for a separate radio (standing order 22: never pair this
+PC's adapter with the Device). They are listed in #299.
 
 ## Layout format
 
