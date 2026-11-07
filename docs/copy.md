@@ -42,7 +42,9 @@ UI tickets copy strings from here. When a screen needs a string this guide doesn
 | this PC | this computer, your computer | The PC the Companion runs on |
 | Tap | press, click (for the Device) | Touching a Tile on the Device. "Click" stays for the mouse in the app |
 | Retry | try again (as a button) | Buttons. Sentences may still say "then retry" |
-| Forget | clear, delete (for secrets and pairings) | Removing a stored key or a paired browser |
+| Forget | clear, delete (for secrets and pairings) | Removing a stored key, a paired browser, a Wi-Fi network or a Keyboard host |
+| Keyboard host, or "computer or phone" in sentences | bond, paired device, Pairing | A computer or phone the Device's Bluetooth keyboard types on. It may be this PC, but the copy doesn't assume so |
+| Add (a computer or phone) | pair, bond (for the Bluetooth keyboard) | Making a Keyboard host. "Pair" stays for a Pairing with this app over Wi-Fi |
 | Remove | delete | Removing a Tile, a Page or unused Assets |
 
 ## Patterns
@@ -249,6 +251,117 @@ Opens from the Device's name.
 | Tile badge tooltip | Update {device}'s Firmware to show this Tile. |
 | Save failed | Couldn't save to {device}. Check that it's plugged in, then retry. |
 | Not connected | Plug in {device} to change its settings. |
+
+### Device panel, Wi-Fi
+
+One section for the network the Device joins (radio build only, set over USB), its Pairing with this app over that network, and the Carrier. `{ssid}` is the network name the user typed.
+
+| Element | String |
+| --- | --- |
+| Section label | Wi-Fi |
+| Network row title | Network |
+| Network, none | No network. {device} works over USB without one. |
+| Network, joining | Joining {ssid}… |
+| Network, connected | Connected to {ssid} at {ip} |
+| Network, connected, no address yet | Connected to {ssid} |
+| Network, failed | {reason} {device} keeps trying. |
+| Network, reading | Reading… |
+| Network, sending | Sending to {device}… |
+| Network, forgetting | Forgetting… |
+| Network, not connected | Plug in {device} to change its Wi-Fi network. |
+| Network, over Wi-Fi | Plug in {device} with a USB cable to change its Wi-Fi network. |
+| Network, older Firmware | {device}'s Firmware can't change this yet. |
+| Network name label | Network name |
+| Password label | Password |
+| Password hint | Empty for an open network. Stored on {device} only, and never shown again. |
+| Buttons | Join, Forget network |
+| Network name error, empty | Type the network name. |
+| Network name error, too long | That network name is too long. |
+| Network name error, control characters | Remove tabs, line breaks and other special characters. |
+| Network name refused by the Device | The Device refused that network name. |
+| Password error, too short | A Wi-Fi password has at least 8 characters. |
+| Password error, too long | A Wi-Fi password has at most 63 characters, or exactly 64 hex digits. |
+| Password error, other characters | A Wi-Fi password uses only letters, digits, spaces and ASCII symbols. |
+| Password refused by the Device | The Device refused that password. |
+| Reason, not found | Can't find {ssid}. Check the name, and that {device} is in range. |
+| Reason, wrong password | {ssid} refused the password. |
+| Reason, no address | Joined {ssid}, but it gave {device} no address. |
+| Reason, security | {ssid} uses security {device} doesn't support, such as WEP or WPA Enterprise. |
+| Reason, refused | {ssid} turned {device} away. It may be full. |
+| Reason, lost | Lost {ssid}. |
+| Reason, driver | {device}'s Wi-Fi didn't start. Restart {device}. |
+| Reason, other | Couldn't join {ssid}. |
+| Network error, read or change failed | Couldn't {read or change} {device}'s Wi-Fi. Check that it's plugged in, then retry. |
+| Pairing row title | Pairing |
+| Pairing, paired | Paired at {address}. |
+| Pairing, looking | Looking for {device} on the network… |
+| Pairing, none | Not paired. Pair to use it without the cable. |
+| Pairing buttons | Pair over Wi-Fi, Forget |
+| Address form title | {device}'s address |
+| Address form hint, found | Found {device} on the network. On {device}, choose Pair new app first. |
+| Address form hint, not found | Type the address {device} shows under Wi-Fi. On {device}, choose Pair new app first. |
+| Address placeholder | IP address or name |
+| Address form buttons | Cancel, Start pairing |
+| Code form title | Enter the code on {device} |
+| Code form hint | {device} at {address} shows {n} digits. |
+| Code tries left | 1 try left, {n} tries left |
+| Code form buttons | Cancel, Pair |
+| Code error, wrong length | Enter the {n} digits {device} shows. |
+| Pairing error, nothing answered | Nothing answered at that address. Check that {device} is on the same network, and the address. |
+| Pairing error, another Device | Another Device answered at that address, not {device}. |
+| Pairing error, not pairing | {device} isn't pairing. On {device}, open Settings and choose Pair new app, then try again. |
+| Pairing error, wrong code | Wrong code. {n} tries left. |
+| Pairing error, locked | Too many wrong codes. {device} stopped pairing for a while. Wait, then start again. |
+| Pairing error, window ended | Pairing ended on {device}. Start again. |
+| Pairing error, four apps | Four apps are paired. Forget one first: on {device}, use the paired apps screen, or plug it in with a USB cable. |
+| Pairing error, already paired | {device} still has a Pairing with this app. Forget it on {device} (paired apps screen), then pair again. |
+| Pairing error, old Firmware | {device}'s Firmware can't pair over Wi-Fi with this app. Update its Firmware over USB, then try again. |
+| Pairing error, busy | {device} is busy with another app. Close it, then try again. |
+| Pairing error, attempt gone | That pairing ended. Start again. |
+| Carrier, USB | Connected over USB |
+| Carrier, Wi-Fi | Connected over Wi-Fi at {address} |
+
+### Device panel, Bluetooth keyboard
+
+Shown only for a Device whose Firmware has the Bluetooth keyboard (the radio build). It changes only over USB. A Keyboard host is a computer or phone it types on; the copy says "computer or phone" and keeps "pair" for the Wi-Fi Pairing.
+
+| Element | String |
+| --- | --- |
+| Section label and switch name | Bluetooth keyboard |
+| Status, off | Off. Turn it on to type on a computer or phone with {device}. |
+| Status, turning on | Turning on… |
+| Status, turning off | Turning off… |
+| Status, starting | Starting… |
+| Status, didn't start (only while the switch is on) | Bluetooth didn't start on {device}. Restart {device} to try again. |
+| Status, no Keyboard hosts | On. Add a computer or phone to type with {device}. |
+| Status, one connected | On. Connected to a computer or phone. |
+| Status, none connected | On. Waiting for a computer or phone to connect. |
+| Status, adding | Waiting for a computer or phone… |
+| Status, code on the Device | {device} shows a 6-digit code. Type it on the computer or phone. |
+| Status, reading | Reading… |
+| Not connected | Plug in {device} to change its Bluetooth keyboard. |
+| Over Wi-Fi | Plug in {device} with a USB cable to change its Bluetooth keyboard. |
+| Older Firmware | {device}'s Firmware can't change this yet. |
+| Add button | Add a computer or phone |
+| Adding box title | Adding a computer or phone |
+| Adding countdown | {m:ss}, read as "{m:ss} left" |
+| Adding hint | Open Bluetooth on the computer or phone and choose {device}. {device} shows a 6-digit code; type it on the computer or phone. |
+| Adding button | Stop adding |
+| Full | {device} keeps {n} computers and phones. Forget one to add another. |
+| Keyboard host list name (screen readers) | Keyboard hosts |
+| Keyboard host row | {address}, then Connected or Not connected |
+| Forget button | Forget, read as "Forget {address}"; in progress Forgetting… |
+| Forget all button | Forget all |
+| Forget all confirm title | Forget every computer and phone? |
+| Forget all confirm body | Each one needs a new code from {device} to be added again. |
+| Forget all confirm buttons | Cancel, Forget all; in progress Forgetting… |
+| Error, off | Turn on the Bluetooth keyboard first. |
+| Error, starting | Bluetooth is still starting on {device}. Try again in a moment. |
+| Error, didn't start | Bluetooth didn't start on {device}. Restart {device} to try again. |
+| Error, full | {device} keeps {n} computers and phones. Forget one to add another. |
+| Error, couldn't save | {device} couldn't save that. Try again. |
+| Error, over Wi-Fi | Plug in {device} with a USB cable to change its Bluetooth keyboard. |
+| Error, no answer (reading again by itself, waiting longer each time) | Couldn't reach {device}. Check that it's plugged in, then retry. |
 
 ### Integrations
 

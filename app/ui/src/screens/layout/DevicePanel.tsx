@@ -17,6 +17,7 @@ import type { DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { button } from '../../shell/button.ts';
 import { useBundledBuild, useDeviceStores, useOfferedFirmware } from './device.ts';
 import { Select } from './fields.tsx';
+import { BluetoothField } from './BluetoothField.tsx';
 import { WifiField } from './WifiField.tsx';
 
 const ORIENTATIONS: { value: Orientation; label: string }[] = [
@@ -463,7 +464,7 @@ function Notice({ settings }: { settings: DeviceSettingsStore }) {
 }
 
 function PanelBody({ device }: { device: DeviceSummary }) {
-  const { settings, firmware, wifi, wifiSetup } = useDeviceStores(device);
+  const { settings, firmware, wifi, wifiSetup, bluetooth } = useDeviceStores(device);
   const name = device.name ?? 'Unnamed Device';
   const live = device.link.state === 'connected';
   const loaded = useStore(settings, (s) => s.load === 'ready');
@@ -486,6 +487,7 @@ function PanelBody({ device }: { device: DeviceSummary }) {
       <BrightnessField {...props} />
       <PhotoFrameField {...props} />
       <WifiField device={device} name={name} wifi={wifi} setup={wifiSetup} live={live && !restarting} />
+      <BluetoothField device={device} name={name} bluetooth={bluetooth} live={live && !restarting} />
       <FirmwareRow {...props} firmware={firmware} />
       <BuildField {...props} firmware={firmware} />
       <Notice settings={settings} />

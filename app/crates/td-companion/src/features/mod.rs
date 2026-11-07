@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod assets;
+pub mod bluetooth;
 pub mod brandfetch;
 pub mod devices;
 pub mod firmware;

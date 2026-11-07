@@ -5,6 +5,7 @@ import type { DeviceSummary, FirmwareBuild } from '../../lib/companion/api.ts';
 import type { Companion } from '../../lib/companion/client.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
 import { jobsStore } from '../../lib/companion/jobs.ts';
+import { createBluetooth, type BluetoothStore } from '../../lib/device/bluetooth.ts';
 import { createFirmwareUpdate, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { offeredFor } from '../../lib/device/radio-build.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from '../../lib/device/settings.ts';
@@ -16,6 +17,7 @@ interface DeviceStores {
   firmware: FirmwareUpdateStore;
   wifi: WifiStore;
   wifiSetup: WifiSetupStore;
+  bluetooth: BluetoothStore;
   observe(summary: DeviceSummary): void;
 }
 
@@ -32,6 +34,7 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
     let latest = device;
     const settings = createDeviceSettings({ companion, device });
     const wifiSetup = createWifiSetup({ companion, device });
+    const bluetooth = createBluetooth({ companion, device });
     const firmware = createFirmwareUpdate({
       companion,
       jobs: jobsStore,
@@ -42,10 +45,12 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
       firmware,
       wifi: createWifiPairing({ companion, device: () => latest }),
       wifiSetup,
+      bluetooth,
       observe(summary) {
         latest = summary;
         settings.observe(summary);
         wifiSetup.observe(summary);
+        bluetooth.observe(summary);
       },
     };
     byDevice.set(device.id, found);

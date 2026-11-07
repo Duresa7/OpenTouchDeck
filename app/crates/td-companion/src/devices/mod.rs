@@ -117,6 +117,11 @@ pub struct Capabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub gif_pixels: Option<u32>,
+    /// The radio build's Bluetooth keyboard: the most computers and phones it keeps bonded, 1 to 8. Absent when the
+    /// Firmware has no Bluetooth keyboard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ble_hid: Option<u32>,
     pub screen: [u32; 2],
     pub grid: [u32; 2],
     pub pages: u32,
@@ -153,6 +158,7 @@ impl From<&td_link::Capabilities> for Capabilities {
             }),
             gif_frames: Some(c.gif_frames),
             gif_pixels: Some(c.gif_pixels),
+            ble_hid: c.ble_hid.filter(|bonds| *bonds > 0),
             screen: c.screen,
             grid: c.grid,
             pages: c.pages,

@@ -420,6 +420,23 @@
   gap: var(--space-2);
 }
 
+/* The Bluetooth keyboard makes the panel taller than a short window. A fixed cap, because following
+   --available-height loops the positioner's ResizeObserver. */
+.device-panel {
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.panel-hosts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .panel-status {
   color: var(--ink-2);
   font-size: var(--text-12);

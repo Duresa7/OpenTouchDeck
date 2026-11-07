@@ -2,6 +2,7 @@ import type { DeviceSummary, FirmwareBuild, Layout, NewBoard, SystemInfo } from 
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
 import { createFakeActions } from './fake/fake-actions.ts';
 import { createFakeAssets, type FakeAssetsOptions } from './fake/fake-assets.ts';
+import { createFakeBluetooth, type FakeBluetoothOptions } from './fake/fake-bluetooth.ts';
 import { createFakeBrandfetch, type FakeBrandfetchOptions } from './fake/fake-brandfetch.ts';
 import { createFakeConsole } from './fake/fake-console.ts';
 import { createFakeControls } from './fake/fake-controls.ts';
@@ -37,6 +38,8 @@ export interface FakeCompanionOptions {
   photoFrame?: readonly string[];
   /** Wi-Fi setup on Devices whose capabilities have `wifi`: how long a join takes and the networks in range. */
   wifiSetup?: Omit<FakeWifiSetupOptions, 'devices'>;
+  /** The Bluetooth keyboard on Devices whose capabilities have `ble_hid`: how each starts, and its timings. */
+  bluetooth?: Omit<FakeBluetoothOptions, 'devices'>;
   bundled?: FirmwareBuild;
   newBoards?: NewBoard[];
   /** Browsers paired before the start. */
@@ -130,6 +133,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs, wrote: controls.wrote });
   const settings = createFakeDeviceSettings({ devices, publish, brightness: options.brightness, photoFrame: options.photoFrame });
   const wifiSetup = createFakeWifiSetup({ devices, ...options.wifiSetup });
+  const bluetooth = createFakeBluetooth({ devices, ...options.bluetooth });
   const firmware = createFakeFirmware({ devices, publish, bundled: options.bundled, stepMs: options.jobMs });
   const newBoards = createFakeNewBoards({ devices, publish, bundled: options.bundled ?? FAKE_BUNDLED, boards: options.newBoards, stepMs: options.jobMs });
   const actions = createFakeActions({ devices, publish, stored: layouts.stored });
@@ -211,6 +215,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       (await brandfetch.handle(request, path)) ??
       (await settings.handle(request, path)) ??
       (await wifiSetup.handle(request, path)) ??
+      (await bluetooth.handle(request, path)) ??
       (await firmware.handle(request, path)) ??
       (await newBoards.handle(request, path)) ??
       (await layouts.handle(request, path)) ??
@@ -253,6 +258,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     integrations,
     assets,
     wifi,
+    bluetooth,
     iconPacks,
     brandfetch,
     /** Sessions minted so far through the bridge. */

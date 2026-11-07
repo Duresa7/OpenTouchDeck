@@ -564,11 +564,12 @@ the request took effect:
 | `pairing_ms` | Milliseconds left in the window, 0 when closed |
 | `passkey` | Whether a pairing passkey is on the Device's screen. The code itself is never sent |
 | `advertising` | `off`, `pairing`, `fast` (bonded hosts, 20-30 ms) or `slow` (bonded hosts, 1-2.5 s) |
-| `bonds` | Bonded hosts, each `{"address":"aa:bb:cc:dd:ee:ff","random":Boolean,"connected":Boolean}`. Listed only while `state` is `on`; empty otherwise |
+| `bonds` | Bonded hosts, each `{"address":"aa:bb:cc:dd:ee:ff","random":Boolean,"connected":Boolean}`. The Device keeps its bonds in every state, and a client accepts a list in any state. The Firmware lists none while `off`, and still lists them while `starting` after a host reset |
 | `bonds_max` | The same number as `caps.ble_hid` |
 | `battery` | The Battery Level the Device reports to hosts, 0 to 100. Fixed at 100: the board runs from USB |
 
 Addresses are identity addresses, most significant byte first, in lower case.
+`ble.forget` takes an address in either case.
 `random` is true for a random static identity address. `connected` means a link
 to that host is up, encrypted with authenticated keys, and bonded.
 

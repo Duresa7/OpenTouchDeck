@@ -7,7 +7,7 @@ import type { FakePick } from './fake/fake-firmware.ts';
 import { freshDevice, newBoard, type Answer, type BoardKind } from './fake/fake-new-boards.ts';
 import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake/fake-updates.ts';
 import { worstAccounts, worstBrowsers, worstCustom, worstDelivery, worstDevices, worstFolder, worstHubError, worstLayouts, worstNewBoards, worstOffer } from './fake/fake-worst.ts';
-import { demoLayout, demoScenario } from './samples.ts';
+import { DEMO_BONDS, demoLayout, demoScenario } from './samples.ts';
 import { windowSession, type UpdateCheck } from './session.ts';
 
 const checks = {
@@ -93,6 +93,13 @@ declare global {
         failGif(error: ErrorBody): void;
       };
       iconPacks: { failInstall(prefix: string, error: ErrorBody): void; installed(): string[] };
+      /** The Bluetooth keyboard: a computer or phone pairing with it, and a controller that won't start. */
+      bluetooth: {
+        passkey(id: string, shown: boolean): void;
+        pair(id: string, address: string): boolean;
+        failStart(fail: boolean): void;
+        state(id: string): { enabled: boolean; bonds: { address: string; connected: boolean }[] };
+      };
     };
   }
 }
@@ -168,6 +175,8 @@ export function demoEnvironment(target: Window): Environment {
     },
     assets: { ...(params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {}), ...renderMs(params.get('render-ms')) },
     wifi: worst ? undefined : demoWifi(devices),
+    // The radio Device starts with Bluetooth on and two computers and phones bonded, so its section shows them.
+    bluetooth: { startMs: 600, seed: worst ? {} : Object.fromEntries(devices.filter((d) => d.capabilities?.ble_hid).map((d) => [d.id, { enabled: true, bonds: DEMO_BONDS }])) },
     // `?packs=logos,mdi` starts with those Icon packs installed.
     iconPacks: { installed: params.get('packs')?.split(',') ?? [] },
     // `?brandfetch=on` starts with fake keys set. Search still goes to Brandfetch, which e2e
@@ -221,6 +230,12 @@ export function demoEnvironment(target: Window): Environment {
       failGif: (error) => fake.assets.failGif(error),
     },
     iconPacks: { failInstall: (prefix, error) => fake.iconPacks.failInstall(prefix, error), installed: () => fake.iconPacks.installed() },
+    bluetooth: {
+      passkey: (id, shown) => fake.bluetooth.showPasskey(id, shown),
+      pair: (id, address) => fake.bluetooth.hostPairs(id, address),
+      failStart: (fail) => fake.bluetooth.failStart(fail),
+      state: (id) => fake.bluetooth.state(id),
+    },
   };
   const network = target.fetch.bind(target);
   target.fetch = (input, init) => {

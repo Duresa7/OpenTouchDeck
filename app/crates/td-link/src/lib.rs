@@ -1,9 +1,11 @@
 pub mod asset;
+pub mod ble;
 pub mod bundle;
 pub mod carrier;
 pub mod discover;
 pub mod live;
 pub mod mock;
+mod mock_ble;
 pub mod net;
 pub mod photo;
 pub mod recover;
