@@ -126,14 +126,18 @@ ROM flashing.
 
 The link sends its frames through a carrier, declared in
 `firmware/components/td_link/include/td_link_carrier.h`. USB, SLIP over the
-USB-Serial/JTAG port, is added first and is the only carrier in this build. Each
-carrier keeps its own online state: a `hello` on it brings it online, and 5
-seconds with no frame on it take it offline. Replies and events leave through one
+USB-Serial/JTAG port, is added first and is the only carrier in the normal
+build. The radio build adds net-v2's TCP carrier. Each carrier keeps its own
+online state: a `hello` on it brings it online, and 5 seconds with no frame on it,
+or the end of its connection, take it offline. A reply or an ACK leaves on the
+carrier its request arrived on. Events and the Device's chunks leave through one
 active carrier. That is the first carrier that is online, so USB wins whenever the
 Companion talks over it. While no carrier is online, it is the carrier the last
 frame arrived on. Frames still arrive through the console's frame handler, with
 the carrier as its context, and `link state` reports the active carrier's
-`online` and `last_rx_ms`.
+`online`, `last_rx_ms` and name in `carrier`. A network carrier gets only the
+messages net-v2 allows; Firmware updates and every other USB-only message answer
+`reason:"usb-only"` there.
 
 The link also moves files and mirrors input. `layout.put` and `layout.get` copy a
 layout in chunks, `icon.put`, `icon.list`, and `icon.rm` manage the icons, and

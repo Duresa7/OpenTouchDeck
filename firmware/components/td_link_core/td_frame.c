@@ -65,15 +65,15 @@ td_frame_result_t td_frame_decode_slip(const uint8_t *wire, size_t len,
     return td_frame_decode(body, used, frame);
 }
 
-size_t td_frame_encode(const td_frame_t *frame, uint8_t *wire, size_t cap)
+size_t td_frame_encode_body(const td_frame_t *frame, uint8_t *body, size_t cap)
 {
-    if (!valid_header(frame) || (frame->len && !frame->payload)) {
+    if (!valid_header(frame) || (frame->len && !frame->payload) || cap < 6u + frame->len + 2u) {
         return 0;
     }
-    uint8_t body[TD_FRAME_BODY_MAX] = {
-        TD_FRAME_VERSION, frame->type, frame->seq, frame->flags,
-        frame->len & 0xff, frame->len >> 8,
+    const uint8_t header[6] = {
+        TD_FRAME_VERSION, frame->type, frame->seq, frame->flags, frame->len & 0xff, frame->len >> 8,
     };
+    memcpy(body, header, sizeof header);
     if (frame->len) {
         memcpy(body + 6, frame->payload, frame->len);
     }
@@ -81,6 +81,16 @@ size_t td_frame_encode(const td_frame_t *frame, uint8_t *wire, size_t cap)
     uint16_t crc = td_crc16(body, len);
     body[len++] = crc & 0xff;
     body[len++] = crc >> 8;
+    return len;
+}
+
+size_t td_frame_encode(const td_frame_t *frame, uint8_t *wire, size_t cap)
+{
+    uint8_t body[TD_FRAME_BODY_MAX];
+    const size_t len = td_frame_encode_body(frame, body, sizeof body);
+    if (!len) {
+        return 0;
+    }
     size_t needed = len + 2;
     for (size_t i = 0; i < len; i++) {
         needed += body[i] == TD_FRAME_END || body[i] == TD_FRAME_ESC;

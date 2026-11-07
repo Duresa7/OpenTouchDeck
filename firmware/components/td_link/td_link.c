@@ -42,6 +42,8 @@ static carrier_slot_t s_carriers[TD_LINK_CARRIERS_MAX];
 static size_t s_carrier_count;
 /* The slot of the frame the link task handles now, or handled last. */
 static size_t s_current;
+static const td_link_message_t *s_tables[TD_LINK_MESSAGE_TABLES];
+static size_t s_table_counts[TD_LINK_MESSAGE_TABLES];
 /* A packet in s_frames is the slot, the body length and the body. One receive at a time fills this, under s_rx_mutex. */
 static uint8_t s_rx_packet[TD_LINK_PACKET_HEADER + TD_FRAME_BODY_MAX];
 static QueueHandle_t s_presses;
@@ -68,18 +70,99 @@ static size_t active_slot(int64_t now)
     return s_current;
 }
 
+static const char *carrier_name(const td_link_carrier_t *carrier)
+{
+    return carrier && carrier->name ? carrier->name : "carrier";
+}
+
 td_link_state_t td_link_state(void)
 {
     int64_t now = esp_timer_get_time() / 1000;
     portENTER_CRITICAL(&s_lock);
     td_link_state_t state = s_state;
+    state.carrier = "none";
     if (s_carrier_count) {
         size_t slot = active_slot(now);
         state.online = slot_online(slot, now);
         state.last_rx_ms = s_carriers[slot].last_rx_ms;
+        state.carrier = carrier_name(s_carriers[slot].carrier);
     }
     portEXIT_CRITICAL(&s_lock);
     return state;
+}
+
+bool td_link_usb_online(void)
+{
+    int64_t now = esp_timer_get_time() / 1000;
+    portENTER_CRITICAL(&s_lock);
+    const bool online = s_carrier_count && slot_online(0, now);
+    portEXIT_CRITICAL(&s_lock);
+    return online;
+}
+
+void td_link_carrier_offline(const td_link_carrier_t *carrier)
+{
+    portENTER_CRITICAL(&s_lock);
+    for (size_t slot = 0; slot < s_carrier_count; slot++) {
+        if (s_carriers[slot].carrier == carrier) {
+            s_carriers[slot].online = false;
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+}
+
+bool td_link_current_network(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    const bool network = s_carrier_count && s_carriers[s_current].carrier->network;
+    portEXIT_CRITICAL(&s_lock);
+    return network;
+}
+
+const char *td_link_current_carrier(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    const char *name = carrier_name(s_carrier_count ? s_carriers[s_current].carrier : NULL);
+    portEXIT_CRITICAL(&s_lock);
+    return name;
+}
+
+esp_err_t td_link_messages_add(const td_link_message_t *messages, size_t count)
+{
+    if (!messages || !count) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = ESP_ERR_NO_MEM;
+    portENTER_CRITICAL(&s_lock);
+    for (size_t i = 0; i < TD_LINK_MESSAGE_TABLES && err != ESP_OK; i++) {
+        if (!s_tables[i]) {
+            s_table_counts[i] = count;
+            s_tables[i] = messages;
+            err = ESP_OK;
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return err;
+}
+
+const td_link_message_t *td_link_extra_message(const char *name)
+{
+    const td_link_message_t *tables[TD_LINK_MESSAGE_TABLES];
+    size_t counts[TD_LINK_MESSAGE_TABLES];
+    portENTER_CRITICAL(&s_lock);
+    for (size_t t = 0; t < TD_LINK_MESSAGE_TABLES; t++) {
+        tables[t] = s_tables[t];
+        counts[t] = s_table_counts[t];
+    }
+    portEXIT_CRITICAL(&s_lock);
+    for (size_t t = 0; t < TD_LINK_MESSAGE_TABLES; t++) {
+        for (size_t i = 0; tables[t] && i < counts[t]; i++) {
+            if (!strcmp(tables[t][i].name, name)) {
+                return &tables[t][i];
+            }
+        }
+    }
+    return NULL;
 }
 
 void td_link_hello(void)
@@ -110,7 +193,7 @@ static bool usb_send(const td_link_carrier_t *carrier, const td_frame_t *frame)
     return wire_len && td_console_write((const char *)wire, wire_len);
 }
 
-static const td_link_carrier_t s_usb = { .send = usb_send };
+static const td_link_carrier_t s_usb = { .send = usb_send, .name = "usb" };
 
 /* USB goes first, into the empty table that td_link_start finds, and every other carrier after it. */
 static esp_err_t add_carrier(const td_link_carrier_t *carrier)
@@ -208,7 +291,8 @@ bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *paylo
     const td_link_carrier_t *carrier = NULL;
     portENTER_CRITICAL(&s_lock);
     if (s_carrier_count) {
-        carrier = s_carriers[active_slot(now)].carrier;
+        /* A reply or an ACK answers the frame being handled, on the carrier it came on. */
+        carrier = s_carriers[flags & TD_FRAME_RESPONSE ? s_current : active_slot(now)].carrier;
     }
     portEXIT_CRITICAL(&s_lock);
     if (!carrier || !carrier->send(carrier, &frame)) {

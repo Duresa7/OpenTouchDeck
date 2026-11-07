@@ -14,6 +14,15 @@ uint32_t td_link_v2_session(void);
  * carrier did not take it. */
 bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload, size_t len);
 
+/* True while the link task handles a frame that arrived on a network carrier. */
+bool td_link_current_network(void);
+
+/* The name of the carrier the frame being handled arrived on. */
+const char *td_link_current_carrier(void);
+
+/* The extra message tables (td_link_messages_add): the one entry named `name`, or NULL. */
+const td_link_message_t *td_link_extra_message(const char *name);
+
 /* Counts a frame the link could not use in `dropped`. */
 void td_link_count_drop(void);
 

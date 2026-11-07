@@ -114,9 +114,9 @@ since boot. Counters reset at boot.
 
 | Request | Successful response fields |
 |---|---|
-| `{"m":"hello"}` | `product:"touchdeck"`, `proto:1`, `elf_sha256`, `version`, `running`, `sinks:["log","link"]`, `recovery:false`, `layout:"builtin"` or `"storage"` |
+| `{"m":"hello"}` | `product:"touchdeck"`, `proto:1`, `elf_sha256`, `version`, `running`, `sinks:["log","link"]`, `recovery:false`, `layout:"builtin"` or `"storage"`, `carrier` |
 | `{"m":"ping","n":N}` | `t`, and `n` echoed when it is a number, string, Boolean, or null |
-| `{"m":"link.state"}` | `online`, `frames_rx`, `frames_tx`, `crc_errors`, `dropped`, `last_rx_ms` |
+| `{"m":"link.state"}` | `online`, `frames_rx`, `frames_tx`, `crc_errors`, `dropped`, `last_rx_ms`, `carrier` |
 
 `elf_sha256` is the running app descriptor's 64-character lowercase hex hash.
 `version` is its build version. `running` is the OTA partition label, `ota_0` or
@@ -138,6 +138,13 @@ includes its request in `frames_rx` and excludes itself from `frames_tx`.
 `last_rx_ms` records the most recent valid frame's arrival time. `online` becomes
 true on `hello` and expires after 5000 ms without a valid frame. After expiry,
 another `hello` establishes the connection again.
+
+`carrier` names how frames travel: `usb`, or `tcp` for net-v2 over a network in
+the radio build. In `hello` it is the carrier the request arrived on. In
+`link.state` it is the active carrier, the one events leave on. A response always
+leaves on the carrier its request arrived on. Over a network carrier only the
+messages [net-v2](net-v2.md) lists are served; any other gets `ok:false`,
+`reason:"usb-only"` and `error:"Only over USB"`.
 
 The text command `link state` returns the same state fields in the console's
 usual `{"cmd":"link","ok":true,...}` envelope.

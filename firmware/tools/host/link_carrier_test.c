@@ -327,8 +327,12 @@ static void reset(void)
     g_usb_len = 0;
     g_usb_handler = NULL;
     g_usb_context = NULL;
+    for (size_t t = 0; t < TD_LINK_MESSAGE_TABLES; t++) {
+        s_tables[t] = NULL;
+        s_table_counts[t] = 0;
+    }
     memset(&g_fake, 0, sizeof g_fake);
-    g_fake.carrier = (td_link_carrier_t){ .send = fake_send };
+    g_fake.carrier = (td_link_carrier_t){ .send = fake_send, .name = "fake" };
     g_now_ms = 100000;
 }
 
@@ -418,6 +422,7 @@ static void test_carrier_add_rules(void)
     CHECK(td_link_carrier_add(NULL) == ESP_ERR_INVALID_ARG);
     start(true);
     CHECK(td_link_carrier_add(&g_fake.carrier) == ESP_ERR_INVALID_STATE);
+    CHECK(!strcmp(td_link_state().carrier, "usb"));
     static fake_carrier_t second, third;
     second.carrier = third.carrier = (td_link_carrier_t){ .send = fake_send };
     CHECK(td_link_carrier_add(&second.carrier) == ESP_OK);
@@ -506,41 +511,137 @@ static void test_fake_carrier_refuses(void)
     CHECK(g_usb_len == 0);
 }
 
-/* USB wins while it is online. When it goes idle the link goes back to the fake carrier, which stayed online. */
+/* USB wins events while it is online, but a reply always leaves on the carrier its request came on. When USB goes
+ * idle, events go back to the fake carrier, which stayed online. */
 static void test_usb_is_preferred(void)
 {
     start(true);
     td_frame_t frame;
     char payload[TD_FRAME_PAYLOAD_MAX + 1];
     over_fake("{\"m\":\"hello\"}", 1);
-    CHECK(g_fake.frames == 1);
+    CHECK(g_fake.frames == 1 && has(g_fake.payload, "\"carrier\":\"fake\""));
+    CHECK(!td_link_usb_online() && !strcmp(td_link_state().carrier, "fake"));
 
     g_now_ms += 1000;
     over_usb("{\"m\":\"hello\"}", 2);
     CHECK(g_fake.frames == 1);
     CHECK(usb_take(&frame, payload) && frame.seq == 2 && has(payload, "\"m\":\"hello\""));
+    CHECK(has(payload, "\"carrier\":\"usb\""));
+    CHECK(td_link_usb_online() && !strcmp(td_link_state().carrier, "usb"));
 
     g_now_ms += 1000;
     over_fake("{\"m\":\"ping\",\"n\":3}", 3);
-    CHECK(g_fake.frames == 1);
-    CHECK(usb_take(&frame, payload) && frame.seq == 3);
+    CHECK(g_fake.frames == 2 && g_fake.last.seq == 3 && g_fake.last.flags == TD_FRAME_RESPONSE);
+    CHECK(g_usb_len == 0);
     td_link_press("main", "tile", "launch");
     send_events();
     CHECK(usb_take(&frame, payload) && frame.flags == TD_FRAME_EVENT && has(payload, "\"m\":\"press\""));
+    CHECK(g_fake.frames == 2);
     CHECK(td_link_state().last_rx_ms == g_now_ms - 1000);
 
     /* USB has been quiet for 5.5 s and the fake carrier for 4.5 s. */
     g_now_ms += 4500;
+    CHECK(!td_link_usb_online());
     over_fake("{\"m\":\"ping\",\"n\":4}", 4);
-    CHECK(g_fake.frames == 2 && g_fake.last.seq == 4 && has(g_fake.payload, "\"n\":4"));
+    CHECK(g_fake.frames == 3 && g_fake.last.seq == 4 && has(g_fake.payload, "\"n\":4"));
     CHECK(g_usb_len == 0);
     td_link_state_t state = td_link_state();
-    CHECK(state.online && state.last_rx_ms == g_now_ms);
+    CHECK(state.online && state.last_rx_ms == g_now_ms && !strcmp(state.carrier, "fake"));
+    td_link_press("main", "tile", "launch");
+    send_events();
+    CHECK(g_fake.frames == 4 && g_fake.last.flags == TD_FRAME_EVENT);
 
     /* And USB takes over again with its next hello. */
     over_usb("{\"m\":\"hello\"}", 5);
     CHECK(usb_take(&frame, payload) && frame.seq == 5);
-    CHECK(g_fake.frames == 2);
+    CHECK(g_fake.frames == 4);
+}
+
+/* A carrier whose connection ended is offline at once, without waiting for the idle time. */
+static void test_carrier_offline(void)
+{
+    start(true);
+    over_fake("{\"m\":\"hello\"}", 1);
+    CHECK(td_link_state().online);
+    td_link_carrier_offline(&g_fake.carrier);
+    CHECK(!td_link_state().online);
+    over_fake("{\"m\":\"ping\"}", 2);
+    CHECK(!td_link_state().online && g_fake.last.seq == 2);
+}
+
+static void net_state(const cJSON *request, cJSON *reply)
+{
+    (void)request;
+    cJSON_AddStringToObject(reply, "state", "idle");
+}
+
+static void net_pair(const cJSON *request, cJSON *reply)
+{
+    (void)request;
+    cJSON_AddBoolToObject(reply, "open", true);
+}
+
+/* A network carrier carries only the messages net-v2.md allows; the rest answer usb-only and do nothing. Over USB the
+ * same messages run. */
+static void test_network_allowlist(void)
+{
+    static const td_link_message_t net[] = {
+        { "net.state", net_state, false },
+        { "net.pair", net_pair, true },
+    };
+    start(true);
+    g_fake.carrier.network = true;
+    CHECK(td_link_messages_add(net, 0) == ESP_ERR_INVALID_ARG);
+    CHECK(td_link_messages_add(net, 2) == ESP_OK);
+    CHECK(td_link_messages_add(net, 1) == ESP_OK);
+    CHECK(td_link_messages_add(net, 1) == ESP_ERR_NO_MEM);
+
+    static const char *const refused[] = {
+        "update.begin", "update.end", "net.pair", "net.forget", "wifi.set", "wifi.forget", "store.wipe", "reboot",
+        "v2.unknown",
+    };
+    for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
+        char json[64];
+        snprintf(json, sizeof json, "{\"m\":\"%s\"}", refused[i]);
+        over_fake(json, (uint8_t)(10 + i));
+        CHECK(g_fake.last.seq == 10 + i && has(g_fake.payload, "\"ok\":false"));
+        CHECK(has(g_fake.payload, "\"reason\":\"usb-only\"") && has(g_fake.payload, "\"error\":\"Only over USB\""));
+    }
+    over_fake("{\"m\":\"net.state\"}", 30);
+    CHECK(has(g_fake.payload, "\"ok\":true") && has(g_fake.payload, "\"state\":\"idle\""));
+    over_fake("{\"m\":\"ping\",\"n\":2}", 31);
+    CHECK(has(g_fake.payload, "\"ok\":true") && has(g_fake.payload, "\"n\":2"));
+    over_fake("{\"m\":\"settings.get\"}", 32);
+    CHECK(!has(g_fake.payload, "usb-only"));
+    over_fake("{\"m\":\"v2.idle.get\"}", 33);
+    CHECK(has(g_fake.payload, "not-negotiated"));
+
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    over_usb("{\"m\":\"net.pair\"}", 40);
+    CHECK(usb_take(&frame, payload) && frame.seq == 40 && has(payload, "\"open\":true"));
+    over_usb("{\"m\":\"update.begin\"}", 41);
+    CHECK(usb_take(&frame, payload) && !has(payload, "usb-only"));
+}
+
+/* The SLIP-free encoder makes exactly the body the SLIP encoder wraps. */
+static void test_frame_body_encoder(void)
+{
+    static const uint8_t payload[] = { 0xc0, 0xdb, 'x', 0xc0 };
+    const td_frame_t frame = { .type = TD_FRAME_MESSAGE, .seq = 9, .flags = TD_FRAME_RESPONSE, .len = sizeof payload,
+                               .payload = payload };
+    uint8_t body[TD_FRAME_BODY_MAX], wire[TD_FRAME_WIRE_MAX], decoded[TD_FRAME_BODY_MAX];
+    const size_t len = td_frame_encode_body(&frame, body, sizeof body);
+    CHECK(len == 8 + sizeof payload);
+    CHECK(td_frame_encode_body(&frame, body, len - 1) == 0);
+    const size_t wire_len = td_frame_encode(&frame, wire, sizeof wire);
+    size_t used = 0;
+    for (size_t i = 1; i + 1 < wire_len; i++) {
+        decoded[used++] = wire[i] == TD_FRAME_ESC ? (wire[++i] == 0xdc ? TD_FRAME_END : TD_FRAME_ESC) : wire[i];
+    }
+    CHECK(used == len && !memcmp(decoded, body, len));
+    td_frame_t back;
+    CHECK(td_frame_decode(body, len, &back) == TD_FRAME_OK && back.seq == 9 && !memcmp(back.payload, payload, 4));
 }
 
 /* A hello brings only its own carrier online. When USB goes idle, a carrier that never said hello is offline. */
@@ -556,7 +657,7 @@ static void test_online_is_per_carrier(void)
 
     g_now_ms += 3000;
     over_fake("{\"m\":\"ping\"}", 3);
-    CHECK(usb_take(&frame, payload) && frame.seq == 3);
+    CHECK(g_fake.last.seq == 3 && g_usb_len == 0);
     g_now_ms += 3000;
     over_fake("{\"m\":\"link.state\"}", 4);
     CHECK(g_fake.last.seq == 4 && has(g_fake.payload, "\"online\":false"));
@@ -584,11 +685,14 @@ int main(void)
     test_usb_is_preferred();
     test_online_is_per_carrier();
     test_unknown_carrier_dropped();
+    test_carrier_offline();
+    test_network_allowlist();
+    test_frame_body_encoder();
     reset();
     if (g_failures) {
         fprintf(stderr, "%d checks failed\n", g_failures);
         return 1;
     }
-    printf("link carrier: 8 tests passed\n");
+    printf("link carrier: 11 tests passed\n");
     return 0;
 }
