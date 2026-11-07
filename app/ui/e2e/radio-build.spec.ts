@@ -86,6 +86,19 @@ test('the switch is reachable with the keyboard and shows the focus ring', async
   await expect(build(page)).toHaveAttribute('data-channel', 'radio');
 });
 
+test('a Device linked over Wi-Fi keeps its build until it is plugged in', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit Stream deck by the window' }).click();
+  await page.getByTestId('device-name').click();
+  await expect(page.getByTestId('connection')).toHaveText('Connected over Wi-Fi');
+  await expect(current(page)).toHaveText('Radio build');
+  await expect(toggle(page)).toHaveAttribute('aria-disabled', 'true');
+  await toggle(page).dispatchEvent('click');
+  await expect(confirm(page)).toHaveCount(0);
+  await expect(page.getByTestId('device-panel-usb-only')).toBeVisible();
+});
+
 test.describe('onboarding', () => {
   const ID = 'mock0009';
   const dialog = (page: Page) => page.getByTestId('onboarding');

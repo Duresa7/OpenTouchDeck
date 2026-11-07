@@ -357,7 +357,8 @@ function BuildField({ device, name, firmware }: PanelProps & { firmware: Firmwar
   const view = useStore(firmware, (s) => s.view);
   const choice = buildChoice(device, bundled, name);
   const [confirming, setConfirming] = useState(false);
-  const live = device.link.state === 'connected';
+  // A switch is a Firmware update, so like one it needs the USB cable, never Wi-Fi.
+  const live = device.link.state === 'connected' && device.carrier !== 'wifi';
   const busy = inProgress(view) || device.link.state === 'updating';
   const toggle = useRef<HTMLButtonElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
