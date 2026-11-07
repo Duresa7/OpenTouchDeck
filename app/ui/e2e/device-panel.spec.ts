@@ -69,6 +69,18 @@ test('refuses a blank name with the rule and keeps the old one', async ({ page }
   await expect(page.getByTestId('device-name')).toHaveText('Desk');
 });
 
+test('refuses a name with an invisible character and keeps the old one', async ({ page }) => {
+  await openPanel(page);
+  const name = page.getByTestId('device-panel-name');
+  for (const hidden of ['Desk‮PC', 'Deskㅤ']) {
+    await name.fill(hidden);
+    await name.press('Enter');
+    await expect(page.getByTestId('device-panel-name-hint')).toHaveText('Remove tabs, line breaks and other special characters.');
+    await expect(name).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByTestId('device-name')).toHaveText('Desk');
+  }
+});
+
 test('switches orientation after the restart confirm, and the Device restarts', async ({ page }) => {
   await openPanel(page);
   await page.getByTestId('device-panel-portrait').click();
