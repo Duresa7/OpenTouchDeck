@@ -91,6 +91,20 @@ td_link_state_t td_link_state(void)
     return state;
 }
 
+bool td_link_carrier_online(const td_link_carrier_t *carrier)
+{
+    int64_t now = esp_timer_get_time() / 1000;
+    bool online = false;
+    portENTER_CRITICAL(&s_lock);
+    for (size_t slot = 0; slot < s_carrier_count; slot++) {
+        if (s_carriers[slot].carrier == carrier) {
+            online = slot_online(slot, now);
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return online;
+}
+
 bool td_link_usb_online(void)
 {
     int64_t now = esp_timer_get_time() / 1000;

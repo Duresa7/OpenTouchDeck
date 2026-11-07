@@ -26,6 +26,7 @@
 #include "td_store.h"
 #include "td_update.h"
 #if CONFIG_TD_RADIO_BUILD
+#include "td_netlink_service.h"
 #include "td_radio.h"
 #endif
 #if CONFIG_TD_PERF_TOOLS
@@ -128,6 +129,18 @@ void app_main(void)
         ESP_LOGW(TAG, "Running partition not found in the partition table");
     }
 
+#if CONFIG_TD_QEMU_TEST
+    /* The QEMU test image (firmware/radio/qemu.defaults): QEMU has no panel, touch controller or USB-Serial/JTAG, so
+     * it runs only the link and net-v2 over QEMU's Ethernet, for CI's network check. radio_guard.py keeps it out of
+     * every real build. */
+    size_t qemu_net_count;
+    td_netlink_console_commands(&qemu_net_count);
+    ESP_ERROR_CHECK(td_link_start());
+    ESP_ERROR_CHECK(td_radio_start());
+    ESP_ERROR_CHECK(td_netlink_start());
+    return;
+#endif
+
     /* td_console_start seals the command list, so every component hands over its commands first. */
     size_t display_cmd_count;
     const esp_console_cmd_t *display_cmds = display_console_commands(&display_cmd_count);
@@ -160,6 +173,9 @@ void app_main(void)
     size_t radio_cmd_count;
     const esp_console_cmd_t *radio_cmds = td_radio_console_commands(&radio_cmd_count);
     register_commands("Radio", radio_cmds, radio_cmd_count);
+    size_t net_cmd_count;
+    const esp_console_cmd_t *net_cmds = td_netlink_console_commands(&net_cmd_count);
+    register_commands("Net", net_cmds, net_cmd_count);
 #endif
     BOOT_MARK("commands");
 
@@ -247,6 +263,12 @@ void app_main(void)
         ESP_LOGE(TAG, "Radio failed to start: %s", esp_err_to_name(radio_err));
     }
     BOOT_MARK("radio");
+    /* net-v2 over TCP, after the station so lwIP is up. */
+    esp_err_t net_err = td_netlink_start();
+    if (net_err != ESP_OK) {
+        ESP_LOGE(TAG, "Network link failed to start: %s", esp_err_to_name(net_err));
+    }
+    BOOT_MARK("net");
 #endif
 
 #if CONFIG_TD_RADIO_BUILD

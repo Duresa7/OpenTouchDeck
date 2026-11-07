@@ -8,7 +8,8 @@ the firmware, so a mistake here cannot ship radios to everyone.
 The radio build is the opt-in build that `idf.py -DTD_RADIO_BUILD=1` makes (see docs/firmware.md). It must have Wi-Fi,
 lwIP and NimBLE, keep Wi-Fi and lwIP buffers in PSRAM and the BLE controller in flash, and keep BLE dormant: until an
 opt-in setting starts it, nothing in the linked image may start the BLE controller or host, advertise, scan or
-connect, and the Wi-Fi station may start but never join a network or scan.
+connect, and the Wi-Fi station may start but never join a network or scan. It runs net-v2's TCP service, and nothing
+from the QEMU test image (-DTD_QEMU_TEST=1), which opens a pairing window by itself, may be in it.
 
     python firmware/tools/radio_guard.py normal <build dir>
     python firmware/tools/radio_guard.py radio <build dir> [--size-json <idf.py size --format json2 output>]
@@ -33,6 +34,8 @@ RADIO_OPTIONS = (
     "BT_NIMBLE_ENABLED",
     "BT_BLUEDROID_ENABLED",
     "TD_RADIO_BUILD",
+    "TD_QEMU_TEST",
+    "ETH_USE_OPENETH",
 )
 
 # Components that only a radio build may link: the radio drivers, the network stack and our own radio components.
@@ -73,7 +76,12 @@ RADIO_BUILD_OPTIONS = {
     # The Wi-Fi driver keeps nothing in NVS, so no network it saw can come back on its own.
     "ESP_WIFI_NVS_ENABLED": False,
 }
-RADIO_BUILD_COMPONENTS = ("td_radio", "esp_wifi", "esp_netif", "lwip", "bt")
+RADIO_BUILD_COMPONENTS = ("td_radio", "td_netlink", "td_netlink_core", "esp_wifi", "esp_netif", "lwip", "bt")
+# The QEMU test image's options: it opens a pairing window at boot, logs the code, and talks over QEMU's emulated
+# Ethernet. A real radio build has none of them.
+TEST_ONLY_OPTIONS = ("TD_QEMU_TEST", "ETH_USE_OPENETH")
+# And none of its code: the QEMU Ethernet start, which only that image compiles.
+TEST_ONLY_SYMBOLS = ("td_radio_qemu_eth_start", "esp_eth_mac_new_openeth")
 # The steady-state internal RAM the radio build must keep free with the station up, in bytes.
 INTERNAL_FLOOR = 24576
 # The radio build's static internal RAM (DIRAM in `idf.py size`), in bytes. The board measured 28815 bytes free in
@@ -107,7 +115,7 @@ DORMANT_SYMBOLS = (
     "esp_now_init",
 )
 # What proves the radio build wires its station at all.
-REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start")
+REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start", "td_netlink_start")
 
 
 class GuardError(ValueError):
@@ -174,6 +182,10 @@ def check_radio(build, symbols=None):
     """Fails unless the build is a radio build with dormant BLE and an unjoined station. Returns what it checked."""
     build = Path(build)
     settings = _settings(build)
+    # First, so the QEMU test image fails for what it is, not for the console it swaps.
+    test_only = [key for key in TEST_ONLY_OPTIONS if settings.get(key)]
+    if test_only:
+        raise GuardError(f"Radio build has test-only options: {test_only}")
     _common(settings)
     for key, want in RADIO_BUILD_OPTIONS.items():
         # A missing key fails too, so a renamed option cannot pass as off.
@@ -190,6 +202,9 @@ def check_radio(build, symbols=None):
     awake = [name for name in DORMANT_SYMBOLS if name in symbols]
     if awake:
         raise GuardError(f"Radio build links calls that must stay dormant: {awake}")
+    test_code = [name for name in TEST_ONLY_SYMBOLS if name in symbols]
+    if test_code:
+        raise GuardError(f"Radio build links test-only code: {test_code}")
     absent = [name for name in REQUIRED_SYMBOLS if name not in symbols]
     if absent:
         raise GuardError(f"Radio build does not link: {absent}")

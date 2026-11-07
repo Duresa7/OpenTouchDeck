@@ -531,6 +531,15 @@ What the radio build does:
   PSRAM. It stays dormant. Nothing starts the controller or the host, so the
   Device never advertises, scans or connects. No observer or central role is
   compiled in.
+- The net-v2 service (`td_netlink`, with the protocol in `td_netlink_core`)
+  listens on TCP port 47820 and adds the `wifi` carrier to the link. It pairs
+  and opens sessions as [net-v2](../schema/protocol/net-v2.md) describes, with
+  its crypto buffers, records and task stack in PSRAM. Only a USB request opens
+  a pairing window: the `net pair` console command or the `net.pair` link
+  message. The Device then shows the six-digit code, the time left and Cancel.
+  The Pairings (up to four), the failed-code count and the lockout live in the
+  `td_netlink` NVS namespace. While USB is online, a network session can't
+  open, and an open one closes. mDNS discovery is not built yet.
 - 30 seconds after the station starts, the log reports the steady-state
   internal heap against the 24 KB floor (`CONFIG_TD_RADIO_INTERNAL_FLOOR`):
   `radio: steady free_internal=N largest_internal=N floor=24576`. Below the
@@ -543,6 +552,12 @@ What the radio build does:
   `steady`, and, after the steady-state report, `steady_free_internal` and
   `steady_largest_internal`. `heap` and, in a perf build, `perf mem` work as in
   the normal build.
+- `net state` replies with net-v2's `net.state` fields: `listening`, `port`,
+  `ble`, `session`, `paired`, `pairing`, `pair_failures` and `locked_ms`.
+  `net pair` opens a pairing window, and `net forget` erases every Pairing and
+  ends the session. They fail with `reason` `locked`, `full` or `storage`. The
+  link has the same three as `net.state`, `net.pair` and `net.forget`; the last
+  two are USB-only.
 
 `firmware/tools/radio_guard.py` checks a build directory for its kind:
 
@@ -576,6 +591,26 @@ normal bundle as `firmware-tdfw` and the radio bundle as `firmware-radio-tdfw`,
 named `touchdeck-radio-<version>.tdfw`. A radio bundle's `manifest.json` has
 `"radio": true`, and the installer recipe refuses such a bundle as
 `--firmware-bundle`.
+
+CI also builds a QEMU test image of the radio build, which runs in Espressif's
+QEMU with its emulated Ethernet (`open_eth`) in place of Wi-Fi:
+
+```sh
+idf.py -B <abs>/build-qemu -DTD_RADIO_BUILD=1 -DTD_QEMU_TEST=1 build
+python firmware/tools/qemu_net_check.py <abs>/build-qemu
+```
+
+[radio/qemu.defaults](../firmware/radio/qemu.defaults) sets
+`CONFIG_TD_QEMU_TEST`, which runs only the link and the net-v2 service, opens a
+pairing window at boot and logs its code. `qemu_net_check.py` starts QEMU with
+port 47820 forwarded to the image. Its client,
+`firmware/tools/qemu/net_v2_client.mjs`, built on
+[net-ref](../schema/protocol/net-ref/), pairs with the logged code, opens a
+session, sends `hello`, `link.state` and `net.state` in records, checks that
+USB-only messages are refused, and checks that a second connection gets `busy`.
+It needs `qemu-system-xtensa` (`idf_tools.py install qemu-xtensa`) and Node 22
+or later. The image is never flashed or packed: `radio_guard.py radio` fails any
+build with `TD_QEMU_TEST`, `ETH_USE_OPENETH` or their code.
 
 ## Layout format
 
@@ -656,6 +691,13 @@ online state per carrier. It needs a C compiler, `cl` from an x64 Visual Studio
 developer terminal on Windows or `cc` elsewhere, and one firmware build first,
 which fetches cJSON into `firmware/managed_components`. It doesn't need
 `IDF_PATH`.
+
+`python -B firmware/tools/test_netlink.py` compiles `td_netlink_core` and
+ESP-IDF's TF-PSA-Crypto for the host and runs every vector and negative in
+[net-v2-vectors.json](../schema/protocol/net-v2-vectors.json), then pairing with
+the right and the wrong code, the lockout and its persistence, records, the
+per-peer backoff and the USB rules. It needs `IDF_PATH` and a C compiler, `cl`
+from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere.
 
 ## Protocol v2 identity
 

@@ -139,7 +139,7 @@ includes its request in `frames_rx` and excludes itself from `frames_tx`.
 true on `hello` and expires after 5000 ms without a valid frame. After expiry,
 another `hello` establishes the connection again.
 
-`carrier` names how frames travel: `usb`, or `tcp` for net-v2 over a network in
+`carrier` names how frames travel: `usb`, or `wifi` for net-v2 over TCP in
 the radio build. In `hello` it is the carrier the request arrived on. In
 `link.state` it is the active carrier, the one events leave on. A response always
 leaves on the carrier its request arrived on. Over a network carrier only the

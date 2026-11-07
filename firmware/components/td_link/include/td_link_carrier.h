@@ -28,7 +28,7 @@ struct td_link_carrier {
     /* Sends one frame, on the td_link task. Returns false when the frame did not go out whole. A carrier with state
      * of its own embeds this struct and finds its state from the pointer. */
     bool (*send)(const td_link_carrier_t *carrier, const td_frame_t *frame);
-    /* What link.state, hello and the console call it: "usb", "tcp". */
+    /* What link.state, hello and the console call it: "usb", "wifi", as net.state names carriers. */
     const char *name;
     /* Frames arrive from a network, so USB-only messages are refused on it. */
     bool network;
@@ -52,6 +52,9 @@ void td_link_carrier_receive(const uint8_t *body, size_t len, void *carrier);
 
 /* The carrier's connection ended, so it goes offline now rather than after the idle time. Any task. */
 void td_link_carrier_offline(const td_link_carrier_t *carrier);
+
+/* True while the carrier is online: a hello on it, and a frame within the last 5 seconds. Any task. */
+bool td_link_carrier_online(const td_link_carrier_t *carrier);
 
 /* True while USB is online: a hello on it, and a frame within the last 5 seconds. Any task. */
 bool td_link_usb_online(void);
