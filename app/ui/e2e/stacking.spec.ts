@@ -79,6 +79,9 @@ test('a confirm opened from Settings draws over Settings and its scrim covers it
   const confirm = page.getByRole('alertdialog', { name: 'Reset pairing?' });
   await expect(confirm).toBeVisible();
   expect((await topAt(confirm)).inside).toBe(true);
+  // Clicking Reset may scroll the Settings dialog, which is taller than the window, so its head
+  // goes out of view. Bring it back to see what covers its Close button.
+  await close.evaluate((el) => el.closest('.dialog-settings')?.scrollTo(0, 0));
   expect((await topAt(close)).className).toBe('scrim');
   expect((await topAt(dock(page))).className).toBe('scrim');
 });

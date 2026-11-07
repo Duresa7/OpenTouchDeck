@@ -1,0 +1,41 @@
+{
+  "id": "id_fixture",
+  "name": "Fixture brand",
+  "domain": "{brand}",
+  "claimed": false,
+  "logos": [
+    {
+      "theme": "light",
+      "type": "icon",
+      "tags": [],
+      "formats": [
+        { "src": "https://cdn.brandfetch.io/fixture/{brand}/icon-light.svg?c=test-client-id&t=1", "format": "svg", "width": null, "height": null, "size": 220, "background": "transparent" },
+        { "src": "https://asset.brandfetch.io/fixture/{brand}/icon-light.png", "format": "png", "width": 400, "height": 400, "size": 4096, "background": null }
+      ]
+    },
+    {
+      "theme": "dark",
+      "type": "icon",
+      "tags": [],
+      "formats": [
+        { "src": "https://cdn.brandfetch.io/fixture/{brand}/icon-dark.svg?c=test-client-id&t=1", "format": "svg", "width": null, "height": null, "size": 220, "background": "transparent" }
+      ]
+    },
+    {
+      "theme": "light",
+      "type": "symbol",
+      "tags": [],
+      "formats": [
+        { "src": "https://cdn.brandfetch.io/fixture/{brand}/symbol.svg?c=test-client-id&t=1", "format": "svg", "width": null, "height": null, "size": 220, "background": "transparent" }
+      ]
+    },
+    {
+      "theme": "light",
+      "type": "logo",
+      "tags": [],
+      "formats": [
+        { "src": "https://cdn.brandfetch.io/fixture/{brand}/logo.svg?c=test-client-id&t=1", "format": "svg", "width": null, "height": null, "size": 220, "background": "transparent" }
+      ]
+    }
+  ]
+}

@@ -33,19 +33,28 @@ export function packFacts(pack: Pick<PackInfo, 'icons' | 'installed' | 'size_byt
   return bytes === null ? icons : `${icons} · ${formatBytes(bytes)}`;
 }
 
-export interface PackCredit {
-  prefix: string;
+/** One source the picker's credits line names. */
+export interface Credit {
+  /** The pack's prefix, or `brandfetch`. */
+  key: string;
   name: string;
-  author: string;
-  license: string;
+  /** Where the name links: a pack's license, or Brandfetch's site. */
   url: string | null;
+  /** What follows the name: "by {author} ({license}, modified)" for a pack, "(your keys)" for Brandfetch. */
+  note: string;
 }
 
-/** The installed packs whose license asks for credit wherever their icons show. */
-export function credits(packs: readonly PackInfo[]): PackCredit[] {
-  return packs
+const BRANDFETCH: Credit = { key: 'brandfetch', name: 'Brandfetch', url: 'https://brandfetch.com', note: '(your keys)' };
+
+/**
+ * The sources the picker's credits line names: each installed pack whose license asks for credit
+ * wherever its icons show, then Brandfetch while a client ID turns its search on.
+ */
+export function credits(packs: readonly PackInfo[], brandfetch = false): Credit[] {
+  const owed = packs
     .filter((pack) => pack.installed && pack.attribution)
-    .map((pack) => ({ prefix: pack.prefix, name: pack.name, author: pack.author.name, license: pack.license.title, url: pack.license.url }));
+    .map((pack): Credit => ({ key: pack.prefix, name: pack.name, url: pack.license.url, note: `by ${pack.author.name} (${pack.license.title}, modified)` }));
+  return brandfetch ? [...owed, BRANDFETCH] : owed;
 }
 
 export function stageText(stage: PackStage | null): string {

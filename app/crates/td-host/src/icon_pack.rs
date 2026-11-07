@@ -79,7 +79,19 @@ pub fn render_svg_fit(
     height: u32,
     cover: bool,
 ) -> Result<RgbaImage, String> {
-    draw(&parse_svg(svg)?, width, height, cover)
+    render_svg_fit_from(svg, width, height, cover, SvgSource::Catalog)
+}
+
+/// [`render_svg_fit`] for an SVG from `source`, which sets what it may hold. A third party's file
+/// goes in as [`SvgSource::Upload`].
+pub fn render_svg_fit_from(
+    svg: &[u8],
+    width: u32,
+    height: u32,
+    cover: bool,
+    source: SvgSource,
+) -> Result<RgbaImage, String> {
+    draw(&parse_svg_from(svg, source)?, width, height, cover)
 }
 
 fn draw(tree: &usvg::Tree, width: u32, height: u32, cover: bool) -> Result<RgbaImage, String> {

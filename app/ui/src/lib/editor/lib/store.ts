@@ -217,15 +217,49 @@ export function assetIds(layout: Layout): string[] {
   return [...ids];
 }
 
+/** Each Asset a Brandfetch refresh replaced, and the Asset that replaced it. */
+export type AssetSwaps = Readonly<Partial<Record<string, string>>>;
+
+/** The same kind of Tile, showing another Asset. */
+const withAsset = <T extends Tile>(tile: T, asset: string): T => ({ ...tile, asset });
+
+/** The Layout with every Tile that shows a replaced Asset showing its replacement instead. */
+export function swapAssets(layout: Layout, swaps: AssetSwaps): Layout {
+  let changed = false;
+  const pages = layout.pages.map((page) => {
+    if (page.kind !== 'grid') return page;
+    let hit = false;
+    const tiles = page.tiles.map((tile) => {
+      const old = assetOf(tile);
+      const next = old === null ? undefined : swaps[old];
+      if (next === undefined) return tile;
+      hit = true;
+      return withAsset(tile, `sha256:${next}`);
+    });
+    if (!hit) return page;
+    changed = true;
+    return { ...page, tiles };
+  });
+  return changed ? { ...layout, pages } : layout;
+}
+
 export function createEditorStore(deps: EditorDeps) {
   const store = createStore<EditorState>()(() => ({ device: null, ...initial() }));
   const { getState: state, setState: set } = store;
+  let swaps: AssetSwaps = {};
 
   const name = () => state().device?.name ?? 'the Device';
   const current = () => state().drafts[state().orientation];
   const say = (kind: Status['kind'], text: string, extra: Omit<Status, 'kind' | 'text'>) => set({ status: { kind, text, ...extra } });
 
-  function keep(orientation: Orientation, draft: Draft | null) {
+  const withSwaps = (draft: Draft): Draft => {
+    const layout = swapAssets(draft.layout, swaps);
+    return layout === draft.layout ? draft : { ...draft, layout };
+  };
+
+  /** Stores a draft, with any replaced Asset swapped for its replacement. */
+  function keep(orientation: Orientation, given: Draft | null) {
+    const draft = given && withSwaps(given);
     const device = state().device;
     set((s) => {
       const ids = draft ? tileIds(draft.layout) : new Set<string>();
@@ -407,6 +441,14 @@ export function createEditorStore(deps: EditorDeps) {
     return { id, page: target, pages: base.pages.map((p) => p.id) };
   }
 
+  /** Swaps replaced Assets in both drafts. The swap leaves a draft unsent, so it reaches the Device on the next push. */
+  function swapDrafts() {
+    for (const orientation of ['landscape', 'portrait'] as const) {
+      const draft = state().drafts[orientation];
+      if (draft && withSwaps(draft) !== draft) keep(orientation, draft);
+    }
+  }
+
   const api = Object.assign(store, {
     open(device: EditorDevice, orientation: Orientation = 'landscape') {
       if (state().device?.id === device.id) {
@@ -418,6 +460,13 @@ export function createEditorStore(deps: EditorDeps) {
         portrait: deps.storage ? readDraft(deps.storage, device.id, 'portrait') : null,
       };
       set({ device, ...initial(), orientation, drafts, page: drafts[orientation]?.layout.pages[0]?.id ?? null });
+      swapDrafts();
+    },
+
+    /** Takes the replacements Brandfetch refreshes made and applies them to the open drafts. */
+    replaceAssets(next: AssetSwaps) {
+      swaps = next;
+      swapDrafts();
     },
 
     setOrientation(orientation: Orientation) {

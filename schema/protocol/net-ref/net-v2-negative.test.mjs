@@ -2,11 +2,11 @@
 // reference. The Firmware and the Companion run the same vectors.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bytes, LIMIT } from './protocol.mjs';
+import { bytes } from './protocol.mjs';
 import {
   handshake, errorItem, pairKeys, acceptKey, verifyPairProof, share, x25519, rawX25519, canonicalShare,
   DeviceSession, CompanionSession, RecordSender, RecordReceiver, Reassembler, FlowCredit, fragment,
-  P25519, MAX_ITEM,
+  P25519, MAX_ITEM, RECORD_LIMIT, SESSION_VERSIONS, onHandshakeError, parseHandshake,
 } from './net-v2.mjs';
 import { inputs, pairing, session, readVectors } from './vectors-v2.mjs';
 
@@ -35,7 +35,7 @@ test('net-v2 negative: every shared vector has a test here', () => {
   assert.deepEqual(Object.keys(negative).sort(), [
     'counter_limit', 'credit_overrun', 'inputs', 'max_record', 'notice', 'oversize_items',
     'swapped_client_share', 'swapped_device_share', 'tampered_wrapped_key', 'unknown_companion_id',
-    'write_before_credit', 'wrong_code', 'wrong_device_id', 'x25519',
+    'version_error', 'write_before_credit', 'wrong_code', 'wrong_device_id', 'x25519',
   ]);
 });
 
@@ -92,23 +92,26 @@ test('net-v2 negative: a wrong device_id or an unknown companion_id gets auth', 
   }
 });
 
-test('net-v2 negative: the record counter stops at 2^32 even with a valid tag', () => {
+test('net-v2 negative: the record counter stops at 2^24 even with a valid tag', () => {
   const v = negative.counter_limit;
-  assert.equal(BigInt(v.last_counter), LIMIT - 1n);
-  assert.equal(BigInt(v.beyond_counter), LIMIT);
+  assert.equal(RECORD_LIMIT, 1n << 24n);
+  assert.equal(BigInt(v.limit), RECORD_LIMIT);
+  assert.equal(v.at_limit, 'end the session');
+  assert.equal(BigInt(v.last_counter), RECORD_LIMIT - 1n);
+  assert.equal(BigInt(v.beyond_counter), RECORD_LIMIT);
 
   const sender = new RecordSender(sess.keys.c2d, 0);
-  sender.counter = LIMIT - 1n;
+  sender.counter = RECORD_LIMIT - 1n;
   assert.equal(sender.seal(bytes(v.plaintext)).toString('hex'), v.last);
   assert.throws(() => sender.seal(bytes(v.plaintext)), /counter exhausted/);
 
   const receiver = new RecordReceiver(sess.keys.c2d, 0);
-  receiver.counter = LIMIT - 1n;
+  receiver.counter = RECORD_LIMIT - 1n;
   assert.equal(outcome(() => receiver.open(bytes(v.last))), v.last_expected);
   assert.equal(outcome(() => receiver.open(bytes(v.beyond))), v.beyond_expected);
 
   const fresh = new RecordReceiver(sess.keys.c2d, 0);
-  fresh.counter = LIMIT;
+  fresh.counter = RECORD_LIMIT;
   assert.equal(outcome(() => fresh.open(bytes(v.beyond))), 'close');
 });
 
@@ -204,4 +207,48 @@ test('net-v2 negative: a share with bit 255 set closes even where masking would 
   assert.equal(outcome(() => companion().challenge(handshake(0x21, peer, sess.keys.deckProof))), 'close');
   assert.equal(outcome(() => device().open(handshake(0x20, inputs.deviceId, inputs.companionId,
     Buffer.from(share(inputs.clientEphemeral)).fill(0xff, 31, 32)))), 'close');
+});
+
+test('net-v2 negative: the session ends at the record limit and a new session starts at zero', () => {
+  const sender = new RecordSender(sess.keys.c2d, 0);
+  sender.counter = RECORD_LIMIT - 2n;
+  const ping = bytes(negative.counter_limit.plaintext);
+  assert.equal(sender.remaining, 2n);
+  sender.seal(ping);
+  assert.equal(sender.remaining, 1n);
+  sender.seal(ping);
+  assert.equal(sender.remaining, 0n);
+  // No rekey: the direction refuses and then stays closed, key erased.
+  assert.throws(() => sender.seal(ping), /counter exhausted/);
+  assert.throws(() => sender.seal(ping), /direction closed/);
+  assert.ok(sender.key.every((byte) => byte === 0));
+
+  // Reconnecting is a new handshake with fresh shares, so new keys and counters.
+  const d = new DeviceSession({ deviceId: inputs.deviceId,
+    pairings: new Map([[inputs.companionId.toString('hex'), inputs.ltk]]), ephemeral: bytes('ff'.repeat(32)) });
+  const c = new CompanionSession({ deviceId: inputs.deviceId, companionId: inputs.companionId,
+    ltk: inputs.ltk, ephemeral: bytes('fe'.repeat(32)) });
+  d.proof(c.challenge(d.open(c.open())));
+  assert.notDeepEqual(d.keys.c2d, sess.keys.c2d);
+  assert.equal(new RecordSender(d.keys.c2d, 0).remaining, RECORD_LIMIT);
+});
+
+test('net-v2 negative: a version error never leads to a weaker fallback', () => {
+  const v = negative.version_error;
+  assert.equal(v.error, errorItem(2).toString('hex'));
+  assert.equal(v.expected, 'stop');
+  assert.equal(parseHandshake(bytes(v.error)).fields[0], 2);
+  assert.deepEqual(v.outcome, onHandshakeError(2));
+  assert.deepEqual([...SESSION_VERSIONS], [2]);
+  // The Companion's choices after any error never name net-v1 or a plain link.
+  for (let reason = 1; reason <= 9; reason++) {
+    const outcome = onHandshakeError(reason);
+    assert.equal(outcome.fallback, null, `reason ${reason}`);
+    assert.deepEqual(outcome.versions, [2], `reason ${reason}`);
+  }
+  assert.equal(onHandshakeError(2).retry, 'person');
+  assert.throws(() => onHandshakeError(0), /invalid error/);
+  assert.throws(() => onHandshakeError(10), /invalid error/);
+  // An error item that claims item version 1 is itself refused.
+  assert.equal(outcome(() => parseHandshake(bytes(v.v1_item.wire))), v.v1_item.expected);
 });

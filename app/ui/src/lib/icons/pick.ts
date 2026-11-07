@@ -10,9 +10,10 @@ export interface PickDeps {
 
 export const UNREACHABLE = "Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry.";
 export const ICONS_FAILED = "Icons didn't load. Restart Open TouchDeck, then retry.";
-const BUSY = 'Other icons are still being prepared. Wait a moment, then retry.';
+export const BUSY = 'Other icons are still being prepared. Wait a moment, then retry.';
 
-async function finish(deps: PickDeps, job: Job, signal: AbortSignal): Promise<AssetRef> {
+/** Waits for a render Job, and cancels it when the pick is abandoned. */
+export async function finish(deps: PickDeps, job: Job, signal: AbortSignal): Promise<AssetRef> {
   try {
     return await deps.wait(job, signal);
   } catch (error) {

@@ -9,6 +9,25 @@ pub struct SystemInfo {
     pub api: String,
     pub mock: bool,
     pub data_dir_override: bool,
+    pub platform: Platform,
+}
+/// The operating system the Companion runs on: Windows or Linux, which Open TouchDeck
+/// supports, or another. The UI names the keychain from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    Windows,
+    Linux,
+    Other,
+}
+impl Platform {
+    pub fn current() -> Self {
+        match std::env::consts::OS {
+            "windows" => Self::Windows,
+            "linux" => Self::Linux,
+            _ => Self::Other,
+        }
+    }
 }
 pub struct Get;
 impl Endpoint for Get {
@@ -27,6 +46,7 @@ impl Endpoint for Get {
             api: "v1".into(),
             mock: ctx.mock,
             data_dir_override: std::env::var_os("TOUCHDECK_APP_DATA_DIR").is_some(),
+            platform: Platform::current(),
         })
     }
 }

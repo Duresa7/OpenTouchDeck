@@ -7,6 +7,7 @@ import type { Appearance } from '../state/theme.ts';
 import { useUi, type SettingsSection } from '../state/ui.ts';
 import { button } from './button.ts';
 import { About } from './settings/About.tsx';
+import { BrandfetchEntry, BrandfetchView } from './settings/Brandfetch.tsx';
 import { IconPacksView } from './settings/IconPacks.tsx';
 import { PairedBrowsers } from './settings/PairedBrowsers.tsx';
 import { StartAtSignIn } from './settings/StartAtSignIn.tsx';
@@ -18,7 +19,17 @@ const appearances: { value: Appearance; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 
-function GeneralView({ onTroubleshooting, onIconPacks, focusEntry }: { onTroubleshooting(): void; onIconPacks(): void; focusEntry: SettingsSection | null }) {
+function GeneralView({
+  onTroubleshooting,
+  onIconPacks,
+  onBrandfetch,
+  focusEntry,
+}: {
+  onTroubleshooting(): void;
+  onIconPacks(): void;
+  onBrandfetch(): void;
+  focusEntry: SettingsSection | null;
+}) {
   const appearance = useUi((s) => s.appearance);
   const setAppearance = useUi((s) => s.setAppearance);
   const entry = useRef<HTMLButtonElement>(null);
@@ -77,6 +88,7 @@ function GeneralView({ onTroubleshooting, onIconPacks, focusEntry }: { onTrouble
             </span>
             <ChevronRight className="row-chevron" size={18} strokeWidth={1.9} aria-hidden />
           </button>
+          <BrandfetchEntry onOpen={onBrandfetch} focus={focusEntry === 'brandfetch'} />
           <button ref={entry} type="button" className="row row-button" onClick={onTroubleshooting}>
             <span className="row-text">
               <span className="row-title">Troubleshooting</span>
@@ -110,8 +122,12 @@ function SettingsViews() {
       return <TroubleshootingView onBack={() => go('general')} focusBack={moved !== null} />;
     case 'icon-packs':
       return <IconPacksView onBack={() => go('general')} focusBack={moved !== null} />;
+    case 'brandfetch':
+      return <BrandfetchView onBack={() => go('general')} focusBack={moved !== null} />;
     default:
-      return <GeneralView onTroubleshooting={() => go('troubleshooting')} onIconPacks={() => go('icon-packs')} focusEntry={moved} />;
+      return (
+        <GeneralView onTroubleshooting={() => go('troubleshooting')} onIconPacks={() => go('icon-packs')} onBrandfetch={() => go('brandfetch')} focusEntry={moved} />
+      );
   }
 }
 
