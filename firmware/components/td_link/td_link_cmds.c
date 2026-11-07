@@ -18,6 +18,7 @@ static int cmd_link(int argc, char **argv)
     td_reply_int(&reply, "crc_errors", state.crc_errors);
     td_reply_int(&reply, "dropped", state.dropped);
     td_reply_int(&reply, "last_rx_ms", state.last_rx_ms);
+    td_reply_str(&reply, "carrier", state.carrier);
     td_reply_end(&reply);
     td_console_write_line(buf);
     return 0;

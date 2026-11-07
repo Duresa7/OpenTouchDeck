@@ -18,6 +18,15 @@ menu "TouchDeck radio build"
             reports floor_ok false. It also reports floor_ok false while the station is not started. The radio
             guard fails a build that sets it below 24576.
 
+    config TD_QEMU_TEST
+        bool "QEMU test image: Ethernet in place of Wi-Fi, and a pairing window opened at boot"
+        default n
+        help
+            Only `idf.py -DTD_QEMU_TEST=1` sets this, for CI's QEMU check of net-v2 over TCP. The image starts QEMU's
+            emulated Ethernet instead of the Wi-Fi station, skips the panel, touch and USB console that QEMU lacks,
+            opens a pairing window at boot and logs its code. firmware/tools/radio_guard.py fails any other build
+            that has it. Never flash it to a Device.
+
     config TD_RADIO_STEADY_MS
         int "Time from radio start to the steady-state heap report, in milliseconds"
         range 1000 600000

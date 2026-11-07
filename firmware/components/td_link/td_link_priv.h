@@ -14,6 +14,15 @@ uint32_t td_link_v2_session(void);
  * carrier did not take it. */
 bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload, size_t len);
 
+/* True while the link task handles a frame that arrived on a network carrier. */
+bool td_link_current_network(void);
+
+/* The name of the carrier the frame being handled arrived on. */
+const char *td_link_current_carrier(void);
+
+/* The extra message tables (td_link_messages_add): the one entry named `name`, or NULL. */
+const td_link_message_t *td_link_extra_message(const char *name);
+
 /* Counts a frame the link could not use in `dropped`. */
 void td_link_count_drop(void);
 
@@ -25,6 +34,13 @@ void td_link_v2_fail(cJSON *reply, const char *reason, const char *error);
 
 /* True when the request has `m`, no other field outside `allowed`, and no key twice. */
 bool td_link_v2_fields(const cJSON *request, const char *const *allowed, size_t count);
+
+/* A transfer belongs to the carrier connection whose request opened it. Claim records the frame being handled as its
+ * origin. Ours is true while the frame being handled has that origin: the link drops chunk and ack frames that
+ * don't. Live is false once that connection has ended, and the transfer is then cut. */
+void td_link_transfer_claim(void);
+bool td_link_transfer_ours(void);
+bool td_link_transfer_live(void);
 
 /* Chunk and ack frames, and the periodic work of a transfer: the chunks of a get that are due, and the abort of a
  * transfer that stopped moving. */

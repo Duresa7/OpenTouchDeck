@@ -10,6 +10,10 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 #include "td_console.h"
+#if CONFIG_TD_QEMU_TEST
+#include "esp_eth.h"
+#include "esp_eth_mac_openeth.h"
+#endif
 
 static const char *TAG = "radio";
 
@@ -66,8 +70,50 @@ static esp_err_t start_station(void)
     return esp_wifi_start();
 }
 
+#if CONFIG_TD_QEMU_TEST
+/* The QEMU test image only: QEMU's emulated Ethernet (open_eth) with DHCP, in place of the station. Not static, so
+ * radio_guard.py can tell from the image that a build carries it. */
+esp_err_t td_radio_qemu_eth_start(void);
+
+esp_err_t td_radio_qemu_eth_start(void)
+{
+    esp_err_t err = nvs_flash_init();
+    if (err != ESP_OK) return err;
+    err = esp_netif_init();
+    if (err != ESP_OK) return err;
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
+    const esp_netif_inherent_config_t base = ESP_NETIF_INHERENT_DEFAULT_ETH();
+    const esp_netif_config_t netif_config = { .base = &base, .stack = ESP_NETIF_NETSTACK_DEFAULT_ETH };
+    esp_netif_t *netif = esp_netif_new(&netif_config);
+    if (netif == NULL) return ESP_FAIL;
+    const eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
+    eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
+    phy_config.autonego_timeout_ms = 100;
+    esp_eth_mac_t *mac = esp_eth_mac_new_openeth(&mac_config);
+    esp_eth_phy_t *phy = esp_eth_phy_new_generic(&phy_config);
+    if (mac == NULL || phy == NULL) return ESP_FAIL;
+    const esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
+    esp_eth_handle_t eth;
+    err = esp_eth_driver_install(&config, &eth);
+    if (err != ESP_OK) return err;
+    /* A locally administered, synthetic address: QEMU's default eFuse has none. */
+    uint8_t address[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    err = esp_eth_ioctl(eth, ETH_CMD_S_MAC_ADDR, address);
+    if (err != ESP_OK) return err;
+    err = esp_netif_attach(netif, esp_eth_new_netif_glue(eth));
+    if (err != ESP_OK) return err;
+    return esp_eth_start(eth);
+}
+#endif
+
 esp_err_t td_radio_start(void)
 {
+#if CONFIG_TD_QEMU_TEST
+    const esp_err_t eth_err = td_radio_qemu_eth_start();
+    ESP_LOGW(TAG, "QEMU test image: Ethernet %s, no Wi-Fi station; ble dormant", esp_err_to_name(eth_err));
+    return eth_err;
+#endif
     const esp_err_t err = start_station();
     s_station = err == ESP_OK ? STATION_STARTED : STATION_FAILED;
     s_station_err = err;

@@ -22,8 +22,18 @@ if(TD_RADIO_BUILD)
         endif()
     endif()
     list(APPEND SDKCONFIG_DEFAULTS "radio/radio.defaults")
-    # The same components as the normal build's minimal build, main and what it requires, plus td_radio.
-    set(COMPONENTS main td_radio)
+    # CI's QEMU image of the radio build (-DTD_RADIO_BUILD=1 -DTD_QEMU_TEST=1): Ethernet in place of Wi-Fi and a
+    # pairing window at boot. Never flashed to a Device; radio_guard.py fails any build that has it.
+    if(TD_QEMU_TEST)
+        list(APPEND SDKCONFIG_DEFAULTS "radio/qemu.defaults")
+    endif()
+    # The same components as the normal build's minimal build, main and what it requires, plus td_radio and the
+    # net-v2 service, td_netlink.
+    set(COMPONENTS main td_radio td_netlink)
+endif()
+
+if(TD_QEMU_TEST AND NOT TD_RADIO_BUILD)
+    message(FATAL_ERROR "TD_QEMU_TEST is a variant of the radio build: add -DTD_RADIO_BUILD=1")
 endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

@@ -41,4 +41,7 @@ typedef enum {
 td_frame_result_t td_frame_decode(const uint8_t *body, size_t len, td_frame_t *frame);
 td_frame_result_t td_frame_decode_slip(const uint8_t *wire, size_t len,
                                      uint8_t *body, size_t cap, td_frame_t *frame);
+/* The frame body without SLIP: header, payload and CRC, 8 + len bytes, for carriers that delimit frames themselves.
+ * Returns 0 for an invalid frame or when cap is too small. */
+size_t td_frame_encode_body(const td_frame_t *frame, uint8_t *body, size_t cap);
 size_t td_frame_encode(const td_frame_t *frame, uint8_t *wire, size_t cap);
