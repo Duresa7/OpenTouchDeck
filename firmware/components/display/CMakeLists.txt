@@ -5,6 +5,10 @@ endif()
 if(CONFIG_TD_PAY_COPY_DEBT)
     list(APPEND srcs "display_copy_debt.c")
 endif()
+# LVGL's PSRAM-first allocator, which only the radio build selects (radio/radio.defaults).
+if(CONFIG_LV_USE_CUSTOM_MALLOC)
+    list(APPEND srcs "display_lv_mem.c")
+endif()
 
 # esp_driver_tsens and esp_mm serve only the perf tools, but requirements are read before the configuration is, so
 # they cannot depend on it. Without the perf tools nothing links from them.
@@ -34,4 +38,10 @@ if(CONFIG_TD_PERF_TOOLS)
                                                      "-u __wrap_esp_lcd_rgb_panel_register_event_callbacks"
                                                      "-Wl,--wrap=esp_lcd_panel_draw_bitmap"
                                                      "-u __wrap_esp_lcd_panel_draw_bitmap")
+endif()
+
+# LVGL calls its allocator, but the linker reads this component's library before LVGL's, so ask for the object up
+# front or nothing pulls it in.
+if(CONFIG_LV_USE_CUSTOM_MALLOC)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-u lv_mem_init")
 endif()
