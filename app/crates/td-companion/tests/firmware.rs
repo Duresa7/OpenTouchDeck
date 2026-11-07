@@ -1345,6 +1345,17 @@ const RADIO_BUNDLE: &[u8] =
 fn channel_of(td: &TestCompanion, id: &td_companion::devices::DeviceId) -> Option<FirmwareChannel> {
     td.device(id).and_then(|d| d.firmware).map(|f| f.channel)
 }
+/// True once the Device is linked again, free for the next Job, and runs `channel`.
+fn ready_on(
+    td: &TestCompanion,
+    id: &td_companion::devices::DeviceId,
+    channel: FirmwareChannel,
+) -> bool {
+    td.device(id).is_some_and(|d| {
+        matches!(d.link, td_companion::devices::LinkState::Connected { .. })
+            && d.firmware.is_some_and(|f| f.channel == channel)
+    })
+}
 fn build_of(td: &TestCompanion, id: &td_companion::devices::DeviceId) -> Option<String> {
     td.device(id).and_then(|d| d.firmware).map(|f| f.build)
 }
@@ -1358,7 +1369,7 @@ async fn run_radio_build(td: &TestCompanion, serial: &str, id: &td_companion::de
     )
     .await
     .unwrap();
-    td.until(|td| channel_of(td, id) == Some(FirmwareChannel::Radio))
+    td.until(|td| ready_on(td, id, FirmwareChannel::Radio))
         .await;
 }
 fn bundled(channel: Option<FirmwareChannel>) -> FirmwareRequest {
@@ -1479,6 +1490,8 @@ async fn switching_builds_asks_first_and_works_both_ways() {
     assert_eq!(done.error.unwrap().code, "firmware.declined");
     assert_eq!(td.deck("mocka").reboots(), 0);
     assert_eq!(channel_of(&td, &id), Some(FirmwareChannel::Normal));
+    td.until(|td| ready_on(td, &id, FirmwareChannel::Normal))
+        .await;
 
     prompt.answer(true);
     let job = td
@@ -1490,7 +1503,7 @@ async fn switching_builds_asks_first_and_works_both_ways() {
         .await
         .unwrap();
     assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
-    td.until(|td| channel_of(td, &id) == Some(FirmwareChannel::Radio))
+    td.until(|td| ready_on(td, &id, FirmwareChannel::Radio))
         .await;
     assert_eq!(build_of(&td, &id).as_deref(), Some(RADIO_BUILD));
 
