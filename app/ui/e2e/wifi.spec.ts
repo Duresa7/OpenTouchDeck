@@ -1,85 +1,104 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openLayout } from './layout-helpers.ts';
 
-// Desk (mock0001) runs the radio build in the demo; Studio (mock0002) runs the normal build. The fake Companion's
-// networks and every password here are made up.
-const NETWORK = 'td-demo-network';
-const PASSWORD = 'demo-pass-1234';
+// The demo data: Stream deck by the window is linked over Wi-Fi at 192.0.2.23, Desk is
+// plugged in and on the network at 192.0.2.21, and Studio isn't on the network.
 
+const panel = (page: Page) => page.getByTestId('device-panel');
 const wifiStatus = (page: Page) => page.getByTestId('device-panel-wifi-status');
+const problem = (page: Page) => page.getByTestId('device-panel-wifi-problem');
 
-async function openPanel(page: Page) {
-  await openLayout(page);
-  await page.getByTestId('device-name').click();
-  await expect(page.getByTestId('device-panel')).toBeVisible();
-  await expect(wifiStatus(page)).toHaveAttribute('data-state', 'off');
-}
-
-async function join(page: Page, ssid: string, password: string) {
-  await page.getByTestId('device-panel-wifi-ssid').fill(ssid);
-  await page.getByTestId('device-panel-wifi-password').fill(password);
-  await page.getByTestId('device-panel-wifi-join').click();
-}
-
-async function stored(page: Page): Promise<{ ssid: string; password: string } | null> {
-  return page.evaluate(async () => (await fetch('/api/v1/test/devices/mock0001/wifi')).json());
-}
-
-test('joins a network, and the password field empties and never comes back', async ({ page }) => {
-  await openPanel(page);
-  await expect(page.getByTestId('device-panel-wifi-password')).toHaveAttribute('type', 'password');
-  await join(page, NETWORK, PASSWORD);
-  await expect(wifiStatus(page)).toHaveAttribute('data-state', 'connecting');
-  await expect(wifiStatus(page)).toHaveText(`Joining ${NETWORK}…`);
-  await expect(wifiStatus(page)).toHaveAttribute('data-state', 'connected');
-  await expect(wifiStatus(page)).toHaveText(`Connected to ${NETWORK} at 192.0.2.10`);
-  await expect(page.getByTestId('device-panel-wifi-password')).toHaveValue('');
-  await expect(page.getByTestId('device-panel-wifi-ssid')).toHaveValue(NETWORK);
-  expect(await stored(page)).toEqual({ ssid: NETWORK, password: PASSWORD });
-  expect(await page.content()).not.toContain(PASSWORD);
-
-  await page.keyboard.press('Escape');
-  await page.getByTestId('device-name').click();
-  await expect(wifiStatus(page)).toHaveAttribute('data-state', 'connected');
-  await expect(page.getByTestId('device-panel-wifi-password')).toHaveValue('');
-});
-
-test('says why a join failed', async ({ page }) => {
-  await openPanel(page);
-  await join(page, 'td-test-nonexistent', PASSWORD);
-  await expect(wifiStatus(page)).toHaveAttribute('data-reason', 'not-found');
-  await expect(wifiStatus(page)).toHaveText("Can't find td-test-nonexistent. Check the name, and that Desk is in range. Desk keeps trying.");
-  await join(page, NETWORK, 'wrong-pass-5678');
-  await expect(wifiStatus(page)).toHaveAttribute('data-reason', 'wrong-password');
-  await expect(wifiStatus(page)).toHaveText(`${NETWORK} refused the password. Desk keeps trying.`);
-});
-
-test('refuses a short password before sending anything', async ({ page }) => {
-  await openPanel(page);
-  await join(page, NETWORK, 'short');
-  await expect(page.getByTestId('device-panel-wifi-password-hint')).toHaveText('A Wi-Fi password has at least 8 characters.');
-  await expect(page.getByTestId('device-panel-wifi-password')).toHaveAttribute('aria-invalid', 'true');
-  await expect(wifiStatus(page)).toHaveAttribute('data-state', 'off');
-  expect(await stored(page)).toBeNull();
-});
-
-test('forgets the network', async ({ page }) => {
-  await openPanel(page);
-  await expect(page.getByTestId('device-panel-wifi-forget')).toHaveCount(0);
-  await join(page, 'td-demo-open', '');
-  await expect(wifiStatus(page)).toHaveAttribute('data-state', 'connected');
-  await page.getByTestId('device-panel-wifi-forget').click();
-  await expect(wifiStatus(page)).toHaveAttribute('data-state', 'off');
-  await expect(page.getByTestId('device-panel-wifi-ssid')).toHaveValue('');
-  expect(await stored(page)).toBeNull();
-});
-
-test('a Device on the normal build shows no Wi-Fi section', async ({ page }) => {
+async function openPanel(page: Page, name: string) {
   await page.goto('/');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
-  await page.getByRole('button', { name: 'Edit Studio' }).click();
-  await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0002');
+  await page.getByRole('button', { name: `Edit ${name}` }).click();
+  await expect(page.getByTestId('editor')).toBeVisible();
   await page.getByTestId('device-name').click();
-  await expect(page.getByTestId('device-panel-name')).toBeEnabled();
-  await expect(page.getByTestId('device-panel-wifi')).toHaveCount(0);
+  await expect(panel(page)).toBeVisible();
+  await expect(page.getByTestId('device-panel-wifi-begin').or(page.getByTestId('device-panel-wifi-forget'))).toBeVisible();
+}
+
+async function startPairing(page: Page, address?: string) {
+  await page.getByTestId('device-panel-wifi-begin').click();
+  const field = page.getByTestId('device-panel-wifi-address');
+  await expect(field).toBeVisible();
+  if (address !== undefined) await field.fill(address);
+  await page.getByTestId('device-panel-wifi-start').click();
+}
+
+test('Home and the Device settings name the Carrier', async ({ page }) => {
+  await page.goto('/');
+  const devices = page.getByRole('list', { name: 'Devices' });
+  await expect(devices.getByRole('listitem').nth(2).locator('.device-meta .status')).toHaveText('Connected over Wi-Fi');
+  await expect(devices.getByRole('listitem').nth(0).locator('.device-meta .status')).toHaveText('Connected');
+
+  await openPanel(page, 'Stream deck by the window');
+  await expect(page.getByTestId('connection')).toHaveText('Connected over Wi-Fi');
+  await expect(page.getByTestId('device-panel-carrier')).toHaveText('Connected over Wi-Fi at 192.0.2.23:47820');
+  await expect(wifiStatus(page)).toHaveText('Paired at 192.0.2.23:47820.');
+  await expect(page.getByTestId('device-panel-usb-only')).toHaveText('Plug in Stream deck by the window with a USB cable to update or restart it.');
+  await expect(page.getByTestId('device-panel-restart')).toHaveAttribute('aria-disabled', 'true');
+});
+
+test('pairs a plugged-in Device found on the network, after a wrong code', async ({ page }) => {
+  await openPanel(page, 'Desk');
+  await expect(page.getByTestId('device-panel-carrier')).toHaveText('Connected over USB');
+  await expect(wifiStatus(page)).toHaveText('Not paired. Pair to use it without the cable.');
+
+  await page.getByTestId('device-panel-wifi-begin').click();
+  await expect(page.getByTestId('device-panel-wifi-address')).toHaveValue('192.0.2.21:47820');
+  await expect(page.getByTestId('device-panel-wifi-found')).toContainText('Found Desk on the network.');
+  await page.getByTestId('device-panel-wifi-start').click();
+
+  const code = page.getByTestId('device-panel-wifi-code');
+  await expect(page.getByTestId('device-panel-wifi-attempts')).toHaveText('3 tries left');
+  await code.fill('000000');
+  await code.press('Enter');
+  await expect(problem(page)).toHaveText('Wrong code. 2 tries left.');
+  await expect(page.getByTestId('device-panel-wifi-attempts')).toHaveCount(0);
+
+  await code.fill('123456');
+  await page.getByTestId('device-panel-wifi-pair').click();
+  await expect(wifiStatus(page)).toHaveText('Paired at 192.0.2.21:47820.');
+  await expect(problem(page)).toHaveCount(0);
+  await expect(page.getByTestId('device-panel-wifi-code-form')).toHaveCount(0);
+  await expect(page.getByTestId('device-panel-carrier')).toHaveText('Connected over USB');
+
+  await page.getByTestId('device-panel-wifi-forget').click();
+  await expect(wifiStatus(page)).toHaveText('Not paired. Pair to use it without the cable.');
+});
+
+test('a Device off the network takes a typed address, and nothing there says so', async ({ page }) => {
+  await openPanel(page, 'Studio');
+  await startPairing(page, '192.0.2.99');
+  await expect(problem(page)).toHaveText('Nothing answered at that address. Check that Studio is on the same network, and the address.');
+  await expect(page.getByTestId('device-panel-wifi-address')).toHaveValue('192.0.2.99');
+  await page.getByTestId('device-panel-wifi-cancel').click();
+  await expect(page.getByTestId('device-panel-wifi-address-form')).toHaveCount(0);
+  await expect(page.getByTestId('device-panel-wifi-begin')).toBeVisible();
+});
+
+test('three wrong codes lock pairing out', async ({ page }) => {
+  await openPanel(page, 'Desk');
+  await startPairing(page);
+  const code = page.getByTestId('device-panel-wifi-code');
+  for (const left of ['2 tries left', '1 try left']) {
+    await code.fill('000000');
+    await code.press('Enter');
+    await expect(problem(page)).toHaveText(`Wrong code. ${left}.`);
+  }
+  await code.fill('000000');
+  await code.press('Enter');
+  await expect(problem(page)).toHaveText('Too many wrong codes. Desk stopped pairing for a while. Wait, then start again.');
+  await expect(page.getByTestId('device-panel-wifi-address-form')).toBeVisible();
+});
+
+test('with no keychain the error says what to do', async ({ page }) => {
+  await openPanel(page, 'Desk');
+  await page.evaluate(() => window.touchdeckDemo?.wifiKeychain(false));
+  await startPairing(page);
+  const code = page.getByTestId('device-panel-wifi-code');
+  await code.fill('123456');
+  await code.press('Enter');
+  await expect(problem(page)).toContainText("Credential Manager isn't available");
+  await expect(wifiStatus(page)).toHaveText('Not paired. Pair to use it without the cable.');
 });

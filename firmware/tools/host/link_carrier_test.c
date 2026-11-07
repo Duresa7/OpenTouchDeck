@@ -268,7 +268,6 @@ td_asset_result_t td_asset_space(td_asset_space_t *out)
     return TD_ASSET_OK;
 }
 
-bool td_device_name_valid(const char *name) { return name && *name; }
 static char g_name[TD_DEVICE_NAME_MAX + 1] = "Open TouchDeck";
 esp_err_t td_device_name_get(char out[TD_DEVICE_NAME_MAX + 1]) { strcpy(out, g_name); return ESP_OK; }
 esp_err_t td_device_name_set(const char *name) { (void)name; return ESP_OK; }
@@ -655,6 +654,38 @@ static void test_wifi_over_usb_only(void)
     CHECK(usb_take(&frame, payload) && g_wifi_calls == 2 && !strcmp(g_wifi_last, "wifi.forget"));
 }
 
+static bool holds(const void *buf, size_t len, const char *text)
+{
+    const size_t n = strlen(text);
+    for (size_t i = 0; i + n <= len; i++) {
+        if (!memcmp((const uint8_t *)buf + i, text, n)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* After a `wifi.set`, handled or refused, no link buffer still holds its password: not the receive packet, not the
+ * frame body, not the message text. */
+static void test_wifi_set_leaves_no_copy(void)
+{
+    start(true);
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    const char *const sets[] = {
+        WIFI_SET,
+        /* Refused by the strict JSON rules before the handler. */
+        "{\"m\":\"wifi.set\",\"ssid\":\"a\\nb\",\"password\":\"dummy-pass\"}",
+    };
+    for (size_t i = 0; i < sizeof sets / sizeof sets[0]; i++) {
+        over_usb(sets[i], (uint8_t)(30 + i));
+        CHECK(usb_take(&frame, payload) && !has(payload, "dummy-pass"));
+        CHECK(!holds(s_rx_packet, sizeof s_rx_packet, "dummy-pass"));
+        CHECK(!holds(s_body, sizeof s_body, "dummy-pass"));
+        CHECK(!holds(s_message, sizeof s_message, "dummy-pass"));
+    }
+}
+
 /* The longest v2 hello, with the wifi cap, a full Device name and a full version, still fits one frame. */
 static void test_wifi_hello_fits(void)
 {
@@ -672,8 +703,132 @@ static void test_wifi_hello_fits(void)
     strcpy(g_app.version, "host");
 }
 
-int main(void)
+/* ---- Device names: the shared vectors in schema/protocol/name-vectors-v2.json ---- */
+
+static cJSON *g_names;
+
+static cJSON *load_names(const char *path)
 {
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        fprintf(stderr, "cannot open %s\n", path);
+        exit(2);
+    }
+    static char text[1 << 16];
+    size_t len = fread(text, 1, sizeof text - 1, file);
+    fclose(file);
+    text[len] = '\0';
+    cJSON *json = cJSON_Parse(text);
+    if (!json) {
+        fprintf(stderr, "cannot parse %s\n", path);
+        exit(2);
+    }
+    return json;
+}
+
+static const char *vector_name(const cJSON *item)
+{
+    return cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(item, "name"));
+}
+
+static const char *vector_label(const cJSON *item)
+{
+    return cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(item, "label"));
+}
+
+static uint32_t hex_value(const char *text, const char **end)
+{
+    return (uint32_t)strtoul(text, (char **)end, 16);
+}
+
+static void utf8(uint32_t c, char out[5])
+{
+    int n = 0;
+    if (c < 0x80) out[n++] = (char)c;
+    else if (c < 0x800) { out[n++] = (char)(0xc0 | c >> 6); out[n++] = (char)(0x80 | (c & 63)); }
+    else if (c < 0x10000) {
+        out[n++] = (char)(0xe0 | c >> 12); out[n++] = (char)(0x80 | ((c >> 6) & 63)); out[n++] = (char)(0x80 | (c & 63));
+    } else {
+        out[n++] = (char)(0xf0 | c >> 18); out[n++] = (char)(0x80 | ((c >> 12) & 63));
+        out[n++] = (char)(0x80 | ((c >> 6) & 63)); out[n++] = (char)(0x80 | (c & 63));
+    }
+    out[n] = '\0';
+}
+
+/* The validator takes and refuses the shared names, and refuses every code point of the pinned Cf table and each
+ * Hangul filler, and only those. */
+static void test_name_vectors_in_the_validator(void)
+{
+    const cJSON *item;
+    cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(g_names, "accepted")) {
+        if (!td_device_name_valid(vector_name(item))) fprintf(stderr, "accepted vector refused: %s\n", vector_label(item));
+        CHECK(td_device_name_valid(vector_name(item)));
+    }
+    cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(g_names, "rejected")) {
+        if (td_device_name_valid(vector_name(item))) fprintf(stderr, "rejected vector taken: %s\n", vector_label(item));
+        CHECK(!td_device_name_valid(vector_name(item)));
+    }
+    static unsigned char marked[0x110000];
+    cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(g_names, "format_ranges")) {
+        const char *end;
+        uint32_t first = hex_value(item->valuestring, &end);
+        uint32_t last = *end == '-' ? hex_value(end + 1, &end) : first;
+        for (uint32_t c = first; c <= last; c++) marked[c] = 1;
+    }
+    cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(g_names, "hangul_fillers")) {
+        marked[hex_value(item->valuestring, NULL)] = 1;
+    }
+    for (uint32_t c = 0x20; c < 0x110000; c++) {
+        if (c == 0x7f || (c >= 0xd800 && c <= 0xdfff)) continue; /* DEL and surrogates have their own rules */
+        char text[16] = "a";
+        utf8(c, text + 1);
+        strcat(text, "b");
+        if (td_device_name_valid(text) == (marked[c] != 0)) {
+            fprintf(stderr, "U+%04X: validator and table disagree\n", (unsigned)c);
+            g_failures++;
+        }
+    }
+}
+
+/* v2.name.set refuses a vector name with args and keeps its reply shape, and takes an accepted one. */
+static void test_name_set_refuses_vectors_with_args(void)
+{
+    start(true);
+    over_fake("{\"m\":\"hello\",\"proto\":2}", 1);
+    uint8_t seq = 2;
+    const cJSON *item;
+    cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(g_names, "rejected")) {
+        cJSON *request = cJSON_CreateObject();
+        cJSON_AddStringToObject(request, "m", "v2.name.set");
+        cJSON_AddStringToObject(request, "name", vector_name(item));
+        char *text = cJSON_PrintUnformatted(request);
+        over_fake(text, seq++);
+        if (!(has(g_fake.payload, "\"ok\":false") && has(g_fake.payload, "\"reason\":\"args\""))) {
+            fprintf(stderr, "v2.name.set took %s: %s\n", vector_label(item), g_fake.payload);
+        }
+        CHECK(has(g_fake.payload, "\"ok\":false") && has(g_fake.payload, "\"reason\":\"args\""));
+        free(text);
+        cJSON_Delete(request);
+    }
+    cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(g_names, "accepted")) {
+        cJSON *request = cJSON_CreateObject();
+        cJSON_AddStringToObject(request, "m", "v2.name.set");
+        cJSON_AddStringToObject(request, "name", vector_name(item));
+        char *text = cJSON_PrintUnformatted(request);
+        over_fake(text, seq++);
+        CHECK(has(g_fake.payload, "\"ok\":true"));
+        free(text);
+        cJSON_Delete(request);
+    }
+}
+
+int main(int argc, char **argv)
+{
+    if (argc != 2) {
+        fprintf(stderr, "usage: %s name-vectors-v2.json\n", argv[0]);
+        return 2;
+    }
+    g_names = load_names(argv[1]);
     test_carrier_add_rules();
     test_usb_reply_is_the_same_wire_bytes();
     test_usb_online_state();
@@ -685,11 +840,14 @@ int main(void)
     test_wifi_unsupported_without_handler();
     test_wifi_over_usb_only();
     test_wifi_hello_fits();
+    test_wifi_set_leaves_no_copy();
+    test_name_vectors_in_the_validator();
+    test_name_set_refuses_vectors_with_args();
     reset();
     if (g_failures) {
         fprintf(stderr, "%d checks failed\n", g_failures);
         return 1;
     }
-    printf("link carrier: 11 tests passed\n");
+    printf("link carrier: 14 tests passed\n");
     return 0;
 }

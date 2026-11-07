@@ -205,6 +205,8 @@ static esp_err_t start_station(void)
     /* The PHY keeps its calibration in NVS. The Wi-Fi driver itself keeps nothing there (CONFIG_ESP_WIFI_NVS_ENABLED
      * is off; td_wifi_store.c keeps the network), and td_device opens the same partition, so a second init is a
      * no-op. */
+    /* Before the driver logs anything: its INFO lines name the network. */
+    td_wifi_quiet_logs();
     esp_err_t err = nvs_flash_init();
     if (err != ESP_OK) return err;
     err = esp_netif_init();

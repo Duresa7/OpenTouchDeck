@@ -85,11 +85,47 @@ pub struct Identity {
     pub capabilities: Option<Capabilities>,
     pub protocol: u32,
 }
+/// The format characters (General_Category Cf) of Unicode 17.0 as inclusive ranges, pinned by
+/// link-v2.md and net-v2.md so no toolchain's Unicode version changes the rule.
+const FORMAT_RANGES: [(u32, u32); 21] = [
+    (0x00ad, 0x00ad),
+    (0x0600, 0x0605),
+    (0x061c, 0x061c),
+    (0x06dd, 0x06dd),
+    (0x070f, 0x070f),
+    (0x0890, 0x0891),
+    (0x08e2, 0x08e2),
+    (0x180e, 0x180e),
+    (0x200b, 0x200f),
+    (0x202a, 0x202e),
+    (0x2060, 0x2064),
+    (0x2066, 0x206f),
+    (0xfeff, 0xfeff),
+    (0xfff9, 0xfffb),
+    (0x110bd, 0x110bd),
+    (0x110cd, 0x110cd),
+    (0x13430, 0x1343f),
+    (0x1bca0, 0x1bca3),
+    (0x1d173, 0x1d17a),
+    (0xe0001, 0xe0001),
+    (0xe0020, 0xe007f),
+];
+/// Letters (Lo) that render as blank space.
+const HANGUL_FILLERS: [u32; 4] = [0x115f, 0x1160, 0x3164, 0xffa0];
+fn hides_text(c: char) -> bool {
+    let code = c as u32;
+    code <= 0x1f
+        || code == 0x7f
+        || HANGUL_FILLERS.contains(&code)
+        || FORMAT_RANGES
+            .iter()
+            .any(|&(first, last)| (first..=last).contains(&code))
+}
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 48
         && name.chars().any(|c| !c.is_whitespace())
-        && !name.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}')
+        && !name.chars().any(hides_text)
 }
 fn invalid(message: &str) -> LinkError {
     LinkError::Reply(ReplyError::Fields(message.into()))

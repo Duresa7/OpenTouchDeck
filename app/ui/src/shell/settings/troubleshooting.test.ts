@@ -66,6 +66,11 @@ describe('Troubleshooting', () => {
     expect(connectionText({ device: sampleDevice('a0b1', null, { state: 'offline' }), demo: false })).toBe("Unnamed Device isn't connected.");
   });
 
+  test('a Device on Wi-Fi says so, with the address it was reached at', () => {
+    const device = { ...sampleDevice('a0b1', 'Desk', { ...connected, port: '192.0.2.21:47820' }), carrier: 'wifi' as const };
+    expect(connectionText({ device, demo: false })).toBe('Desk is on Wi-Fi at 192.0.2.21:47820.');
+  });
+
   test('the raw link error is kept for Details only when there is one', () => {
     expect(lastError(sampleDevice('a', 'Desk', { state: 'lost', reason: 'io-error', detail: 'write failed: 31', at_ms: 1 }))).toBe('write failed: 31');
     expect(lastError(sampleDevice('a', 'Desk', { state: 'lost', reason: 'unplugged', detail: '', at_ms: 1 }))).toBeNull();

@@ -180,26 +180,36 @@ impl MockPorts {
     pub fn plug_media_device(&self, serial: &str) {
         self.plug_board(serial, BoardKind::Device, true);
     }
+    /// The board under this USB serial, made if it doesn't exist, without plugging it in. A
+    /// fake Wi-Fi Device wraps the same mock, so plugging it in later is the same Device.
+    pub fn board(&self, serial: &str, kind: BoardKind) -> td_link::MockDeck {
+        let mut state = self.state.lock();
+        Self::make(&mut state, serial, kind);
+        state.boards[serial].1.clone()
+    }
+    fn make(state: &mut MockState, serial: &str, kind: BoardKind) {
+        if state.boards.get(serial).is_none_or(|(k, _)| *k != kind) {
+            let deck = match kind {
+                BoardKind::Device | BoardKind::DeviceRadio => td_link::MockDeck::v2(),
+                _ => td_link::MockDeck::new(),
+            };
+            match kind {
+                BoardKind::Device => deck.set_name(&format!("Mock Device {serial}")),
+                BoardKind::DeviceRadio => {
+                    deck.set_name(&format!("Mock Device {serial}"));
+                    deck.set_wifi_capability(true);
+                }
+                BoardKind::Silent => deck.stop(),
+                BoardKind::OtherFirmware => deck.set_product("esp-at"),
+                BoardKind::DeviceV1 | BoardKind::Busy => {}
+            }
+            state.boards.insert(serial.into(), (kind, deck));
+        }
+    }
     fn plug_board(&self, serial: &str, kind: BoardKind, media: bool) {
         let changed = {
             let mut state = self.state.lock();
-            if state.boards.get(serial).is_none_or(|(k, _)| *k != kind) {
-                let deck = match kind {
-                    BoardKind::Device | BoardKind::DeviceRadio => td_link::MockDeck::v2(),
-                    _ => td_link::MockDeck::new(),
-                };
-                match kind {
-                    BoardKind::Device => deck.set_name(&format!("Mock Device {serial}")),
-                    BoardKind::DeviceRadio => {
-                        deck.set_name(&format!("Mock Device {serial}"));
-                        deck.set_wifi_capability(true);
-                    }
-                    BoardKind::Silent => deck.stop(),
-                    BoardKind::OtherFirmware => deck.set_product("esp-at"),
-                    BoardKind::DeviceV1 | BoardKind::Busy => {}
-                }
-                state.boards.insert(serial.into(), (kind, deck));
-            }
+            Self::make(&mut state, serial, kind);
             if media {
                 state.boards[serial].1.set_media_capabilities(true);
             }

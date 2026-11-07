@@ -22,7 +22,7 @@ extern "C" {
  */
 
 #define TD_WIFI_SSID_MAX 32
-/* A WPA passphrase is 8 to 63 bytes. 64 hex digits are a raw pre-shared key. */
+/* A WPA passphrase is 8 to 63 printable ASCII characters. 64 hex digits are a raw pre-shared key. */
 #define TD_WIFI_PASSWORD_MIN 8
 #define TD_WIFI_PASSWORD_MAX 64
 /* How long an associated station waits for an address before it gives up with `no-ip`. */
@@ -73,7 +73,7 @@ typedef struct {
 /* ---- Policy: pure functions, no state ---- */
 
 /* The SSID is 1 to 32 bytes of UTF-8 without control characters. The password is empty for an open network, 8 to 63
- * bytes without control characters, or 64 hex digits. */
+ * printable ASCII characters (0x20 to 0x7e), or 64 hex digits. */
 bool td_wifi_credentials_valid(const char *ssid, const char *password);
 /* What a disconnect with this ESP-IDF reason code (wifi_err_reason_t) tells the person. */
 td_wifi_reason_t td_wifi_reason_from_driver(uint16_t code);
@@ -113,6 +113,10 @@ typedef struct {
 
 /* Loads the stored network, once, before the station starts. A stored network shows as `connecting`. */
 esp_err_t td_wifi_init(const td_wifi_driver_t *driver);
+/* Sets the ESP-IDF log tags whose INFO and WARN lines name the network, a nearby access point or the address to
+ * errors only: the Wi-Fi driver `wifi` ("connected with <SSID>, bssid=..."), the supplicant `wpa` and the netif handler
+ * `esp_netif_handlers` ("sta ip: ..."). td_radio calls it before esp_wifi_init. */
+void td_wifi_quiet_logs(void);
 /* The station started, or failed to start with `err`. A started station joins the stored network. */
 void td_wifi_started(esp_err_t err);
 

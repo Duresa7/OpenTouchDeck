@@ -6,7 +6,7 @@
 #include "td_recovery.h"
 #include "td_wifi.h"
 
-static const char *TAG = "wifi";
+static const char *TAG = "td_wifi";
 
 /*
  * A small Wi-Fi glyph at the right end of the title band, on LVGL's top layer, so a Layout reload never removes it and

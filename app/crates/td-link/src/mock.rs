@@ -156,6 +156,8 @@ struct State {
     refuse_sessions: bool,
     booted: Instant,
     link: Option<Sender<Vec<u8>>>,
+    /// The link is a network carrier's, not USB's.
+    link_network: bool,
     generation: u64,
     layouts: HashMap<Orientation, Vec<u8>>,
     shown: Orientation,
@@ -376,6 +378,7 @@ impl MockDeck {
                 refuse_sessions: false,
                 booted: Instant::now(),
                 link: None,
+                link_network: false,
                 generation: 0,
                 layouts: HashMap::new(),
                 shown: Orientation::Landscape,
@@ -542,6 +545,17 @@ impl MockDeck {
                 state.booted = Instant::now();
             }
         }
+        Ok(self.attach(false))
+    }
+
+    /// Links a network carrier, as the fake net-v2 Device does once a session is ready. It
+    /// replaces whatever link there was, and a later USB connect replaces it.
+    #[cfg(feature = "fake")]
+    pub(crate) fn connect_network(&self) -> MockTransport {
+        self.attach(true)
+    }
+
+    fn attach(&self, network: bool) -> MockTransport {
         let (to_deck, from_host) = mpsc::channel::<Vec<u8>>();
         let (to_host, from_deck) = mpsc::channel::<Vec<u8>>();
         let generation = {
@@ -549,11 +563,27 @@ impl MockDeck {
             state.selected_v2 = false;
             state.generation += 1;
             state.link = Some(to_host.clone());
+            state.link_network = network;
             state.generation
         };
         let deck = self.clone();
         thread::spawn(move || deck.run(&from_host, &to_host, generation));
-        Ok(MockTransport { from_deck, to_deck })
+        MockTransport { from_deck, to_deck }
+    }
+
+    /// Whether the USB link is online: a USB host said `hello` and sent a frame within 5 s.
+    /// net-v2 refuses a network session then.
+    pub fn usb_online(&self) -> bool {
+        let state = self.state();
+        state.link.is_some()
+            && !state.link_network
+            && state.online_since_hello
+            && state.last_rx.is_some_and(|at| at.elapsed() < ONLINE_FOR)
+    }
+
+    /// The id a v2 `hello` reports: the factory MAC that is also the USB serial.
+    pub fn device_id(&self) -> [u8; 6] {
+        [0x02, 0, 0, 0, 0, 0x01]
     }
 
     /// Stops answering anything for good, as a deck that hung or lost its cable without an error.
@@ -561,9 +591,12 @@ impl MockDeck {
         self.state().silent = true;
     }
 
-    /// Ends the stream, as a port that went away.
+    /// Ends the USB stream, as a port that went away. A network link stays up.
     pub fn hang_up(&self) {
         let mut state = self.state();
+        if state.link_network {
+            return;
+        }
         state.link = None;
         state.generation += 1;
     }
@@ -1780,8 +1813,10 @@ impl MockDeck {
                 .all(|key| key == "m" || keys.contains(&key.as_str()))
         };
         let mut state = self.state();
+        // The Device checks the Carrier before anything else: off USB, every `wifi.*` is refused.
+        let off_usb = state.link_network;
         let wifi = &mut state.wifi;
-        if wifi.usb_only {
+        if wifi.usb_only || off_usb {
             return refusal("usb-only", "Only over USB");
         }
         if !wifi.capability {

@@ -69,6 +69,18 @@ test('refuses a blank name with the rule and keeps the old one', async ({ page }
   await expect(page.getByTestId('device-name')).toHaveText('Desk');
 });
 
+test('refuses a name with an invisible character and keeps the old one', async ({ page }) => {
+  await openPanel(page);
+  const name = page.getByTestId('device-panel-name');
+  for (const hidden of ['Desk‮PC', 'Deskㅤ']) {
+    await name.fill(hidden);
+    await name.press('Enter');
+    await expect(page.getByTestId('device-panel-name-hint')).toHaveText('Remove tabs, line breaks and other special characters.');
+    await expect(name).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByTestId('device-name')).toHaveText('Desk');
+  }
+});
+
 test('switches orientation after the restart confirm, and the Device restarts', async ({ page }) => {
   await openPanel(page);
   await page.getByTestId('device-panel-portrait').click();
@@ -267,9 +279,9 @@ test('every control in the panel is reachable with Tab and shows the focus ring'
   await page.getByTestId('device-name').focus();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('device-panel-brightness-value')).toHaveText('80%');
-  await expect(page.getByTestId('device-panel-wifi-status')).toHaveAttribute('data-state', 'off');
+  await expect(page.getByTestId('device-panel-wifi-setup-status')).toHaveAttribute('data-state', 'off');
   const reached: string[] = [];
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 9; i++) {
     const focused = await page.evaluate(() => {
       const el = document.activeElement;
       if (!(el instanceof HTMLElement)) return null;
@@ -287,9 +299,10 @@ test('every control in the panel is reachable with Tab and shows the focus ring'
     'device-panel-landscape',
     'device-panel-brightness',
     'device-panel-photo-frame',
-    'device-panel-wifi-ssid',
-    'device-panel-wifi-password',
-    'device-panel-wifi-join',
+    'device-panel-wifi-setup-ssid',
+    'device-panel-wifi-setup-password',
+    'device-panel-wifi-setup-join',
+    'device-panel-wifi-begin',
     'device-panel-restart',
   ]);
 });

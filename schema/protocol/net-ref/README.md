@@ -84,6 +84,15 @@ node --test schema/protocol/net-ref/net-v2.test.mjs schema/protocol/net-ref/net-
 node schema/protocol/net-ref/vectors-v2.mjs --write
 ```
 
+`name-vectors.mjs` regenerates [name-vectors-v2.json](../name-vectors-v2.json),
+the names that link-v2 Device names and net-v2 Companion names share. Its
+`\p{Cf}` ranges come from `net-v2.mjs`, and the Firmware host test, the UI
+tests and the Companion tests read the same file.
+
+```powershell
+node schema/protocol/net-ref/name-vectors.mjs --write
+```
+
 Every key, code and identity in those vectors is a synthetic test value. The
 test also checks X25519 against RFC 7748's own vectors and HKDF against Node's
 built-in implementation. There is no net-v2 socket peer yet; the Firmware and

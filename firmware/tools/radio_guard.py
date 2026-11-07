@@ -119,7 +119,8 @@ DORMANT_SYMBOLS = (
     "esp_now_init",
 )
 # What proves the radio build wires its station and joins the stored network.
-REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start", "esp_wifi_connect")
+# td_wifi_quiet_logs turns down the ESP-IDF tags that log the network's name; the linker keeps it only if it is called.
+REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start", "esp_wifi_connect", "td_wifi_quiet_logs")
 
 
 class GuardError(ValueError):

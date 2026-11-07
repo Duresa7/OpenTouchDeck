@@ -1,147 +1,198 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { DeviceSummary } from '../companion/api.ts';
 import { createClient, type Companion } from '../companion/client.ts';
-import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
-import { RADIO_CAPS, sampleDevice } from '../companion/samples.ts';
+import { ApiError } from '../companion/errors.ts';
+import { createFakeCompanion, FAKE_WIFI_CODE, type FakeCompanion } from '../companion/fake.ts';
+import { sampleDevice } from '../companion/samples.ts';
 import { windowSession } from '../companion/session.ts';
-import { createDeviceWifi, offersWifi, passwordProblem, ssidProblem, wifiStatusText, type DeviceWifiStore } from './wifi.ts';
+import { carrierText, createWifiPairing, wifiProblem, type WifiStore } from './wifi.ts';
 
-// Every network and password here is made up.
 const BASE = 'http://127.0.0.1:51234';
-const NETWORK = 'td-demo-network';
-const PASSWORD = 'demo-pass-1234';
-const connected = { state: 'connected' as const, port: 'COM3', since_ms: 0, protocol: 2 };
-const radio: DeviceSummary = { ...sampleDevice('mock0001', 'Desk', connected), capabilities: RADIO_CAPS };
-const normal = sampleDevice('mock0002', 'Studio', connected);
+const USB = { state: 'connected' as const, port: 'COM3', since_ms: 0, protocol: 2 };
+const desk = sampleDevice('mock0001', 'Desk', USB);
+const shelf = sampleDevice('mock0002', 'Shelf');
 
 let fake: FakeCompanion;
 let companion: Companion;
-let sent: string[];
-const opened: DeviceWifiStore[] = [];
 
-function wifiFor(device: DeviceSummary): DeviceWifiStore {
-  const store = createDeviceWifi({ companion, device, pollMs: 10, pollForMs: 2000 });
-  opened.push(store);
-  return store;
-}
+const pairingFor = (device: DeviceSummary): WifiStore => createWifiPairing({ companion, device: () => device });
 
-async function settled(store: DeviceWifiStore) {
-  await vi.waitFor(() => expect(store.getState().wifi?.state).not.toBe('connecting'), { timeout: 2000 });
-  return store.getState().wifi;
+async function atCode(store: WifiStore, address: string) {
+  await store.getState().load();
+  await store.getState().begin();
+  store.getState().type(address);
+  await store.getState().start();
+  expect(store.getState().view.step).toBe('code');
 }
 
 beforeEach(() => {
-  fake = createFakeCompanion({ devices: [radio, normal], wifiJoinMs: 30 });
-  sent = [];
-  vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
-    const request = new Request(input, init);
-    if (request.method === 'PUT') sent.push(await request.clone().text());
-    return fake.fetch(request);
+  fake = createFakeCompanion({
+    devices: [desk, shelf],
+    wifi: {
+      discovered: [
+        { device: 'mock0001', name: 'Desk', address: '192.0.2.21', paired: 0 },
+        { device: 'mock0002', name: 'Shelf', address: '192.0.2.22:47820', paired: 0 },
+        { device: 'mock0009', name: 'Other', address: '192.0.2.29', paired: 0 },
+      ],
+    },
   });
+  vi.stubGlobal('fetch', fake.fetch);
   companion = createClient(BASE, windowSession(fake.bridge));
 });
 
 afterEach(() => {
-  for (const store of opened.splice(0)) store.dispose();
   vi.unstubAllGlobals();
 });
 
-describe('the network rules', () => {
-  test.each([
-    ['', 'Type the network name.'],
-    ['x'.repeat(33), 'That network name is too long.'],
-    ['é'.repeat(17), 'That network name is too long.'],
-    ['line\nbreak', 'Remove tabs, line breaks and other special characters.'],
-  ])('network %j is refused', (ssid, problem) => {
-    expect(ssidProblem(ssid)).toBe(problem);
-  });
-
-  test.each(['', '12345678', 'a'.repeat(63), 'F0'.repeat(32)])('password %j is fine', (password) => {
-    expect(passwordProblem(password)).toBeNull();
-  });
-
-  test.each(['short', 'g'.repeat(64), 'a'.repeat(65), 'tab\tin here'])('password %j is refused', (password) => {
-    expect(passwordProblem(password)).not.toBeNull();
-  });
-
-  test('only a Device advertising Wi-Fi offers it', () => {
-    expect(offersWifi(radio)).toBe(true);
-    expect(offersWifi(normal)).toBe(false);
-    expect(offersWifi({ capabilities: null })).toBe(false);
-  });
-
-  test('the status reads the reason the Device reports', () => {
-    const failed = { configured: true, ssid: NETWORK, state: 'failed' as const, reason: 'not-found', ip: null, rssi: null };
-    expect(wifiStatusText(failed, 'Desk')).toBe(`Can't find ${NETWORK}. Check the name, and that Desk is in range. Desk keeps trying.`);
-    expect(wifiStatusText({ ...failed, reason: 'wrong-password' }, 'Desk')).toBe(`${NETWORK} refused the password. Desk keeps trying.`);
-    expect(wifiStatusText({ ...failed, state: 'connected', reason: null, ip: '192.0.2.10', rssi: -52 }, 'Desk')).toBe(`Connected to ${NETWORK} at 192.0.2.10`);
+describe('the Carrier in words', () => {
+  test('USB, Wi-Fi with its address, and nothing while not connected', () => {
+    expect(carrierText(desk)).toBe('Connected over USB');
+    expect(carrierText({ link: { ...USB, port: '192.0.2.21:47820' }, carrier: 'wifi' })).toBe('Connected over Wi-Fi at 192.0.2.21:47820');
+    expect(carrierText(shelf)).toBeNull();
   });
 });
 
-describe('the Wi-Fi store', () => {
-  test('joins a network and follows the join to connected', async () => {
-    const store = wifiFor(radio);
-    await store.load();
-    expect(store.getState().wifi?.state).toBe('off');
-    expect(await store.join(NETWORK, PASSWORD)).toBe(true);
-    expect(store.getState().wifi?.state).toBe('connecting');
-    const wifi = await settled(store);
-    expect(wifi).toMatchObject({ state: 'connected', ssid: NETWORK, ip: '192.0.2.10' });
-    expect(JSON.parse(sent[0])).toEqual({ ssid: NETWORK, password: PASSWORD });
+describe('pairing over Wi-Fi', () => {
+  test('discovery fills in the address, and the right code pairs and links the Device', async () => {
+    const store = pairingFor(shelf);
+    await store.getState().load();
+    expect(store.getState().pairing).toBeNull();
+    await store.getState().begin();
+    expect(store.getState().view).toEqual({ step: 'address', found: true });
+    expect(store.getState().address).toBe('192.0.2.22:47820');
+    await store.getState().start();
+    expect(store.getState().view).toMatchObject({ step: 'code', address: '192.0.2.22:47820', attemptsLeft: 3 });
+    await store.getState().submit(FAKE_WIFI_CODE);
+    expect(store.getState().view.step).toBe('idle');
+    expect(store.getState().pairing).toMatchObject({ device: 'mock0002', address: '192.0.2.22:47820', confirmed: true });
+    const linked = await companion.devices.get({ device: 'mock0002' });
+    expect(linked).toMatchObject({ carrier: 'wifi', link: { state: 'connected', port: '192.0.2.22:47820' } });
   });
 
-  test('never keeps the password', async () => {
-    const store = wifiFor(radio);
-    await store.load();
-    await store.join(NETWORK, PASSWORD);
-    await settled(store);
-    expect(JSON.stringify(store.getState())).not.toContain(PASSWORD);
+  test('a Device the browse misses takes a typed address, with the default port', async () => {
+    const store = pairingFor(desk);
+    await store.getState().begin();
+    expect(store.getState().address).toBe('192.0.2.21:47820');
+    store.getState().type('192.0.2.21');
+    await store.getState().start();
+    expect(store.getState().view).toMatchObject({ step: 'code', address: '192.0.2.21:47820' });
   });
 
-  test('reports a network out of range and a wrong password', async () => {
-    const store = wifiFor(radio);
-    await store.load();
-    await store.join('td-test-nonexistent', PASSWORD);
-    expect(await settled(store)).toMatchObject({ state: 'failed', reason: 'not-found' });
-    await store.join(NETWORK, 'wrong-pass-5678');
-    expect(await settled(store)).toMatchObject({ state: 'failed', reason: 'wrong-password' });
+  test('nothing at the address says so and keeps the address field', async () => {
+    const store = pairingFor(desk);
+    await store.getState().begin();
+    store.getState().type('192.0.2.99');
+    await store.getState().start();
+    expect(store.getState().view).toEqual({ step: 'address', found: false });
+    expect(store.getState().problem).toMatch(/^Nothing answered at that address/u);
   });
 
-  test('joins an open network without a password', async () => {
-    const store = wifiFor(radio);
-    await store.load();
-    await store.join('td-demo-open', '');
-    expect(await settled(store)).toMatchObject({ state: 'connected', ssid: 'td-demo-open' });
+  test('another Device at the address is refused and its attempt cancelled', async () => {
+    const store = pairingFor(desk);
+    await store.getState().begin();
+    store.getState().type('192.0.2.29');
+    await store.getState().start();
+    expect(store.getState().problem).toBe('Another Device answered at that address, not Desk.');
+    expect(fake.wifi.attempts()).toEqual([]);
   });
 
-  test('refuses a bad network or password without sending it', async () => {
-    const store = wifiFor(radio);
-    await store.load();
-    expect(await store.join('', PASSWORD)).toBe(false);
-    expect(await store.join(NETWORK, 'short')).toBe(false);
-    expect(store.getState().problem).toEqual({ password: 'A Wi-Fi password has at least 8 characters.' });
-    expect(sent).toEqual([]);
+  test('wrong codes count down, and the third one locks pairing out', async () => {
+    const store = pairingFor(desk);
+    await atCode(store, '192.0.2.21');
+    await store.getState().submit('000000');
+    expect(store.getState().view).toMatchObject({ step: 'code', attemptsLeft: 2 });
+    expect(store.getState().problem).toBe('Wrong code. 2 tries left.');
+    await store.getState().submit('000000');
+    expect(store.getState().problem).toBe('Wrong code. 1 try left.');
+    await store.getState().submit('000000');
+    expect(store.getState().view.step).toBe('address');
+    expect(store.getState().problem).toMatch(/^Too many wrong codes\. Desk stopped pairing/u);
   });
 
-  test('forgets the network', async () => {
-    const store = wifiFor(radio);
-    await store.load();
-    await store.join(NETWORK, PASSWORD);
-    await settled(store);
-    expect(await store.forget()).toBe(true);
-    expect(store.getState().wifi).toMatchObject({ configured: false, state: 'off', ssid: '' });
+  test('a code that is not six digits never reaches the Companion', async () => {
+    const store = pairingFor(desk);
+    await atCode(store, '192.0.2.21');
+    const before = fake.requests;
+    await store.getState().submit('12a');
+    expect(fake.requests).toBe(before);
+    expect(store.getState().problem).toBe('Enter the 6 digits Desk shows.');
   });
 
-  test('marks Firmware without a Wi-Fi station', async () => {
-    const store = wifiFor({ ...normal, capabilities: RADIO_CAPS });
-    await store.load();
-    expect(store.getState().needs).toBe(true);
-    expect(store.getState().error).toBeNull();
+  test('with no keychain the error says what to do, and the attempt stays open', async () => {
+    fake.wifi.setKeychain(false);
+    const store = pairingFor(desk);
+    await atCode(store, '192.0.2.21');
+    await store.getState().submit(FAKE_WIFI_CODE);
+    expect(store.getState().view.step).toBe('code');
+    expect(store.getState().problem).toMatch(/Credential Manager/u);
+    expect(store.getState().pairing).toBeNull();
   });
 
-  test('reads nothing from a Device that does not offer Wi-Fi', async () => {
-    const store = wifiFor(normal);
-    await store.load();
-    expect(store.getState().load).toBe('idle');
+  test('cancel ends the attempt on the Companion', async () => {
+    const store = pairingFor(desk);
+    await atCode(store, '192.0.2.21');
+    expect(fake.wifi.attempts()).toHaveLength(1);
+    await store.getState().cancel();
+    expect(store.getState().view.step).toBe('idle');
+    expect(fake.wifi.attempts()).toEqual([]);
+  });
+
+  test('forget drops the Pairing and takes the Device off Wi-Fi', async () => {
+    const store = pairingFor(shelf);
+    await atCode(store, '192.0.2.22');
+    await store.getState().submit(FAKE_WIFI_CODE);
+    await store.getState().forget();
+    expect(store.getState().pairing).toBeNull();
+    expect(fake.wifi.pairings()).toEqual([]);
+    expect(await companion.devices.get({ device: 'mock0002' })).toMatchObject({ carrier: null, link: { state: 'offline' } });
+  });
+
+  test('a rename shows in the messages', async () => {
+    let device = desk;
+    const store = createWifiPairing({ companion, device: () => device });
+    device = { ...desk, name: 'Desk left' };
+    await atCode(store, '192.0.2.21');
+    await store.getState().submit('1');
+    expect(store.getState().problem).toBe('Enter the 6 digits Desk left shows.');
+  });
+});
+
+describe('the words for each Wi-Fi error', () => {
+  test.each([
+    ['wifi.window_closed', "Desk isn't pairing. On Desk, open Settings and choose Pair new app, then try again."],
+    ['wifi.expired', 'Pairing ended on Desk. Start again.'],
+    ['wifi.full', 'The keychain message.'],
+    ['wifi.already_paired', 'Desk still has a Pairing with this app. Forget it on Desk (paired apps screen), then pair again.'],
+    ['wifi.version', "Desk's Firmware can't pair over Wi-Fi with this app. Update its Firmware over USB, then try again."],
+    ['wifi.busy', 'Desk is busy with another app. Close it, then try again.'],
+    ['wifi.keychain', 'The keychain message.'],
+  ])('%s', (code, words) => {
+    expect(wifiProblem(new ApiError(code, 'The keychain message.'), 'Desk')).toBe(words);
+  });
+
+  test('a full Device that advertised four Pairings gets the four-apps advice', () => {
+    expect(wifiProblem(new ApiError('wifi.full', 'The Companion message.', { paired: 4 }), 'Desk')).toBe(
+      'Four apps are paired. Forget one first: on Desk, use the paired apps screen, or plug it in with a USB cable.',
+    );
+  });
+});
+
+describe('a Device with four Pairings', () => {
+  test('shows the advice up front and treats full the same way', async () => {
+    fake = createFakeCompanion({
+      devices: [desk, shelf],
+      wifi: { discovered: [{ device: 'mock0002', name: 'Shelf', address: '192.0.2.22:47820', paired: 4 }] },
+    });
+    vi.stubGlobal('fetch', fake.fetch);
+    companion = createClient(BASE, windowSession(fake.bridge));
+    const store = pairingFor(shelf);
+    await store.getState().load();
+    await store.getState().begin();
+    const advice = 'Four apps are paired. Forget one first: on Shelf, use the paired apps screen, or plug it in with a USB cable.';
+    expect(store.getState().view).toEqual({ step: 'address', found: true });
+    expect(store.getState().problem).toBe(advice);
+    await store.getState().start();
+    expect(store.getState().view).toEqual({ step: 'address', found: false });
+    expect(store.getState().problem).toBe(advice);
   });
 });

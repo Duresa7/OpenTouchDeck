@@ -42,8 +42,21 @@ static carrier_slot_t s_carriers[TD_LINK_CARRIERS_MAX];
 static size_t s_carrier_count;
 /* The slot of the frame the link task handles now, or handled last. */
 static size_t s_current;
-/* A packet in s_frames is the slot, the body length and the body. One receive at a time fills this, under s_rx_mutex. */
+/* A packet in s_frames is the slot, the body length and the body. One receive at a time fills this, under s_rx_mutex,
+ * and wipes it once the stream buffer holds the copy. */
 static uint8_t s_rx_packet[TD_LINK_PACKET_HEADER + TD_FRAME_BODY_MAX];
+/* The link task's frame body and message text. Both are wiped after a `wifi.set`, whose password they held. */
+static uint8_t s_body[TD_FRAME_BODY_MAX];
+static char s_message[TD_FRAME_PAYLOAD_MAX + 1];
+
+/* A wipe the compiler can't drop: every store goes through a volatile pointer. */
+static void wipe(void *p, size_t n)
+{
+    volatile unsigned char *b = p;
+    while (n--) {
+        *b++ = 0;
+    }
+}
 static QueueHandle_t s_presses;
 static uint32_t s_press_seq;
 static td_input_mailbox_t s_input;
@@ -193,6 +206,7 @@ void td_link_carrier_receive(const uint8_t *body, size_t len, void *carrier)
     s_rx_packet[2] = (uint8_t)(len >> 8);
     memcpy(s_rx_packet + TD_LINK_PACKET_HEADER, body, len);
     size_t sent = xStreamBufferSend(s_frames, s_rx_packet, len + TD_LINK_PACKET_HEADER, 0);
+    wipe(s_rx_packet + TD_LINK_PACKET_HEADER, len);
     xSemaphoreGive(s_rx_mutex);
     configASSERT(sent == len + TD_LINK_PACKET_HEADER);
 }
@@ -237,9 +251,11 @@ void td_link_fail(cJSON *reply, const char *error)
     cJSON_AddStringToObject(reply, "error", error);
 }
 
-static void handle_message(const td_frame_t *frame)
+/* Handles one message. Returns true when it was a `wifi.set`, which carried a password the caller wipes too. */
+static bool handle_message(const td_frame_t *frame)
 {
-    static char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    char *const payload = s_message;
+    const size_t cap = sizeof s_message;
     memcpy(payload, frame->payload, frame->len);
     payload[frame->len] = '\0';
     const char *end = NULL;
@@ -251,6 +267,7 @@ static void handle_message(const td_frame_t *frame)
         recovered = cJSON_ParseWithLength(raw_message, message_len);
     }
     const char *message = cJSON_GetStringValue(recovered);
+    const bool secret = message && !strcmp(message, "wifi.set");
     bool strict = message && (!strncmp(message, "v2.", 3) || !strncmp(message, "wifi.", 5) || !strcmp(message, "hello"));
     cJSON *reply;
     if (strict && !td_v2_json_valid_live(payload, frame->len, !strcmp(message, "v2.live.set"))) {
@@ -264,26 +281,34 @@ static void handle_message(const td_frame_t *frame)
     } else if (!cJSON_IsObject(request) || end != payload + frame->len) {
         cJSON_Delete(recovered);
         cJSON_Delete(request);
+        if (secret) {
+            wipe(payload, cap);
+        }
         td_link_count_drop();
-        return;
+        return secret;
     } else {
         reply = td_link_dispatch(request);
     }
     cJSON_Delete(recovered);
     cJSON_Delete(request);
-    bool printed = reply && cJSON_PrintPreallocated(reply, payload, sizeof payload, false);
+    if (secret) {
+        /* The handler wiped the parsed password; this is the request text. The reply is printed over it. */
+        wipe(payload, cap);
+    }
+    bool printed = reply && cJSON_PrintPreallocated(reply, payload, (int)cap, false);
     cJSON_Delete(reply);
     if (!printed) {
         td_link_count_drop();
-        return;
+        return secret;
     }
     td_link_send(TD_FRAME_MESSAGE, frame->seq, TD_FRAME_RESPONSE, (const uint8_t *)payload, strlen(payload));
+    return secret;
 }
 
 /* Waits up to `wait` ticks for one frame, and handles it. */
 static void handle_frame(TickType_t wait)
 {
-    static uint8_t body[TD_FRAME_BODY_MAX];
+    uint8_t *const body = s_body;
     uint8_t header[TD_LINK_PACKET_HEADER];
     if (!read_bytes(header, sizeof header, wait)) {
         return;
@@ -299,7 +324,9 @@ static void handle_frame(TickType_t wait)
     s_current = header[0];
     portEXIT_CRITICAL(&s_lock);
     if (frame.type == TD_FRAME_MESSAGE && frame.flags == 0) {
-        handle_message(&frame);
+        if (handle_message(&frame)) {
+            wipe(body, len);
+        }
     } else if (frame.type == TD_FRAME_CHUNK && frame.flags == 0) {
         td_link_files_chunk(frame.seq, frame.payload, frame.len);
     } else if (frame.type == TD_FRAME_ACK && frame.flags == TD_FRAME_RESPONSE) {

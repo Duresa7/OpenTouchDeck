@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# The fake net-v2 Device on loopback, for tests only.
+fake = []
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -12,6 +16,19 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 espflash = { version = "4", default-features = false, features = ["serialport"] }
 serialport = "4.10"
 sha2 = "0.10"
+aes-gcm = "0.10"
+getrandom = "0.3"
+hkdf = "0.12"
+hmac = "0.12"
+mdns-sd = "0.21"
+num-bigint = "0.4"
+srp = "=0.6.0"
+subtle = "2"
+x25519-dalek = { version = "2", features = ["getrandom"] }
+zeroize = "1"
 td-core.workspace = true
 td-host.workspace = true
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+td-link = { path = ".", features = ["fake"] }

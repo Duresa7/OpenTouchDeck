@@ -34,8 +34,14 @@ pub enum DeviceError {
     Timeout,
     #[error("The link to the Device failed: {reason}")]
     Link { reason: String },
+    #[error(
+        "The link closed before the Device answered, so it isn't known whether it did this. Check the Device, then try again if it didn't: {reason}"
+    )]
+    UnknownOutcome { reason: String },
     #[error("This needs newer Firmware on the Device.")]
     NeedsFirmware { field: &'static str },
+    #[error("The Device takes this only over USB. Plug it in with a USB cable.")]
+    UsbOnly,
     #[error("The console line isn't on the read-only allowlist.")]
     ConsoleForbidden,
     #[error(transparent)]
@@ -48,17 +54,20 @@ impl ApiError for DeviceError {
         "device.connected",
         "device.timeout",
         "device.link",
+        "device.unknown_outcome",
         "device.needs_firmware",
+        "device.usb_only",
         "console.forbidden",
     ];
     fn status(&self) -> StatusCode {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
-            Self::NotConnected { .. } | Self::Connected | Self::NeedsFirmware { .. } => {
-                StatusCode::CONFLICT
-            }
+            Self::NotConnected { .. }
+            | Self::Connected
+            | Self::NeedsFirmware { .. }
+            | Self::UsbOnly => StatusCode::CONFLICT,
             Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
-            Self::Link { .. } => StatusCode::BAD_GATEWAY,
+            Self::Link { .. } | Self::UnknownOutcome { .. } => StatusCode::BAD_GATEWAY,
             Self::ConsoleForbidden => StatusCode::FORBIDDEN,
             Self::Common(e) => e.status(),
         }
@@ -70,7 +79,9 @@ impl ApiError for DeviceError {
             Self::Connected => "device.connected",
             Self::Timeout => "device.timeout",
             Self::Link { .. } => "device.link",
+            Self::UnknownOutcome { .. } => "device.unknown_outcome",
             Self::NeedsFirmware { .. } => "device.needs_firmware",
+            Self::UsbOnly => "device.usb_only",
             Self::ConsoleForbidden => "console.forbidden",
             Self::Common(e) => e.code(),
         }
@@ -78,7 +89,9 @@ impl ApiError for DeviceError {
     fn details(&self) -> Option<serde_json::Value> {
         match self {
             Self::NotConnected { link } => Some(serde_json::json!({ "link": link })),
-            Self::Link { reason } => Some(serde_json::json!({ "reason": reason })),
+            Self::Link { reason } | Self::UnknownOutcome { reason } => {
+                Some(serde_json::json!({ "reason": reason }))
+            }
             Self::NeedsFirmware { field } => {
                 Some(serde_json::json!({ "field": field, "version": null }))
             }
@@ -99,6 +112,7 @@ impl From<LinkError> for DeviceError {
     fn from(error: LinkError) -> Self {
         match error {
             LinkError::Timeout(_) => Self::Timeout,
+            LinkError::Unanswered(reason) => Self::UnknownOutcome { reason },
             error => Self::Link {
                 reason: error.to_string(),
             },
@@ -374,7 +388,9 @@ impl Endpoint for SettingsPatch {
             .as_deref()
             .is_some_and(|n| !td_link::identity::valid_name(n))
         {
-            return Err(invalid("name is empty, too long or has control characters"));
+            return Err(invalid(
+                "name is empty, too long or has control, format or filler characters",
+            ));
         }
         if patch.brightness.is_some_and(|b| b > BRIGHTNESS_MAX) {
             return Err(invalid("brightness is a percentage from 0 to 100"));
@@ -569,7 +585,7 @@ impl std::fmt::Debug for WifiSecret {
     }
 }
 /// The network to join: an SSID of 1 to 32 bytes and a password that is empty for an open network, 8 to 63
-/// characters, or 64 hex digits.
+/// printable ASCII characters, or 64 hex digits.
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct WifiSetBody {
@@ -584,6 +600,7 @@ impl From<WifiError> for DeviceError {
             WifiError::Refused { reason, .. } if reason == "unsupported" => {
                 Self::NeedsFirmware { field: "wifi" }
             }
+            WifiError::Refused { reason, .. } if reason == "usb-only" => Self::UsbOnly,
             WifiError::Refused { reason, error } if reason == "args" => {
                 CommonError::invalid("body", error).into()
             }
@@ -593,7 +610,8 @@ impl From<WifiError> for DeviceError {
         }
     }
 }
-/// Runs one Wi-Fi request on a Device whose Firmware has a Wi-Fi station (the radio build).
+/// Runs one Wi-Fi setup request on a Device whose Firmware has a Wi-Fi station (the radio build). The Device takes
+/// its network only over USB, so one connected over Wi-Fi hears nothing.
 async fn on_wifi_device(
     ctx: &Ctx,
     id: &DeviceId,
@@ -602,6 +620,9 @@ async fn on_wifi_device(
     let summary = ctx.devices.get(id).ok_or(DeviceError::NotFound)?;
     if summary.capabilities.as_ref().and_then(|c| c.wifi) != Some(true) {
         return Err(DeviceError::NeedsFirmware { field: "wifi" });
+    }
+    if summary.carrier == Some(crate::devices::Carrier::Wifi) {
+        return Err(DeviceError::UsbOnly);
     }
     let state = ctx.devices.call(id, work).await??;
     Ok(state.into())
@@ -668,7 +689,7 @@ impl Endpoint for WifiSet {
         if !wifi::valid_password(&password) {
             return Err(CommonError::invalid(
                 "body",
-                "password is empty for an open network, 8 to 63 characters, or 64 hex digits",
+                "password is empty for an open network, 8 to 63 printable ASCII characters, or 64 hex digits",
             )
             .into());
         }

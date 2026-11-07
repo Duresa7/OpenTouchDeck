@@ -14,7 +14,8 @@ import { createFakeLive } from './fake/fake-live.ts';
 import { createFakeNewBoards } from './fake/fake-new-boards.ts';
 import { createFakeSessions, type FakeBrowser } from './fake/fake-sessions.ts';
 import { createFakeStartup } from './fake/fake-startup.ts';
-import { createFakeWifi } from './fake/fake-wifi.ts';
+import { createFakeWifi, type FakeWifiOptions } from './fake/fake-wifi.ts';
+import { createFakeWifiSetup, type FakeWifiSetupOptions } from './fake/fake-wifi-setup.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
 // An in-memory Companion for tests and the demo mode of `pnpm dev:ui`. It answers
@@ -34,8 +35,8 @@ export interface FakeCompanionOptions {
   brightness?: Record<string, number>;
   /** The Devices whose Firmware has the photo frame. */
   photoFrame?: readonly string[];
-  /** How long a Wi-Fi join takes on a Device whose capabilities have `wifi`. */
-  wifiJoinMs?: number;
+  /** Wi-Fi setup on Devices whose capabilities have `wifi`: how long a join takes and the networks in range. */
+  wifiSetup?: Omit<FakeWifiSetupOptions, 'devices'>;
   bundled?: FirmwareBuild;
   newBoards?: NewBoard[];
   /** Browsers paired before the start. */
@@ -44,6 +45,8 @@ export interface FakeCompanionOptions {
   /** How CLIProxyAPI starts: not set up unless `configured`. */
   integrations?: Omit<FakeIntegrationsOptions, 'publish'>;
   assets?: Omit<FakeAssetsOptions, 'publish' | 'brandfetch'>;
+  /** Devices on the network and Pairings made before the start. */
+  wifi?: Omit<FakeWifiOptions, 'devices' | 'publish'>;
   iconPacks?: Omit<FakeIconPacksOptions, 'publish'>;
   brandfetch?: FakeBrandfetchOptions;
 }
@@ -126,7 +129,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   });
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs, wrote: controls.wrote });
   const settings = createFakeDeviceSettings({ devices, publish, brightness: options.brightness, photoFrame: options.photoFrame });
-  const wifi = createFakeWifi({ devices, joinMs: options.wifiJoinMs });
+  const wifiSetup = createFakeWifiSetup({ devices, ...options.wifiSetup });
   const firmware = createFakeFirmware({ devices, publish, bundled: options.bundled, stepMs: options.jobMs });
   const newBoards = createFakeNewBoards({ devices, publish, bundled: options.bundled ?? { version: '1.5.0', build: 'fake' }, boards: options.newBoards, stepMs: options.jobMs });
   const actions = createFakeActions({ devices, publish, stored: layouts.stored });
@@ -138,6 +141,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const iconPacks = createFakeIconPacks({ publish, ...options.iconPacks });
   const brandfetch = createFakeBrandfetch(options.brandfetch);
   const assets = createFakeAssets({ publish, packHits: iconPacks.hits, ...options.assets, brandfetch });
+  const wifi = createFakeWifi({ devices, publish, ...options.wifi });
 
   function mint() {
     minted += 1;
@@ -177,7 +181,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     if (path.startsWith('/test/'))
       return (
         (await firmware.test(request, path)) ??
-        wifi.test(request, path) ??
+        wifiSetup.test(request, path) ??
         (await newBoards.test(request, path)) ??
         (await actions.test(request, path)) ??
         (await live.test(request, path)) ??
@@ -206,12 +210,13 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       (await assets.handle(request, path)) ??
       (await brandfetch.handle(request, path)) ??
       (await settings.handle(request, path)) ??
-      (await wifi.handle(request, path)) ??
+      (await wifiSetup.handle(request, path)) ??
       (await firmware.handle(request, path)) ??
       (await newBoards.handle(request, path)) ??
       (await layouts.handle(request, path)) ??
       actions.handle(request, path) ??
       (await integrations.handle(request, path)) ??
+      (await wifi.handle(request, path)) ??
       failure(404, 'route.not_found', 'No route with that path.')
     );
   }
@@ -247,6 +252,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     consoles,
     integrations,
     assets,
+    wifi,
     iconPacks,
     brandfetch,
     /** Sessions minted so far through the bridge. */
@@ -323,6 +329,7 @@ export { fakeMedia, fakeVolume } from './fake/fake-media.ts';
 export { freshDevice, newBoard } from './fake/fake-new-boards.ts';
 export { createFakeSessions } from './fake/fake-sessions.ts';
 export { fakeThisPc } from './fake/fake-this-pc.ts';
-export { FAKE_NETWORKS } from './fake/fake-wifi.ts';
+export { FAKE_NETWORKS } from './fake/fake-wifi-setup.ts';
 export { createFakeUpdates, sampleOffer, type FakeUpdatesScript } from './fake/fake-updates.ts';
+export { FAKE_WIFI_CODE } from './fake/fake-wifi.ts';
 export { LONG_WORD, WORST_DEVICE_NAMES, WORST_LABELS, worstDevices, worstLayout, worstLayouts } from './fake/fake-worst.ts';

@@ -5,15 +5,17 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-static const char *TAG = "wifi";
+static const char *TAG = "td_wifi";
 
 /*
  * The station logic. One lock guards everything here and is held across the driver calls, so a set, a forget and the
  * driver's events apply one at a time and in order. The NVS write of a set or forget happens under it too: it is rare,
  * and the indicator reads the status without the lock.
  *
- * Log lines name no network and never the password: the SSID is the person's, and the console log reaches the
- * Companion.
+ * Our log lines name no network and never the password: the SSID is the person's, and the console log reaches the
+ * Companion. ESP-IDF's own Wi-Fi and supplicant lines do name it ("connected with <SSID>, bssid=..."), and the netif
+ * handler logs the address it got, so td_wifi_quiet_logs() turns those tags down before the station starts. Our tag is
+ * td_wifi, so turning down `wifi` keeps our lines.
  */
 static SemaphoreHandle_t s_lock;
 static const td_wifi_driver_t *s_driver;
@@ -32,6 +34,14 @@ static void wipe(void *p, size_t n)
     volatile unsigned char *b = p;
     while (n--) {
         *b++ = 0;
+    }
+}
+
+void td_wifi_quiet_logs(void)
+{
+    static const char *const tags[] = { "wifi", "wpa", "esp_netif_handlers" };
+    for (size_t i = 0; i < sizeof tags / sizeof tags[0]; i++) {
+        esp_log_level_set(tags[i], ESP_LOG_ERROR);
     }
 }
 

@@ -34,7 +34,7 @@ RADIO_SETTINGS = {**NORMAL_SETTINGS, **guard.RADIO_BUILD_OPTIONS, "TD_RADIO_INTE
 RADIO_COMPONENTS = NORMAL_COMPONENTS + ["td_radio", "esp_wifi", "esp_netif", "lwip", "bt", "esp_phy", "esp_coex",
                                         "wpa_supplicant"]
 RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "esp_wifi_connect",
-                 "ble_gatts_count_cfg"}
+                 "td_wifi_quiet_logs", "ble_gatts_count_cfg"}
 # Spelled out here, not read from the guard, so dropping a name from the guard fails a test.
 FORBIDDEN_OPTIONS = ("ESP_WIFI_ENABLED", "ESP_HOST_WIFI_ENABLED", "BT_ENABLED", "BT_CONTROLLER_ENABLED",
                      "BT_NIMBLE_ENABLED", "BT_BLUEDROID_ENABLED", "TD_RADIO_BUILD")
@@ -188,7 +188,8 @@ class RadioBuildTests(unittest.TestCase):
 
     def test_unwired_station_fails(self):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
-        for symbol in ("esp_wifi_start", "esp_wifi_connect"):
+        # td_wifi_quiet_logs turns down the ESP-IDF tags that log the network's name (#269 review).
+        for symbol in ("esp_wifi_start", "esp_wifi_connect", "td_wifi_quiet_logs"):
             with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, f"does not link: \\['{symbol}'\\]"):
                 guard.check_radio(build, symbols=RADIO_SYMBOLS - {symbol})
 

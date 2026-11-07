@@ -131,6 +131,19 @@ update or conflicting reuse of its counter. `rate` includes `retry_ms`, 1 to
 `v2.name.set` requires `name` and returns the stored `name`. The name is 1 to 48
 UTF-8 bytes, contains at least one non-whitespace Unicode code point, and obeys
 the string rules above. No truncation, normalization, or trimming occurs.
+The name also MUST NOT contain a format character (`\p{Cf}`) or one of the
+Hangul fillers U+115F, U+1160, U+3164 and U+FFA0. Format characters are
+invisible or reorder text, so they can make one name look like another on
+screen, and the fillers are letters that render as blank space. This is the
+rule net-v2 applies to `companion_name`, with the `\p{Cf}` set pinned to Unicode
+17.0's, the inclusive ranges listed in [net-v2.md](net-v2.md#pairing) so a
+receiver needs no Unicode database. Rejecting U+200D also rejects emoji joined
+into one glyph; single emoji are fine. Firmware refuses such a name with
+`args`, and the Companion and the UI refuse it before they send it. The names
+in [name-vectors-v2.json](name-vectors-v2.json), shared with net-v2, show which
+names every implementation accepts and refuses. A Device name already stored
+with one of these characters reads as corrupt, so Firmware shows the default
+until the next successful set.
 The factory default is `Open TouchDeck`. Firmware stores the name in NVS under
 namespace `td_device`, key `name`, separately from Layouts and network pairing.
 It acknowledges only after durable commit. An identical set causes no write.
@@ -160,7 +173,8 @@ names return `unsupported`; there is no scan message.
 | `wifi.forget` | none | `storage` |
 
 `ssid` is 1 to 32 UTF-8 bytes. `password` is empty for an open network, 8 to
-63 bytes for a WPA passphrase, or 64 hex digits for a raw key. Both obey the
+63 printable ASCII characters (0x20 to 0x7e) for a WPA passphrase, or 64 hex
+digits for a raw key. Both obey the
 string rules above. `wifi.set` stores the network in NVS, in namespace
 `td_wifi`, apart from the Device name, the Layouts and network pairing, then
 leaves any other network and joins this one. A failed write keeps the old

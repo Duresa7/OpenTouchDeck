@@ -4,32 +4,6 @@
 #include <stdint.h>
 #include <string.h>
 
-bool td_device_name_valid(const char *name)
-{
-    if (!name || !*name || strlen(name) > TD_DEVICE_NAME_MAX) return false;
-    const unsigned char *p = (const unsigned char *)name;
-    bool visible = false;
-    while (*p) {
-        uint32_t c = *p++;
-        unsigned count = 0;
-        uint32_t min = 0;
-        if (c >= 0xc2 && c <= 0xdf) { c &= 31; count = 1; min = 0x80; }
-        else if (c >= 0xe0 && c <= 0xef) { c &= 15; count = 2; min = 0x800; }
-        else if (c >= 0xf0 && c <= 0xf4) { c &= 7; count = 3; min = 0x10000; }
-        else if (c >= 0x80) return false;
-        while (count--) {
-            if ((*p & 0xc0) != 0x80) return false;
-            c = (c << 6) | (*p++ & 63);
-        }
-        if (c < min || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff) || c < 32 || c == 127) return false;
-        bool space = c == 32 || c == 0x85 || c == 0xa0 || c == 0x1680 ||
-                     (c >= 0x2000 && c <= 0x200a) || c == 0x2028 || c == 0x2029 ||
-                     c == 0x202f || c == 0x205f || c == 0x3000;
-        visible |= !space;
-    }
-    return visible;
-}
-
 esp_err_t td_device_name_get(char out[TD_DEVICE_NAME_MAX + 1])
 {
     strcpy(out, "Open TouchDeck");

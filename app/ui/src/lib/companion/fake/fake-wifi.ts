@@ -1,98 +1,150 @@
-import type { DeviceSummary, DeviceWifi } from '../api.ts';
+import type { DeviceSummary, PairingStarted, WifiDevice, WifiPairing } from '../api.ts';
 
-// The Device's Wi-Fi network on mock Devices, as docs/companion-api.md (Device Wi-Fi) describes it. Only a Device
-// whose capabilities say `wifi: true` answers; the others need Firmware. Every network and password is made up.
+// The `wifi` routes of docs/companion-api.md: discovery, pairing with the code the Device
+// shows, and Pairings. Discovery answers `discovered`; a typed address must match one of
+// them, with or without the port. A right code links the Device over Wi-Fi when it isn't
+// connected, the way the Wi-Fi thread would.
 
-/** The networks in range of every fake Device, by name, with their passwords. `''` is an open network. */
-export const FAKE_NETWORKS: Readonly<Record<string, string>> = {
-  'td-demo-network': 'demo-pass-1234',
-  'td-demo-open': '',
-};
+type Frame = Record<string, unknown> & { type: string };
 
 export interface FakeWifiOptions {
   devices: Map<string, DeviceSummary>;
-  networks?: Readonly<Record<string, string>>;
-  /** How long a join takes before it connects or fails. */
-  joinMs?: number;
+  publish(frame: Frame): void;
+  /** Devices on the network: what `wifi.discover` finds and `wifi.pair_start` reaches. */
+  discovered?: readonly Omit<WifiDevice, 'paired_here'>[];
+  pairings?: readonly WifiPairing[];
+  /** The code every Device shows. */
+  code?: string;
 }
 
-interface Station {
-  ssid: string;
-  password: string;
-  since: number;
-}
-
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+const json = (status: number, body: unknown) =>
+  new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 const failure = (status: number, code: string, message: string, details: unknown = null) => json(status, { error: { code, message, details } });
 
-const special = (text: string) => [...text].some((c) => c <= '\u001f' || c === '\u007f');
-const bytes = (text: string) => new TextEncoder().encode(text).length;
-const validSsid = (ssid: string) => ssid.length > 0 && bytes(ssid) <= 32 && !special(ssid);
-const validPassword = (password: string) =>
-  password === '' || (bytes(password) >= 8 && bytes(password) < 64 && !special(password)) || /^[0-9a-f]{64}$/iu.test(password);
+export const FAKE_WIFI_CODE = '123456';
+export const NET_PORT = 47820;
+const WINDOW_MS = 120_000;
+const ATTEMPTS = 3;
+/** The Pairings a Device holds when every slot is taken. */
+const FULL = 4;
+const KEYCHAIN_MISSING =
+  "Windows Credential Manager isn't available, so the Companion can't keep the Pairing key. Sign in to Windows with your own user account and pair again.";
+
+const withPort = (address: string) => (/:\d+$/u.test(address) && !address.endsWith(']') ? address : `${address}:${NET_PORT}`);
+
+async function bodyOf(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
+}
+
+const field = (body: unknown, key: string): unknown => (typeof body === 'object' && body !== null && key in body ? (body as Record<string, unknown>)[key] : undefined);
 
 export function createFakeWifi(options: FakeWifiOptions) {
-  const { devices, networks = FAKE_NETWORKS, joinMs = 800 } = options;
-  const stations = new Map<string, Station>();
+  const { devices, publish, code = FAKE_WIFI_CODE } = options;
+  const discovered = (options.discovered ?? []).map((d) => ({ ...d, address: withPort(d.address) }));
+  const pairings = new Map((options.pairings ?? []).map((p) => [p.device, structuredClone(p)]));
+  const attempts = new Map<string, PairingStarted>();
+  let minted = 0;
+  let keychain = true;
+  let discoveries = 0;
 
-  function view(id: string): DeviceWifi {
-    const station = stations.get(id);
-    if (!station) return { configured: false, ssid: '', state: 'off', reason: null, ip: null, rssi: null };
-    const base = { configured: true, ssid: station.ssid, reason: null, ip: null, rssi: null };
-    if (Date.now() - station.since < joinMs) return { ...base, state: 'connecting' };
-    const expected = networks[station.ssid];
-    if (expected === undefined) return { ...base, state: 'failed', reason: 'not-found' };
-    if (expected !== station.password) return { ...base, state: 'failed', reason: 'wrong-password' };
-    return { ...base, state: 'connected', ip: '192.0.2.10', rssi: -52 };
+  function link(id: string, change: Partial<DeviceSummary>) {
+    const current = devices.get(id);
+    if (!current) return;
+    const next = { ...current, ...change, rev: current.rev + 1 };
+    devices.set(id, next);
+    publish({ type: 'device.updated', device: id, data: next });
   }
 
-  function reachable(id: string): DeviceSummary | Response {
-    const device = devices.get(id);
-    if (!device) return failure(404, 'device.not_found', 'No Device with that id.');
-    if (device.link.state !== 'connected') return failure(409, 'device.not_connected', 'The Device is not connected.', { link: device.link });
-    if (device.capabilities?.wifi !== true) return failure(409, 'device.needs_firmware', 'This needs newer Firmware on the Device.', { field: 'wifi', version: null });
-    return device;
+  function start(address: string): Response {
+    const target = withPort(address.trim());
+    const found = discovered.find((d) => d.address === target);
+    if (!found) return failure(502, 'wifi.unreachable', `Nothing answered at ${target}.`, { reason: 'connection refused' });
+    if (pairings.has(found.device)) return failure(409, 'wifi.already_paired', 'This Companion already has a Pairing with the Device.');
+    if (found.paired === FULL)
+      return failure(409, 'wifi.full', 'This Device has four paired apps. Remove one on the Device (paired apps screen), or over USB, then pair again.', { paired: FULL });
+    minted += 1;
+    const started: PairingStarted = { attempt: `attempt_${minted}`, device: found.device, address: found.address, remaining_ms: WINDOW_MS, attempts_left: ATTEMPTS };
+    attempts.set(started.attempt, started);
+    return json(200, started);
   }
 
-  async function put(request: Request, id: string): Promise<Response> {
-    const body: unknown = await request.json().catch(() => null);
-    // A body that doesn't parse gets one fixed reason, so nothing of it comes back.
-    const shape = failure(400, 'request.invalid', 'The request body is invalid.', { part: 'body', reason: 'the body is {"ssid": string, "password": string}' });
-    if (typeof body !== 'object' || body === null || Object.keys(body).some((key) => key !== 'ssid' && key !== 'password')) return shape;
-    const ssid: unknown = Reflect.get(body, 'ssid');
-    const password: unknown = Reflect.get(body, 'password');
-    if (typeof ssid !== 'string' || typeof password !== 'string') return shape;
-    if (!validSsid(ssid)) return failure(400, 'request.invalid', 'The request body is invalid.', { part: 'body', reason: 'ssid is 1 to 32 bytes without control characters' });
-    if (!validPassword(password)) {
-      return failure(400, 'request.invalid', 'The request body is invalid.', { part: 'body', reason: 'password is empty for an open network, 8 to 63 characters, or 64 hex digits' });
+  function submit(attempt: string, body: unknown): Response {
+    const digits = field(body, 'code');
+    if (typeof digits !== 'string' || !/^\d{6}$/u.test(digits)) return failure(400, 'request.invalid', 'The code is six digits.');
+    const started = attempts.get(attempt);
+    if (!started) return failure(404, 'wifi.attempt_not_found', 'No started pairing with that id.');
+    if (digits !== code) {
+      const left = started.attempts_left - 1;
+      if (left <= 0) {
+        attempts.delete(attempt);
+        return failure(429, 'wifi.locked', 'The Device stopped pairing for 30 s after three wrong codes.');
+      }
+      started.attempts_left = left;
+      return failure(422, 'wifi.wrong_code', 'The code is wrong.', { attempts_left: left });
     }
-    stations.set(id, { ssid, password, since: Date.now() });
-    return json(200, view(id));
+    if (!keychain) return failure(503, 'wifi.keychain', KEYCHAIN_MISSING);
+    attempts.delete(attempt);
+    const name = discovered.find((d) => d.device === started.device)?.name ?? null;
+    const pairing: WifiPairing = { device: started.device, address: started.address, name, confirmed: true, paired_ms: Date.now(), problem: null };
+    pairings.set(pairing.device, pairing);
+    const device = devices.get(pairing.device);
+    if (device && device.link.state !== 'connected' && device.link.state !== 'updating') {
+      link(pairing.device, { link: { state: 'connected', port: pairing.address, since_ms: Date.now(), protocol: device.firmware?.protocol ?? 2 }, carrier: 'wifi' });
+    }
+    return json(200, pairing);
+  }
+
+  function forget(id: string): Response {
+    if (!pairings.delete(id)) return failure(404, 'wifi.not_paired', 'No Pairing with that Device.');
+    if (devices.get(id)?.carrier === 'wifi') link(id, { link: { state: 'offline' }, carrier: null });
+    return json(204, null);
+  }
+
+  async function handle(request: Request, path: string): Promise<Response | null> {
+    if (!path.startsWith('/wifi/')) return null;
+    const method = request.method;
+    if (path === '/wifi/discover') {
+      if (method !== 'POST') return failure(405, 'route.method_not_allowed', 'Use POST.');
+      discoveries += 1;
+      return json(
+        200,
+        discovered.map((d) => ({ ...d, paired_here: pairings.has(d.device) })),
+      );
+    }
+    if (path === '/wifi/pairings') {
+      if (method === 'GET') return json(200, [...pairings.values()]);
+      if (method !== 'POST') return failure(405, 'route.method_not_allowed', 'Use GET or POST.');
+      const address = field(await bodyOf(request), 'address');
+      return typeof address === 'string' && address.trim() ? start(address) : failure(400, 'request.invalid', 'Give an address.');
+    }
+    const code = /^\/wifi\/attempts\/([^/]+)\/code$/u.exec(path);
+    if (code) return method === 'POST' ? submit(decodeURIComponent(code[1]), await bodyOf(request)) : failure(405, 'route.method_not_allowed', 'Use POST.');
+    const attempt = /^\/wifi\/attempts\/([^/]+)$/u.exec(path);
+    if (attempt) {
+      if (method !== 'DELETE') return failure(405, 'route.method_not_allowed', 'Use DELETE.');
+      return attempts.delete(decodeURIComponent(attempt[1])) ? json(204, null) : failure(404, 'wifi.attempt_not_found', 'No started pairing with that id.');
+    }
+    const pairing = /^\/wifi\/pairings\/([^/]+)$/u.exec(path);
+    if (pairing) return method === 'DELETE' ? forget(decodeURIComponent(pairing[1])) : failure(405, 'route.method_not_allowed', 'Use DELETE.');
+    return failure(404, 'route.not_found', 'No route with that path.');
   }
 
   return {
-    async handle(request: Request, path: string): Promise<Response | null> {
-      const match = /^\/devices\/([^/]+)\/wifi$/.exec(path);
-      if (!match) return null;
-      const device = reachable(decodeURIComponent(match[1]));
-      if (device instanceof Response) return device;
-      if (request.method === 'GET') return json(200, view(device.id));
-      if (request.method === 'PUT') return put(request, device.id);
-      if (request.method === 'DELETE') {
-        stations.delete(device.id);
-        return json(200, view(device.id));
-      }
-      return failure(405, 'route.method_not_allowed', 'Use GET, PUT or DELETE.');
+    handle,
+    /** Whether pairing can store its key: false answers `wifi.keychain`. */
+    setKeychain(on: boolean) {
+      keychain = on;
     },
-
-    /** `/test/devices/{id}/wifi`: what the Device stored, password included, for a test to check what was sent. */
-    test(request: Request, path: string): Response | null {
-      const match = /^\/test\/devices\/([^/]+)\/wifi$/.exec(path);
-      if (!match) return null;
-      if (request.method !== 'GET') return failure(405, 'route.method_not_allowed', 'Use GET.');
-      const station = stations.get(decodeURIComponent(match[1]));
-      return json(200, station ? { ssid: station.ssid, password: station.password } : null);
+    pairings: () => [...pairings.values()].map((p) => ({ ...p })),
+    /** Pairings started and not yet finished or cancelled. */
+    attempts: () => [...attempts.keys()],
+    get discoveries() {
+      return discoveries;
     },
   };
 }

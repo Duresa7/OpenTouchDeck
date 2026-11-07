@@ -340,6 +340,16 @@ static td_line_status_t read_line(rx_t *rx, char *line, size_t cap)
     }
 }
 
+/* A wipe the compiler can't drop: every store goes through a volatile pointer. A line may hold a password
+ * (`wifi set <ssid> <password>`), so nothing keeps it after it ran. */
+static void wipe(void *p, size_t n)
+{
+    volatile unsigned char *b = p;
+    while (n--) {
+        *b++ = 0;
+    }
+}
+
 static void command_word(const char *line, char *word, size_t cap)
 {
     char copy[TD_LINE_MAX];
@@ -349,6 +359,7 @@ static void command_word(const char *line, char *word, size_t cap)
     if (esp_console_split_argv(copy, argv, 2) > 0) {
         strlcpy(word, argv[0], cap);
     }
+    wipe(copy, sizeof copy);
 }
 
 static void run_line(const char *line)
@@ -386,6 +397,10 @@ static void console_task(void *arg)
         case TD_LINE_MORE:
             break;
         }
+        /* The line and the bytes it came in are done with: wipe both, but keep the unread bytes of the next line. */
+        wipe(line, sizeof line);
+        wipe(rx.in, rx.pos);
+        wipe(rx.in + rx.len, sizeof rx.in - rx.len);
     }
 }
 

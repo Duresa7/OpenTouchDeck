@@ -53,6 +53,21 @@ static bool hex_key(const char *s, size_t len)
     return true;
 }
 
+/* A WPA passphrase: 8 to 63 printable ASCII characters (IEEE 802.11 Annex J). */
+static bool passphrase(const char *s, size_t len)
+{
+    if (len < TD_WIFI_PASSWORD_MIN || len >= TD_WIFI_PASSWORD_MAX) {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        const unsigned char c = (unsigned char)s[i];
+        if (c < 0x20 || c > 0x7e) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool td_wifi_credentials_valid(const char *ssid, const char *password)
 {
     if (!ssid || !password) {
@@ -60,11 +75,10 @@ bool td_wifi_credentials_valid(const char *ssid, const char *password)
     }
     const size_t ssid_len = strlen(ssid);
     const size_t password_len = strlen(password);
-    if (ssid_len == 0 || ssid_len > TD_WIFI_SSID_MAX || !text_valid(ssid) || !text_valid(password)) {
+    if (ssid_len == 0 || ssid_len > TD_WIFI_SSID_MAX || !text_valid(ssid)) {
         return false;
     }
-    return password_len == 0 || (password_len >= TD_WIFI_PASSWORD_MIN && password_len < TD_WIFI_PASSWORD_MAX) ||
-           hex_key(password, password_len);
+    return password_len == 0 || passphrase(password, password_len) || hex_key(password, password_len);
 }
 
 /* The numbers are wifi_err_reason_t's in ESP-IDF v6.1. td_radio.c checks them against esp_wifi_types.h. */

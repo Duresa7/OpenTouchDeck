@@ -1,3 +1,4 @@
+import { hasHiddenCharacter } from '../../device/name-rule.ts';
 import type { DeviceSettings, DeviceSummary, LinkState, PhotoFrameSettings } from '../api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
@@ -16,7 +17,7 @@ const json = (status: number, body: unknown) =>
 const failure = (status: number, code: string, message: string, details: unknown = null) => json(status, { error: { code, message, details } });
 
 const validName = (name: string) =>
-  name.length > 0 && new TextEncoder().encode(name).length <= 48 && /\S/u.test(name) && ![...name].some((c) => c <= '\u001f' || c === '\u007f');
+  name.length > 0 && new TextEncoder().encode(name).length <= 48 && /\S/u.test(name) && !hasHiddenCharacter(name);
 
 interface Stored {
   idle_timeout_s: number;
@@ -92,7 +93,7 @@ export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
     const folder = part('folder');
     if (orientation !== null && orientation !== 'landscape' && orientation !== 'portrait') return invalid('orientation is landscape or portrait');
     if (idle !== null && (typeof idle !== 'number' || !Number.isInteger(idle) || idle < 1 || idle > 86400)) return invalid('idle_timeout_s is out of range');
-    if (name !== null && (typeof name !== 'string' || !validName(name))) return invalid('name is empty, too long or has control characters');
+    if (name !== null && (typeof name !== 'string' || !validName(name))) return invalid('name is empty, too long or has control, format or filler characters');
     if (brightness !== null && (typeof brightness !== 'number' || !Number.isInteger(brightness) || brightness < 0 || brightness > 100)) return invalid('brightness is a percentage from 0 to 100');
     if (frame !== null && typeof frame !== 'object') return invalid('photo_frame is an object');
     if (enabled !== null && typeof enabled !== 'boolean') return invalid('photo_frame.enabled is true or false');

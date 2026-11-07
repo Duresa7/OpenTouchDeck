@@ -17,7 +17,7 @@ use crate::session::{LinkError, Session};
 
 pub const SSID_MAX: usize = 32;
 pub const PASSWORD_MIN: usize = 8;
-/// A passphrase is 8 to 63 bytes; 64 hex digits are a raw key.
+/// A passphrase is 8 to 63 printable ASCII characters; 64 hex digits are a raw key.
 pub const PASSWORD_MAX: usize = 64;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -51,6 +51,11 @@ impl fmt::Debug for WifiPassword {
     }
 }
 
+/// Printable ASCII, 0x20 to 0x7e: what IEEE 802.11 allows in a WPA passphrase.
+fn printable_ascii(text: &str) -> bool {
+    text.bytes().all(|b| (0x20..=0x7e).contains(&b))
+}
+
 fn text_valid(text: &str) -> bool {
     !text.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}')
 }
@@ -60,11 +65,11 @@ pub fn valid_ssid(ssid: &str) -> bool {
     !ssid.is_empty() && ssid.len() <= SSID_MAX && text_valid(ssid)
 }
 
-/// Empty for an open network, 8 to 63 bytes without control characters, or 64 hex digits.
+/// Empty for an open network, 8 to 63 printable ASCII characters, or 64 hex digits.
 pub fn valid_password(password: &WifiPassword) -> bool {
     let p = password.expose();
     p.is_empty()
-        || ((PASSWORD_MIN..PASSWORD_MAX).contains(&p.len()) && text_valid(p))
+        || ((PASSWORD_MIN..PASSWORD_MAX).contains(&p.len()) && printable_ascii(p))
         || (p.len() == PASSWORD_MAX && p.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
@@ -199,7 +204,7 @@ pub fn wifi_set(
     }
     if !valid_password(password) {
         return Err(WifiError::Invalid(
-            "The password is empty for an open network, 8 to 63 characters, or 64 hex digits.",
+            "The password is empty for an open network, 8 to 63 printable ASCII characters, or 64 hex digits.",
         ));
     }
     let payload = serde_json::to_vec(&Set {
@@ -242,6 +247,11 @@ mod tests {
         assert!(!valid_password(&WifiPassword::new("g".repeat(64))));
         assert!(valid_password(&WifiPassword::new("F".repeat(64))));
         assert!(!valid_password(&WifiPassword::new("line\nbreak")));
+        // A passphrase is printable ASCII only.
+        assert!(valid_password(&WifiPassword::new(" ~dummy pass~ ")));
+        assert!(!valid_password(&WifiPassword::new("dummy-pass\u{7f}")));
+        assert!(!valid_password(&WifiPassword::new("café-dummy-pass")));
+        assert!(!valid_password(&WifiPassword::new("dummy-pass-\u{200b}")));
         assert!(valid_ssid("td-test-network"));
         assert!(valid_ssid(&"x".repeat(32)));
         assert!(!valid_ssid(&"x".repeat(33)));

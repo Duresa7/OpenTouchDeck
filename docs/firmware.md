@@ -542,7 +542,11 @@ What the radio build does:
   stays unencrypted (above), so anyone with the board and a flash reader can
   read the password, as with any ESP-IDF station. Log lines never name the
   network or the password; a failed join logs only its reason, such as
-  `wifi: join failed: not-found, retry in 1000 ms`.
+  `td_wifi: join failed: not-found, retry in 1000 ms`. ESP-IDF's own `wifi`,
+  `wpa` and `esp_netif_handlers` lines name the network, a nearby access point
+  or the address, so the radio build sets those tags to errors only before the
+  station starts, and `radio_guard.py` requires `td_wifi_quiet_logs` in the
+  image.
 - A small Wi-Fi glyph at the right end of the title band shows the station
   while a network is stored: grey when joined, dim while joining, amber after
   a failure. With no network stored it is hidden.
@@ -679,8 +683,10 @@ build, with the other host tests.
 and the rest of the Device, from `firmware/tools/host/link/`. It sends link
 messages through the USB console's frame handler and through a fake carrier, and
 checks which carrier each reply and event leaves on, the USB wire bytes, and the
-online state per carrier. It needs a C compiler, `cl` from an x64 Visual Studio
-developer terminal on Windows or `cc` elsewhere, and one firmware build first,
+online state per carrier. It also runs the production Device name check against
+[name-vectors-v2.json](../schema/protocol/name-vectors-v2.json) and sends each
+refused name in `v2.name.set`, which must answer `args`. It needs a C compiler,
+`cl` from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere, and one firmware build first,
 which fetches cJSON into `firmware/managed_components`. It doesn't need
 `IDF_PATH`. It also checks that `wifi.*` messages answer `unsupported` without
 the radio build's handler, `usb-only` on any other carrier, and that the
@@ -704,7 +710,8 @@ refuses association. The legacy discovery API remains available.
 
 The `td-link` CLI provides `discover-identities`, `identity`, `name`, and
 `set-name "Studio"`. Names default to `Open TouchDeck`, contain 1–48 UTF-8
-bytes, and persist in NVS separately from Layouts. See the
+bytes, hold no format character or Hangul filler, and persist in NVS separately
+from Layouts. See the
 [protocol contract](../schema/protocol/link-v2.md) for validation rules.
 It advertises the `static`, `graph`, `photo-frame`, and `clock` Tile kinds, the
 tdi1 format, and `photo_bytes` 131072. The live values, photo frame, idle, and

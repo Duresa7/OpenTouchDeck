@@ -1,222 +1,231 @@
-import { createStore } from 'zustand/vanilla';
-import type { DeviceSummary, DeviceWifi } from '../companion/api.ts';
+import { createStore, type StoreApi } from 'zustand/vanilla';
+import type { DeviceSummary, PairingStarted, WifiPairing } from '../companion/api.ts';
 import type { Companion } from '../companion/client.ts';
 import { toApiError, type ApiError } from '../companion/errors.ts';
 
-// The Device's Wi-Fi network, for a Device whose Firmware has a Wi-Fi station (the radio build). The store keeps
-// what the Device reports and never the password: `join` hands it straight to the Companion and forgets it.
+// Pairing one Device over Wi-Fi (docs/companion-api.md, Wi-Fi Carrier): find it on the
+// network or take a typed address, start pairing, then send the six digits the Device shows.
 
-export const SSID_BYTES = 32;
-export const PASSWORD_MIN = 8;
-export const PASSWORD_MAX = 64;
+export type WifiStep =
+  | { step: 'idle' }
+  | { step: 'finding' }
+  | { step: 'address'; found: boolean }
+  | { step: 'starting' }
+  | { step: 'code'; attempt: string; address: string; attemptsLeft: number }
+  | { step: 'checking'; attempt: string; address: string; attemptsLeft: number };
 
-const bytes = (text: string) => new TextEncoder().encode(text).length;
-const special = (text: string) => [...text].some((c) => c <= '\u001f' || c === '\u007f');
-
-/** `true` for a Device that advertises a Wi-Fi station. */
-export function offersWifi(device: Pick<DeviceSummary, 'capabilities'>): boolean {
-  return device.capabilities?.wifi === true;
+export interface WifiState {
+  loaded: 'idle' | 'loading' | 'ready' | 'failed';
+  /** This Device's Pairing, or null when it has none. */
+  pairing: WifiPairing | null;
+  view: WifiStep;
+  /** The address field: what discovery found, or what the person typed. */
+  address: string;
+  problem: string | null;
 }
 
-export function ssidProblem(ssid: string): string | null {
-  if (ssid.length === 0) return 'Type the network name.';
-  if (bytes(ssid) > SSID_BYTES) return 'That network name is too long.';
-  if (special(ssid)) return 'Remove tabs, line breaks and other special characters.';
-  return null;
+export interface WifiActions {
+  load(): Promise<void>;
+  /** Opens the flow: a short network search, then the address field. */
+  begin(): Promise<void>;
+  type(address: string): void;
+  start(): Promise<void>;
+  submit(code: string): Promise<void>;
+  cancel(): Promise<void>;
+  forget(): Promise<void>;
 }
 
-/** Empty for an open network, 8 to 63 characters, or 64 hex digits. */
-export function passwordProblem(password: string): string | null {
-  if (password.length === 0) return null;
-  const length = bytes(password);
-  if (length === PASSWORD_MAX && /^[0-9a-f]+$/iu.test(password)) return null;
-  if (length < PASSWORD_MIN) return 'A Wi-Fi password has at least 8 characters.';
-  if (length >= PASSWORD_MAX) return 'A Wi-Fi password has at most 63 characters, or exactly 64 hex digits.';
-  if (special(password)) return 'Remove tabs, line breaks and other special characters.';
-  return null;
+export type WifiStore = StoreApi<WifiState & WifiActions>;
+
+export interface WifiDeps {
+  companion: Pick<Companion, 'wifi'>;
+  /** The Device, read on each use so a rename shows in the messages. */
+  device: () => Pick<DeviceSummary, 'id' | 'name'>;
 }
 
-/** Why the station failed, in words, from the reason the Device reports. */
-export function wifiReasonText(reason: string | null, ssid: string, device: string): string {
-  switch (reason) {
-    case 'not-found':
-      return `Can't find ${ssid}. Check the name, and that ${device} is in range.`;
-    case 'wrong-password':
-      return `${ssid} refused the password.`;
-    case 'no-ip':
-      return `Joined ${ssid}, but it gave ${device} no address.`;
-    case 'security':
-      return `${ssid} uses security ${device} doesn't support, such as WEP or WPA Enterprise.`;
-    case 'refused':
-      return `${ssid} turned ${device} away. It may be full.`;
-    case 'lost':
-      return `Lost ${ssid}.`;
-    case 'driver':
-      return `${device}'s Wi-Fi didn't start. Restart ${device}.`;
-    default:
-      return `Couldn't join ${ssid}.`;
-  }
-}
+export const CODE_DIGITS = 6;
 
-/** One line on how the station is doing. */
-export function wifiStatusText(wifi: DeviceWifi, device: string): string {
-  switch (wifi.state) {
-    case 'off':
-      return `No network. ${device} works over USB without one.`;
-    case 'connecting':
-      return `Joining ${wifi.ssid}…`;
-    case 'connected':
-      return wifi.ip ? `Connected to ${wifi.ssid} at ${wifi.ip}` : `Connected to ${wifi.ssid}`;
-    case 'failed':
-      return `${wifiReasonText(wifi.reason, wifi.ssid, device)} ${device} keeps trying.`;
+export const isCode = (code: string) => new RegExp(`^\\d{${CODE_DIGITS}}$`).test(code);
+
+/** The Carrier in words, or null when the Device isn't connected. */
+export function carrierText(device: Pick<DeviceSummary, 'link' | 'carrier'>): string | null {
+  if (device.link.state !== 'connected') return null;
+  switch (device.carrier) {
+    case 'wifi':
+      return `Connected over Wi-Fi at ${device.link.port}`;
+    case 'usb':
+      return 'Connected over USB';
+    case null:
+      return null;
     default: {
-      const _exhaustive: never = wifi.state;
+      const _exhaustive: never = device.carrier;
       return _exhaustive;
     }
   }
 }
 
-export interface DeviceWifiState {
-  load: 'idle' | 'loading' | 'ready' | 'failed';
-  wifi: DeviceWifi | null;
-  busy: 'joining' | 'forgetting' | null;
-  problem: { ssid?: string; password?: string };
-  /** Firmware without a Wi-Fi station answered. */
-  needs: boolean;
-  error: string | null;
+function attemptsText(left: number) {
+  return left === 1 ? '1 try left' : `${left} tries left`;
 }
 
-export interface DeviceWifiDeps {
-  companion: Pick<Companion, 'devices'>;
-  device: Pick<DeviceSummary, 'id' | 'name' | 'link' | 'capabilities'>;
-  /** How often a join in progress is read again. */
-  pollMs?: number;
-  /** How long to read a join again before leaving it to the Device. */
-  pollForMs?: number;
+/** The Pairings a Device holds when every slot is taken. */
+export const MAX_PAIRINGS = 4;
+
+/** The advice for a Device with every slot taken, before pairing or after `full`. */
+export const fourApps = (name: string) => `Four apps are paired. Forget one first: on ${name}, use the paired apps screen, or plug it in with a USB cable.`;
+
+function pairedCount(details: unknown): number | null {
+  if (typeof details !== 'object' || details === null || !('paired' in details)) return null;
+  const paired = details.paired;
+  return typeof paired === 'number' ? paired : null;
 }
 
-const detailsReason = (error: ApiError): string =>
-  typeof error.details === 'object' && error.details !== null && 'reason' in error.details && typeof error.details.reason === 'string'
-    ? error.details.reason
-    : '';
+function attemptsLeft(details: unknown): number | null {
+  if (typeof details !== 'object' || details === null || !('attempts_left' in details)) return null;
+  const left = details.attempts_left;
+  return typeof left === 'number' ? left : null;
+}
 
-export function createDeviceWifi(deps: DeviceWifiDeps) {
-  const { companion, pollMs = 1000, pollForMs = 30_000 } = deps;
-  let device = deps.device;
-  const store = createStore<DeviceWifiState>()(() => ({ load: 'idle', wifi: null, busy: null, problem: {}, needs: false, error: null }));
-  const { getState: state, setState: set } = store;
-  const name = () => device.name ?? 'the Device';
-  const live = () => device.link.state === 'connected';
-
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let pollUntil = 0;
-  let seq = 0;
-
-  function stopPolling() {
-    if (timer) clearTimeout(timer);
-    timer = null;
-  }
-
-  function show(wifi: DeviceWifi) {
-    set({ wifi, load: 'ready', needs: false, error: null });
-    stopPolling();
-    if (wifi.state === 'connecting' && Date.now() < pollUntil) {
-      timer = setTimeout(() => {
-        timer = null;
-        if (live()) void read();
-      }, pollMs);
+/** What to tell the person for each `wifi.*` error. */
+export function wifiProblem(error: ApiError, name: string): string {
+  switch (error.code) {
+    case 'wifi.unreachable':
+      return `Nothing answered at that address. Check that ${name} is on the same network, and the address.`;
+    case 'wifi.window_closed':
+      return `${name} isn't pairing. On ${name}, open Settings and choose Pair new app, then try again.`;
+    case 'wifi.wrong_code': {
+      const left = attemptsLeft(error.details);
+      return left === null ? 'Wrong code.' : `Wrong code. ${attemptsText(left)}.`;
     }
+    case 'wifi.locked':
+      return `Too many wrong codes. ${name} stopped pairing for a while. Wait, then start again.`;
+    case 'wifi.expired':
+      return `Pairing ended on ${name}. Start again.`;
+    case 'wifi.full':
+      // Without the advertised count it may also be this app's own old Pairing: the
+      // Companion's message says both.
+      return pairedCount(error.details) === MAX_PAIRINGS ? fourApps(name) : error.message;
+    case 'wifi.already_paired':
+      return `${name} still has a Pairing with this app. Forget it on ${name} (paired apps screen), then pair again.`;
+    case 'wifi.version':
+      return `${name}'s Firmware can't pair over Wi-Fi with this app. Update its Firmware over USB, then try again.`;
+    case 'wifi.busy':
+      return `${name} is busy with another app. Close it, then try again.`;
+    case 'wifi.attempt_not_found':
+      return 'That pairing ended. Start again.';
+    case 'wifi.keychain':
+    case 'wifi.discovery':
+    case 'wifi.failed':
+      return error.message;
+    default:
+      return error.message;
   }
+}
 
-  function failed(thrown: unknown, doing: string) {
-    const error = toApiError(thrown);
-    if (error.code === 'device.needs_firmware') {
-      set({ needs: true, error: null });
-      return;
-    }
-    const usbOnly = error.code === 'device.link' && detailsReason(error).includes('usb-only');
-    set({
-      error: usbOnly ? `Plug ${name()} in with USB to change its Wi-Fi.` : `Couldn't ${doing} ${name()}'s Wi-Fi. Check that it's plugged in, then retry.`,
-    });
-  }
+/** Whether the error ends the attempt, so the flow goes back to the address field. */
+const endsAttempt = (code: string) => code !== 'wifi.wrong_code' && code !== 'wifi.keychain';
 
-  async function read(): Promise<void> {
-    const mine = ++seq;
-    try {
-      const wifi = await companion.devices.wifi_get({ device: device.id });
-      if (mine === seq) show(wifi);
-    } catch (thrown) {
-      if (mine !== seq) return;
-      stopPolling();
-      if (state().load === 'loading') set({ load: 'failed' });
-      failed(thrown, 'read');
-    }
-  }
+export function createWifiPairing({ companion, device: current }: WifiDeps): WifiStore {
+  const id = current().id;
+  const nameOf = () => current().name ?? 'the Device';
+  return createStore<WifiState & WifiActions>()((set, get) => {
+    const fail = (error: unknown) => set({ problem: wifiProblem(toApiError(error), nameOf()) });
 
-  const api = {
-    async load(): Promise<void> {
-      if (!live() || !offersWifi(device)) return;
-      if (state().load !== 'ready') set({ load: 'loading' });
-      pollUntil = Date.now() + pollForMs;
-      await read();
-    },
+    return {
+      loaded: 'idle',
+      pairing: null,
+      view: { step: 'idle' },
+      address: '',
+      problem: null,
 
-    /** Stores the network on the Device and follows the join. The password is sent once and kept nowhere. */
-    async join(ssid: string, password: string): Promise<boolean> {
-      const problem = { ssid: ssidProblem(ssid) ?? undefined, password: passwordProblem(password) ?? undefined };
-      set({ problem });
-      if (problem.ssid || problem.password || state().busy || !live()) return false;
-      const mine = ++seq;
-      stopPolling();
-      set({ busy: 'joining', error: null });
-      try {
-        const wifi = await companion.devices.wifi_set({ device: device.id }, null, { ssid, password });
-        pollUntil = Date.now() + pollForMs;
-        set({ busy: null });
-        if (mine === seq) show(wifi);
-        return true;
-      } catch (thrown) {
-        set({ busy: null });
-        const error = toApiError(thrown);
-        if (error.code === 'request.invalid') {
-          const reason = detailsReason(error);
-          set({ problem: reason.startsWith('ssid') ? { ssid: 'The Device refused that network name.' } : { password: 'The Device refused that password.' } });
-        } else {
-          failed(thrown, 'change');
+      async load() {
+        if (get().loaded === 'loading') return;
+        set({ loaded: 'loading' });
+        try {
+          const pairings = await companion.wifi.pairings_list();
+          set({ loaded: 'ready', pairing: pairings.find((p) => p.device === id) ?? null });
+        } catch {
+          set({ loaded: 'failed' });
         }
-        return false;
-      }
-    },
+      },
 
-    async forget(): Promise<boolean> {
-      if (state().busy || !live()) return false;
-      const mine = ++seq;
-      stopPolling();
-      set({ busy: 'forgetting', error: null, problem: {} });
-      try {
-        const wifi = await companion.devices.wifi_forget({ device: device.id });
-        set({ busy: null });
-        if (mine === seq) show(wifi);
-        return true;
-      } catch (thrown) {
-        set({ busy: null });
-        failed(thrown, 'change');
-        return false;
-      }
-    },
+      async begin() {
+        if (get().view.step !== 'idle') return;
+        set({ view: { step: 'finding' }, problem: null });
+        let address = '';
+        let full = false;
+        try {
+          const found = (await companion.wifi.discover()).find((d) => d.device === id);
+          address = found?.address ?? '';
+          // The advertised count is a hint, so pairing stays possible; the advice comes first.
+          full = found?.paired === MAX_PAIRINGS;
+        } catch (error) {
+          fail(error);
+        }
+        if (get().view.step === 'finding') set({ view: { step: 'address', found: address !== '' }, address, ...(full ? { problem: fourApps(nameOf()) } : {}) });
+      },
 
-    observe(summary: Pick<DeviceSummary, 'id' | 'name' | 'link' | 'capabilities'>) {
-      device = summary;
-      if (!live()) stopPolling();
-    },
+      type(address) {
+        set({ address, problem: null });
+      },
 
-    dispose() {
-      stopPolling();
-      seq += 1;
-    },
-  };
+      async start() {
+        const address = get().address.trim();
+        if (!address || get().view.step !== 'address') return;
+        set({ view: { step: 'starting' }, problem: null });
+        let started: PairingStarted;
+        try {
+          started = await companion.wifi.pair_start({}, null, { address });
+        } catch (error) {
+          set({ view: { step: 'address', found: false } });
+          fail(error);
+          return;
+        }
+        if (started.device !== id) {
+          await companion.wifi.pair_cancel({ attempt: started.attempt }).catch(() => undefined);
+          set({ view: { step: 'address', found: false }, problem: `Another Device answered at that address, not ${nameOf()}.` });
+          return;
+        }
+        set({ view: { step: 'code', attempt: started.attempt, address: started.address, attemptsLeft: started.attempts_left } });
+      },
 
-  return Object.assign(store, api);
+      async submit(code) {
+        const view = get().view;
+        if (view.step !== 'code') return;
+        if (!isCode(code)) {
+          set({ problem: `Enter the ${CODE_DIGITS} digits ${nameOf()} shows.` });
+          return;
+        }
+        set({ view: { ...view, step: 'checking' }, problem: null });
+        try {
+          const pairing = await companion.wifi.pair_code({ attempt: view.attempt }, null, { code });
+          set({ view: { step: 'idle' }, pairing, address: '' });
+        } catch (thrown) {
+          const error = toApiError(thrown);
+          const left = attemptsLeft(error.details);
+          set({
+            view: endsAttempt(error.code) ? { step: 'address', found: false } : { ...view, attemptsLeft: left ?? view.attemptsLeft },
+            problem: wifiProblem(error, nameOf()),
+          });
+        }
+      },
+
+      async cancel() {
+        const view = get().view;
+        set({ view: { step: 'idle' }, problem: null, address: '' });
+        if (view.step === 'code' || view.step === 'checking') await companion.wifi.pair_cancel({ attempt: view.attempt }).catch(() => undefined);
+      },
+
+      async forget() {
+        const pairing = get().pairing;
+        if (!pairing) return;
+        try {
+          await companion.wifi.pairings_forget({ device: pairing.device });
+          set({ pairing: null, problem: null });
+        } catch (error) {
+          fail(error);
+        }
+      },
+    };
+  });
 }
-
-export type DeviceWifiStore = ReturnType<typeof createDeviceWifi>;

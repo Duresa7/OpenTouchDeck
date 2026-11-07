@@ -55,6 +55,36 @@ void host_log(const char *level, const char *tag, const char *format, ...)
     assert(g_log_len < sizeof g_log);
 }
 
+/* The levels td_wifi_quiet_logs set, by tag. */
+static struct {
+    char tag[32];
+    esp_log_level_t level;
+} g_levels[8];
+static size_t g_level_count;
+
+void esp_log_level_set(const char *tag, esp_log_level_t level)
+{
+    for (size_t i = 0; i < g_level_count; i++) {
+        if (!strcmp(g_levels[i].tag, tag)) {
+            g_levels[i].level = level;
+            return;
+        }
+    }
+    assert(g_level_count < sizeof g_levels / sizeof g_levels[0]);
+    snprintf(g_levels[g_level_count].tag, sizeof g_levels[g_level_count].tag, "%s", tag);
+    g_levels[g_level_count++].level = level;
+}
+
+static bool level_at_most(const char *tag, esp_log_level_t most)
+{
+    for (size_t i = 0; i < g_level_count; i++) {
+        if (!strcmp(g_levels[i].tag, tag)) {
+            return g_levels[i].level <= most;
+        }
+    }
+    return false;
+}
+
 struct host_mutex {
     bool held;
 };
@@ -378,6 +408,11 @@ static void test_credentials(void)
     CHECK(td_wifi_credentials_valid(SSID, long_password));
     CHECK(!td_wifi_credentials_valid("tab\there", PASSWORD));
     CHECK(!td_wifi_credentials_valid(SSID, "line\nbreak1"));
+    /* A passphrase is printable ASCII: a space and a tilde are fine, DEL and anything past ASCII are not. */
+    CHECK(td_wifi_credentials_valid(SSID, " ~dummy pass~ "));
+    CHECK(!td_wifi_credentials_valid(SSID, "dummy-pass\x7f"));
+    CHECK(!td_wifi_credentials_valid(SSID, "caf\xc3\xa9-dummy-pass"));
+    CHECK(!td_wifi_credentials_valid(SSID, "dummy-pass-\xe2\x80\x8b"));
     CHECK(td_wifi_credentials_valid("caf\xc3\xa9 net", PASSWORD));
     CHECK(!td_wifi_credentials_valid("bad \xc3", PASSWORD));
     CHECK(!td_wifi_credentials_valid("overlong \xc0\xaf", PASSWORD));
@@ -804,6 +839,19 @@ static void test_echo_mask(void)
     CHECK(last == '*' && state.mask_count == 1);
 }
 
+/* ESP-IDF's own Wi-Fi, supplicant and netif lines name the network or the address; the radio build turns them down to
+ * errors before the station starts. Our own lines use td_wifi, which stays at INFO. */
+static void test_idf_logs_are_quiet(void)
+{
+    g_level_count = 0;
+    td_wifi_quiet_logs();
+    CHECK(level_at_most("wifi", ESP_LOG_ERROR));
+    CHECK(level_at_most("wpa", ESP_LOG_ERROR));
+    CHECK(level_at_most("esp_netif_handlers", ESP_LOG_ERROR));
+    CHECK(!level_at_most("td_wifi", ESP_LOG_WARN));
+    CHECK(strcmp(TAG, "wifi") != 0);
+}
+
 int main(void)
 {
     test_credentials();
@@ -824,11 +872,12 @@ int main(void)
     test_console_command();
     test_logs_hold_no_secret();
     test_echo_mask();
+    test_idf_logs_are_quiet();
     reboot();
     if (g_failures) {
         fprintf(stderr, "%d checks failed\n", g_failures);
         return 1;
     }
-    printf("wifi: 18 tests passed\n");
+    printf("wifi: 19 tests passed\n");
     return 0;
 }
