@@ -10,3 +10,10 @@ CONFIG_ESP_TASK_WDT_INIT=n
 CONFIG_ESP_INT_WDT=n
 # Code runs from flash: QEMU's PSRAM holds data only here.
 CONFIG_SPIRAM_XIP_FROM_PSRAM=n
+# QEMU's flash and PSRAM models don't take MSPI timing tuning, high-performance-mode commands or the memory protection
+# lock, so the image keeps them off: 40 MHz flash and PSRAM need no tuning.
+CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
+CONFIG_SPIRAM_SPEED_40M=y
+CONFIG_SPI_FLASH_HPM_DIS=y
+CONFIG_ESP_SYSTEM_MEMPROT=n
+CONFIG_ESP_BROWNOUT_DET=n
