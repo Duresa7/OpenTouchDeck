@@ -12,6 +12,27 @@
 #include "td_asset.h"
 #include "esp_mac.h"
 
+static const td_link_extension_t *s_extensions[TD_LINK_EXTENSIONS_MAX];
+static size_t s_extension_count;
+
+esp_err_t td_link_extend(const td_link_extension_t *extension)
+{
+    const size_t len = extension && extension->prefix ? strlen(extension->prefix) : 0;
+    if (!extension || !extension->handle || len == 0 || extension->prefix[len - 1] != '.' ||
+        !strncmp(extension->prefix, "v2.", 3)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (size_t i = 0; i < s_extension_count; i++) {
+        if (!strcmp(s_extensions[i]->prefix, extension->prefix)) {
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+    if (s_extension_count == TD_LINK_EXTENSIONS_MAX) {
+        return ESP_ERR_NO_MEM;
+    }
+    s_extensions[s_extension_count++] = extension;
+    return ESP_OK;
+}
 
 cJSON *td_link_capabilities(void)
 {
@@ -37,6 +58,11 @@ cJSON *td_link_capabilities(void)
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_frames"), 60);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_pixels"), 983040);
 #endif
+    for (size_t i = 0; i < s_extension_count; i++) {
+        if (caps && s_extensions[i]->caps) {
+            s_extensions[i]->caps(caps);
+        }
+    }
     return caps;
 }
 
@@ -374,6 +400,17 @@ cJSON *td_link_dispatch(const cJSON *request)
         if (strcmp(message->valuestring, s_messages[i].name) == 0) {
             cJSON_AddBoolToObject(reply, "ok", true);
             s_messages[i].handler(request, reply);
+            return reply;
+        }
+    }
+    for (size_t i = 0; i < s_extension_count; i++) {
+        if (!strncmp(message->valuestring, s_extensions[i]->prefix, strlen(s_extensions[i]->prefix))) {
+            cJSON_AddBoolToObject(reply, "ok", true);
+            if (td_link_request_on_usb()) {
+                s_extensions[i]->handle(request, reply);
+            } else {
+                v2_fail(reply, "usb-only", "Only over USB");
+            }
             return reply;
         }
     }

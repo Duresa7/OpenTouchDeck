@@ -185,15 +185,26 @@ void app_main(void)
     BOOT_MARK("settings");
 
     /* The engine exists before the console can run a keys command. Every report goes to the console key log and to the
-     * link, which mirrors it to the app. The USB HID sink takes the third slot in the post-product update. */
+     * link, which mirrors it to the app. In the radio build the third slot is the Bluetooth keyboard, which sends only
+     * while a bonded host is connected; elsewhere the USB HID sink takes it in the post-product update. */
     key_sink_log_start(&s_key_log);
+#if CONFIG_TD_RADIO_BUILD
+    s_key_fanout = (key_sink_fanout_t){
+        .sinks = { key_sink_log_sink(&s_key_log), key_sink_link_sink(), td_radio_key_sink() },
+    };
+#else
     s_key_fanout = (key_sink_fanout_t){ .sinks = { key_sink_log_sink(&s_key_log), key_sink_link_sink() } };
+#endif
     esp_err_t keys_err = keys_start(key_sink_fanout_sink(&s_key_fanout));
     if (keys_err != ESP_OK) {
         ESP_LOGE(TAG, "Keys failed to start: %s", esp_err_to_name(keys_err));
     }
     BOOT_MARK("keys");
 
+#if CONFIG_TD_RADIO_BUILD
+    /* Before the link starts, so a v2 hello carries the Bluetooth capability. It starts no radio. */
+    td_radio_init();
+#endif
     esp_err_t link_err = td_link_start();
     if (link_err != ESP_OK) {
         ESP_LOGE(TAG, "Link failed to start: %s", esp_err_to_name(link_err));

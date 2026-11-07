@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" build
 
-      - name: Test Firmware file loaders, key events, link carriers, Assets, Tile geometry and td_ui_core on the host
+      - name: Test Firmware file loaders, key events, link carriers, the Bluetooth keyboard, Assets, Tile geometry and td_ui_core on the host
         # After the build: the LittleFS test compiles the pinned managed component it fetched.
         # The IDF virtualenv has pip; the system Python in this image does not.
         shell: bash
@@ -60,6 +60,7 @@ jobs:
           python -B firmware/tools/test_media.py
           python -B firmware/tools/test_key_sink.py
           python -B firmware/tools/test_link_carrier.py
+          python -B firmware/tools/test_ble.py
           python -B firmware/tools/test_file_loaders.py
           python -B firmware/tools/test_tile_geometry.py
           python -B firmware/tools/test_playback.py
@@ -137,9 +138,10 @@ jobs:
           idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" -DTD_RADIO_BUILD=1 build
 
       - name: Check the radio build and that the release guards reject it
-        # Wi-Fi, lwIP and NimBLE on, buffers in PSRAM, the BLE controller in flash, nothing in the image that starts
-        # BLE, advertises, scans or joins a network, and static internal RAM under the ceiling that keeps the 24 KB
-        # floor measured on the board. The normal build's guard and the release audit must fail it.
+        # Wi-Fi, lwIP and NimBLE on, buffers in PSRAM, the BLE controller in flash, BLE started only by the Bluetooth
+        # keyboard, nothing in the image that scans, connects as a central or joins a network, and static internal RAM
+        # under the ceiling that keeps the 24 KB floor measured on the board. The normal build's guard and the release
+        # audit must fail it.
         shell: bash
         run: |
           . "$IDF_PATH/export.sh" > /dev/null

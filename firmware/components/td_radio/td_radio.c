@@ -9,6 +9,7 @@
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
+#include "td_ble.h"
 #include "td_console.h"
 
 static const char *TAG = "radio";
@@ -66,15 +67,34 @@ static esp_err_t start_station(void)
     return esp_wifi_start();
 }
 
+esp_err_t td_radio_init(void)
+{
+    const esp_err_t err = td_ble_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "bluetooth keyboard not set up: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+key_sink_t td_radio_key_sink(void)
+{
+    return td_ble_key_sink();
+}
+
 esp_err_t td_radio_start(void)
 {
     const esp_err_t err = start_station();
     s_station = err == ESP_OK ? STATION_STARTED : STATION_FAILED;
     s_station_err = err;
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "wifi station started, not joined; ble dormant");
+        ESP_LOGI(TAG, "wifi station started, not joined");
     } else {
-        ESP_LOGE(TAG, "wifi station failed to start: %s; ble dormant", esp_err_to_name(err));
+        ESP_LOGE(TAG, "wifi station failed to start: %s", esp_err_to_name(err));
+    }
+    /* After the station, so the steady-state figure has both radios when the stored setting turns BLE on. */
+    const esp_err_t ble_err = td_ble_boot();
+    if (ble_err != ESP_OK) {
+        ESP_LOGE(TAG, "ble: %s", esp_err_to_name(ble_err));
     }
     const esp_timer_create_args_t args = { .callback = steady_report, .name = "td_radio_steady" };
     esp_err_t timer_err = esp_timer_create(&args, &s_steady_timer);
@@ -110,7 +130,7 @@ static int cmd_radio(int argc, char **argv)
     td_reply_str(&r, "wifi", station_name());
     if (s_station == STATION_FAILED) td_reply_str(&r, "wifi_error", esp_err_to_name(s_station_err));
     td_reply_bool(&r, "joined", false);
-    td_reply_str(&r, "ble", "dormant");
+    td_reply_str(&r, "ble", td_ble_state_name());
     td_reply_int(&r, "free_internal", (long long)free_internal);
     td_reply_int(&r, "largest_internal", (long long)heap_caps_get_largest_free_block(INTERNAL));
     td_reply_int(&r, "floor", CONFIG_TD_RADIO_INTERNAL_FLOOR);
@@ -127,10 +147,19 @@ static int cmd_radio(int argc, char **argv)
 
 const esp_console_cmd_t *td_radio_console_commands(size_t *count)
 {
-    static const esp_console_cmd_t cmds[] = {
-        { .command = "radio", .help = "report the radio build's station, BLE and internal heap",
-          .hint = "state", .func = cmd_radio },
-    };
-    *count = sizeof cmds / sizeof cmds[0];
+    static esp_console_cmd_t cmds[2];
+    static size_t n;
+    if (n == 0) {
+        cmds[n++] = (esp_console_cmd_t){ .command = "radio",
+                                         .help = "report the radio build's station, BLE and internal heap",
+                                         .hint = "state",
+                                         .func = cmd_radio };
+        size_t ble_count;
+        const esp_console_cmd_t *ble = td_ble_console_commands(&ble_count);
+        for (size_t i = 0; i < ble_count && n < sizeof cmds / sizeof cmds[0]; i++) {
+            cmds[n++] = ble[i];
+        }
+    }
+    *count = n;
     return cmds;
 }

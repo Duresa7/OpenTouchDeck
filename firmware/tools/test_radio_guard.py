@@ -1,5 +1,6 @@
-"""The radio guards: the normal build fails on any radio option or component, and the radio build passes only with
-dormant BLE and an unjoined station. The release recipe's audit must reject the same builds.
+"""The radio guards: the normal build fails on any radio option or component, and the radio build passes only when
+nothing but the Bluetooth keyboard can start BLE, nothing can scan or connect, and the station never joins. The release
+recipe's audit must reject the same builds.
 
     python -B firmware/tools/test_radio_guard.py
 
@@ -31,9 +32,10 @@ package = load("package_windows", ROOT / "app/scripts/package_windows.py")
 NORMAL_SETTINGS = {"IDF_TARGET": "esp32s3", "ESP_CONSOLE_USB_SERIAL_JTAG": True}
 NORMAL_COMPONENTS = ["main", "td_link", "td_console", "esp_system", "nvs_flash", "mbedtls", "esp_psram"]
 RADIO_SETTINGS = {**NORMAL_SETTINGS, **guard.RADIO_BUILD_OPTIONS, "TD_RADIO_INTERNAL_FLOOR": 24576}
-RADIO_COMPONENTS = NORMAL_COMPONENTS + ["td_radio", "esp_wifi", "esp_netif", "lwip", "bt", "esp_phy", "esp_coex",
-                                        "wpa_supplicant"]
-RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "ble_gatts_count_cfg"}
+RADIO_COMPONENTS = NORMAL_COMPONENTS + ["td_radio", "td_ble", "esp_wifi", "esp_netif", "lwip", "bt", "esp_phy",
+                                        "esp_coex", "wpa_supplicant"]
+RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "td_ble_boot", "nimble_port_init",
+                 "ble_gap_adv_start", "ble_gatts_count_cfg"}
 # Spelled out here, not read from the guard, so dropping a name from the guard fails a test.
 FORBIDDEN_OPTIONS = ("ESP_WIFI_ENABLED", "ESP_HOST_WIFI_ENABLED", "BT_ENABLED", "BT_CONTROLLER_ENABLED",
                      "BT_NIMBLE_ENABLED", "BT_BLUEDROID_ENABLED", "TD_RADIO_BUILD")
@@ -41,10 +43,13 @@ FORBIDDEN_COMPONENTS = ("bt", "esp_wifi", "esp_phy", "esp_coex", "wpa_supplicant
                         "lwip", "td_net",
                         "td_ble", "td_radio", "td_netlink", "td_netlink_core", "td_netlink_v2", "mdns",
                         "espressif__mdns")
-DORMANT = ("esp_bt_controller_init", "esp_bt_controller_enable", "nimble_port_init", "nimble_port_freertos_init",
-           "ble_hs_start", "ble_gap_adv_start", "ble_gap_ext_adv_start", "ble_gap_disc", "ble_gap_connect",
+DORMANT = ("ble_gap_ext_adv_start", "ble_gap_disc", "ble_gap_ext_disc", "ble_gap_connect", "ble_gap_ext_connect",
            "esp_wifi_connect", "esp_wifi_scan_start", "esp_wifi_wps_start", "esp_wifi_80211_tx",
            "esp_smartconfig_start", "esp_now_init")
+# What only td_ble_nimble.c may call: starting the controller and host, advertising, and the accept list.
+BLE_START = ("esp_bt_controller_init", "esp_bt_controller_enable", "esp_nimble_init", "nimble_port_init",
+             "nimble_port_run", "nimble_port_freertos_init", "ble_hs_init", "ble_hs_start", "ble_gap_adv_start",
+             "ble_gap_wl_set")
 
 
 class BuildDirs:
@@ -119,7 +124,23 @@ class RadioBuildTests(unittest.TestCase):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
         result = guard.check_radio(build, symbols=RADIO_SYMBOLS)
         self.assertIn("td_radio", result["radio_components"])
-        self.assertIn("nimble_port_init", result["dormant"])
+        self.assertIn("ble_gap_connect", result["dormant"])
+        self.assertIn("nimble_port_init", result["ble_start"])
+
+    def test_dormant_and_start_lists_are_the_spelled_out_ones(self):
+        """Moving a scan or connect call to the start list, or dropping one, fails here."""
+        self.assertEqual(set(guard.DORMANT_SYMBOLS) & set(DORMANT), set(DORMANT))
+        self.assertEqual(set(guard.BLE_START_SYMBOLS), set(BLE_START))
+        self.assertFalse(set(guard.BLE_START_SYMBOLS) & set(guard.DORMANT_SYMBOLS))
+
+    def test_int_options_need_their_value(self):
+        for key, want in guard.RADIO_BUILD_OPTIONS.items():
+            if isinstance(want, bool):
+                continue
+            for value in (want + 1, True if want == 1 else want + 2):
+                build = self.dirs.make({**RADIO_SETTINGS, key: value}, RADIO_COMPONENTS)
+                with self.subTest(option=key, value=value), self.assertRaisesRegex(ValueError, f"needs {key}={want}"):
+                    guard.check_radio(build, symbols=RADIO_SYMBOLS)
 
     def test_every_required_option_is_checked(self):
         for key, want in guard.RADIO_BUILD_OPTIONS.items():
@@ -146,7 +167,7 @@ class RadioBuildTests(unittest.TestCase):
             with self.subTest(component=component), self.assertRaisesRegex(ValueError, "missing components"):
                 guard.check_radio(build, symbols=RADIO_SYMBOLS)
 
-    def test_any_ble_start_advertise_scan_or_wifi_join_fails(self):
+    def test_any_ble_scan_connect_or_wifi_join_fails(self):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
         for symbol in DORMANT:
             with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, f"must stay dormant: \\['{symbol}'\\]"):
@@ -157,6 +178,11 @@ class RadioBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not link: \\['esp_wifi_start'\\]"):
             guard.check_radio(build, symbols=RADIO_SYMBOLS - {"esp_wifi_start"})
 
+    def test_unwired_bluetooth_keyboard_fails(self):
+        build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
+        with self.assertRaisesRegex(ValueError, "does not link: \\['td_ble_boot'\\]"):
+            guard.check_radio(build, symbols=RADIO_SYMBOLS - {"td_ble_boot"})
+
     def test_no_firmware_source_calls_a_dormant_function(self):
         """The same rule at the source, so a normal-build CI run catches it before any radio build links it."""
         sources = [*(ROOT / "firmware/components").rglob("*.[ch]"), *(ROOT / "firmware/main").rglob("*.[ch]")]
@@ -165,6 +191,20 @@ class RadioBuildTests(unittest.TestCase):
         found = [f"{path.relative_to(ROOT).as_posix()}: {match.group(1)}" for path in sources
                  for match in call.finditer(path.read_text(encoding="utf-8", errors="replace"))]
         self.assertEqual(found, [])
+
+    def test_only_the_bluetooth_keyboard_starts_ble(self):
+        """Only td_ble_nimble.c starts the controller or the host, advertises or writes the accept list, and it does so
+        only when the core asks, which the host tests in test_ble.py tie to the stored setting."""
+        sources = [*(ROOT / "firmware/components").rglob("*.[ch]"), *(ROOT / "firmware/main").rglob("*.[ch]")]
+        owner = ROOT / guard.BLE_OWNER
+        self.assertIn(owner, sources)
+        call = re.compile(r"\b(" + "|".join(guard.BLE_START_SYMBOLS) + r")\s*\(")
+        found = [f"{path.relative_to(ROOT).as_posix()}: {match.group(1)}" for path in sources if path != owner
+                 for match in call.finditer(path.read_text(encoding="utf-8", errors="replace"))]
+        self.assertEqual(found, [])
+        used = {match.group(1) for match in call.finditer(owner.read_text(encoding="utf-8"))}
+        self.assertIn("nimble_port_init", used)
+        self.assertIn("ble_gap_adv_start", used)
 
     def test_static_internal_ram_ceiling(self):
         report = Path(self.dirs.tmp.name) / "size.json"

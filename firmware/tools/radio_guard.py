@@ -6,9 +6,11 @@ or network component linked. The release recipe (app/scripts/package_windows.py)
 the firmware, so a mistake here cannot ship radios to everyone.
 
 The radio build is the opt-in build that `idf.py -DTD_RADIO_BUILD=1` makes (see docs/firmware.md). It must have Wi-Fi,
-lwIP and NimBLE, keep Wi-Fi and lwIP buffers in PSRAM and the BLE controller in flash, and keep BLE dormant: until an
-opt-in setting starts it, nothing in the linked image may start the BLE controller or host, advertise, scan or
-connect, and the Wi-Fi station may start but never join a network or scan.
+lwIP and NimBLE, keep Wi-Fi and lwIP buffers in PSRAM and the BLE controller in flash, and keep BLE a peripheral that
+pairs only with LE Secure Connections. Only the Bluetooth keyboard (td_ble) may start BLE or advertise, and it does so
+only when the person's stored setting is on: the host tests in firmware/tools/test_ble.py check that, and
+test_radio_guard.py checks no other source calls those functions. Nothing in the linked image may scan, start a
+connection or use extended advertising, and the Wi-Fi station may start but never join a network or scan.
 
     python firmware/tools/radio_guard.py normal <build dir>
     python firmware/tools/radio_guard.py radio <build dir> [--size-json <idf.py size --format json2 output>]
@@ -66,25 +68,43 @@ RADIO_BUILD_OPTIONS = {
     # Wi-Fi and lwIP buffers come from PSRAM, NimBLE's own memory too, and the BLE controller runs from flash.
     "SPIRAM_TRY_ALLOCATE_WIFI_LWIP": True,
     "BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL": True,
+    # Static .bss of Wi-Fi, lwIP, wpa_supplicant and the link's frame buffers lives in PSRAM, which pays for BLE's
+    # internal RAM.
+    "SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY": True,
     "BT_CTRL_RUN_IN_FLASH_ONLY": True,
-    # No scanning or connecting role is even compiled in.
+    # No scanning or connecting role is even compiled in, and no extended advertising.
     "BT_NIMBLE_ROLE_OBSERVER": False,
     "BT_NIMBLE_ROLE_CENTRAL": False,
+    "BT_NIMBLE_ROLE_PERIPHERAL": True,
+    "BT_NIMBLE_EXT_ADV": False,
+    # The Bluetooth keyboard (#276): LE Secure Connections only, bonds kept in NVS, one host at a time, at most four
+    # bonds, and Peripheral Preferred Connection Parameters that match its one request: 7.5-50 ms, latency 0, 4 s.
+    "BT_NIMBLE_SM_LEGACY": False,
+    "BT_NIMBLE_SM_SC": True,
+    "BT_NIMBLE_SM_SC_ONLY": 1,
+    "BT_NIMBLE_NVS_PERSIST": True,
+    "BT_NIMBLE_MAX_CONNECTIONS": 1,
+    "BT_NIMBLE_MAX_BONDS": 4,
+    "BT_NIMBLE_SVC_GAP_PPCP_MIN_CONN_INTERVAL": 6,
+    "BT_NIMBLE_SVC_GAP_PPCP_MAX_CONN_INTERVAL": 40,
+    "BT_NIMBLE_SVC_GAP_PPCP_SLAVE_LATENCY": 0,
+    "BT_NIMBLE_SVC_GAP_PPCP_SUPERVISION_TMO": 400,
     # The Wi-Fi driver keeps nothing in NVS, so no network it saw can come back on its own.
     "ESP_WIFI_NVS_ENABLED": False,
 }
-RADIO_BUILD_COMPONENTS = ("td_radio", "esp_wifi", "esp_netif", "lwip", "bt")
+RADIO_BUILD_COMPONENTS = ("td_radio", "td_ble", "esp_wifi", "esp_netif", "lwip", "bt")
 # The steady-state internal RAM the radio build must keep free with the station up, in bytes.
 INTERNAL_FLOOR = 24576
 # The radio build's static internal RAM (DIRAM in `idf.py size`), in bytes. The board measured 28815 bytes free in
 # steady state at 151083 bytes static, and every static byte comes out of that margin. Raise this only with a new
-# board measurement of the floor.
+# board measurement of the floor. With the Bluetooth keyboard (#276) linked and .bss moved to PSRAM the build uses
+# about 136.8 KB, so the ceiling has room the board hasn't measured yet.
 DIRAM_CEILING = 153600
 
-# Functions that would start BLE, put it on the air, or join or scan a Wi-Fi network. The radio build's image must
-# define none of them: the linker drops every function that nothing calls, so a name missing from the image is a call
-# that cannot happen. A later ticket that adds an opt-in setting, default off, moves the BLE names out of this list.
-DORMANT_SYMBOLS = (
+# Functions that start BLE, put it on the air, or set who may connect. The Bluetooth keyboard needs them, so the radio
+# build links them, but only BLE_OWNER may call them, and it does only when the stored setting is on. The source test
+# in test_radio_guard.py holds every other file to that.
+BLE_START_SYMBOLS = (
     "esp_bt_controller_init",
     "esp_bt_controller_enable",
     "esp_nimble_init",
@@ -94,6 +114,14 @@ DORMANT_SYMBOLS = (
     "ble_hs_init",
     "ble_hs_start",
     "ble_gap_adv_start",
+    "ble_gap_wl_set",
+)
+BLE_OWNER = "firmware/components/td_ble/td_ble_nimble.c"
+
+# Functions that would scan or connect over BLE, advertise in extended mode, or join or scan a Wi-Fi network. The radio
+# build's image must define none of them: the linker drops every function that nothing calls, so a name missing from
+# the image is a call that cannot happen.
+DORMANT_SYMBOLS = (
     "ble_gap_ext_adv_start",
     "ble_gap_connect",
     "ble_gap_ext_connect",
@@ -106,8 +134,8 @@ DORMANT_SYMBOLS = (
     "esp_smartconfig_start",
     "esp_now_init",
 )
-# What proves the radio build wires its station at all.
-REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start")
+# What proves the radio build wires its station and its Bluetooth keyboard at all.
+REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start", "td_ble_boot")
 
 
 class GuardError(ValueError):
@@ -170,15 +198,24 @@ def defined_symbols(build):
     return {f[0] for f in fields if len(f) > 1 and f[1] not in ("A", "a")}
 
 
+def _option_ok(value, want):
+    if isinstance(want, bool):
+        return bool(value) == want
+    # An int option must be that int, not a bool that compares equal to it.
+    return type(value) is int and value == want
+
+
 def check_radio(build, symbols=None):
-    """Fails unless the build is a radio build with dormant BLE and an unjoined station. Returns what it checked."""
+    """Fails unless the build is a radio build whose BLE only td_ble starts and whose station never joins. Returns
+    what it checked."""
     build = Path(build)
     settings = _settings(build)
     _common(settings)
     for key, want in RADIO_BUILD_OPTIONS.items():
         # A missing key fails too, so a renamed option cannot pass as off.
-        if key not in settings or bool(settings[key]) != want:
-            raise GuardError(f"Radio build needs {key}={'y' if want else 'n'}")
+        if key not in settings or not _option_ok(settings[key], want):
+            shown = ('y' if want else 'n') if isinstance(want, bool) else want
+            raise GuardError(f"Radio build needs {key}={shown}")
     floor = settings.get("TD_RADIO_INTERNAL_FLOOR")
     if not isinstance(floor, int) or floor < INTERNAL_FLOOR:
         raise GuardError(f"Radio build needs TD_RADIO_INTERNAL_FLOOR >= {INTERNAL_FLOOR}, not {floor!r}")
@@ -194,7 +231,8 @@ def check_radio(build, symbols=None):
     if absent:
         raise GuardError(f"Radio build does not link: {absent}")
     return {"kind": "radio", "usb_serial_jtag": True, "radio_components": radio_components(components),
-            "dormant": list(DORMANT_SYMBOLS), "build_components": components}
+            "dormant": list(DORMANT_SYMBOLS), "ble_start": list(BLE_START_SYMBOLS), "ble_owner": BLE_OWNER,
+            "build_components": components}
 
 
 def check_diram(size_report, ceiling=DIRAM_CEILING):

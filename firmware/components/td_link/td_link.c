@@ -10,6 +10,7 @@
 #include "ui_page_report.h"
 #include <stdio.h>
 #include <string.h>
+#include "esp_attr.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -43,7 +44,11 @@ static size_t s_carrier_count;
 /* The slot of the frame the link task handles now, or handled last. */
 static size_t s_current;
 /* A packet in s_frames is the slot, the body length and the body. One receive at a time fills this, under s_rx_mutex. */
-static uint8_t s_rx_packet[TD_LINK_PACKET_HEADER + TD_FRAME_BODY_MAX];
+/* This and the three frame buffers below go to PSRAM in the radio build (EXT_RAM_BSS_ATTR with
+ * CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY), where they pay for the internal RAM that linking BLE costs. Only the
+ * link and console tasks use them, and the radio build runs code from PSRAM, so PSRAM stays readable while flash is
+ * written. Elsewhere they stay internal. */
+EXT_RAM_BSS_ATTR static uint8_t s_rx_packet[TD_LINK_PACKET_HEADER + TD_FRAME_BODY_MAX];
 static QueueHandle_t s_presses;
 static uint32_t s_press_seq;
 static td_input_mailbox_t s_input;
@@ -105,12 +110,20 @@ void td_link_count_drop(void)
 static bool usb_send(const td_link_carrier_t *carrier, const td_frame_t *frame)
 {
     (void)carrier;
-    static uint8_t wire[TD_FRAME_WIRE_MAX];
+    EXT_RAM_BSS_ATTR static uint8_t wire[TD_FRAME_WIRE_MAX];
     size_t wire_len = td_frame_encode(frame, wire, sizeof wire);
     return wire_len && td_console_write((const char *)wire, wire_len);
 }
 
 static const td_link_carrier_t s_usb = { .send = usb_send };
+
+bool td_link_request_on_usb(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    const bool usb = s_carrier_count && s_carriers[s_current].carrier == &s_usb;
+    portEXIT_CRITICAL(&s_lock);
+    return usb;
+}
 
 /* USB goes first, into the empty table that td_link_start finds, and every other carrier after it. */
 static esp_err_t add_carrier(const td_link_carrier_t *carrier)
@@ -230,7 +243,7 @@ void td_link_fail(cJSON *reply, const char *error)
 
 static void handle_message(const td_frame_t *frame)
 {
-    static char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    EXT_RAM_BSS_ATTR static char payload[TD_FRAME_PAYLOAD_MAX + 1];
     memcpy(payload, frame->payload, frame->len);
     payload[frame->len] = '\0';
     const char *end = NULL;
@@ -274,7 +287,7 @@ static void handle_message(const td_frame_t *frame)
 /* Waits up to `wait` ticks for one frame, and handles it. */
 static void handle_frame(TickType_t wait)
 {
-    static uint8_t body[TD_FRAME_BODY_MAX];
+    EXT_RAM_BSS_ATTR static uint8_t body[TD_FRAME_BODY_MAX];
     uint8_t header[TD_LINK_PACKET_HEADER];
     if (!read_bytes(header, sizeof header, wait)) {
         return;
