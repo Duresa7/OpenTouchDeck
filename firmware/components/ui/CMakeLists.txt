@@ -1,5 +1,5 @@
 idf_component_register(SRCS "ui_theme.c" "ui_deck.c" "ui_cmds.c" "ui_tile_keys.c" "ui_icon.c" "ui_layout_cmds.c"
-                            "ui_widget.c" "ui_dashboard.c" "ui_live_tiles.c" "ui_idle.c" "ui_gif.c"
+                            "ui_widget.c" "ui_dashboard.c" "ui_live_tiles.c" "ui_idle.c" "ui_gif.c" "ui_pairing.c"
                             "fonts/ui_font_medium_22.c" "fonts/ui_font_medium_26.c" "fonts/ui_font_medium_44.c"
                             "fonts/ui_font_semibold_32.c" "fonts/ui_font_semibold_40.c" "fonts/ui_font_nameplate_26.c"
                        INCLUDE_DIRS "include"

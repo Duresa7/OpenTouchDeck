@@ -31,12 +31,13 @@ package = load("package_windows", ROOT / "app/scripts/package_windows.py")
 NORMAL_SETTINGS = {"IDF_TARGET": "esp32s3", "ESP_CONSOLE_USB_SERIAL_JTAG": True}
 NORMAL_COMPONENTS = ["main", "td_link", "td_console", "esp_system", "nvs_flash", "mbedtls", "esp_psram"]
 RADIO_SETTINGS = {**NORMAL_SETTINGS, **guard.RADIO_BUILD_OPTIONS, "TD_RADIO_INTERNAL_FLOOR": 24576}
-RADIO_COMPONENTS = NORMAL_COMPONENTS + ["td_radio", "esp_wifi", "esp_netif", "lwip", "bt", "esp_phy", "esp_coex",
-                                        "wpa_supplicant"]
-RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "ble_gatts_count_cfg"}
+RADIO_COMPONENTS = NORMAL_COMPONENTS + ["td_radio", "td_netlink", "td_netlink_core", "esp_wifi", "esp_netif", "lwip",
+                                        "bt", "esp_phy", "esp_coex", "wpa_supplicant"]
+RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "td_netlink_start",
+                 "ble_gatts_count_cfg"}
 # Spelled out here, not read from the guard, so dropping a name from the guard fails a test.
 FORBIDDEN_OPTIONS = ("ESP_WIFI_ENABLED", "ESP_HOST_WIFI_ENABLED", "BT_ENABLED", "BT_CONTROLLER_ENABLED",
-                     "BT_NIMBLE_ENABLED", "BT_BLUEDROID_ENABLED", "TD_RADIO_BUILD")
+                     "BT_NIMBLE_ENABLED", "BT_BLUEDROID_ENABLED", "TD_RADIO_BUILD", "TD_QEMU_TEST", "ETH_USE_OPENETH")
 FORBIDDEN_COMPONENTS = ("bt", "esp_wifi", "esp_phy", "esp_coex", "wpa_supplicant", "esp_netif", "esp_netif_stack",
                         "lwip", "td_net",
                         "td_ble", "td_radio", "td_netlink", "td_netlink_core", "td_netlink_v2", "mdns",
@@ -189,6 +190,22 @@ class RadioBuildTests(unittest.TestCase):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
         with self.assertRaisesRegex(ValueError, "does not link: \\['esp_wifi_start'\\]"):
             guard.check_radio(build, symbols=RADIO_SYMBOLS - {"esp_wifi_start"})
+
+    def test_unwired_network_service_fails(self):
+        build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
+        with self.assertRaisesRegex(ValueError, "does not link: \\['td_netlink_start'\\]"):
+            guard.check_radio(build, symbols=RADIO_SYMBOLS - {"td_netlink_start"})
+
+    def test_qemu_test_image_fails(self):
+        """The QEMU test image opens a pairing window by itself, so no real radio build may carry any of it."""
+        for key in ("TD_QEMU_TEST", "ETH_USE_OPENETH"):
+            build = self.dirs.make({**RADIO_SETTINGS, key: True}, RADIO_COMPONENTS)
+            with self.subTest(option=key), self.assertRaisesRegex(ValueError, f"test-only options: \\['{key}'\\]"):
+                guard.check_radio(build, symbols=RADIO_SYMBOLS)
+        build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
+        for symbol in ("td_radio_qemu_eth_start", "esp_eth_mac_new_openeth"):
+            with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, f"test-only code: \\['{symbol}'\\]"):
+                guard.check_radio(build, symbols=RADIO_SYMBOLS | {symbol})
 
     def test_no_firmware_source_calls_a_dormant_function(self):
         """The same rule at the source, so a normal-build CI run catches it before any radio build links it."""
