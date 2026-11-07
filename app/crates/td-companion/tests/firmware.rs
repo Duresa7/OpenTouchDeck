@@ -934,7 +934,7 @@ async fn consent_dialog_escapes_a_renamed_device() {
     use td_companion::features::devices::{DevicePath, DeviceSettingsPatch, SettingsPatch};
     let td = TestCompanion::start().await;
     let id = td.plug_device("mocka").await;
-    let name = "Desk\u{2028}Port: COM99\u{202E}kced";
+    let name = "Desk\u{2028}Port: COM99\u{2029}kced";
     td.call::<SettingsPatch>(
         DevicePath { device: id.clone() },
         NoQuery,
@@ -961,8 +961,8 @@ async fn consent_dialog_escapes_a_renamed_device() {
     prompt.answer(false);
     td.wait(&job).await;
     assert!(text.contains(r"\u{2028}"), "{text}");
-    assert!(text.contains(r"\u{202E}"), "{text}");
-    assert!(!text.contains(['\u{2028}', '\u{202E}']), "{text}");
+    assert!(text.contains(r"\u{2029}"), "{text}");
+    assert!(!text.contains(['\u{2028}', '\u{2029}']), "{text}");
     assert_eq!(
         text.lines().filter(|l| l.starts_with("Port:")).count(),
         1,

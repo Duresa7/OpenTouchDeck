@@ -9,7 +9,7 @@ import { button } from '../shell/button.ts';
 import { useUi } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
 import { useDeviceLayout } from './home-layouts.ts';
-import { CHECKING_CONTROLS, deviceWidth, firmwareUpdate, lastSeen, NEEDS_SEND, previewOf, shownOrientation, statusOf, uncheckedText } from './home-model.ts';
+import { CHECKING_CONTROLS, deviceWidth, firmwareUpdate, lastSeen, NEEDS_SEND, previewOf, shownOrientation, deviceStatus, uncheckedText } from './home-model.ts';
 import { boardCards, boardInstallFor, boardsUi, useBoardsUi } from './new-boards.ts';
 import { IgnoredBoards, NewBoardCard } from './NewBoardCard.tsx';
 import './home.css';
@@ -51,7 +51,7 @@ function ControlsNotice({ device, name }: { device: DeviceSummary; name: string 
 
 function DeviceCard({ device, width }: { device: DeviceSummary; width: number }) {
   const openDevice = useUi((s) => s.openDevice);
-  const status = statusOf(device.link.state);
+  const status = deviceStatus(device);
   const name = device.name ?? 'Unnamed Device';
   const seen = !status.live && lastSeen(device);
   const layout = useDeviceLayout(device);

@@ -38,7 +38,7 @@ export const WORST_DEVICE_NAMES = [
   '配信用メインデスク左側のタッチ盤',
   'مكتب الاستوديو الرئيسي',
   'Phòng thu của Nguyễn Thị Ánh'.normalize('NFD'),
-  '👩🏽‍💻 Dev desk 🏳️‍🌈',
+  '👩🏽 Dev desk 🏳️',
   'โต๊ะสตูดิโอชั้น',
   'Bartholomew Fitzgerald-Montgomery III',
   'Desk',

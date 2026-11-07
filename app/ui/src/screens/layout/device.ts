@@ -8,10 +8,12 @@ import { jobsStore } from '../../lib/companion/jobs.ts';
 import { createFirmwareUpdate, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { newerFirmware } from '../../lib/device/needs-firmware.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from '../../lib/device/settings.ts';
+import { createWifiPairing, type WifiStore } from '../../lib/device/wifi.ts';
 
 interface DeviceStores {
   settings: DeviceSettingsStore;
   firmware: FirmwareUpdateStore;
+  wifi: WifiStore;
   observe(summary: DeviceSummary): void;
 }
 
@@ -35,6 +37,7 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
     found = {
       settings,
       firmware,
+      wifi: createWifiPairing({ companion, device: () => latest }),
       observe(summary) {
         latest = summary;
         settings.observe(summary);

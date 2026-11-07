@@ -385,7 +385,10 @@ is pinned to Unicode 17.0's, these inclusive hex ranges, also in the vectors'
 `1bca0-1bca3`, `1d173-1d17a`, `e0001` and `e0020-e007f`. `\p{Cc}` is
 U+0000 to U+001F and U+007F to U+009F. The name also MUST NOT contain the
 Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, letters (`\p{Lo}`) that
-render as blank space. A refused name closes the carrier connection.
+render as blank space. A refused name closes the carrier connection. A
+link-v2 Device name obeys the same character rule
+([link-v2.md](link-v2.md#device-name)); both specs share the names in
+[name-vectors-v2.json](name-vectors-v2.json).
 `window_id` is a fresh random 16-byte value. A new request can't replace or
 extend an open window. Three failed client proofs close the window and the
 carrier connection.

@@ -32,7 +32,8 @@ export function connectionText({ device, demo }: { device: DeviceSummary; demo: 
   const { link } = device;
   switch (link.state) {
     case 'connected':
-      return demo ? `${name} is the demo Device.` : `${name} is on ${link.port}.`;
+      if (demo) return `${name} is the demo Device.`;
+      return device.carrier === 'wifi' ? `${name} is on Wi-Fi at ${link.port}.` : `${name} is on ${link.port}.`;
     case 'connecting':
       return 'Connecting…';
     case 'busy':
