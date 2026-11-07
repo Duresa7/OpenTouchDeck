@@ -378,8 +378,10 @@ A Device reaches the Companion over USB or Wi-Fi, one Carrier at a time, under o
 
 - **One Device on both Carriers.** net-v2 pins the factory MAC, which is also the USB serial, so a Device paired over Wi-Fi has the same id as over USB. `DeviceSummary.carrier` is `usb` or `wifi` while connected and `null` otherwise. While connected over Wi-Fi, `link.port` is the `host:port` the Companion reached.
 - **USB wins.** The scan thread still probes the USB port of a Device linked over Wi-Fi. When it answers, the USB link replaces the Wi-Fi one. When the port leaves, the Device goes `lost` with `unplugged` and the Wi-Fi thread tries it at once, so it comes back as `connected` over Wi-Fi without being forgotten.
-- **The Wi-Fi thread.** It tries each paired Device that has no USB port, isn't linked and wasn't disconnected by the person: at once after pairing, a Wi-Fi link loss, an unplug or `devices.connect`; then after 0.25 s, doubling up to 10 s. A Device that answers `busy` (linked over USB or to another app) is `busy` with the address as `port` and is tried again at most every 2 s. A failure leaves the Device `offline` and records `problem` on its Pairing.
-- **Discovery** runs only when `wifi.discover` asks: a 3 s DNS-SD browse for `_touchdeck._tcp` with the pure-Rust `mdns-sd` crate, which needs neither Bonjour nor Avahi and works beside an OS responder. Records are hints; the Pairing pins the id. Where multicast is blocked it finds nothing, and the person types the address.
+- **The Wi-Fi thread.** It tries each paired Device that has no USB port, isn't linked and wasn't disconnected by the person: at once after pairing, a Wi-Fi link loss, an unplug or `devices.connect`; then after 0.25 s, doubling up to 10 s. A Device that answers `busy` (linked over USB or to another app) is `busy` with the address as `port` and is tried again at most every 2 s. A failure leaves the Device `offline` and records `problem` on its Pairing. Two failures stop the retries until the person connects again (`devices.connect`) or plugs the Device in: a `version` refusal, and a Device whose `hello` doesn't offer link-v2 or doesn't carry the paired id. Both mean its Firmware can't take this Companion over Wi-Fi, so `problem` says to update it over USB. The Companion never falls back to anything weaker. An `auth` refusal never deletes the key: `problem` says the Device no longer knows this Companion, and the person can forget the Pairing and pair again.
+- **Discovery** runs only when `wifi.discover` asks: a 3 s DNS-SD browse for `_touchdeck._tcp` with the pure-Rust `mdns-sd` crate, which needs neither Bonjour nor Avahi and works beside an OS responder. Records are hints; the Pairing pins the id. A browse returns at most 32 Devices, drops loopback, link-local, unspecified, broadcast and multicast addresses, drops every character from a name that net-v2 refuses in a name, and ignores a `paired` count above 4. When it finds a paired Device at a new address, as after a DHCP change, the Pairing takes that address and the Wi-Fi thread tries it at once; the session still proves it's the paired Device. Where multicast is blocked it finds nothing, and the person types the address.
+- **Full Devices.** `wifi.pair_start` reads the `paired` count the last discovery saw at that address. With 4, a `full` or `closed` refusal is 409 `wifi.full` with `details.paired: 4` and a message that says to remove one on the Device (paired apps screen) or over USB. With fewer, `full` means the Device still holds this Companion's own Pairing, so it is 409 `wifi.already_paired`. With no count, `wifi.full` says it may be either.
+- **Records and unknown outcomes.** A session carries at most 2^24 records per direction. Once fewer than 1024 remain in either direction, the Companion ends the session before the next request, never in the middle of a transfer, and the Wi-Fi thread reconnects with fresh keys. A request whose session ends before its reply fails with 502 `device.unknown_outcome`: the Device may or may not have acted, so the person checks before trying again.
 - **Keys.** The long-term key of each Pairing is in the OS keychain through the `keyring` crate: Credential Manager on Windows, the Secret Service on Linux, under service `touchdeck` and user `net-pairing:<device>`. With no keychain, pairing fails with 503 `wifi.keychain` and a message that says what to install or unlock; the key is never written to a file. `network.json` in the data folder holds the Companion id and each Pairing's Device id, address, name and whether it's confirmed, never a key.
 - **Over Wi-Fi a session has no console.** `console.send` and `devices.restart` fail with `device.link`. Firmware updates need USB: `firmware.update` and `firmware.repair` give 409 `firmware.usb_only` for a Device connected over Wi-Fi. The Device refuses USB-only requests over a network session with `usb-only`.
 
@@ -556,7 +558,7 @@ Feature module `wifi`. See Wi-Fi Carrier above.
 |---|---|---|
 | `wifi.discover` | `POST /wifi/discover` | → `WifiDevice[]`, after a 3 s browse. 503 `wifi.discovery` when mDNS can't start |
 | `wifi.pairings_list` | `GET /wifi/pairings` | → `WifiPairing[]` |
-| `wifi.pair_start` | `POST /wifi/pairings` | `{address}` → `PairingStarted`. `address` is an IPv4 or IPv6 address or a host name, with an optional port that defaults to 47820. The Device must have its pairing window open (Pair new app on the Device), or 409 `wifi.window_closed`. 502 `wifi.unreachable`, 409 `wifi.full`, `wifi.already_paired` or `wifi.busy` |
+| `wifi.pair_start` | `POST /wifi/pairings` | `{address}` → `PairingStarted`. `address` is an IPv4 or IPv6 address or a host name, with an optional port that defaults to 47820. The Device must have its pairing window open (Pair new app on the Device), or 409 `wifi.window_closed`. 502 `wifi.unreachable`, 409 `wifi.full`, `wifi.already_paired`, `wifi.busy` or `wifi.version` |
 | `wifi.pair_code` | `POST /wifi/attempts/{attempt}/code` | `{code}`, the six digits on the Device → `WifiPairing`, and the Device then connects over Wi-Fi. A wrong code gives 422 `wifi.wrong_code` with `details.attempts_left`; the third gives 429 `wifi.locked`, and the Device refuses pairing for 30 s, doubling. 409 `wifi.expired` when the window closed, 503 `wifi.keychain`, 404 `wifi.attempt_not_found` |
 | `wifi.pair_cancel` | `DELETE /wifi/attempts/{attempt}` | → `()`. Closes the window on the Device, which counts it as a wrong code, as net-v2 does any window dropped before the code is right |
 | `wifi.pairings_forget` | `DELETE /wifi/pairings/{device}` | → `()`. Deletes the key and closes a Wi-Fi link. The Device keeps its side until it's forgotten there. 404 `wifi.not_paired`. `devices.forget` also forgets the Pairing |
@@ -1276,6 +1278,7 @@ Features add codes as they land. This list is the starting set.
 | `device.busy` | 409 | A Job holds the Device. `details.job` |
 | `device.timeout` | 504 | The Device didn't reply in time |
 | `device.link` | 502 | Link I/O failed or the Device refused. `details.reason` |
+| `device.unknown_outcome` | 502 | The link closed after the request went out and before its reply, so whether the Device acted is unknown. `details.reason` |
 | `device.needs_firmware` | 409 | The feature needs newer Firmware. `details.field` names the setting; `details.version` is the version that adds it, or `null` while no released Firmware has it (brightness today) |
 | `new_board.not_found` | 404 | No New board with that id |
 | `layout.invalid` | 422 | The Layout fails validation. `details.issues` |
@@ -1295,13 +1298,14 @@ Features add codes as they land. This list is the starting set.
 | `wifi.window_closed` | 409 | The Device isn't pairing, or pairing is locked out. Open Pair new app on the Device |
 | `wifi.wrong_code` | 422 | The code is wrong. `details.attempts_left` |
 | `wifi.locked` | 429 | The third wrong code; the Device stopped pairing for a while |
-| `wifi.full` | 409 | The Device holds four Pairings |
+| `wifi.full` | 409 | The Device holds four Pairings, or with no advertised count, may still hold this Companion's. `details.paired` |
 | `wifi.already_paired` | 409 | This Companion already has a Pairing with the Device |
 | `wifi.expired` | 409 | The pairing window closed or was cancelled on the Device |
 | `wifi.busy` | 409 | The Device is linked over USB or to another app |
 | `wifi.attempt_not_found` | 404 | No started pairing with that id |
 | `wifi.not_paired` | 404 | No Pairing with that Device |
 | `wifi.keychain` | 503 | The OS keychain is missing or refused the key. The message says what to do |
+| `wifi.version` | 409 | The Device answered `version`: its Firmware can't pair with this Companion. Update it over USB |
 | `wifi.failed` | 502 | The Device broke net-v2 or a proof failed. `details.reason` |
 | `wifi.discovery` | 503 | mDNS couldn't start; type the address instead |
 | `asset.not_found` | 404 | No Asset with that id |

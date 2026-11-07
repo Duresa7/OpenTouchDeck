@@ -414,3 +414,60 @@ fn a_full_device_refuses_a_fifth_pairing() {
         Some(NetError::Refused(Refusal::Full))
     ));
 }
+
+#[test]
+fn a_session_near_the_record_limit_ends_between_requests_and_a_new_one_starts_at_zero() {
+    use td_link::LinkError;
+    use td_link::net::wire::{COUNTER_LIMIT, RECORD_RESERVE};
+    let device = fake();
+    let paired = pair_with(&device, COMPANION);
+    // Both sides start 1025 records short of the limit.
+    let start = COUNTER_LIMIT - RECORD_RESERVE - 1;
+    device.skip_next_session(start);
+    let mut carrier = NetCarrier::connect(&addr(&device), &paired.credential, TIMEOUT).unwrap();
+    assert_eq!(carrier.counters(), (0, 0));
+    carrier.skip_records(start);
+    let (session, incoming) = Session::over(Box::new(carrier), quiet()).unwrap();
+    let ping = json!({"m": "ping"});
+    // 1025 left, then 1024: both requests go out and are answered.
+    session.call(&ping, TIMEOUT).unwrap();
+    session.call(&ping, TIMEOUT).unwrap();
+    // 1023 left: the session ends before the request, so the request never went out.
+    let error = session.call(&ping, TIMEOUT).unwrap_err();
+    assert!(matches!(error, LinkError::Io(_)), "{error:?}");
+    assert!(closed(&incoming), "the session ended");
+    let end = Instant::now() + TIMEOUT;
+    while device.session().is_some() && Instant::now() < end {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(device.session(), None);
+
+    // A reconnect runs the session exchange again: fresh keys with counters at zero.
+    let carrier = NetCarrier::connect(&addr(&device), &paired.credential, TIMEOUT).unwrap();
+    assert_eq!(carrier.counters(), (0, 0));
+    let (session, _incoming) = Session::over(Box::new(carrier), quiet()).unwrap();
+    session.call(&ping, TIMEOUT).unwrap();
+    assert_eq!(device.sessions(), 2);
+}
+
+#[test]
+fn a_request_cut_off_by_a_closed_session_has_an_unknown_outcome() {
+    use td_link::LinkError;
+    let device = fake();
+    let paired = pair_with(&device, COMPANION);
+    let (session, _incoming) = session(&device, &paired.credential);
+    device.deck().delay_replies(Duration::from_millis(500));
+    let dropper = {
+        let device = &device;
+        thread::scope(|scope| {
+            let call = scope.spawn(|| session.call(&json!({"m": "ping"}), TIMEOUT));
+            thread::sleep(Duration::from_millis(100));
+            device.drop_connection();
+            call.join().unwrap()
+        })
+    };
+    assert!(
+        matches!(dropper, Err(LinkError::Unanswered(_))),
+        "{dropper:?}"
+    );
+}

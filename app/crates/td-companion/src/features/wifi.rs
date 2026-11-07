@@ -34,6 +34,7 @@ impl ApiError for WifiError {
         "wifi.attempt_not_found",
         "wifi.not_paired",
         "wifi.keychain",
+        "wifi.version",
         "wifi.failed",
         "wifi.discovery",
     ];
@@ -46,8 +47,9 @@ impl ApiError for WifiError {
                 PairError::AttemptNotFound | PairError::NotPaired => StatusCode::NOT_FOUND,
                 PairError::Keychain(_) => StatusCode::SERVICE_UNAVAILABLE,
                 PairError::WindowClosed
-                | PairError::Full
+                | PairError::Full { .. }
                 | PairError::AlreadyPaired
+                | PairError::Version
                 | PairError::Expired
                 | PairError::Busy => StatusCode::CONFLICT,
             },
@@ -62,13 +64,14 @@ impl ApiError for WifiError {
                 PairError::WindowClosed => "wifi.window_closed",
                 PairError::WrongCode { .. } => "wifi.wrong_code",
                 PairError::Locked => "wifi.locked",
-                PairError::Full => "wifi.full",
+                PairError::Full { .. } => "wifi.full",
                 PairError::AlreadyPaired => "wifi.already_paired",
                 PairError::Expired => "wifi.expired",
                 PairError::Busy => "wifi.busy",
                 PairError::AttemptNotFound => "wifi.attempt_not_found",
                 PairError::NotPaired => "wifi.not_paired",
                 PairError::Keychain(_) => "wifi.keychain",
+                PairError::Version => "wifi.version",
                 PairError::Failed(_) => "wifi.failed",
             },
             Self::Discovery(_) => "wifi.discovery",
@@ -80,6 +83,7 @@ impl ApiError for WifiError {
             Self::Pair(PairError::WrongCode { attempts_left }) => {
                 Some(serde_json::json!({ "attempts_left": attempts_left }))
             }
+            Self::Pair(PairError::Full { paired }) => Some(serde_json::json!({ "paired": paired })),
             Self::Pair(PairError::Unreachable(reason) | PairError::Failed(reason)) => {
                 Some(serde_json::json!({ "reason": reason }))
             }

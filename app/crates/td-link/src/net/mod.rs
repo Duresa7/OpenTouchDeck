@@ -4,10 +4,11 @@
 //! [`Session`](crate::Session) runs over it unchanged.
 //!
 //! [`pair`] starts pairing at an address, [`NetCarrier::connect`] opens a session with a
-//! [`Credential`], and [`mdns::browse`] finds Devices on the LAN. [`fake::FakeNetDevice`] is a
-//! Device on loopback for tests.
+//! [`Credential`], and [`mdns::browse`] finds Devices on the LAN. With the `fake` feature,
+//! `fake::FakeNetDevice` is a Device on loopback for tests; release builds leave it out.
 
 mod client;
+#[cfg(feature = "fake")]
 pub mod fake;
 pub mod mdns;
 mod socket;

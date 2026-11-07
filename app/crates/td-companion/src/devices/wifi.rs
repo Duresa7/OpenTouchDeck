@@ -21,6 +21,7 @@ use td_link::{
     },
 };
 use ts_rs::TS;
+use zeroize::Zeroize;
 
 /// How long a Wi-Fi connection and its session setup may take.
 const CONNECT: Duration = Duration::from_secs(4);
@@ -34,6 +35,9 @@ const MAX_RETRY: Duration = Duration::from_secs(10);
 const BUSY_RETRY: Duration = Duration::from_secs(2);
 /// A started pairing that nobody finishes is dropped after this.
 const ATTEMPT_LIFE: Duration = Duration::from_secs(130);
+/// Why Wi-Fi stopped for a Device whose Firmware doesn't speak net-v2 or link-v2. The person
+/// updates it over USB; nothing retries on its own.
+const NEEDS_FIRMWARE: &str = "The Device's Firmware can't take this Companion over Wi-Fi. Update its Firmware over USB, then connect again.";
 /// The service name Pairing keys are saved under in the keychain.
 pub const KEY_SERVICE: &str = "touchdeck";
 
@@ -82,11 +86,18 @@ impl PairingKeys for OsKeychain {
     }
     fn load(&self, device: &DeviceId) -> Result<Option<[u8; 32]>, KeychainError> {
         match Self::entry(device)?.get_secret() {
-            Ok(bytes) => bytes.try_into().map(Some).map_err(|_| {
-                KeychainError(
-                    "The saved Pairing key is damaged. Forget the Pairing and pair again.".into(),
-                )
-            }),
+            Ok(mut bytes) => {
+                let key = <[u8; 32]>::try_from(bytes.as_slice())
+                    .map(Some)
+                    .map_err(|_| {
+                        KeychainError(
+                            "The saved Pairing key is damaged. Forget the Pairing and pair again."
+                                .into(),
+                        )
+                    });
+                bytes.zeroize();
+                key
+            }
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(failed(error)),
         }
@@ -253,6 +264,9 @@ pub(super) struct WifiRecord {
     pub backoff: Duration,
     /// Why the last try failed, for the Pairings list.
     pub problem: Option<String>,
+    /// Wi-Fi stopped until the person connects again or plugs the Device in, because its
+    /// Firmware can't take the session. Never retried on its own.
+    pub stopped: bool,
 }
 
 /// A Pairing as the API lists it.
@@ -293,6 +307,8 @@ struct Attempt {
 pub(super) struct WifiState {
     companion: Mutex<Option<CompanionId>>,
     attempts: Mutex<BTreeMap<String, Arc<Mutex<Attempt>>>>,
+    /// The `paired` count the last discovery saw at each address.
+    advertised: Mutex<BTreeMap<String, Option<u8>>>,
     pub(super) wake: super::Wake,
 }
 
@@ -323,10 +339,9 @@ pub enum PairError {
         "Too many wrong codes. The Device stopped pairing for a while; wait, then open Pair new app on the Device again."
     )]
     Locked,
-    #[error(
-        "The Device already has four Pairings. Forget one on the Device over USB, then try again."
-    )]
-    Full,
+    /// `full`, with the `paired` count the Device advertised, if discovery saw one.
+    #[error("{}", full_message(*.paired))]
+    Full { paired: Option<u8> },
     #[error(
         "The Device already has a Pairing with this Companion. Forget it here and on the Device, then pair again."
     )]
@@ -337,6 +352,10 @@ pub enum PairError {
         "The Device is busy with another app. Close it, or unplug the USB cable, then try again."
     )]
     Busy,
+    #[error(
+        "The Device's Firmware can't pair over Wi-Fi with this Companion. Update its Firmware over USB, then try again."
+    )]
+    Version,
     #[error("No pairing with that id is waiting for a code.")]
     AttemptNotFound,
     #[error("This Companion has no Pairing with that Device.")]
@@ -347,12 +366,40 @@ pub enum PairError {
     Failed(String),
 }
 
+/// What to tell the person about `full`. Four advertised Pairings means the slots are taken;
+/// with no count it may also be this Companion's own Pairing that the Device still holds.
+fn full_message(paired: Option<u8>) -> &'static str {
+    if paired == Some(FULL) {
+        "This Device has four paired apps. Remove one on the Device (paired apps screen), or over USB, then pair again."
+    } else {
+        "The Device can't take a new Pairing: four apps are paired, or it still has one with this Companion. Remove one on the Device (paired apps screen), or over USB, then pair again."
+    }
+}
+
+/// The Pairings a Device holds when every slot is taken.
+const FULL: u8 = 4;
+
+/// The pairing error for `error`, given the `paired` count the Device last advertised. That
+/// count is a hint: it only chooses the advice.
+fn pair_refused(error: NetError, paired: Option<u8>) -> PairError {
+    match error {
+        NetError::Refused(Refusal::Full) => match paired {
+            Some(count) if count < FULL => PairError::AlreadyPaired,
+            paired => PairError::Full { paired },
+        },
+        NetError::Refused(Refusal::Closed) if paired == Some(FULL) => PairError::Full { paired },
+        error => pair_error(error),
+    }
+}
+
 fn pair_error(error: NetError) -> PairError {
     match error {
         NetError::Refused(Refusal::Closed) => PairError::WindowClosed,
-        NetError::Refused(Refusal::Full) => PairError::Full,
+        NetError::Refused(Refusal::Full) => PairError::Full { paired: None },
         NetError::Refused(Refusal::Expired | Refusal::Cancelled) => PairError::Expired,
         NetError::Refused(Refusal::Busy) => PairError::Busy,
+        // No fallback and no retry: net-v1 or plain text would be weaker.
+        NetError::Refused(Refusal::Version) | NetError::Version(_) => PairError::Version,
         NetError::Store(detail) => PairError::Keychain(detail),
         NetError::Io(error) => PairError::Unreachable(error.to_string()),
         NetError::Closed => PairError::Expired,
@@ -422,6 +469,7 @@ impl Inner {
                     due: now,
                     backoff: scan::FIRST_RETRY,
                     problem: None,
+                    stopped: false,
                 },
             );
         }
@@ -466,6 +514,7 @@ impl Inner {
         if let Some(record) = reg.wifi.get_mut(id) {
             record.due = Instant::now();
             record.backoff = scan::FIRST_RETRY;
+            record.stopped = false;
             self.wifi.wake.kick();
         }
     }
@@ -475,7 +524,7 @@ impl Inner {
         let now = Instant::now();
         reg.wifi
             .iter()
-            .filter(|(id, r)| r.due <= now && wifi_wanted(&reg, id))
+            .filter(|(id, r)| !r.stopped && r.due <= now && wifi_wanted(&reg, id))
             .map(|(id, r)| (id.clone(), r.address.clone()))
             .collect()
     }
@@ -485,7 +534,7 @@ impl Inner {
         let now = Instant::now();
         reg.wifi
             .iter()
-            .filter(|(id, _)| wifi_wanted(&reg, id))
+            .filter(|(id, r)| !r.stopped && wifi_wanted(&reg, id))
             .map(|(_, r)| r.due.saturating_duration_since(now))
             .min()
             .unwrap_or(Duration::MAX)
@@ -517,10 +566,16 @@ impl Inner {
                 }
                 return;
             }
-            WifiProbed::Failed(problem) => {
+            WifiProbed::Failed(_) | WifiProbed::Stopped(_) => {
+                let (problem, stopped) = match probed {
+                    WifiProbed::Failed(problem) => (problem, false),
+                    WifiProbed::Stopped(problem) => (problem, true),
+                    _ => unreachable!(),
+                };
                 record.due = Instant::now() + record.backoff;
                 record.backoff = (record.backoff * 2).min(MAX_RETRY);
                 record.problem = Some(problem);
+                record.stopped = stopped;
                 let offline = reg.devices.get(id).is_some_and(|e| {
                     matches!(
                         e.summary.link,
@@ -570,6 +625,7 @@ impl Inner {
                 due: now,
                 backoff: scan::FIRST_RETRY,
                 problem: None,
+                stopped: false,
             },
         );
         if !reg.devices.contains_key(device) {
@@ -629,14 +685,17 @@ fn wifi_wanted(reg: &Registry, id: &DeviceId) -> bool {
 enum WifiProbed {
     Device(Box<scan::Found>),
     Busy,
+    /// Tried again after a backoff.
     Failed(String),
+    /// Not tried again until the person connects or plugs the Device in.
+    Stopped(String),
 }
 
 fn probe(inner: &Inner, id: &DeviceId, address: &Address) -> WifiProbed {
     let Some(device_id) = net::parse_device_id(id) else {
         return WifiProbed::Failed("The Device id isn't a net-v2 id.".into());
     };
-    let ltk = match inner.wifi_config().keys.load(id) {
+    let mut ltk = match inner.wifi_config().keys.load(id) {
         Ok(Some(key)) => key,
         Ok(None) => {
             return WifiProbed::Failed(
@@ -651,9 +710,16 @@ fn probe(inner: &Inner, id: &DeviceId, address: &Address) -> WifiProbed {
         companion_id: inner.companion_id(),
         ltk,
     };
-    let carrier = match NetCarrier::connect(address, &credential, CONNECT) {
+    ltk.zeroize();
+    let connected = NetCarrier::connect(address, &credential, CONNECT);
+    drop(credential);
+    let carrier = match connected {
         Ok(carrier) => carrier,
         Err(NetError::Refused(Refusal::Busy)) => return WifiProbed::Busy,
+        // net-v2 says stop: no weaker fallback and no retry of our own.
+        Err(NetError::Refused(Refusal::Version) | NetError::Version(_)) => {
+            return WifiProbed::Stopped(NEEDS_FIRMWARE.into());
+        }
         Err(NetError::Refused(Refusal::Auth)) => {
             return WifiProbed::Failed(
                 "The Device doesn't know this Companion any more. Forget the Pairing and pair again."
@@ -682,11 +748,11 @@ fn probe(inner: &Inner, id: &DeviceId, address: &Address) -> WifiProbed {
         }
         Err(error) => return WifiProbed::Failed(error.to_string()),
     };
-    if identity
-        .id
-        .as_deref()
-        .is_some_and(|reported| net::parse_device_id(reported) != Some(device_id))
-    {
+    // A net-v2 Device offers link-v2, and its hello carries the id it paired with.
+    if identity.protocol != 2 {
+        return WifiProbed::Stopped(NEEDS_FIRMWARE.into());
+    }
+    if identity.id.as_deref().and_then(net::parse_device_id) != Some(device_id) {
         return WifiProbed::Failed("The Device at that address has another id.".into());
     }
     WifiProbed::Device(Box::new(scan::Found {
@@ -730,7 +796,29 @@ impl super::DeviceManager {
     /// Browses the LAN for up to `wait`. Blocking.
     pub fn wifi_discover(&self, wait: Duration) -> Result<Vec<WifiDevice>, String> {
         let found = (self.inner.wifi_config().browse)(wait)?;
-        let reg = self.inner.reg.lock();
+        *self.inner.wifi.advertised.lock() = found
+            .iter()
+            .map(|d| (d.address.to_string(), d.paired))
+            .collect();
+        let mut reg = self.inner.reg.lock();
+        // A paired Device that moved, as DHCP may move it, is tried at its new address. The
+        // session still proves it is the paired Device.
+        let mut moved = false;
+        for d in &found {
+            let device = device_id_of(&d.device_id);
+            if let Some(record) = reg.wifi.get_mut(&device)
+                && record.address != d.address
+            {
+                record.address = d.address.clone();
+                record.due = Instant::now();
+                record.backoff = scan::FIRST_RETRY;
+                moved = true;
+            }
+        }
+        if moved {
+            self.inner.save_wifi(&reg);
+            self.inner.wifi.wake.kick();
+        }
         Ok(found
             .into_iter()
             .map(|d| {
@@ -770,13 +858,21 @@ impl super::DeviceManager {
         let address = Address::parse(address).ok_or_else(|| {
             PairError::Unreachable("That isn't an IP address or host name.".into())
         })?;
+        let advertised = self
+            .inner
+            .wifi
+            .advertised
+            .lock()
+            .get(&address.to_string())
+            .copied()
+            .flatten();
         let pairing = net::pair(
             &address,
             &self.inner.companion_id(),
             &companion_name(),
             CONNECT,
         )
-        .map_err(pair_error)?;
+        .map_err(|error| pair_refused(error, advertised))?;
         let device = device_id_of(&pairing.device_id());
         if self.inner.reg.lock().wifi.contains_key(&device) {
             pairing.cancel();
@@ -966,6 +1062,36 @@ mod tests {
         keys.set_unavailable(false);
         keys.delete(&id).unwrap();
         assert_eq!(keys.load(&id).unwrap(), None);
+    }
+
+    #[test]
+    fn full_and_closed_take_their_advice_from_the_advertised_count() {
+        let full = || NetError::Refused(Refusal::Full);
+        let closed = || NetError::Refused(Refusal::Closed);
+        assert_eq!(
+            pair_refused(full(), Some(4)),
+            PairError::Full { paired: Some(4) }
+        );
+        assert_eq!(pair_refused(full(), Some(2)), PairError::AlreadyPaired);
+        assert_eq!(pair_refused(full(), None), PairError::Full { paired: None });
+        assert_eq!(
+            pair_refused(closed(), Some(4)),
+            PairError::Full { paired: Some(4) }
+        );
+        assert_eq!(pair_refused(closed(), Some(3)), PairError::WindowClosed);
+        assert!(
+            PairError::Full { paired: Some(4) }
+                .to_string()
+                .contains("four paired apps")
+        );
+        assert!(
+            PairError::Full { paired: None }
+                .to_string()
+                .contains("still has one with this Companion")
+        );
+        for version in [NetError::Refused(Refusal::Version), NetError::Version(1)] {
+            assert_eq!(pair_refused(version, None), PairError::Version);
+        }
     }
 
     #[test]

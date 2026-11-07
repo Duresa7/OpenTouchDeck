@@ -111,6 +111,10 @@ struct State {
     /// Per Pairing: when its update prompt cooldown ends, and how long the last one was.
     cooldowns: BTreeMap<CompanionId, (Instant, Duration)>,
     sessions: u32,
+    /// Where the next session's record counters start, for tests of the record limit.
+    skip: Option<u64>,
+    /// An error item every `session.open` gets, as a Device that can't take the session.
+    session_refusal: Option<Refusal>,
     unreachable: bool,
     lose_stored: bool,
 }
@@ -318,6 +322,22 @@ impl FakeNetDevice {
     }
 
     /// Time left in the session's update prompt cooldown.
+    /// Answers every `session.open` with `refusal`, or runs sessions again with `None`.
+    pub fn refuse_sessions_with(&self, refusal: Option<Refusal>) {
+        self.inner.state().session_refusal = refusal;
+    }
+
+    /// How many connections reached the Device.
+    pub fn connections(&self) -> u64 {
+        self.inner.connections.load(Ordering::Acquire)
+    }
+
+    /// Starts the next session's record counters at `counter` in both directions, as
+    /// [`NetCarrier::skip_records`](super::NetCarrier::skip_records) does on the Companion.
+    pub fn skip_next_session(&self, counter: u64) {
+        self.inner.state().skip = Some(counter);
+    }
+
     pub fn update_cooldown(&self) -> Option<Duration> {
         let state = self.state();
         let (until, _) = state.cooldowns.get(state.peer.as_ref()?)?;
@@ -459,6 +479,9 @@ impl Inner {
                 self.pair(&mut items, &first, &fields);
             }
             Ok((SESSION_OPEN, fields)) => {
+                if let Some(refusal) = self.state().session_refusal {
+                    return refuse(&mut items, refusal);
+                }
                 let fields = fields.to_vec();
                 self.session(items, &fields, started);
             }
@@ -483,9 +506,7 @@ impl Inner {
                 return refuse(items, Refusal::Full);
             }
             let window = state.window.as_mut().expect("checked above");
-            let mut raw = [0u8; 4];
-            random(&mut raw);
-            let code = format!("{:06}", u32::from_be_bytes(raw) % 1_000_000);
+            let code = format!("{:06}", pairing_code());
             window.bound = true;
             window.code = Some(code.clone());
             (window.id, window.ends, code)
@@ -661,17 +682,18 @@ impl Inner {
         if items.send(&ready, deadline).is_err() {
             return;
         }
-        {
+        let skip = {
             let mut state = self.state();
             state.session = Some(name);
             state.peer = Some(companion_id);
             state.sessions += 1;
-        }
-        self.bridge(
-            items,
-            RecordSender::new(&keys.d2c, D2C),
-            RecordReceiver::new(&keys.c2d, C2D),
-        );
+            state.skip.take().unwrap_or(0)
+        };
+        let mut sender = RecordSender::new(&keys.d2c, D2C);
+        let mut receiver = RecordReceiver::new(&keys.c2d, C2D);
+        sender.skip_to(skip);
+        receiver.skip_to(skip);
+        self.bridge(items, sender, receiver);
     }
 
     /// Runs the session's link frames through the mock: records in, SLIP frames to the mock,
@@ -845,6 +867,20 @@ impl Inner {
             None
         } else {
             refuse("usb-only", "Only over USB")
+        }
+    }
+}
+
+/// A uniform six-digit code: values at or above the last whole million are drawn again, so
+/// no code is likelier than another.
+fn pairing_code() -> u32 {
+    const BOUND: u32 = u32::MAX - (u32::MAX % 1_000_000) - 1;
+    loop {
+        let mut raw = [0u8; 4];
+        random(&mut raw);
+        let value = u32::from_be_bytes(raw);
+        if value <= BOUND {
+            return value % 1_000_000;
         }
     }
 }

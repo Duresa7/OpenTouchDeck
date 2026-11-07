@@ -35,8 +35,11 @@ pub const MIN_HANDSHAKE_BODY: usize = 3;
 pub const MAX_HANDSHAKE_BODY: usize = 512;
 pub const MIN_RECORD_BODY: usize = 24;
 pub const MAX_RECORD_BODY: usize = 1_048;
-/// Records per direction per session. Close before counter `2^32`.
-pub const COUNTER_LIMIT: u64 = 1 << 32;
+/// Records per direction per key. A sender never seals counter `2^24` and a receiver closes
+/// rather than accept it; the session ends there and never rekeys.
+pub const COUNTER_LIMIT: u64 = 1 << 24;
+/// A sender ends the session between requests once fewer records than this remain.
+pub const RECORD_RESERVE: u64 = 1024;
 pub const PAIR_WINDOW_MS: u32 = 120_000;
 pub const NAME_MAX: usize = 64;
 
@@ -263,13 +266,16 @@ fn extract_and_derive<const N: usize>(
     ikm: &[u8],
     labels: [&str; N],
 ) -> ([u8; 32], [[u8; 32]; N]) {
-    let (prk, hk) = Hkdf::<Sha256>::extract(Some(salt), ikm);
+    let (mut extracted, hk) = Hkdf::<Sha256>::extract(Some(salt), ikm);
     let mut keys = [[0u8; 32]; N];
     for (key, label) in keys.iter_mut().zip(labels) {
         hk.expand(format!("touchdeck/net-v2/{label}").as_bytes(), key)
             .expect("HKDF expands 32 bytes");
     }
-    (prk.into(), keys)
+    let mut prk = [0u8; 32];
+    prk.copy_from_slice(&extracted);
+    extracted.as_mut_slice().zeroize();
+    (prk, keys)
 }
 
 // --- SRP-6a ---------------------------------------------------------------------------------
@@ -280,6 +286,13 @@ pub fn pad(n: &BigUint) -> [u8; PAD_LEN] {
     let mut out = [0u8; PAD_LEN];
     out[PAD_LEN - raw.len()..].copy_from_slice(&raw);
     out
+}
+
+/// Overwrites a secret number in place before it is freed. num-bigint 0.4 has no `zeroize`,
+/// so this is best effort: it wipes the named values, not the temporaries inside `modpow`.
+fn wipe(n: &mut BigUint) {
+    let digits = (n.bits() as usize).div_ceil(32);
+    n.assign_from_slice(&vec![0u32; digits]);
 }
 
 /// `MIN(n)`: the shortest nonempty big-endian encoding.
@@ -346,11 +359,15 @@ pub fn srp_client_public(a: &[u8; 32]) -> Result<[u8; PAD_LEN], NetError> {
 }
 
 /// `K_srp = H512(MIN(S))` for an `S` that isn't zero.
-fn srp_key(s: &BigUint) -> Result<[u8; 64], NetError> {
-    if *s == BigUint::ZERO {
+fn srp_key(mut s: BigUint) -> Result<[u8; 64], NetError> {
+    if s == BigUint::ZERO {
         return Err(auth("zero SRP secret"));
     }
-    Ok(Sha512::digest(min(s)).into())
+    let mut bytes = min(&s);
+    wipe(&mut s);
+    let key = Sha512::digest(&bytes).into();
+    bytes.zeroize();
+    Ok(key)
 }
 
 /// The Companion's side: `K_srp` from `S_companion = (B - k*g^x mod N)^(a + u*x) mod N`.
@@ -362,18 +379,23 @@ pub fn srp_client_key(
     b_pub: &[u8; PAD_LEN],
 ) -> Result<[u8; 64], NetError> {
     let a_pub = srp_client_public(a)?;
-    let a = exponent(a).ok_or_else(|| protocol("zero SRP exponent"))?;
+    let mut a = exponent(a).ok_or_else(|| protocol("zero SRP exponent"))?;
     let b = public_value(b_pub)?;
     let u = srp_u(&a_pub, b_pub)?;
     let (n, g) = (&G_3072.n, &G_3072.g);
-    let x = srp_x(identity, code, salt);
+    let mut x = srp_x(identity, code, salt);
     let k = srp_k();
-    let kgx = (&k * g.modpow(&x, n)) % n;
-    if (&b + n - &kgx) % n == BigUint::ZERO {
-        return Err(auth("zero SRP client base"));
+    let mut kgx = (&k * g.modpow(&x, n)) % n;
+    let zero_base = (&b + n - &kgx) % n == BigUint::ZERO;
+    wipe(&mut kgx);
+    let s = (!zero_base)
+        .then(|| SrpClient::<Sha512>::new(&G_3072).compute_premaster_secret(&b, &k, &x, &a, &u));
+    wipe(&mut x);
+    wipe(&mut a);
+    match s {
+        Some(s) => srp_key(s),
+        None => Err(auth("zero SRP client base")),
     }
-    let s = SrpClient::<Sha512>::new(&G_3072).compute_premaster_secret(&b, &k, &x, &a, &u);
-    srp_key(&s)
 }
 
 /// The Device's side of one attempt: its public `B`, kept with what it needs for `S`.
@@ -393,7 +415,9 @@ impl SrpServer {
     ) -> Result<Self, NetError> {
         let b = exponent(b).ok_or_else(|| protocol("zero SRP exponent"))?;
         let (n, g) = (&G_3072.n, &G_3072.g);
-        let v = g.modpow(&srp_x(identity, code, salt), n);
+        let mut x = srp_x(identity, code, salt);
+        let v = g.modpow(&x, n);
+        wipe(&mut x);
         let b_pub = pad(&((srp_k() * &v + g.modpow(&b, n)) % n));
         public_value(&b_pub)?;
         Ok(SrpServer { b_pub, b, v })
@@ -405,7 +429,14 @@ impl SrpServer {
         let u = srp_u(a_pub, &self.b_pub)?;
         let n = &G_3072.n;
         let s = ((a * self.v.modpow(&u, n)) % n).modpow(&self.b, n);
-        srp_key(&s)
+        srp_key(s)
+    }
+}
+
+impl Drop for SrpServer {
+    fn drop(&mut self) {
+        wipe(&mut self.b);
+        wipe(&mut self.v);
     }
 }
 
@@ -665,6 +696,23 @@ impl RecordSender {
         }
     }
 
+    /// The counter the next record takes.
+    pub fn counter(&self) -> u64 {
+        self.counter
+    }
+
+    /// Records this key can still seal.
+    pub fn remaining(&self) -> u64 {
+        COUNTER_LIMIT.saturating_sub(self.counter)
+    }
+
+    /// Moves the counter forward to `counter`, for tests of the limit. It never goes back, so
+    /// no nonce repeats.
+    #[doc(hidden)]
+    pub fn skip_to(&mut self, counter: u64) {
+        self.counter = self.counter.max(counter);
+    }
+
     /// Seals one complete link frame body into an item.
     pub fn seal(&mut self, body: &[u8]) -> Result<Vec<u8>, NetError> {
         if self.closed {
@@ -726,6 +774,22 @@ impl RecordReceiver {
             counter,
             ..Self::new(key, direction)
         }
+    }
+
+    /// The counter the next record must carry.
+    pub fn counter(&self) -> u64 {
+        self.counter
+    }
+
+    /// Records this key can still open.
+    pub fn remaining(&self) -> u64 {
+        COUNTER_LIMIT.saturating_sub(self.counter)
+    }
+
+    /// Moves the counter forward to `counter`, for tests of the limit.
+    #[doc(hidden)]
+    pub fn skip_to(&mut self, counter: u64) {
+        self.counter = self.counter.max(counter);
     }
 
     /// Authenticates a complete record item, then checks the link frame body inside it.
@@ -820,7 +884,7 @@ mod tests {
     }
 
     #[test]
-    fn counters_stop_before_two_to_the_thirty_two() {
+    fn counters_stop_before_two_to_the_twenty_four() {
         let key = [0x33u8; 32];
         let mut last = RecordSender::at(&key, C2D, COUNTER_LIMIT - 1);
         let item = last.seal(&body(4)).unwrap();
@@ -830,7 +894,7 @@ mod tests {
                 .unwrap(),
             body(4)
         );
-        assert!(last.seal(&body(5)).is_err(), "counter 2^32 never goes out");
+        assert!(last.seal(&body(5)).is_err(), "counter 2^24 never goes out");
         assert!(
             RecordReceiver::at(&key, C2D, COUNTER_LIMIT)
                 .open(&item)

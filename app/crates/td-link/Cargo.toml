@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# The fake net-v2 Device on loopback, for tests only.
+fake = []
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -25,3 +29,6 @@ zeroize = "1"
 td-core.workspace = true
 td-host.workspace = true
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+td-link = { path = ".", features = ["fake"] }

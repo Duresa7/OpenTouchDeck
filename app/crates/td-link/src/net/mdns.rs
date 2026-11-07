@@ -11,10 +11,16 @@ use std::time::{Duration, Instant};
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 
-use super::{Address, DeviceId, SERVICE, parse_device_id};
+use super::{Address, DeviceId, SERVICE, parse_device_id, wire};
 
 /// The longest a browse may run.
 pub const MAX_BROWSE: Duration = Duration::from_secs(10);
+/// The most Devices one browse returns. A noisy LAN can't grow the list past this.
+pub const MAX_FOUND: usize = 32;
+/// The most answers one browse reads before it stops listening.
+const MAX_ANSWERS: usize = 256;
+/// The most Pairings a Device holds.
+const MAX_PAIRED: u8 = 4;
 
 /// One Device that answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,8 +40,24 @@ pub struct Resolved {
     pub txt: BTreeMap<String, String>,
 }
 
+/// Whether a LAN Device could be at `ip`. Loopback, link-local, unspecified, broadcast and
+/// multicast addresses are dropped, so an answer can't steer pairing at this PC or at an
+/// address that needs a scope.
+fn usable(ip: &IpAddr) -> bool {
+    if ip.is_unspecified() || ip.is_multicast() || ip.is_loopback() {
+        return false;
+    }
+    match ip {
+        IpAddr::V4(v4) => !v4.is_link_local() && !v4.is_broadcast(),
+        IpAddr::V6(v6) => {
+            (v6.segments()[0] & 0xffc0) != 0xfe80
+                && v6.to_ipv4_mapped().is_none_or(|v4| usable(&IpAddr::V4(v4)))
+        }
+    }
+}
+
 /// Reads one resolved instance. Anything that isn't net-v2 with a valid id and a usable
-/// address is dropped. IPv4 is preferred, then a global IPv6 address, then a link-local one.
+/// address is dropped. IPv4 is preferred, then IPv6.
 pub fn read(resolved: &Resolved) -> Option<Discovered> {
     if resolved.txt.get("proto").map(String::as_str) != Some("2") || resolved.port == 0 {
         return None;
@@ -44,19 +66,28 @@ pub fn read(resolved: &Resolved) -> Option<Discovered> {
     let ip = resolved
         .addresses
         .iter()
-        .filter(|ip| !ip.is_unspecified() && !ip.is_multicast())
+        .filter(|ip| usable(ip))
         .min_by_key(|ip| match ip {
             IpAddr::V4(_) => 0,
-            IpAddr::V6(v6) if (v6.segments()[0] & 0xffc0) != 0xfe80 => 1,
-            IpAddr::V6(_) => 2,
+            IpAddr::V6(_) => 1,
         })?;
+    // The character rule of names on the wire, so no control, bidi or zero-width character
+    // reaches the UI.
     let name = resolved
         .txt
         .get("name")
-        .map(|n| n.chars().filter(|c| !c.is_control()).collect::<String>())
+        .map(|n| {
+            n.chars()
+                .filter(|&c| wire::name_char_allowed(c))
+                .collect::<String>()
+        })
         .filter(|n| !n.trim().is_empty() && n.len() <= 48)
         .unwrap_or_else(|| "TouchDeck".to_owned());
-    let paired = resolved.txt.get("paired").and_then(|p| p.parse().ok());
+    let paired = resolved
+        .txt
+        .get("paired")
+        .and_then(|p| p.parse().ok())
+        .filter(|&p| p <= MAX_PAIRED);
     Some(Discovered {
         device_id,
         name,
@@ -68,11 +99,13 @@ pub fn read(resolved: &Resolved) -> Option<Discovered> {
     })
 }
 
-/// Merges answers by Device id, keeping the latest for each.
+/// Merges answers by Device id, keeping the latest for each, and at most [`MAX_FOUND`].
 pub fn merge(found: impl IntoIterator<Item = Discovered>) -> Vec<Discovered> {
     let mut by_id = BTreeMap::new();
     for device in found {
-        by_id.insert(device.device_id, device);
+        if by_id.len() < MAX_FOUND || by_id.contains_key(&device.device_id) {
+            by_id.insert(device.device_id, device);
+        }
     }
     by_id.into_values().collect()
 }
@@ -98,6 +131,9 @@ pub fn browse(wait: Duration) -> Result<Vec<Discovered>, String> {
                         .collect(),
                 };
                 found.extend(read(&resolved));
+                if found.len() >= MAX_ANSWERS {
+                    break;
+                }
             }
             Ok(_) => {}
             Err(_) => break,
@@ -139,6 +175,48 @@ mod tests {
         assert_eq!(found.paired, Some(1));
         let v6 = read(&resolved(TXT, &["fe80::1", "2001:db8::5"])).unwrap();
         assert_eq!(v6.address.host, "2001:db8::5");
+    }
+
+    #[test]
+    fn loopback_link_local_and_odd_addresses_are_dropped() {
+        for address in [
+            "127.0.0.1",
+            "::1",
+            "169.254.1.2",
+            "fe80::1",
+            "0.0.0.0",
+            "224.0.0.251",
+            "ff02::fb",
+            "255.255.255.255",
+            "::ffff:127.0.0.1",
+        ] {
+            assert_eq!(read(&resolved(TXT, &[address])), None, "{address}");
+        }
+        let found = read(&resolved(TXT, &["127.0.0.1", "192.0.2.10"])).unwrap();
+        assert_eq!(found.address.host, "192.0.2.10");
+    }
+
+    #[test]
+    fn names_lose_every_character_the_wire_refuses() {
+        let mut odd = resolved(TXT, &["192.0.2.10"]);
+        odd.txt
+            .insert("name".into(), "De\u{202e}sk\u{200b}\u{7}".into());
+        assert_eq!(read(&odd).unwrap().name, "Desk");
+        odd.txt.insert("name".into(), "\u{200b}\u{3164}".into());
+        assert_eq!(read(&odd).unwrap().name, "TouchDeck");
+        let mut many = resolved(TXT, &["192.0.2.10"]);
+        many.txt.insert("paired".into(), "9".into());
+        assert_eq!(read(&many).unwrap().paired, None);
+    }
+
+    #[test]
+    fn a_browse_returns_at_most_thirty_two_devices() {
+        let found = (0..40u8).map(|i| {
+            let mut answer = resolved(TXT, &["192.0.2.10"]);
+            answer.txt.insert("id".into(), format!("0200000000{i:02x}"));
+            read(&answer).unwrap()
+        });
+        assert_eq!(merge(found).len(), MAX_FOUND);
     }
 
     #[test]

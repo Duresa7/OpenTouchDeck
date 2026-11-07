@@ -442,3 +442,210 @@ async fn forgetting_a_pairing_drops_the_key_and_the_link() {
         (404, Some("wifi.not_paired"))
     );
 }
+
+/// The Pairings list, read until `done` holds or 5 s pass.
+async fn pairings_until(
+    td: &TestCompanion,
+    done: impl Fn(&[td_companion::devices::WifiPairing]) -> bool,
+) -> Vec<td_companion::devices::WifiPairing> {
+    let end = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let pairings = td.call::<PairingsList>((), NoQuery, ()).await.unwrap();
+        if done(&pairings) || std::time::Instant::now() > end {
+            return pairings;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_version_refusal_stops_wifi_until_the_person_connects_again() {
+    let td = TestCompanion::start().await;
+    let fake = td.wifi_device(SERIAL, false);
+    let id = td.pair_wifi(&fake).await;
+    fake.refuse_sessions_with(Some(net::Refusal::Version));
+    fake.drop_connection();
+    let pairings = pairings_until(&td, |p| {
+        p[0].problem
+            .as_deref()
+            .is_some_and(|problem| problem.contains("Update its Firmware over USB"))
+    })
+    .await;
+    assert!(
+        pairings[0].problem.as_deref().unwrap().contains("over USB"),
+        "{pairings:?}"
+    );
+    assert!(!on_wifi(&td, &id));
+    // No retry of its own: the backoff would have tried several times by now.
+    let tries = fake.connections();
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    assert_eq!(fake.connections(), tries, "a version refusal isn't retried");
+    assert!(td.wifi_keys().has(&id), "the key stays");
+
+    // The person updated the Firmware and connects again.
+    fake.refuse_sessions_with(None);
+    td.call::<Connect>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    td.until(|td| on_wifi(td, &id)).await;
+}
+
+#[tokio::test]
+async fn a_device_without_link_v2_is_not_linked_over_wifi() {
+    let td = TestCompanion::start().await;
+    // A protocol-1 Device: its hello offers no link-v2 and carries no id.
+    let fake = FakeNetDevice::start(td_link::MockDeck::new());
+    let attempt = start(&td, &fake).await;
+    let paired = td
+        .call::<PairCodeEndpoint>(
+            AttemptPath { attempt },
+            NoQuery,
+            PairCode {
+                code: fake.code().unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    let pairings = pairings_until(&td, |p| p[0].problem.is_some()).await;
+    assert!(
+        pairings[0].problem.as_deref().unwrap().contains("over USB"),
+        "{pairings:?}"
+    );
+    assert!(!on_wifi(&td, &paired.device));
+    td.until(|_| fake.session().is_none()).await;
+}
+
+#[tokio::test]
+async fn an_auth_refusal_keeps_the_key() {
+    let td = TestCompanion::start().await;
+    let fake = td.wifi_device(SERIAL, false);
+    let id = td.pair_wifi(&fake).await;
+    // Someone forgot this app on the Device.
+    fake.forget_all();
+    fake.drop_connection();
+    let pairings = pairings_until(&td, |p| {
+        p[0].problem
+            .as_deref()
+            .is_some_and(|problem| problem.contains("pair again"))
+    })
+    .await;
+    assert!(pairings[0].problem.is_some(), "{pairings:?}");
+    assert!(td.wifi_keys().has(&id), "an auth never deletes the key");
+}
+
+#[tokio::test]
+async fn a_full_device_gets_advice_by_its_advertised_count() {
+    let td = TestCompanion::start().await;
+    let fake = td.wifi_device(SERIAL, false);
+    let address = net::Address::from(fake.addr());
+    for app in 0..4u8 {
+        fake.open_window().unwrap();
+        let mut other = net::pair(
+            &address,
+            &[0x70 + app; 16],
+            "Other app",
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        other
+            .submit(&fake.code().unwrap(), &mut |_| Ok(()))
+            .unwrap();
+    }
+    td.wifi_network().announce(net::mdns::Discovered {
+        device_id: fake.device_id(),
+        name: "Desk".into(),
+        address: fake.addr().into(),
+        paired: Some(4),
+    });
+    let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    assert_eq!(found[0].paired, Some(4));
+    fake.open_window().unwrap();
+    let (status, error) = failure(td.request::<PairStartEndpoint>(
+        (),
+        NoQuery,
+        &PairStart {
+            address: fake.addr().to_string(),
+        },
+    ))
+    .await;
+    assert_eq!((status, error["code"].as_str()), (409, Some("wifi.full")));
+    assert_eq!(error["details"]["paired"], 4);
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("four paired apps"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_device_that_still_knows_this_companion_says_so() {
+    let td = TestCompanion::start().await;
+    let fake = td.wifi_device(SERIAL, false);
+    let id = td.pair_wifi(&fake).await;
+    // Forgotten here only: the Device keeps its side.
+    td.call::<PairingsForget>(PairingPath { device: id }, NoQuery, ())
+        .await
+        .unwrap();
+    td.until(|_| fake.session().is_none()).await;
+    td.wifi_network().announce(net::mdns::Discovered {
+        device_id: fake.device_id(),
+        name: "Desk".into(),
+        address: fake.addr().into(),
+        paired: Some(1),
+    });
+    td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    fake.open_window().unwrap();
+    let (status, error) = failure(td.request::<PairStartEndpoint>(
+        (),
+        NoQuery,
+        &PairStart {
+            address: fake.addr().to_string(),
+        },
+    ))
+    .await;
+    assert_eq!(
+        (status, error["code"].as_str()),
+        (409, Some("wifi.already_paired"))
+    );
+}
+
+#[tokio::test]
+async fn discovery_refreshes_a_moved_devices_address() {
+    let td = TestCompanion::start().await;
+    let fake = td.wifi_device(SERIAL, false);
+    let id = td.pair_wifi(&fake).await;
+    // The Device answers at a new address. A closed loopback port stands in for it.
+    let moved = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    td.wifi_network().announce(net::mdns::Discovered {
+        device_id: fake.device_id(),
+        name: "Desk".into(),
+        address: moved.into(),
+        paired: Some(1),
+    });
+    td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    let pairings = td.call::<PairingsList>((), NoQuery, ()).await.unwrap();
+    assert_eq!(pairings[0].address, moved.to_string());
+
+    // Back at its own address, the next discovery finds it and Wi-Fi links there.
+    td.call::<Disconnect>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    td.wifi_network().announce(net::mdns::Discovered {
+        device_id: fake.device_id(),
+        name: "Desk".into(),
+        address: fake.addr().into(),
+        paired: Some(1),
+    });
+    td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    td.call::<Connect>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    td.until(|td| on_wifi(td, &id)).await;
+    let pairings = td.call::<PairingsList>((), NoQuery, ()).await.unwrap();
+    assert_eq!(pairings[0].address, fake.addr().to_string());
+}

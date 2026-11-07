@@ -68,6 +68,18 @@ function attemptsText(left: number) {
   return left === 1 ? '1 try left' : `${left} tries left`;
 }
 
+/** The Pairings a Device holds when every slot is taken. */
+export const MAX_PAIRINGS = 4;
+
+/** The advice for a Device with every slot taken, before pairing or after `full`. */
+export const fourApps = (name: string) => `Four apps are paired. Forget one first: on ${name}, use the paired apps screen, or plug it in with a USB cable.`;
+
+function pairedCount(details: unknown): number | null {
+  if (typeof details !== 'object' || details === null || !('paired' in details)) return null;
+  const paired = details.paired;
+  return typeof paired === 'number' ? paired : null;
+}
+
 function attemptsLeft(details: unknown): number | null {
   if (typeof details !== 'object' || details === null || !('attempts_left' in details)) return null;
   const left = details.attempts_left;
@@ -90,9 +102,13 @@ export function wifiProblem(error: ApiError, name: string): string {
     case 'wifi.expired':
       return `Pairing ended on ${name}. Start again.`;
     case 'wifi.full':
-      return `${name} is paired with four apps. Forget one on ${name}, then try again.`;
+      // Without the advertised count it may also be this app's own old Pairing: the
+      // Companion's message says both.
+      return pairedCount(error.details) === MAX_PAIRINGS ? fourApps(name) : error.message;
     case 'wifi.already_paired':
-      return `${name} is already paired over Wi-Fi.`;
+      return `${name} still has a Pairing with this app. Forget it on ${name} (paired apps screen), then pair again.`;
+    case 'wifi.version':
+      return `${name}'s Firmware can't pair over Wi-Fi with this app. Update its Firmware over USB, then try again.`;
     case 'wifi.busy':
       return `${name} is busy with another app. Close it, then try again.`;
     case 'wifi.attempt_not_found':
@@ -137,13 +153,16 @@ export function createWifiPairing({ companion, device: current }: WifiDeps): Wif
         if (get().view.step !== 'idle') return;
         set({ view: { step: 'finding' }, problem: null });
         let address = '';
+        let full = false;
         try {
-          const found = await companion.wifi.discover();
-          address = found.find((d) => d.device === id)?.address ?? '';
+          const found = (await companion.wifi.discover()).find((d) => d.device === id);
+          address = found?.address ?? '';
+          // The advertised count is a hint, so pairing stays possible; the advice comes first.
+          full = found?.paired === MAX_PAIRINGS;
         } catch (error) {
           fail(error);
         }
-        if (get().view.step === 'finding') set({ view: { step: 'address', found: address !== '' }, address });
+        if (get().view.step === 'finding') set({ view: { step: 'address', found: address !== '' }, address, ...(full ? { problem: fourApps(nameOf()) } : {}) });
       },
 
       type(address) {

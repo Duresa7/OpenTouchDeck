@@ -26,6 +26,8 @@ export const FAKE_WIFI_CODE = '123456';
 export const NET_PORT = 47820;
 const WINDOW_MS = 120_000;
 const ATTEMPTS = 3;
+/** The Pairings a Device holds when every slot is taken. */
+const FULL = 4;
 const KEYCHAIN_MISSING =
   "Windows Credential Manager isn't available, so the Companion can't keep the Pairing key. Sign in to Windows with your own user account and pair again.";
 
@@ -63,6 +65,8 @@ export function createFakeWifi(options: FakeWifiOptions) {
     const found = discovered.find((d) => d.address === target);
     if (!found) return failure(502, 'wifi.unreachable', `Nothing answered at ${target}.`, { reason: 'connection refused' });
     if (pairings.has(found.device)) return failure(409, 'wifi.already_paired', 'This Companion already has a Pairing with the Device.');
+    if (found.paired === FULL)
+      return failure(409, 'wifi.full', 'This Device has four paired apps. Remove one on the Device (paired apps screen), or over USB, then pair again.', { paired: FULL });
     minted += 1;
     const started: PairingStarted = { attempt: `attempt_${minted}`, device: found.device, address: found.address, remaining_ms: WINDOW_MS, attempts_left: ATTEMPTS };
     attempts.set(started.attempt, started);

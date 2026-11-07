@@ -464,6 +464,7 @@ impl MockDeck {
 
     /// Links a network carrier, as the fake net-v2 Device does once a session is ready. It
     /// replaces whatever link there was, and a later USB connect replaces it.
+    #[cfg(feature = "fake")]
     pub(crate) fn connect_network(&self) -> MockTransport {
         self.attach(true)
     }

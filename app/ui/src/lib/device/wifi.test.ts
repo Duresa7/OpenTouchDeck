@@ -161,10 +161,38 @@ describe('the words for each Wi-Fi error', () => {
   test.each([
     ['wifi.window_closed', "Desk isn't pairing. On Desk, open Settings and choose Pair new app, then try again."],
     ['wifi.expired', 'Pairing ended on Desk. Start again.'],
-    ['wifi.full', 'Desk is paired with four apps. Forget one on Desk, then try again.'],
+    ['wifi.full', 'The keychain message.'],
+    ['wifi.already_paired', 'Desk still has a Pairing with this app. Forget it on Desk (paired apps screen), then pair again.'],
+    ['wifi.version', "Desk's Firmware can't pair over Wi-Fi with this app. Update its Firmware over USB, then try again."],
     ['wifi.busy', 'Desk is busy with another app. Close it, then try again.'],
     ['wifi.keychain', 'The keychain message.'],
   ])('%s', (code, words) => {
     expect(wifiProblem(new ApiError(code, 'The keychain message.'), 'Desk')).toBe(words);
+  });
+
+  test('a full Device that advertised four Pairings gets the four-apps advice', () => {
+    expect(wifiProblem(new ApiError('wifi.full', 'The Companion message.', { paired: 4 }), 'Desk')).toBe(
+      'Four apps are paired. Forget one first: on Desk, use the paired apps screen, or plug it in with a USB cable.',
+    );
+  });
+});
+
+describe('a Device with four Pairings', () => {
+  test('shows the advice up front and treats full the same way', async () => {
+    fake = createFakeCompanion({
+      devices: [desk, shelf],
+      wifi: { discovered: [{ device: 'mock0002', name: 'Shelf', address: '192.0.2.22:47820', paired: 4 }] },
+    });
+    vi.stubGlobal('fetch', fake.fetch);
+    companion = createClient(BASE, windowSession(fake.bridge));
+    const store = pairingFor(shelf);
+    await store.getState().load();
+    await store.getState().begin();
+    const advice = 'Four apps are paired. Forget one first: on Shelf, use the paired apps screen, or plug it in with a USB cable.';
+    expect(store.getState().view).toEqual({ step: 'address', found: true });
+    expect(store.getState().problem).toBe(advice);
+    await store.getState().start();
+    expect(store.getState().view).toEqual({ step: 'address', found: false });
+    expect(store.getState().problem).toBe(advice);
   });
 });

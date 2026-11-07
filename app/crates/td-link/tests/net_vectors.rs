@@ -16,7 +16,8 @@ use td_link::net::wire::{
     PAIR_START, PAIR_STORED, PairKeys, RecordReceiver, RecordSender, SESSION_CHALLENGE,
     SESSION_OPEN, SESSION_PROOF, SESSION_READY, SessionKeys, SrpServer,
 };
-use td_link::net::{Address, Credential, NetCarrier, NetError, Refusal};
+use td_link::net::{Address, Credential, NetCarrier, NetError, Refusal, pair};
+use td_link::{Session, SessionConfig};
 use x25519_dalek::{EphemeralSecret, X25519_BASEPOINT_BYTES, x25519};
 
 fn vectors() -> Value {
@@ -282,6 +283,10 @@ fn the_error_items_match() {
     assert_eq!(
         hex(&wire::error_item(Refusal::Closed)),
         v["errors"]["closed"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex(&wire::error_item(Refusal::Version)),
+        v["errors"]["version"].as_str().unwrap()
     );
 }
 
@@ -566,6 +571,9 @@ fn the_counter_limit_opens_the_last_record_and_closes_the_next() {
         plaintext
     );
 
+    assert_eq!(case["limit"].as_u64(), Some(1 << 24));
+    assert_eq!(case["limit"].as_u64(), Some(wire::COUNTER_LIMIT));
+    assert_eq!(case["at_limit"], "end the session");
     let beyond = case["beyond_counter"].as_u64().unwrap();
     assert_eq!(beyond, wire::COUNTER_LIMIT);
     assert_eq!(case["beyond_expected"], "close");
@@ -718,4 +726,129 @@ fn companion_names_follow_the_pinned_rule() {
             case["label"]
         );
     }
+}
+
+/// A scripted Device for any first item: it reads one length-prefixed item, answers with
+/// `reply`, then returns what else the client sent and how long it took to close.
+fn answers_first_item_with(reply: Vec<u8>) -> (Address, thread::JoinHandle<(Vec<u8>, Duration)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = Address::from(listener.local_addr().unwrap());
+    let device = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut prefix = [0u8; 2];
+        stream.read_exact(&mut prefix).unwrap();
+        let mut item = vec![0u8; usize::from(u16::from_be_bytes(prefix))];
+        stream.read_exact(&mut item).unwrap();
+        stream.write_all(&reply).unwrap();
+        let started = Instant::now();
+        let mut rest = Vec::new();
+        let _ = stream.read_to_end(&mut rest);
+        (rest, started.elapsed())
+    });
+    (addr, device)
+}
+
+#[test]
+fn a_version_error_stops_the_companion_with_no_fallback() {
+    let v = vectors();
+    let case = &v["negative"]["version_error"];
+    assert_eq!(
+        (case["receiver"].as_str(), case["expected"].as_str()),
+        (Some("companion"), Some("stop"))
+    );
+    assert_eq!(case["outcome"]["fallback"], Value::Null);
+    assert_eq!(case["outcome"]["retry"], "person");
+    assert_eq!(case["error"], v["errors"]["version"]);
+    let error = bytes(&case["error"]);
+
+    // On session.open: the client stops with `version`, sends nothing more and closes.
+    let (addr, device) = answers_first_item_with(error.clone());
+    let result = NetCarrier::connect(&addr, &fixture_credential(&v), Duration::from_secs(5));
+    assert!(
+        matches!(result, Err(NetError::Refused(Refusal::Version))),
+        "{:?}",
+        result.err()
+    );
+    let (rest, waited) = device.join().unwrap();
+    assert!(rest.is_empty(), "no net-v1 item, no plaintext and no retry");
+    assert!(waited < Duration::from_secs(2), "the client closed at once");
+
+    // On pair.request too.
+    let (addr, device) = answers_first_item_with(error);
+    let result = pair(&addr, &[0x10; 16], "Vector app", Duration::from_secs(5));
+    assert!(
+        matches!(result, Err(NetError::Refused(Refusal::Version))),
+        "{:?}",
+        result.err()
+    );
+    let (rest, _) = device.join().unwrap();
+    assert!(rest.is_empty());
+
+    // The same error item with item version 1 isn't an answer: the client closes.
+    let v1 = &case["v1_item"];
+    assert_eq!(v1["expected"], "close");
+    let (addr, device) = answers_first_item_with(bytes(&v1["wire"]));
+    let result = NetCarrier::connect(&addr, &fixture_credential(&v), Duration::from_secs(5));
+    assert!(
+        matches!(result, Err(NetError::Version(1))),
+        "{:?}",
+        result.err()
+    );
+    let (rest, _) = device.join().unwrap();
+    assert!(rest.is_empty());
+}
+
+/// The `management` steps a network session can run against the fake Device: the USB-only
+/// refusal over Wi-Fi. The USB steps need `net.list`, `net.forget` and `net.pair` handlers
+/// that the mock Device doesn't have, and the BLE step needs a BLE carrier; both are skipped.
+#[test]
+fn management_over_wifi_is_usb_only() {
+    let v = vectors();
+    let steps = v["management"]["steps"].as_array().unwrap();
+    let device = FakeNetDevice::start(MockDeck::v2());
+    device.open_window().unwrap();
+    let address = Address::from(device.addr());
+    let mut pairing = pair(&address, &[0x10; 16], "Vector app", Duration::from_secs(5)).unwrap();
+    let paired = pairing
+        .submit(&device.code().unwrap(), &mut |_| Ok(()))
+        .unwrap();
+    let carrier =
+        NetCarrier::connect(&address, &paired.credential, Duration::from_secs(5)).unwrap();
+    let (session, _incoming) = Session::over(
+        Box::new(carrier),
+        SessionConfig {
+            ping_every: None,
+            ..SessionConfig::default()
+        },
+    )
+    .unwrap();
+    let mut ran = 0;
+    for step in steps {
+        if step["carrier"] != "wifi" {
+            continue;
+        }
+        let reply = session
+            .call(&step["request"], Duration::from_secs(5))
+            .unwrap();
+        let expected = &step["response"];
+        assert_eq!(reply.m, expected["m"].as_str().unwrap());
+        assert_eq!(reply.ok, expected["ok"].as_bool().unwrap());
+        for field in ["reason", "error"] {
+            assert_eq!(reply.fields.get(field), expected.get(field), "{field}");
+        }
+        ran += 1;
+    }
+    assert_eq!(ran, 1, "one step runs over Wi-Fi");
+    // net.list is USB-only on every network carrier, so over Wi-Fi it is refused the same way.
+    let reply = session
+        .call(
+            &serde_json::json!({"m": "net.list"}),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+    assert!(!reply.ok);
+    assert_eq!(reply.fields["reason"], "usb-only");
 }
