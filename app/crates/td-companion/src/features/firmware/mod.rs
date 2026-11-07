@@ -55,6 +55,46 @@ impl Confirmation {
         )
     }
 }
+/// What the consent dialog asks. It always says when the result changes the build the Device runs, or may change it.
+fn question(
+    install: bool,
+    recovery: bool,
+    running: Option<FirmwareChannel>,
+    channel: FirmwareChannel,
+    downgrade: bool,
+) -> String {
+    use FirmwareChannel::{Normal, Radio};
+    const ADDS: &str = "It adds Wi-Fi and Bluetooth, which stay off until you set them up.";
+    const UNUSED: &str = "Its Wi-Fi and Bluetooth setup stays stored but unused.";
+    if install {
+        return match channel {
+            Radio => "Install the radio build on this New board?".into(),
+            Normal => "Install Firmware on this New board?".into(),
+        };
+    }
+    if recovery {
+        let change = match (running, channel) {
+            (Some(Radio), Normal) => {
+                format!(" This installs the normal build instead of the radio build. {UNUSED}")
+            }
+            (Some(Normal), Radio) => {
+                format!(" This installs the radio build instead of the normal build. {ADDS}")
+            }
+            (None, Normal) => " This installs the normal build. If the Device ran the radio build, it comes \
+                 back on the normal build, and its Wi-Fi and Bluetooth setup stays stored but unused."
+                .into(),
+            (None, Radio) => format!(" This installs the radio build. {ADDS}"),
+            _ => String::new(),
+        };
+        return format!("Repair this Device's Firmware?{change}");
+    }
+    match (running.is_some_and(|running| running != channel), channel) {
+        (true, Radio) => format!("Switch this Device to the radio build? {ADDS}"),
+        (true, Normal) => format!("Switch this Device back to the normal build? {UNUSED}"),
+        _ if downgrade => "Downgrade this Device's Firmware?".into(),
+        _ => "Replace this Device's Firmware with a version that may be older?".into(),
+    }
+}
 fn channel_word(channel: FirmwareChannel) -> &'static str {
     match channel {
         FirmwareChannel::Normal => "normal",
@@ -483,6 +523,8 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
     let install = K::NAME == "firmware.install";
     let recovery = K::NAME != "firmware.update";
     let (name, port, current) = target(&ctx, &id, install)?;
+    // The build the Device runs, from its last hello. A Device under repair may have sent none, so its build is
+    // unknown; an update needs a linked Device, which has always sent one.
     let running = if install {
         None
     } else {
@@ -490,9 +532,13 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
             .devices
             .get(&id)
             .ok_or(crate::link::DeviceLinkError::NotFound)?;
-        Some(device.firmware.map(|f| f.channel).unwrap_or_default())
+        device
+            .firmware
+            .map(|f| f.channel)
+            .or((!recovery).then(FirmwareChannel::default))
     };
-    // The Device's own build picks the bundle. Only a request that names the other build switches.
+    // The Device's own build picks the bundle, and an unknown build gets the normal one. Only a request that names
+    // the other build switches.
     let channel = requested.or(running).unwrap_or_default();
     let switching = running.is_some_and(|running| running != channel);
 
@@ -516,21 +562,15 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
         });
     }
     let consent = recovery || switching || !same_or_newer(&bundle.manifest.version, &current);
-    let question = match (install, switching, channel) {
-        (true, _, FirmwareChannel::Radio) => "Install the radio build on this New board?",
-        (true, _, FirmwareChannel::Normal) => "Install Firmware on this New board?",
-        (false, true, FirmwareChannel::Radio) => {
-            "Switch this Device to the radio build? It adds Wi-Fi and Bluetooth, which stay off until you set them up."
-        }
-        (false, true, FirmwareChannel::Normal) => {
-            "Switch this Device back to the normal build? Its Wi-Fi and Bluetooth setup stays stored but unused."
-        }
-        _ if recovery => "Repair this Device's Firmware?",
-        _ if older(&bundle.manifest.version, &current) => "Downgrade this Device's Firmware?",
-        _ => "Replace this Device's Firmware with a version that may be older?",
-    };
+    let question = question(
+        install,
+        recovery,
+        running,
+        channel,
+        older(&bundle.manifest.version, &current),
+    );
     let confirmation = Confirmation {
-        question: question.into(),
+        question,
         target: id.to_string(),
         name,
         port,
@@ -675,7 +715,34 @@ inventory::submit! { Registration(feature) }
 
 #[cfg(test)]
 mod tests {
-    use super::{older, same_or_newer};
+    use super::{FirmwareChannel, older, question, same_or_newer};
+
+    #[test]
+    fn a_repair_says_when_it_changes_the_build_or_may_change_it() {
+        use FirmwareChannel::{Normal, Radio};
+        let repair = |running, channel| question(false, true, running, channel, false);
+        assert_eq!(
+            repair(Some(Normal), Normal),
+            "Repair this Device's Firmware?"
+        );
+        assert_eq!(repair(Some(Radio), Radio), "Repair this Device's Firmware?");
+        assert_eq!(
+            repair(Some(Radio), Normal),
+            "Repair this Device's Firmware? This installs the normal build instead of the radio build. \
+             Its Wi-Fi and Bluetooth setup stays stored but unused."
+        );
+        assert_eq!(
+            repair(Some(Normal), Radio),
+            "Repair this Device's Firmware? This installs the radio build instead of the normal build. \
+             It adds Wi-Fi and Bluetooth, which stay off until you set them up."
+        );
+        assert_eq!(
+            repair(None, Normal),
+            "Repair this Device's Firmware? This installs the normal build. If the Device ran the radio build, \
+             it comes back on the normal build, and its Wi-Fi and Bluetooth setup stays stored but unused."
+        );
+        assert!(repair(None, Radio).contains("This installs the radio build."));
+    }
 
     #[test]
     fn semantic_versions_require_consent_only_for_downgrades() {

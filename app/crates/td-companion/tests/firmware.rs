@@ -1540,6 +1540,58 @@ async fn switching_builds_asks_first_and_works_both_ways() {
 }
 
 #[tokio::test]
+async fn a_repair_that_changes_the_build_says_so_before_it_writes() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mocka").await;
+    run_radio_build(&td, "mocka", &id).await;
+    let reboots = td.deck("mocka").reboots();
+    let prompt = Arc::new(Prompt::default());
+    prompt.answer(false);
+    td.firmware_prompter(prompt.clone());
+
+    // A repair keeps the build the Device runs and says nothing more.
+    let job = td
+        .call::<Repair>(
+            FirmwareTarget { device: id.clone() },
+            NoQuery,
+            bundled(None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(td.wait(&job).await.error.unwrap().code, "firmware.declined");
+    td.until(|td| ready_on(td, &id, FirmwareChannel::Radio))
+        .await;
+
+    // A repair onto the other build names the change.
+    prompt.answer(false);
+    let job = td
+        .call::<Repair>(
+            FirmwareTarget { device: id.clone() },
+            NoQuery,
+            bundled(Some(FirmwareChannel::Normal)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(td.wait(&job).await.error.unwrap().code, "firmware.declined");
+    assert_eq!(
+        td.deck("mocka").reboots(),
+        reboots,
+        "a declined repair wrote Firmware"
+    );
+    let seen = prompt.seen.lock().unwrap();
+    assert_eq!(seen[0].question, "Repair this Device's Firmware?");
+    assert_eq!(seen[0].channel, FirmwareChannel::Radio);
+    assert!(
+        seen[1]
+            .question
+            .starts_with("Repair this Device's Firmware? This installs the normal build instead of the radio build."),
+        "{}",
+        seen[1].question
+    );
+    assert_eq!(seen[1].channel, FirmwareChannel::Normal);
+}
+
+#[tokio::test]
 async fn a_bundle_of_the_other_build_is_refused_unless_asked_for() {
     let td = TestCompanion::start().await;
     let id = td.plug_device("mocka").await;
