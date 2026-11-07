@@ -1,7 +1,7 @@
 //! The photo frame: each Device's picture folder on this PC, its idle settings and clock, and the
 //! stream that sends it pictures while it is idle, as `schema/protocol/link-v2.md` § "Photo
 //! frame, idle, and clock" defines them.
-mod clock;
+pub(crate) mod clock;
 pub(crate) mod encode;
 pub(crate) mod folder;
 mod stream;

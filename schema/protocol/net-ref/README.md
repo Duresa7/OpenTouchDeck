@@ -105,3 +105,14 @@ outcomes in `COUNTED` toward per-peer backoff.
 reference: `DeviceSession` and `CompanionSession` answer and check the session
 items, `verifyPairProof` checks a pairing proof, `canonicalShare` applies the
 X25519 share rule, and `FlowCredit` is the Device's side of BLE credit.
+
+The reference also models three rules that came out of the crypto review.
+`RECORD_LIMIT` is `2^24` records per direction per key. `RecordSender` and
+`RecordReceiver` refuse the record at the limit and then stay closed, with
+`remaining` counting what is left, because the session ends rather than
+rekeys. `onHandshakeError` is the Companion's reaction to an unauthenticated
+error: `fallback` is always `null` and `versions` is only `[2]`, so a `version`
+error never leads to a net-v1 item or a plaintext link. `PairingStore` and
+`manage` are the Device's four slots and its USB-only `net.pair`, `net.list`
+and `net.forget` messages, with `app_id` removing one Pairing and `all:true`
+wiping every one. The `management` vectors replay one ordered run of them.

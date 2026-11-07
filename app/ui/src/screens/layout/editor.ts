@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useStore } from 'zustand';
+import { brandfetchStore, replacementsOf } from '../../lib/brandfetch/settings.ts';
 import type { Companion } from '../../lib/companion/client.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
 import { devicesStore, useDevices } from '../../lib/companion/devices.ts';
@@ -31,11 +32,39 @@ export function watchSends(editor: EditorStore, controls: ControlsStore): () => 
   });
 }
 
+/**
+ * Applies the logos a Brandfetch refresh replaced to the editor's drafts. The Companion never
+ * changes a Layout itself, so the new logo reaches the Device on the next Send to Device. The
+ * list is read when the editor starts and again whenever this window comes back into view.
+ */
+export function watchReplacements(editor: EditorStore, companion: Companion): () => void {
+  const brandfetch = brandfetchStore(companion);
+  let last = replacementsOf(brandfetch.getState().view);
+  editor.replaceAssets(last);
+  const stop = brandfetch.subscribe(({ view }) => {
+    const next = replacementsOf(view);
+    if (next === last) return;
+    last = next;
+    editor.replaceAssets(next);
+  });
+  void brandfetch.getState().load();
+  if (typeof document === 'undefined') return stop;
+  const reread = () => {
+    if (document.visibilityState === 'visible') void brandfetch.getState().load();
+  };
+  document.addEventListener('visibilitychange', reread);
+  return () => {
+    stop();
+    document.removeEventListener('visibilitychange', reread);
+  };
+}
+
 export function editorFor(companion: Companion): EditorStore {
   let store = stores.get(companion);
   if (!store) {
     store = createEditorStore({ companion, storage: storage(), wait: (job) => waitForJob(jobsStore, companion, job) });
     watchSends(store, controlsStore);
+    watchReplacements(store, companion);
     stores.set(companion, store);
   }
   return store;

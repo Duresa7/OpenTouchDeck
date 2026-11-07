@@ -20,7 +20,7 @@ rule and the Device identity. It changes these things:
   windows and reboots.
 * A network session may run only the messages listed for it. Firmware updates
   need approval on the Device, and Wi-Fi credentials, opening pairing windows
-  and wiping Pairings stay USB-only.
+  and removing Pairings stay USB-only.
 
 The suite is fixed, with no negotiation: SRP-6a over RFC 5054's 3072-bit group
 with generator 5 and SHA-512 for pairing; X25519 (RFC 7748) for the session
@@ -313,16 +313,28 @@ connection. A Device that receives an item with version 1 sends `version`.
 | Reason | Name | Meaning |
 |---|---|---|
 | 1 | `busy` | Another owner holds the Device, or USB is online and this is `session.open` |
-| 2 | `version` | Unsupported item version |
+| 2 | `version` | Unsupported item version. The Companion never falls back (see below) |
 | 3 | `args` | Invalid handshake fields or state |
-| 4 | `full` | Four Pairings exist, or this Companion id already exists |
+| 4 | `full` | Four Pairings exist, or this Companion id already exists. A slot frees only when a Pairing is removed (see Pairing slots) |
 | 5 | `auth` | Authentication failed, including an unknown Companion id |
 | 6 | `expired` | A deadline or the pairing window expired |
 | 7 | `cancelled` | The person cancelled pairing on the Device |
 | 8 | `storage` | The Pairing could not be committed |
 | 9 | `closed` | No pairing window is open on the Device, or pairing is locked out |
 
-For example, `busy` is hex `00037f0201`. Errors close the carrier connection,
+For example, `busy` is hex `00037f0201`. **No fallback after `version`.** An error item is unauthenticated, so anyone on
+the path can forge one. A Companion MUST NOT answer `version`, or any other
+error, by falling back to anything weaker than a net-v2 session: no net-v1
+item (item version 1), no plaintext link, no session without the X25519
+exchange and no weaker suite. net-v2 has no negotiation, so there is nothing
+weaker to choose. The Companion treats `version` as a failed attempt and tells
+the person the Device doesn't speak net-v2, so its Firmware needs updating
+over USB. It doesn't retry by itself and doesn't delete the Pairing. A Device
+reply that is itself an item with version 1 is malformed and closes the carrier
+connection. If a later protocol adds versions, it MUST choose among them with
+something authenticated, never from an unauthenticated error.
+
+Errors close the carrier connection,
 except that the first two `auth` errors after a pairing proof return to code
 entry. After a terminal error, TCP shuts down its write side and drains input
 for at most 100 ms before closing; BLE waits at most 100 ms after the
@@ -412,7 +424,8 @@ Device also limits code guesses across windows and reboots:
   minute while it runs. After a reboot the lock resumes from the stored value,
   so restarting the Device doesn't clear it.
 * A committed Pairing resets `pair_failures` to 0 and clears the lock. So does
-  `net.forget`, which is USB-only.
+  wipe-all (`net.forget` with `all:true`), which is USB-only. Forgetting one
+  Pairing leaves both alone.
 
 | Kind | Name | Sender | Fields |
 |---|---|---|---|
@@ -503,6 +516,45 @@ Companion confirms later. An uncommitted key on the Device is discarded on
 disconnect. The Device refuses an existing `companion_id` and never overwrites
 or evicts a Pairing. It stores at most four, and refuses `pair.request` with
 `full` before it shows a code.
+
+### Pairing slots
+
+The Device has four slots. A slot frees only when someone removes its Pairing:
+a Pairing never expires, an unused one isn't evicted, and a new Pairing never
+replaces an old one. There are three ways to remove one.
+
+* **On the Device.** The paired apps screen lists each Pairing's
+  `companion_name`. It offers Forget for one and Forget all for every one, and
+  each asks for confirmation on the Device before it erases anything.
+* **Over USB, one app.** `net.forget` with `app_id`, below.
+* **Over USB, all.** `net.forget` with `all:true`, below. It needs no
+  confirmation on the Device, because USB already needs physical access.
+
+Removing Pairings is never a network operation. A network session can't list
+or forget Pairings, as the message table says, so a stolen Pairing can't revoke
+the others. Removing a Pairing erases its entry in NVS durably, drops its
+update prompt cooldown, and closes that app's session if it has one. A session
+that ends this way gets no error item, only a close. The app's next
+`session.open` gets `auth`, because its `companion_id` is unknown. The
+Companion then tells the person that the Device no longer knows this app and
+that they can pair again. It keeps its own key until the person forgets the
+Device, because an `auth` is an unauthenticated hint and never deletes a key.
+
+**A full Device tells the person how to free a slot.** With four Pairings:
+
+* "Pair new app" on the Device opens no window. It shows "Four apps are paired.
+  Forget one first." with the paired apps list and its Forget buttons.
+* `net.pair` over USB fails with `reason:"full"` and the same sentence as its
+  `error`: `Four apps are paired. Forget one first.` It fits the 96-byte limit.
+* A `pair.request` that gets `full` or `closed` makes the Companion look at the
+  advertised `paired` count. A count of 4 means it tells the person: "This
+  Device has four paired apps. Remove one on the Device (paired apps screen),
+  or over USB, then pair again." The Companion shows the same advice up front
+  when the TXT record or the BLE service data already says 4, before the
+  person goes to the Device. `paired` is a hint; the Device's own answer is
+  the one to trust.
+* The Companion's USB view lists the Pairings with `net.list` and offers
+  Forget on each, so the person can free a slot without touching the Device.
 
 ## Session setup
 
@@ -610,8 +662,58 @@ body, end of stream mid-item, or impossible length closes the session. A valid
 frame with an invalid message follows link-v1 dispatch. Nobody scans for a new
 record after a framing error.
 
-Counters MUST NOT wrap. Close before sending or receiving counter `2^32`.
-Reconnect to continue. Counters and keys never outlive the carrier connection.
+**Record limit: 2^24 per key.** Each direction carries at most `2^24` records
+(counters 0 to `2^24 - 1`) under its key. That is about `2^30` AES blocks,
+in line with TLS 1.3's guidance for AES-GCM and well below net-v1's `2^32`
+records. Counters MUST NOT wrap. A sender doesn't seal counter `2^24`, and a
+receiver closes the session when it would have to accept it, even with a valid
+tag. **The session ends at the limit and doesn't rekey.** Rekeying would need
+an authenticated in-session message, a second code path and a transition that
+two implementations could disagree on. Ending costs one reconnect: the
+Companion opens a new carrier connection and runs the session exchange again,
+which makes fresh X25519 shares and keys with counters at zero. Counters and
+keys never outlive the carrier connection. A `ping` every 2000 ms alone takes
+about 388 days to reach the limit, so ordinary use meets it only in a long
+transfer or a very long-lived session. A sender SHOULD end the session between
+requests, not in the middle of one, once fewer than 1024 records remain in
+either direction. A request the limit interrupts is unanswered, so the next
+section applies to it.
+
+## Close and unknown outcomes
+
+net-v2 has no authenticated close. A TCP FIN or a BLE disconnect that falls on
+a record boundary looks the same whether the other side meant it, the radio
+dropped it, or someone on the path cut the stream there. A cut inside a record
+is caught, because the record's length or tag fails. So:
+
+* A request is **answered** only when its response record has arrived and
+  authenticated. When a session ends for any reason, every request without an
+  answer has an **unknown outcome**: the Device may not have received it, may
+  have received it and not acted, or may have acted and lost the reply.
+* The Companion MUST NOT treat an unanswered request as succeeded or as
+  failed. It shows "unknown" until it learns the outcome as below.
+* A close is never proof of anything. In particular it isn't proof that the
+  Device wiped, stored or removed something.
+
+The Companion recovers after reconnecting, by reading the state back or by
+repeating a request that is safe to repeat. The Device never replays a reply
+into a new session.
+
+| Unanswered request | Recovery |
+|---|---|
+| `net.forget` with `app_id` or `all:true` (USB-only, and the rule holds for a lost USB reply too) | Repeat it. Forgetting an id that is gone succeeds with `removed:0`, and `all:true` on an empty list succeeds too. Or read `net.list`. The Companion keeps its local key, marked as being removed, until it sees the Pairing gone. The person can still discard the key locally. |
+| `layout.put` and `xfer.end`, `icon.put` and `xfer.end` | The Device writes only at `xfer.end`, so a cut transfer leaves nothing. If the `xfer.end` reply was lost, the file may be stored. Read it back with `layout.get` (size and CRC-32) or `icon.list`, and repeat the whole put if it differs. |
+| `v2.asset.put` and `v2.asset.end` | Repeat `v2.asset.put`. `present:true` means the Asset is committed; otherwise start the transfer again from chunk 0. |
+| `v2.photo.put` and `v2.photo.end` | Repeat the photo from the start. Showing the same photo twice is harmless. |
+| `update.begin`, its chunks and `update.end` | The Device restarts after `update.end`, so a lost reply is expected. Reconnect and read `hello`: if `version` and `elf_sha256` are the new image's, it installed. Otherwise the old image still runs. The person decides whether to try again, because each network attempt needs the Device's approval again. |
+| `icon.rm`, `v2.asset.delete` | Repeat. `no such icon`, or `deleted:false`, means it is already gone. |
+| `settings.put`, `v2.name.set`, `v2.idle.set` | Read back with the matching `get` and repeat if it differs. |
+| `v2.clock.set`, `widget.set`, `dashboard.set`, `v2.live.set` | The latest value wins, so send the current one again. `v2.live.set` takes a new `sequence`. |
+| `hello`, `ping`, `link.state`, `net.state`, `layout.get` and other reads | Repeat. Reads change nothing. |
+
+A transfer the Device had open when the carrier connection closed is aborted
+and its temporary data discarded, as link-v2 says. A new session starts every
+transfer from the beginning.
 
 ## Link protocol selection and liveness
 
@@ -646,7 +748,7 @@ Companion sends; Device events such as `press`, `key.report`, `v2.input` and
 |---|---|
 | Allowed | `hello`, `ping`, `link.state`, `layout.get`, `layout.put`, `icon.put`, `icon.list`, `icon.rm`, `settings.get`, `settings.put`, `store.stat`, `xfer.end`, `widget.set`, `dashboard.set`, `v2.name.get`, `v2.name.set`, `v2.asset.stat`, `v2.asset.list`, `v2.asset.put`, `v2.asset.end`, `v2.asset.delete`, `v2.live.set`, `v2.photo.put`, `v2.photo.end`, `v2.idle.get`, `v2.idle.set`, `v2.clock.set`, `net.state` |
 | Confirmed on the Device | `update.begin`, then the update's chunks and `update.end` as usual |
-| USB only | `net.pair`, `net.forget`, every `wifi.*` message, and every message not named above |
+| USB only | `net.pair`, `net.list`, `net.forget`, every `wifi.*` message, and every message not named above |
 
 Chunks and acks are allowed only for a transfer this session opened. A
 USB-only request gets `ok:false`, `reason:"usb-only"` and
@@ -703,7 +805,7 @@ sessions only. Over USB, `update.begin` works as before.
 | BLE fragment sent | 1 to `ATT_MTU - 3` bytes, at most 20 when the MTU is unknown |
 | BLE fragment received | 1 to `ATT_MTU - 3` bytes, at most 514 when the MTU is unknown |
 | BLE initial credit | at least 1050 bytes, 2100 recommended |
-| Records per direction per session | `2^32` |
+| Records per direction per key, then the session ends | `2^24` |
 | Stored Pairings | 4 |
 | Failed proofs per pairing window | 3 |
 | Pairing lockout after the third and later failures | 30000 ms doubling, at most 900000 ms |
@@ -711,26 +813,63 @@ sessions only. Over USB, `update.begin` works as before.
 | Firmware update prompt on the Device | 60000 ms |
 | Update prompt cooldown per Pairing after an unapproved prompt | 60000 ms doubling, at most 3600000 ms |
 
+## The long-term key is symmetric
+
+Both ends hold the same `LTK`, and each side's proofs are MACs under keys
+derived from it. Nothing in net-v2 tells the Device and the Companion apart by
+secret, so whoever has a copy of the key can play either side:
+
+* A copy from the Companion's OS credential store lets the thief open sessions
+  to the Device as that Companion, which the Pairing already allows for any
+  holder of the key.
+* A copy from the Device's NVS does that too, and also lets the thief
+  impersonate the Device to the Companion. The Companion accepts any peer that
+  proves it holds the LTK for that `device_id`, and a fake Device can then
+  answer link requests with chosen state and read everything the Companion
+  sends it.
+* Forward secrecy doesn't change this. It keeps recorded sessions closed, not
+  new ones.
+
+The Device's NVS isn't encrypted in the radio build, so a flash dump over USB
+(or a desoldered chip) yields every stored Pairing. NVS encryption needs an
+eFuse burn, so it waits for an operator decision
+([ADR 0010](../../docs/adr/0010-nvs-stays-unencrypted-until-the-operator-decides.md)).
+Until then:
+
+* Treat physical access to the Device as access to every Pairing on it.
+* After a Device is lost, resold or serviced by someone else, run `net.forget`
+  on it (or reflash and erase NVS), and forget the Device in each Companion.
+  Removing the Pairing from only one side doesn't end the other side's key.
+* Companions SHOULD tell the person this when they pair, and MUST NOT describe
+  a Pairing as proving the Device's identity against someone with its hardware.
+
+A design with a per-side secret (for example a Device identity key that the
+Companion pins, with the LTK only for the session) would close the
+impersonation half. It is a protocol change and out of scope for net-v2.
+
 ## Storage, management and secrets
 
 The Device stores Pairings in NVS, separate from Layouts and Wi-Fi
-credentials. net-v1 never shipped, so there's nothing to migrate. The
+credentials, and unencrypted (see above). net-v1 never shipped, so there's nothing to migrate. The
 Companion keeps LTKs in the OS credential store (Windows Credential Manager or
 the Secret Service on Linux, for example through the `keyring` crate). It may
 keep `device_id`, `companion_id` and the Device name in ordinary settings.
 Forgetting a Device in the Companion deletes its local key and closes its
-session; it doesn't revoke the Device's entry. `net.forget` on the Device does.
+session; it doesn't revoke the Device's entry. Removing the Pairing on the
+Device, or `net.forget` over USB, does.
 
 These link messages use the normal link response envelope. Their JSON names
 stay as in net-v1 ([ADR 0003](../../docs/adr/0003-brand-changes-wire-names-stay.md)).
-`net.state` works over USB and over a net-v2 session. `net.pair` and
-`net.forget` are USB-only.
+`net.state` works over USB and over a net-v2 session. `net.pair`, `net.list`
+and `net.forget` are USB-only.
 
 | Request | Successful response fields |
 |---|---|
 | `{"m":"net.state"}` | `listening` Boolean, `port:47820`, `ble` Boolean, `session` null or `{app_id,app_name,carrier,since_ms}`, `paired` 0 to 4, `pairing` Boolean, `pair_failures` integer, `locked_ms` integer |
 | `{"m":"net.pair"}` | The same fields after opening a pairing window |
-| `{"m":"net.forget"}` | The same fields after clearing every Pairing |
+| `{"m":"net.list"}` | The same fields as `net.state`, plus `free` (0 to 4) and `pairings`, an array of `{app_id,app_name}` for every stored Pairing, oldest first |
+| `{"m":"net.forget","app_id":"<32 hex>"}` | The same fields after removing that one Pairing, plus `removed`, 1 or 0 |
+| `{"m":"net.forget","all":true}` | The same fields after clearing every Pairing, plus `removed`, the number cleared |
 
 `app_id` is `companion_id` as 32 lowercase hex characters and `app_name` is
 `companion_name`. `carrier` is `"wifi"` or `"ble"`. `since_ms` is the
@@ -740,9 +879,17 @@ listener and `ble` whether the link service is advertising or connected.
 counter and `locked_ms` the time left in a pairing lockout, 0 when none.
 `net.pair` fails with `reason:"locked"` during a lockout and `reason:"full"`
 when four Pairings exist. A failure is otherwise `ok:false` with an `error`
-sentence and `reason:"storage"`. `net.forget` cancels a window, erases every
+sentence and `reason:"storage"`. `net.forget` with `app_id`
+removes one Pairing and nothing else. It is idempotent: an `app_id` that isn't
+stored succeeds with `removed:0`, so a Companion that lost the reply can send it
+again. An `app_id` that isn't 32 lowercase hex characters, or a request with
+both `app_id` and `all`, fails with `reason:"args"`. It ends that app's session
+if it has one. `net.forget` with `all:true` cancels a window, erases every
 Pairing durably, resets `pair_failures` and the lockout, and ends any network
-session. A failed erase still ends the session and reports the failure.
+session. A bare `net.forget` with neither field fails with `reason:"args"`, so
+a request that lost its `app_id` can't wipe the Device. A failed erase still
+ends the affected session and reports the failure. Over a network Carrier all
+three messages get `usb-only`.
 
 Codes, verifiers, private exponents, X25519 private keys, `Z`, LTKs and
 session keys MUST NOT appear in logs, console replies, `hello`, screenshots
@@ -812,8 +959,12 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
   names every receiver MUST accept, and items with one control or format
   character or Hangul filler, labelled by code point, that MUST close the
   carrier connection.
-* `errors.busy` and `errors.closed`, and the `ble` UUIDs and recommended
-  initial credit.
+* `errors.busy`, `errors.version` and `errors.closed`, and the `ble` UUIDs and
+  recommended initial credit.
+* `management`: ten ordered `net.list`, `net.pair` and `net.forget` requests on a
+  store of four synthetic Pairings, each with its carrier and the exact
+  response: a full Device, forgetting one app, repeating it, `usb-only` over
+  Wi-Fi and BLE, the `args` refusals and wipe-all.
 * `negative`: inputs every implementation MUST refuse, each with its
   receiver and expected outcome (`auth`, `close`, or `accept` for the
   boundary case):
@@ -825,8 +976,12 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
     an unchanged proof. The proof check fails and the receiver closes.
   * `wrong_device_id` and `unknown_companion_id`: `session.open` that gets
     `auth`.
-  * `counter_limit`: a record at counter `2^32 - 1`, which opens, and one at
-    `2^32` with a valid tag, which closes.
+  * `counter_limit`: a record at counter `2^24 - 1`, which opens, and one at
+    `2^24` with a valid tag, which closes. The session ends there, and a new
+    session starts at counter zero.
+  * `version_error`: the `version` error item, which the Companion handles by
+    stopping with no fallback, and the same item with item version 1, which
+    closes.
   * `max_record`: a 1050-byte item, which opens, and `oversize_items`: length
     prefixes one past each phase's bounds, which close before allocation.
   * `write_before_credit` and `credit_overrun`: `rx` events, as enabled
@@ -837,4 +992,5 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
 Implementations also test reflection, replay, reorder, truncation, fragment
 boundaries and middle-fragment sizes at ATT_MTU 23, the pairing lockout across
 a reboot, which outcomes count toward per-peer backoff, the update prompt
-cooldown, and the network message list.
+cooldown, the network message list, `net.forget` and the slot rules, and the
+unknown outcome of each request in the recovery table.

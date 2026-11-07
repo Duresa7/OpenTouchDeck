@@ -55,7 +55,16 @@ describe('pack facts', () => {
 describe('credits', () => {
   test('name installed packs whose license asks for credit', () => {
     const list = [pack({ installed: true }), pack({ prefix: 'mdi', attribution: false, installed: true }), pack({ prefix: 'other' })];
-    expect(credits(list)).toEqual([{ prefix: 'fa6-brands', name: 'Font Awesome 6 Brands', author: 'Dave Gandy', license: 'CC BY 4.0', url: 'https://creativecommons.org/licenses/by/4.0/' }]);
+    expect(credits(list)).toEqual([{ key: 'fa6-brands', name: 'Font Awesome 6 Brands', url: 'https://creativecommons.org/licenses/by/4.0/', note: 'by Dave Gandy (CC BY 4.0, modified)' }]);
+  });
+
+  test('name Brandfetch last while its search is on', () => {
+    const list = [pack({ installed: true })];
+    expect(credits(list, true).map((credit) => [credit.key, credit.name, credit.note])).toEqual([
+      ['fa6-brands', 'Font Awesome 6 Brands', 'by Dave Gandy (CC BY 4.0, modified)'],
+      ['brandfetch', 'Brandfetch', '(your keys)'],
+    ]);
+    expect(credits([], true)).toEqual([{ key: 'brandfetch', name: 'Brandfetch', url: 'https://brandfetch.com', note: '(your keys)' }]);
   });
 });
 

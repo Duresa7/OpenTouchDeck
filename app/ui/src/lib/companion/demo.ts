@@ -132,7 +132,8 @@ export function demoEnvironment(target: Window): Environment {
   const fake = createFakeCompanion({
     devices,
     layouts: worst ? worstLayouts(devices) : Object.fromEntries(devices.map((d) => [d.id, demoLayout()])),
-    system: { build: 'demo' },
+    // `?platform=linux` shows Linux wording, such as the keychain's name.
+    system: { build: 'demo', platform: params.get('platform') === 'linux' ? 'linux' : 'windows' },
     brightness: Object.fromEntries(devices.filter((_, i) => i % 3 !== 2).map((d) => [d.id, 80])),
     photoFrame: devices.filter((_, i) => i % 3 !== 2).map((d) => d.id),
     browsers: params.get('browsers') === '0' ? [] : worst ? worstBrowsers(10) : browsers,
@@ -145,6 +146,13 @@ export function demoEnvironment(target: Window): Environment {
     assets: { ...(params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {}), ...renderMs(params.get('render-ms')) },
     // `?packs=logos,mdi` starts with those Icon packs installed.
     iconPacks: { installed: params.get('packs')?.split(',') ?? [] },
+    // `?brandfetch=on` starts with fake keys set. Search still goes to Brandfetch, which e2e
+    // specs intercept; nobody's real keys are involved. `?keychain=off` acts like Linux with no
+    // Secret Service running.
+    brandfetch: {
+      ...(params.get('brandfetch') === 'on' ? { clientId: 'demo-client-id', keySet: true, logos: { total: 3, needRefresh: 1, expired: [] } } : {}),
+      ...(params.get('keychain') === 'off' ? { keychain: false } : {}),
+    },
   });
   const update = params.get('update');
   const offer = worst && update === 'available' ? worstOffer : isCheckName(update) ? checks[update] : checks.none;

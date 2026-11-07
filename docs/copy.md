@@ -267,7 +267,7 @@ Opens from the Device's name.
 | Secret field, saved | Saved · ends in {last4} |
 | Secret field, empty | Not set |
 | Secret field buttons | Save, Forget |
-| Secret field hint | Stored in Windows Credential Manager, never in a file. |
+| Secret field hint | Stored in {keychain}, never in a file. `{keychain}` is "Windows Credential Manager" on Windows and "your system keychain (GNOME Keyring or KWallet)" on Linux |
 | Forget confirm | Forget the {field}? {integration} stops until you add it again. |
 | Preset tile button | Add to Layout |
 | Preset tile added | Added to {device}'s Layout |
@@ -360,7 +360,7 @@ Opens from the Icon field in the Tile inspector.
 | Recent app icon name | {program file name}, or App icon |
 | Too many icons rendering at once | Other icons are still being prepared. Wait a moment, then retry. |
 | Failure buttons | Retry, Details |
-| Credits | Icons: Simple Icons (CC0) · selfh.st/icons (CC BY 4.0, modified)[ · {pack name} by {author} ({license}, modified), for each installed Icon pack that asks for credit] · Logos belong to their owners |
+| Credits | Icons: Simple Icons (CC0) · selfh.st/icons (CC BY 4.0, modified)[ · {pack name} by {author} ({license}, modified), for each installed Icon pack that asks for credit][ · Brandfetch (your keys), while a Brandfetch client ID is saved] · Logos belong to their owners |
 
 ### Icon packs
 
@@ -1351,3 +1351,85 @@ A connected Device whose Companion reports `control_layout` as `no-pushed-copy` 
 | Row, controls | Drag to change, Mute, Previous track, Play or pause, Next track, joined by “ · ” |
 
 `{orientation}` is lowercase in a sentence and capitalized on the button, as the Orientation options are. Unknown names show the Device's text in quotes, so a Tile label never stands in for an Integration.
+
+## Brandfetch logos
+
+Settings, Brandfetch logos, and the icon picker's Brandfetch section (#127). `{keychain}` is "Windows Credential Manager" on Windows, "your system keychain (GNOME Keyring or KWallet)" on Linux and "your system keychain" elsewhere, as in the Secret field hint. The Field buttons, the empty field and the Forget confirm follow the Integrations Secret field.
+
+### Settings, Brandfetch logos
+
+| Element | String |
+| --- | --- |
+| Settings entry | Brandfetch logos |
+| Settings entry, on | On. The icon picker searches Brandfetch with your client ID. |
+| Settings entry, off | Off. Add your own Brandfetch keys to search brand logos. |
+| Section title | Brandfetch logos |
+| Lede | Search brand logos in the icon picker with your own Brandfetch account. It stays off until you add a client ID. |
+| Reading | Reading the Brandfetch settings… |
+| Keys heading | Keys |
+| Client ID label | Client ID |
+| Client ID hint | Turns on logo search in the icon picker. Searches go from this window straight to Brandfetch. Adding or forgetting it reloads the window. |
+| API key label | API key |
+| API key hint | Turns a picked logo into a Tile icon. Each pick uses one Brand API request; Test key is free. |
+| Field, empty | Not set |
+| API key, saved | Set |
+| Field buttons | Save, Cancel, Replace, Forget |
+| Test key button | Test key |
+| Test key worked | Brandfetch accepted the key. |
+| Forget confirm, client ID | Forget the client ID? Logo search stops until you add it again. |
+| Forget confirm, API key | Forget the API key? Picking Brandfetch logos stops until you add it again. |
+| Logos heading | Logos on this PC |
+| Logo count, none | No Brandfetch logos yet |
+| Logo count, all fresh | {n} logo, all up to date; {n} logos, all up to date |
+| Logo count, some due | {n} logos; 1 needs a refresh; {n} logos; {m} need a refresh |
+| Refresh line | Each logo is fetched again from day 25, so no cached copy is older than 30 days. |
+| Expired line | {n} went 30 days without a refresh, so this PC deleted their cached copy. Their Tiles keep showing them; pick them again to refresh them. |
+| Stored note heading | How the key is stored |
+| Stored note | The API key is stored in {keychain}, never in a file. Open TouchDeck never shows it again and sends it only to Brandfetch's Brand API, when you pick a logo, test the key or a logo is refreshed. |
+| Notes heading | Good to know |
+| Notes | You use your own Brandfetch account and keys. Open TouchDeck ships none. / Logos stay the trademarks of their brand owners. / Brandfetch lets apps keep a logo for 30 days. This PC fetches each one again before then; the free developer plan includes about 100 Brand API requests. |
+| Portal link | Get a client ID and API key from Brandfetch |
+| Settings couldn't be read | Couldn't read the Brandfetch settings. Restart Open TouchDeck, then retry. |
+| Companion unreachable | Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry. |
+| Client ID rejected (`request.invalid`) | That doesn't look like a client ID. Copy it from the Brandfetch developer portal. |
+| API key rejected (`request.invalid`) | That doesn't look like an API key. Copy it from the Brandfetch developer portal. |
+| Save or Forget failed | Couldn't save the Brandfetch settings. Retry, or restart Open TouchDeck. |
+| Test key, no key saved (`brandfetch.no_key`) | Save an API key first. |
+| Test key, refused (`brandfetch.key_refused`) | Brandfetch refused the key. Replace it with the API key from the Brandfetch developer portal. |
+| Test key, used up (`brandfetch.quota`) | Your Brandfetch API requests are used up. Check your plan in the Brandfetch developer portal. |
+| Test key, any other failure | Brandfetch didn't answer. Check the internet connection, then retry. |
+| No keychain, Windows (`brandfetch.no_keychain`) | Windows Credential Manager isn't available. Restart Open TouchDeck and try again. |
+| No keychain, Linux | No system keychain is available. Start GNOME Keyring or KWallet and try again. |
+| No keychain, elsewhere | No system keychain is available. Start it and try again. |
+| Failure link | Details |
+
+A failed save, Forget or Test key shows the sentence above and the Companion's message under Details. The Companion's `brandfetch.no_keychain` message, "The system keychain isn't available.", names no platform; the UI picks the row for the platform `system.get` reports.
+
+### Icon picker, Brandfetch section
+
+Shown only while a client ID is saved.
+
+| Element | String |
+| --- | --- |
+| Section title | Brandfetch |
+| Cell, accessible name | {name}, Brandfetch |
+| Cell tooltip | {name} · Brandfetch |
+| A result without a name | Its domain stands in for {name} |
+| Getting a logo | Getting {name}… |
+| Recent icon name | Brandfetch logo |
+| Credits, with a client ID | "· Brandfetch (your keys)" after the Icon pack credits, as the Icon picker Credits row shows |
+| Search refused (401, 403) | Brandfetch refused the client ID. Check it in Settings, Brandfetch logos. |
+| Too many searches (429) | Too many Brandfetch searches for now. Wait a few minutes, then retry. |
+| Search the query can't run (400) | Brandfetch couldn't search for that. Try a shorter brand name. |
+| Search failed, another status | Brandfetch couldn't answer. Retry in a moment. |
+| Search offline | Can't reach Brandfetch. Check the internet connection, then retry. |
+| Search failure button | Retry Brandfetch |
+| Pick, no key saved (`brandfetch.no_key`) | Add your Brandfetch API key in Settings, Brandfetch logos, then retry. |
+| Pick, key refused (`brandfetch.key_refused`) | Brandfetch refused the API key. Check it in Settings, Brandfetch logos. |
+| Pick, used up (`brandfetch.quota`) | Your Brandfetch API requests are used up. Check your plan in the Brandfetch developer portal. |
+| Pick, unknown brand (`brandfetch.not_found`) | Brandfetch has no details for {name}. Choose another result. |
+| Pick, no usable logo (`brandfetch.no_logo`) | Brandfetch has no logo for {name} that this PC can download. Choose another result. |
+| Pick, no keychain (`brandfetch.no_keychain`) | The No keychain rows above, for the platform |
+| Pick, too many at once (`limits.exceeded`) | Other icons are still being prepared. Wait a moment, then retry. |
+| Pick, any other failure | Couldn't get {name} from Brandfetch. Check the internet connection, then retry. |
+| Pick failure buttons | Retry, Details |

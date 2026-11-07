@@ -522,6 +522,56 @@ describe('drafts', () => {
   });
 });
 
+describe('logos a Brandfetch refresh replaced', () => {
+  const OLD = 'a'.repeat(64);
+  const NEW = 'b'.repeat(64);
+  const NEWER = 'c'.repeat(64);
+
+  test('a draft that shows the old Asset gets the new one, and a push sends the new one', async () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    store.selectPage('shortcuts');
+    store.setAsset('copy', OLD);
+    await store.push();
+    expect(saveState(state(store))).toBe('saved');
+
+    store.replaceAssets({ [OLD]: NEW });
+    expect(tile(store, 'copy').asset).toBe(`sha256:${NEW}`);
+    expect(saveState(state(store))).toBe('unsent');
+    expect(storage.items.get(draftKey('mock0001', 'landscape'))).toContain(NEW);
+    await store.push();
+    expect(state(store).status?.event).toBe('pushed');
+    expect(fake.layouts.stored('mock0001', 'landscape')).toContain(`sha256:${NEW}`);
+    expect(fake.layouts.stored('mock0001', 'landscape')).not.toContain(OLD);
+  });
+
+  test('a draft read back from storage, and an Asset picked from Recents, get the replacement too', () => {
+    const first = editor();
+    first.open(DESK);
+    first.startStarter();
+    first.selectPage('shortcuts');
+    first.setAsset('copy', OLD);
+
+    const second = editor();
+    second.replaceAssets({ [OLD]: NEWER });
+    second.open(DESK);
+    second.selectPage('shortcuts');
+    expect(tile(second, 'copy').asset).toBe(`sha256:${NEWER}`);
+    second.setAsset('copy', OLD);
+    expect(tile(second, 'copy').asset).toBe(`sha256:${NEWER}`);
+  });
+
+  test('a draft with no replaced Asset stays as it is', () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    const before = state(store).drafts.landscape;
+    store.replaceAssets({ [OLD]: NEW });
+    expect(state(store).drafts.landscape).toBe(before);
+  });
+});
+
 describe('send and load', () => {
   test('Send shows Sending…, then the result with the Device’s counts, and the draft reads as saved', async () => {
     const store = editor();

@@ -517,6 +517,15 @@ What the radio build does:
   (`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP`), and the internal buffers are sized
   small. The Wi-Fi driver stores nothing in NVS; the station keeps its one
   network itself (below).
+- NVS stays unencrypted, and no build burns an eFuse or enables flash
+  encryption. Both NVS encryption schemes on the ESP32-S3 are irreversible, so
+  the radio build waits for an operator decision
+  ([ADR 0010](adr/0010-nvs-stays-unencrypted-until-the-operator-decides.md)).
+  Anyone who dumps the Device's flash can read its Pairings and impersonate the
+  Device, because the long-term key is symmetric
+  ([net-v2](../schema/protocol/net-v2.md#the-long-term-key-is-symmetric)).
+  `radio_guard.py` fails either build when `NVS_ENCRYPTION`, flash encryption,
+  secure boot or anti-rollback is on.
 - Internal RAM is tuned to the floor. `malloc` puts blocks of 256 bytes and up
   in PSRAM first, not 16 KB and up. The heartbeat runs on an `esp_timer`, so
   `app_main` returns its stack. The lwIP, event, `esp_timer` and FreeRTOS timer
@@ -530,7 +539,7 @@ What the radio build does:
   with the `wifi.*` link messages in
   [link-v2](../schema/protocol/link-v2.md#wi-fi-network). It lives in NVS, in
   namespace `td_wifi`, so a Layout reset or a Firmware update keeps it. NVS
-  isn't encrypted on this board: anyone with the board and a flash reader can
+  stays unencrypted (above), so anyone with the board and a flash reader can
   read the password, as with any ESP-IDF station. Log lines never name the
   network or the password; a failed join logs only its reason, such as
   `wifi: join failed: not-found, retry in 1000 ms`.
