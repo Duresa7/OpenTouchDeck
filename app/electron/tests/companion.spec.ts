@@ -127,3 +127,81 @@ test('reading a session preserves in-flight requests and stale renewals share on
     } finally { await app.close(); }
   });
 });
+
+test('a saved Brandfetch client ID opens the window to Brandfetch after a reload, and forgetting it closes it', async () => {
+  // A made-up client ID; every Brandfetch host is answered here, so nothing reaches Brandfetch.
+  const hits = [{ name: 'Example Music', domain: 'music.example', claimed: true, brandId: 'id_fixture_music',
+    icon: 'https://cdn.brandfetch.io/id_fixture_music/icon.png?c=test-client-id' }];
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==', 'base64');
+  await withCompanion(async (env, origin) => {
+    const app = await launch(env);
+    try {
+      const searches: { url: string; referer: string | null }[] = [];
+      await app.context().route('https://api.brandfetch.io/**', async route => {
+        searches.push({ url: route.request().url(), referer: await route.request().headerValue('referer') });
+        await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, contentType: 'application/json', body: JSON.stringify(hits) });
+      });
+      await app.context().route(/^https:\/\/(cdn|asset)\.brandfetch\.io\//, route =>
+        route.fulfill({ status: 200, contentType: 'image/png', body: png }));
+      const page = await app.firstWindow();
+      await page.waitForURL(origin + '/');
+      await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible({ timeout: 15_000 });
+      // Whether the page's content policy lets it call the Brand API search.
+      const reaches = () => page.evaluate(() => fetch('https://api.brandfetch.io/v2/search/probe?c=test-client-id',
+        { credentials: 'omit' }).then(() => true, () => false));
+      const view = page.getByRole('dialog', { name: 'Brandfetch logos' });
+      const openBrandfetch = async () => {
+        await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings' }).click();
+        await page.getByTestId('brandfetch-entry').click();
+        await expect(view).toBeVisible();
+      };
+      const openPicker = async () => {
+        await page.getByRole('button', { name: 'Layout', exact: true }).click();
+        const start = page.getByTestId('start-starter');
+        await expect(start.or(page.getByTestId('page-tab').first())).toBeVisible({ timeout: 15_000 });
+        if (await start.isVisible()) await start.click();
+        await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+        await page.locator('[data-testid="tile"][data-id="copy"]').click();
+        await page.getByTestId('icon-change').click();
+        await expect(page.getByTestId('icon-picker').getByTestId('icon-grid')).toBeVisible();
+      };
+
+      expect(await reaches()).toBe(false);
+      expect(searches).toEqual([]);
+
+      await openBrandfetch();
+      await view.getByTestId('brandfetch-client-id-input').fill('test-client-id');
+      let reloaded = page.waitForEvent('load');
+      await view.getByTestId('brandfetch-client-id-save').click();
+      await reloaded;
+      // The reload comes back to the same Settings section.
+      await expect(view.getByTestId('brandfetch-client-id-state')).toHaveText('test-client-id');
+      await view.getByRole('button', { name: 'Close' }).click();
+      await openPicker();
+      await page.getByTestId('icon-search').fill('example');
+      const hit = page.getByTestId('icon-picker').locator('[data-testid="icon-option"][data-key="brand:id_fixture_music"]');
+      await expect(hit).toBeVisible();
+      expect(searches.map(s => new URL(s.url).pathname)).toEqual(['/v2/search/example']);
+      // The page itself sends no Referer; the search sends only the Companion's origin.
+      expect(searches[0].referer).toBe(origin + '/');
+      await expect.poll(() => hit.locator('img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+      await mkdir(evidence, { recursive: true });
+      await page.screenshot({ path: resolve(evidence, 'electron-brandfetch-search.png') });
+      await page.keyboard.press('Escape');
+
+      await openBrandfetch();
+      await view.getByTestId('brandfetch-client-id-forget').click();
+      reloaded = page.waitForEvent('load');
+      await page.getByTestId('forget-confirm').click();
+      await reloaded;
+      await expect(view.getByTestId('brandfetch-client-id-field')).toHaveAttribute('data-set', 'false');
+      expect(await reaches()).toBe(false);
+      await view.getByRole('button', { name: 'Close' }).click();
+      await openPicker();
+      await page.getByTestId('icon-search').fill('example');
+      await expect(page.getByTestId('icon-picker').locator('.icon-credits')).not.toContainText('Brandfetch');
+      await expect(page.getByTestId('icon-picker').getByTestId('icon-section-brandfetch')).toHaveCount(0);
+      expect(searches).toHaveLength(1);
+    } finally { await app.close(); }
+  });
+});

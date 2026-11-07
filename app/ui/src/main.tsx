@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { Pair, takePairingCode } from './screens/Pair.tsx';
 import { App } from './App.tsx';
 import { CompanionContext, connect, EventsContext, FolderPickerContext, pageEnvironment, type Environment } from './lib/companion/connection.ts';
+import { reopenSettings } from './state/ui.ts';
 import { createUpdatesStore, UpdatesContext, watchForUpdates } from './state/updates.ts';
 
 const isPair = window.location.pathname === '/pair';
@@ -24,6 +25,8 @@ const companion = connection?.companion ?? null;
 const events = connection?.events ?? null;
 const updates = createUpdatesStore(env.updates);
 watchForUpdates(updates);
+// A Settings change that reloaded the window comes back to the section it was made in.
+if (!isPair) reopenSettings();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

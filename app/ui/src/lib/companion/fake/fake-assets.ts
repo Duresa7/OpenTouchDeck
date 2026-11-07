@@ -1,5 +1,6 @@
 import { encodeTdi1, TDI1_SIDE } from '../../icons/tdi1.ts';
 import type { AssetRef, AssetSource, Builtin, CatalogHit, CreateAsset, ErrorBody, Fit, Job } from '../api.ts';
+import type { FakeBrandfetch } from './fake-brandfetch.ts';
 import { RECORDED_BUILTINS, RECORDED_HITS } from './fake-catalog.data.ts';
 import { fakeGif } from './fake-gif.ts';
 
@@ -12,6 +13,8 @@ export interface FakeAssetsOptions {
   packHits?: () => readonly CatalogHit[];
   renderMs?: number;
   searchMs?: number;
+  /** Answers Brandfetch picks; without it they fail as with no API key. */
+  brandfetch?: Pick<FakeBrandfetch, 'render'>;
 }
 
 export interface FakeSearch {
@@ -130,7 +133,7 @@ export function createFakeAssets(options: FakeAssetsOptions) {
     return next;
   }
 
-  async function render(source: AssetSource, fit: Fit): Promise<{ file: Uint8Array } | { problem: string }> {
+  async function render(source: AssetSource, fit: Fit): Promise<{ file: Uint8Array } | { problem: string } | { error: ErrorBody }> {
     switch (source.kind) {
       case 'catalog': {
         const hit = everything().find((h) => h.source === source.catalog && h.id === source.id);
@@ -155,6 +158,10 @@ export function createFakeAssets(options: FakeAssetsOptions) {
       }
       case 'app':
         return source.path ? { file: disc(`app:${source.path.toLowerCase()}`, null) } : { problem: 'no icon resource in that program' };
+      case 'brandfetch': {
+        const picked = options.brandfetch?.render(source) ?? { error: { code: 'brandfetch.no_key', message: 'Add your Brandfetch API key in Settings, then retry.', details: null } };
+        return 'error' in picked ? picked : { file: disc(picked.seed, source.tint) };
+      }
       default: {
         const exhaustive: never = source;
         return exhaustive;
@@ -168,6 +175,10 @@ export function createFakeAssets(options: FakeAssetsOptions) {
     if (!now || now.state !== 'running') return;
     if (refusal) {
       update(now, { state: 'failed', error: refusal, cancellable: false, finished_ms: Date.now() });
+      return;
+    }
+    if ('error' in outcome) {
+      update(now, { state: 'failed', error: outcome.error, cancellable: false, finished_ms: Date.now() });
       return;
     }
     if ('problem' in outcome) {
@@ -228,7 +239,7 @@ export function createFakeAssets(options: FakeAssetsOptions) {
       const target = source.target;
       return typeof target === 'object' && target !== null && 'width' in target && typeof target.width === 'number' && Number.isInteger(target.width) && target.width > 0 && target.width <= 4096 && 'height' in target && typeof target.height === 'number' && Number.isInteger(target.height) && target.height > 0 && target.height <= 4096 && 'background' in target && Array.isArray(target.background) && target.background.length === 3 && target.background.every((v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255);
     }
-    return typeof source === 'object'  && source !== null && 'kind' in source && ['app', 'catalog', 'upload'].includes(String(source.kind));
+    return typeof source === 'object'  && source !== null && 'kind' in source && ['app', 'brandfetch', 'catalog', 'upload'].includes(String(source.kind));
   }
 
   return {

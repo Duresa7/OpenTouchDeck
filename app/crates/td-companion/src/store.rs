@@ -189,6 +189,11 @@ impl AssetStore {
         }
         self.cache.get(id)
     }
+    /// Blocking. Whether the store holds a prepared Asset with this id. Unlike [`Self::get`],
+    /// it doesn't count as a use.
+    pub fn has(&self, id: &str) -> bool {
+        td_link::asset::valid_asset_id(id) && self.path(id).is_file()
+    }
     /// Blocking. Validates and stores an Asset and returns its content hash.
     pub fn put(&self, file: &[u8]) -> Result<String, PutError> {
         if !td_host::icon_pack::is_icon(file)

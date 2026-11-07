@@ -416,37 +416,6 @@
   overflow-wrap: anywhere;
 }
 
-.secret-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.secret-row .input {
-  flex: 1;
-}
-
-.secret-state {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: var(--space-2);
-  height: 36px;
-  padding: 0 12px;
-  border-radius: var(--radius-control);
-  background: var(--surface-inset);
-  box-shadow: inset 0 0 0 1px var(--line);
-  color: var(--ink);
-}
-
-.secret-state.is-empty {
-  color: var(--ink-2);
-}
-
-.secret-state svg {
-  color: var(--ink-2);
-}
-
 .usage-scroll {
   overflow-x: auto;
   border-radius: var(--radius-group);

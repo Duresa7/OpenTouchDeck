@@ -152,7 +152,7 @@ Cross-Origin-Resource-Policy: same-origin
 Cache-Control: no-store
 ```
 
-Hashed static files override `Cache-Control` with `public, max-age=31536000, immutable`. `index.html` keeps `no-store`. The UI makes no third-party requests: the Companion fetches and caches icon catalogs and downloads Icon packs, and the UI shows pack icons through the same-origin `icon_packs.thumbnail` route, so `connect-src` and `img-src` stay on `'self'`. The UI never uses `dangerouslySetInnerHTML`.
+Hashed static files override `Cache-Control` with `public, max-age=31536000, immutable`. `index.html` keeps `no-store`. The UI makes no third-party requests unless you turn on Brandfetch: the Companion fetches and caches icon catalogs and downloads Icon packs, and the UI shows pack icons through the same-origin `icon_packs.thumbnail` route, so `connect-src` and `img-src` stay on `'self'`. While a Brandfetch client ID is saved, and only then, the policy adds `https://cdn.brandfetch.io https://asset.brandfetch.io` to `img-src` and `https://api.brandfetch.io` to `connect-src`, so the icon picker can search Brandfetch and show its thumbnails (see [Brandfetch](#brandfetch)). The page sets its policy when it loads, so saving or forgetting the client ID reloads the window. Without a client ID the header is byte for byte the one above. The UI never uses `dangerouslySetInnerHTML`.
 
 ### How the Electron window gets its session
 
@@ -574,7 +574,7 @@ Feature module `assets`. Assets reach a Device through `layouts.push` and the in
 | `assets.builtin` | `GET /assets/builtin` | → `Builtin[] {name, label, tags, id}` |
 | `assets.suggest` | `POST /assets/builtin/suggest` | `{action: TileAction}` → `Builtin \| null` |
 | `assets.file` | `GET /assets/{asset}` | → the stored bytes with their media type: `application/vnd.touchdeck.tdi1`, `image/gif` or `image/png` |
-| `assets.create` | `POST /assets` | `{source: {kind: "app", path} \| {kind: "upload", upload} \| {kind: "catalog", catalog, id}, fit}` → 202 Job `assets.render`. For `app`, the Companion reads only the icon resource of that program |
+| `assets.create` | `POST /assets` | `{source: {kind: "app", path} \| {kind: "upload", upload} \| {kind: "catalog", catalog, id} \| {kind: "brandfetch", brand, logo_type, theme, padding, background, tint}, fit}` → 202 Job `assets.render`. For `app`, the Companion reads only the icon resource of that program |
 | `assets.upload` | `POST /uploads` | raw `image/*` (PNG, JPEG, GIF or SVG), at most 16 MiB → `{id, media_type, bytes}`, kept for 1 hour |
 | `assets.catalog_search` | `GET /assets/catalog/search?q=&catalog=` | → `CatalogHit[]`, at most 500. Searches the bundled catalogs and installed Icon packs offline; catalog images are fetched on pick |
 | `assets.on_device` | `GET /devices/{device}/assets` | → `{ids: AssetId[], storage_free}` |
@@ -585,6 +585,34 @@ As built in #75:
 - `assets.create` takes `app`, `upload` and `catalog` sources. Uploads accept PNG, JPEG, GIF and SVG images. An SVG is drawn with nothing outside the file: an `<image>` draws nothing, whether it names a file, a URL or a `data:` image, and `currentColor` without a root `color` draws in the built-in icon ink `#f2f5fa`. An uploaded SVG with a `DOCTYPE` or `ENTITY` declaration, or gzip-compressed, gets 400 `request.invalid`. GIF headers are admitted without decoding; full GIF validation runs in the preparation Job. An expired, consumed or foreign upload returns `upload.not_found`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
 - `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does. It also keeps live cover Assets the Companion last sent successfully or whose reply is still unanswered. Obsolete cached covers may be removed and are forgotten by the upload cache. A Device delete refusal with reason `in-use` keeps that Asset and continues; other delete errors still fail the Job. The result's `kept_in_use` counts distinct listed Assets protected as live covers or refused `in-use`, including on repeat runs. It excludes Assets kept only by Layouts or `also_keep`.
 - `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
+- A `brandfetch` source renders a logo through the Brand API with the user's own key; see [Brandfetch](#brandfetch).
+
+### Brandfetch
+
+Feature module `brandfetch` (#127). Brand logos from [Brandfetch](https://brandfetch.com), with the user's own keys. Open TouchDeck ships no client ID and no key. Nothing reaches Brandfetch until the user saves keys in Settings, Brandfetch logos.
+
+| Name | Method and path | Request → Response |
+|---|---|---|
+| `brandfetch.get` | `GET /brandfetch` | → `BrandfetchStatus {client_id, key_set, logos, need_refresh, expired, replaced}` |
+| `brandfetch.client_id_put` | `PUT /brandfetch/client-id` | `{client_id}` → `BrandfetchStatus`. 1 to 128 of letters, digits, `-`, `_`, `.`; else 400 `request.invalid` |
+| `brandfetch.client_id_delete` | `DELETE /brandfetch/client-id` | → `BrandfetchStatus`. Turns search off |
+| `brandfetch.key_put` | `PUT /brandfetch/key` | `{value}` → `BrandfetchStatus`. Write-only; 1 to 512 printable ASCII characters |
+| `brandfetch.key_delete` | `DELETE /brandfetch/key` | → `BrandfetchStatus`. Deletes the keychain entry |
+| `brandfetch.key_test` | `POST /brandfetch/key/test` | → `BrandfetchStatus`. One Brand API call for `brandfetch.com`, which Brandfetch doesn't count. Only on request |
+
+- **Search runs in the UI.** The client ID isn't a secret: Brandfetch puts it in every logo URL. The Companion keeps it in `brandfetch/settings.json` under its data folder and returns it. The icon picker calls `GET https://api.brandfetch.io/v2/search/{query}?c={client_id}&limit=5` straight from the page, at least 300 ms after the last keystroke, aborts a stale search, and never caches results. Thumbnails are hotlinked `<img>` elements with `referrerpolicy="origin"`, so Brandfetch sees which app shows them while the document keeps `Referrer-Policy: no-referrer`. The Companion never searches and never fetches a thumbnail.
+- **The API key never comes back.** The Companion stores it in the system keychain (Windows Credential Manager on Windows, Secret Service such as GNOME Keyring or KWallet on Linux), entry `app:brandfetch:api_key` of service `touchdeck`, bound to the origin `https://api.brandfetch.io`. It's never written to a file, a log, a Layout or the provenance record. No route returns it or any part of it, only `key_set`. When no keychain is reachable, `brandfetch.key_put` fails with 503 `brandfetch.no_keychain`; there is no plain-text fallback. Its message names no platform: the UI words the problem from `system.get`'s `platform` and shows the message under Details. Mock mode (`--mock-devices`) keeps the key in memory, and only there may the Companion take `TOUCHDECK_BRANDFETCH_CLIENT_ID` and `TOUCHDECK_BRANDFETCH_API_KEY` from its environment.
+- **A pick goes through the Companion.** `assets.create` with a `brandfetch` source calls `GET https://api.brandfetch.io/v2/brands/{brand}` with `Authorization: Bearer`, where `brand` is a domain or a Brandfetch brand id. The key travels only in that header, only over HTTPS (the agent refuses plain HTTP), and redirects aren't followed, so it never reaches another host. The Companion picks the requested `logo_type` (`icon`, `symbol` or `logo`), then the other types in the order icon, symbol, logo, so a brand without an icon still gives its symbol or logo. Within a type it goes by the requested `theme` (`light`, `dark` or `auto`, which prefers `light`), then prefers SVG, PNG, WebP and JPEG. It downloads the file unchanged and without the key from the `src` the answer gives, on `cdn.brandfetch.io` or `asset.brandfetch.io` only; it never builds a Logo API address itself. It tries at most 4 files, best first, and stops when the Job is cancelled. It draws an SVG by the rules for uploads (no DOCTYPE, ENTITY or compression, and no linked or embedded image is read) and a PNG, WebP or JPEG with the upload decode limits (4096 pixels a side, 64 MiB), then fits it like a catalog icon (`padding`, `background`, `tint`, `fit`) into a 64 by 64 `tdi1` Asset. A file that draws nothing fails the pick with `asset.render_failed`. Each pick uses one Brand API request; the free developer plan has about 100.
+- **The 30-day rule.** Brandfetch's terms let an app keep a logo for 30 days. For each Brandfetch Asset the Companion records the brand, the options, the fetch time and the original file in `brandfetch/provenance.json` and `brandfetch/originals/`. A check runs at start and then every hour. It compares wall-clock times, so a PC that slept catches up when it wakes. From day 25 it calls the Brand API again for each due logo, at most 10 calls per run; the rest wait for the next run.
+  - The same file moves the fetch time.
+  - A changed file renders a new Asset, and `replaced` maps the old Asset id to the new one. A logo replaced twice maps straight to the newest. The Companion changes no stored Layout and pushes nothing: the editor swaps the new Asset into its drafts when it reads `brandfetch.get`, so the next Send to Device carries it.
+  - A failure that may pass, such as no answer, tries again a day later. Used-up requests (`brandfetch.quota`) end the run.
+  - A refused key stops calls for every logo until a key is saved. A brand Brandfetch no longer knows, or with no logo left, stops calls for that logo.
+  - A logo whose Asset is gone from this PC is forgotten without a call.
+  - A logo that goes 30 days without a successful fetch loses its cached original, is listed in `expired` and is never called again; picking it again starts over.
+
+  Assets on a Device are never deleted. `need_refresh` counts logos at least 25 days old, expired ones included.
+- **Errors** are Job errors on a pick and HTTP errors on the routes: `brandfetch.no_key` 409 (no key saved), `brandfetch.key_refused` 502 (401, 402 or 403 from Brandfetch), `brandfetch.quota` 429 (429, or 403 `no_api_credits`), `brandfetch.not_found` 404 (400 or 404, or a brand that is neither a domain nor an id), `brandfetch.no_logo` 422 (no file of that kind on an allowed host), `brandfetch.unavailable` 502 (no answer, a redirect or another status), `brandfetch.store` 500 (the settings or provenance file couldn't be written) and `brandfetch.no_keychain` 503. No message carries text from Brandfetch's answer.
 
 ### Icon packs
 
@@ -1027,7 +1055,7 @@ Feature module `system`.
 | Name | Method and path | Request → Response |
 |---|---|---|
 | `system.ping` | `GET /system/ping` | → `{api: ["v1"]}`. Public |
-| `system.get` | `GET /system` | → `{version, build, api: "v1", mock, data_dir_override}` |
+| `system.get` | `GET /system` | → `{version, build, api: "v1", mock, data_dir_override, platform}`. `platform` is `windows`, `linux` or `other`; the UI names the keychain from it |
 | `system.lock` | `POST /system/lock` | → `{lock}`, where `lock` is `lock_` and 16 random characters. Window sessions only; owner-bound 10-minute lease. 409 `system.busy` while any Job is active or another session holds the lock. Once held, new Jobs fail with 503 `companion.installing` |
 | `system.lock_renew` | `PUT /system/lock/{lock}` | → `()`. Owner window session only; renews the lease for 10 minutes |
 | `system.unlock` | `DELETE /system/lock/{lock}` | → `()`. Owner window session only |
@@ -1247,6 +1275,14 @@ Features add codes as they land. This list is the starting set.
 | `integration.not_found` | 404 | No Integration with that id |
 | `integration.config_invalid` | 422 | The config fails the Integration's schema. `details.issues` |
 | `integration.credentials` | 500 | The keyring failed |
+| `brandfetch.no_key` | 409, Job error | No Brandfetch API key is saved |
+| `brandfetch.key_refused` | 502, Job error | Brandfetch refused the API key |
+| `brandfetch.quota` | 429, Job error | The Brandfetch account's requests are used up |
+| `brandfetch.not_found` | 404, Job error | Brandfetch doesn't know the brand |
+| `brandfetch.no_logo` | 422, Job error | The brand has no logo of that kind on an allowed host |
+| `brandfetch.unavailable` | 502, Job error | Brandfetch didn't answer, redirected or answered another status |
+| `brandfetch.store` | 500, Job error | The Brandfetch settings or provenance file couldn't be written |
+| `brandfetch.no_keychain` | 503, Job error | No system keychain is reachable, such as Linux without a running Secret Service |
 | `system.busy` | 409 | A Job is active or another session holds the install lock |
 | `system.dialog_open` | 409 | A native file dialog is already open |
 | `companion.installing` | 503 | The install lock is held |
