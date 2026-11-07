@@ -74,7 +74,14 @@ test('the switch is reachable with the keyboard and shows the focus ring', async
   await page.getByTestId('device-name').focus();
   await page.keyboard.press('Enter');
   await expect(toggle(page)).toBeVisible();
-  for (let i = 0; i < 12 && !(await toggle(page).evaluate((el) => el === document.activeElement)); i++) await page.keyboard.press('Tab');
+  // Desk also has Wi-Fi setup and the Bluetooth keyboard before the build switch.
+  const MAX_TABS = 40;
+  let tabs = 0;
+  while (tabs < MAX_TABS && !(await toggle(page).evaluate((el) => el === document.activeElement))) {
+    await page.keyboard.press('Tab');
+    tabs += 1;
+  }
+  expect(await toggle(page).evaluate((el) => el === document.activeElement), `build switch not reached after ${MAX_TABS} tabs`).toBe(true);
   await expect(toggle(page)).toBeFocused();
   expect(await toggle(page).evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('solid');
   await page.keyboard.press('Enter');
