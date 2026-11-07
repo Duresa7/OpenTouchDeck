@@ -338,6 +338,22 @@ bool td_netlink_forget(td_netlink_deck_t *deck)
     return erased && reset;
 }
 
+bool td_netlink_forget_one(td_netlink_deck_t *deck, const uint8_t companion_id[TD_NETLINK_COMPANION_ID_LEN],
+                           uint8_t *removed)
+{
+    const int at = find_pairing(&deck->pairings, companion_id);
+    *removed = at >= 0;
+    if (at < 0) {
+        return true;
+    }
+    td_netlink_pairings_t *p = &deck->pairings;
+    td_netlink_wipe(&p->entries[at], sizeof p->entries[at]);
+    memmove(&p->entries[at], &p->entries[at + 1], (size_t)(p->count - at - 1) * sizeof p->entries[0]);
+    p->count--;
+    td_netlink_wipe(&p->entries[p->count], sizeof p->entries[0]);
+    return deck->env.save_pairings(deck->env.ctx, p);
+}
+
 bool td_netlink_names_stored(const td_netlink_deck_t *deck, const uint8_t *body, size_t len)
 {
     return len == 2 + OPEN_FIELDS && body[0] == TD_NETLINK_SESSION_OPEN && body[1] == TD_NETLINK_VERSION

@@ -76,6 +76,9 @@ typedef struct {
  * `animating` is false. */
 void ui_get_state(ui_state_t *out);
 
+/* Whether the Layout on screen has a title strip, which a full-screen Layout gives to its Tiles. On the LVGL task. */
+bool ui_deck_title_shown(void);
+
 /* Slides to a page, as a swipe would. False when the page does not exist. The caller holds the LVGL lock. */
 bool ui_goto(uint8_t page);
 
