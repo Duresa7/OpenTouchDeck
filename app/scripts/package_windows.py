@@ -19,6 +19,8 @@ TARGET = "x86_64-pc-windows-msvc"
 SIGNER = ROOT / ".github/release-signer/cli.mjs"
 FEED = "https://github.com/Duresa7/OpenTouchDeck/releases/download"
 TEST_HOOK_MARKERS = (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts", b"--test-real-device-console")
+BUNDLE = "touchdeck.tdfw"
+RADIO_BUNDLE = "touchdeck-radio.tdfw"
 
 
 def build_environment(env=None):
@@ -68,9 +70,35 @@ def radio_guard():
 
 
 def audit_radio(build):
-    """The release ships the normal build only, so it must be radio-free. CI runs the same guard on every build."""
+    """The installer's Firmware is the normal build, so it must be radio-free. CI runs the same guard on every build."""
     result = radio_guard().check_normal(build)
     return {"usb_serial_jtag": True, "radio_components": [], "build_components": result["build_components"]}
+
+
+def audit_radio_build(build, size_json):
+    """The opt-in radio build ships next to it as a separate file, held to the radio build's own rules: Wi-Fi and BLE
+    dormant until set up, and static internal RAM under the ceiling. CI runs the same guard on every build."""
+    guard = radio_guard()
+    result = guard.check_radio(build)
+    return {"usb_serial_jtag": True, "radio_components": result["radio_components"], "dormant": result["dormant"],
+            "diram": guard.check_diram(size_json), "diram_ceiling": guard.DIRAM_CEILING,
+            "build_components": result["build_components"]}
+
+
+def checked_bundle(bundle, radio):
+    """Checks a bundle against its manifest and that it is the build its path says. Returns the manifest."""
+    manifest = bundle_tool().check_bundle(bundle)
+    if bool(manifest.get("radio")) != radio:
+        raise ValueError(f"{bundle.name} is the {'radio' if manifest.get('radio') else 'normal'} build, "
+                         f"not the {'radio' if radio else 'normal'} build")
+    return manifest
+
+
+def pack(build, folder, name, radio):
+    bundle, _ = bundle_tool().make_bundle(build, folder)
+    installed = bundle.with_name(name)
+    bundle.rename(installed)
+    return installed, checked_bundle(installed, radio)
 
 
 def verify_production_companion(binary):
@@ -92,31 +120,55 @@ def firmware(out, revision, lock_path):
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as lock:
             lock.write(owner)
+        folder = out / "payload/firmware"
         build = out / "build/firmware"
         run([sys.executable, idf, "-C", ROOT / "firmware", "-B", build, "build"])
         audit = audit_radio(build)
-        tool = bundle_tool()
-        bundle, manifest = tool.make_bundle(build, out / "payload/firmware")
-        tool.check_bundle(bundle)
-        installed_bundle = bundle.with_name("touchdeck.tdfw")
-        bundle.rename(installed_bundle)
-        return {"source_revision": revision, "bundle": installed_bundle.name,
-                "sha256": sha(installed_bundle.read_bytes()), "manifest": manifest, "audit": audit}
+        bundle, manifest = pack(build, folder, BUNDLE, radio=False)
+        normal = {"source_revision": revision, "bundle": bundle.name,
+                  "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": audit}
+        # The radio build needs a build folder of its own; firmware/CMakeLists.txt refuses it anywhere else.
+        build = out / "build/firmware-radio"
+        run([sys.executable, idf, "-C", ROOT / "firmware", "-B", build, "-DTD_RADIO_BUILD=1", "build"])
+        size = out / "build/firmware-radio-size.json"
+        run([sys.executable, idf, "-C", ROOT / "firmware", "-B", build, "size", "--format", "json2",
+             "--output-file", size])
+        audit = audit_radio_build(build, size)
+        bundle, manifest = pack(build, folder, RADIO_BUNDLE, radio=True)
+        radio = {"source_revision": revision, "bundle": bundle.name,
+                 "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": audit}
+        return normal, radio
     finally:
         if lock_path.read_text(encoding="utf-8") == owner:
             lock_path.unlink()
 
 
-def prebuilt_firmware(out, revision, source):
+def prebuilt_firmware(out, revision, source, radio_source=None):
+    """Test-signed candidates only. The normal bundle must be the normal build and the radio bundle the radio build;
+    without a radio bundle the candidate carries the normal build alone."""
     folder = out / "payload/firmware"
     folder.mkdir()
-    bundle = folder / "touchdeck.tdfw"
+    bundle = folder / BUNDLE
     shutil.copyfile(source, bundle)
     manifest = bundle_tool().check_bundle(bundle)
     if manifest.get("radio"):
-        raise ValueError("--firmware-bundle holds the radio build; an installer ships the normal Firmware only")
-    return {"source_revision": None, "requested_revision": revision, "bundle": bundle.name,
-            "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": None}
+        raise ValueError("--firmware-bundle holds the radio build; pass it with --radio-firmware-bundle instead")
+    normal = {"source_revision": None, "requested_revision": revision, "bundle": bundle.name,
+              "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": None}
+    if radio_source is None:
+        return normal, None
+    bundle = folder / RADIO_BUNDLE
+    shutil.copyfile(radio_source, bundle)
+    manifest = bundle_tool().check_bundle(bundle)
+    if not manifest.get("radio"):
+        raise ValueError("--radio-firmware-bundle holds the normal build; pass it with --firmware-bundle instead")
+    return normal, {"source_revision": None, "requested_revision": revision, "bundle": bundle.name,
+                    "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": None}
+
+
+def radio_asset(version):
+    """The release asset name of the radio build, apart from the installer's normal build."""
+    return f"touchdeck-radio-{version}.tdfw"
 
 
 def next_patch(version):
@@ -174,6 +226,8 @@ def build(args):
         raise ValueError("Configure a public key for an unsigned release, or use --test-signing for a candidate")
     if args.firmware_bundle and not args.test_signing:
         raise ValueError("--firmware-bundle is for test-signed candidates only; releases build the Firmware")
+    if args.radio_firmware_bundle and not args.firmware_bundle:
+        raise ValueError("--radio-firmware-bundle needs --firmware-bundle; releases build both Firmware builds")
     revision = clean_revision()
     out = args.out.resolve()
     if out.is_relative_to(ROOT) or ROOT.is_relative_to(out):
@@ -182,15 +236,16 @@ def build(args):
     payload = out / "payload"
     payload.mkdir()
     if args.firmware_bundle:
-        fw = prebuilt_firmware(out, revision, args.firmware_bundle)
+        fw, radio = prebuilt_firmware(out, revision, args.firmware_bundle, args.radio_firmware_bundle)
     else:
         common = Path(capture(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]))
-        fw = firmware(out, revision, args.build_lock or common.parent / ".verify/m3-build.lock")
+        fw, radio = firmware(out, revision, args.build_lock or common.parent / ".verify/m3-build.lock")
     version = json.loads((ELECTRON / "package.json").read_text(encoding="utf-8"))["version"]
     shutil.copyfile(ROOT / "LICENSE", payload / "LICENSE.txt")
     (payload / "licenses").mkdir()
     shutil.copyfile(ROOT / "app/icons/builtin/LICENSE-lucide.txt", payload / "licenses/LICENSE-lucide.txt")
-    write_json(payload / "install-manifest.json", {"source_revision": revision, "version": version, "firmware": fw})
+    write_json(payload / "install-manifest.json", {"source_revision": revision, "version": version, "firmware": fw,
+                                                   "radio_firmware": radio})
 
     env = build_environment()
     for key in ("CARGO_BUILD_TARGET", "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS"):
@@ -198,6 +253,9 @@ def build(args):
     env["RUSTFLAGS"] = "-C target-feature=+crt-static"
     env["CARGO_TARGET_DIR"] = str(out / "build/app")
     env["TOUCHDECK_FIRMWARE_BUNDLE"] = str(payload / "firmware" / fw["bundle"])
+    env.pop("TOUCHDECK_RADIO_FIRMWARE_BUNDLE", None)
+    if radio:
+        env["TOUCHDECK_RADIO_FIRMWARE_BUNDLE"] = str(payload / "firmware" / radio["bundle"])
     env["CSC_IDENTITY_AUTO_DISCOVERY"] = "false"
     key_path = None
     try:
@@ -239,10 +297,13 @@ def build(args):
     write_json(assets / "release-manifest.json", {"source_revision": revision, "version": version,
         "test_signing": args.test_signing, "updater_public_key": public_key,
         "installer": installer.name, "installer_sha256": sha(installer.read_bytes()), "firmware": fw,
+        "radio_firmware": radio and {**radio, "asset": radio_asset(version)},
         "companion_sha256": sha(companion.read_bytes()),
         "tools": {"rustc": capture(["rustc", "--version"]), "node": capture(["node", "--version"]),
                   "electron-builder": json.loads((ELECTRON / "node_modules/electron-builder/package.json").read_text(encoding="utf-8"))["version"]}})
     shutil.copyfile(payload / "firmware" / fw["bundle"], assets / fw["bundle"])
+    if radio:
+        shutil.copyfile(payload / "firmware" / radio["bundle"], assets / radio_asset(version))
     paths = sorted(path for path in assets.iterdir() if path.is_file())
     (assets / "SHA256SUMS").write_text("".join(f"{sha(path.read_bytes())}  {path.name}\n" for path in paths),
                                      encoding="utf-8", newline="\n")
@@ -267,7 +328,9 @@ def main():
     builder.add_argument("--test-signing", action="store_true", help="generate and delete a disposable candidate-only signing key")
     builder.add_argument("--public-key-file", type=Path, help="durable updater public key; signing happens in a separate job")
     builder.add_argument("--notes-file", type=Path, help="release notes for latest.json")
-    builder.add_argument("--firmware-bundle", type=Path, help="test-signed candidates only: reuse this .tdfw instead of building Firmware")
+    builder.add_argument("--firmware-bundle", type=Path, help="test-signed candidates only: reuse this normal-build .tdfw instead of building Firmware")
+    builder.add_argument("--radio-firmware-bundle", type=Path, help="test-signed candidates only, with --firmware-bundle: "
+                         "reuse this radio-build .tdfw; without it the candidate carries the normal build alone")
     checker = commands.add_parser("verify-companion", help="check a Companion binary has no test hooks")
     checker.add_argument("binary", type=Path)
     args = parser.parse_args()

@@ -1,5 +1,5 @@
 name: windows release build
-description: Build the Open TouchDeck Windows installer with the Companion and matching radio-free Firmware, unsigned for isolated release signing or test-signed for candidates.
+description: Build the Open TouchDeck Windows installer with the Companion and matching radio-free Firmware, plus the opt-in radio build as a separate file, unsigned for isolated release signing or test-signed for candidates.
 
 inputs:
   release-mode:
@@ -118,7 +118,7 @@ runs:
         & "$env:RUNNER_TEMP/esp-idf/install.ps1" esp32s3
         if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-    - name: Build test-signed installer and matching radio-free Firmware
+    - name: Build test-signed installer, matching radio-free Firmware and the radio build
       if: inputs.release-mode == 'test-signing'
       shell: pwsh
       run: |
@@ -126,7 +126,7 @@ runs:
         python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --test-signing --notes-file "$env:RUNNER_TEMP/release-notes.md"
         exit $LASTEXITCODE
 
-    - name: Build unsigned installer and matching radio-free Firmware
+    - name: Build unsigned installer, matching radio-free Firmware and the radio build
       if: inputs.release-mode != 'test-signing'
       shell: pwsh
       run: |

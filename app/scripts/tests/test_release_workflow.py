@@ -11,6 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / '.github/workflows/release-windows.yml'
 NAME = 'OpenTouchDeck-windows-x64-setup.exe'
+RADIO = 'touchdeck-radio-1.0.0.tdfw'
 
 
 def workflow_shell(step):
@@ -35,8 +36,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
         (self.root / 'signed-assets').mkdir()
         self.data = b'synthetic installer'
         self.digest = hashlib.sha256(self.data).hexdigest()
+        self.normal = b'synthetic normal firmware'
+        self.radio = b'synthetic radio firmware'
         self.manifest = dict(version='1.0.0', test_signing=False, source_revision='a' * 40,
-                             installer=NAME, installer_sha256=self.digest, updater_public_key='public')
+                             installer=NAME, installer_sha256=self.digest, updater_public_key='public',
+                             firmware=dict(bundle='touchdeck.tdfw', sha256=hashlib.sha256(self.normal).hexdigest(),
+                                           manifest=dict(version='1.0.0')),
+                             radio_firmware=dict(bundle='touchdeck-radio.tdfw', asset=RADIO,
+                                                 sha256=hashlib.sha256(self.radio).hexdigest(),
+                                                 manifest=dict(version='1.0.0', radio=True)))
         self.env = dict(os.environ, INSTALLER=NAME, EXPECTED_SHA256=self.digest,
                         SOURCE_REVISION='a' * 40, TAGGED_SHA='a' * 40, RELEASE_TAG='v1.0.0',
                         GITHUB_EVENT_NAME='push', GITHUB_REF_TYPE='tag', GITHUB_REF_NAME='v1.0.0',
@@ -45,6 +53,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def prepare(self):
         (self.assets / NAME).write_bytes(self.data)
+        (self.assets / 'touchdeck.tdfw').write_bytes(self.normal)
+        (self.assets / RADIO).write_bytes(self.radio)
         (self.assets / 'release-manifest.json').write_text(json.dumps(self.manifest))
         (self.assets / 'latest.json').write_text('{"notes":"untrusted build feed"}')
         (self.assets / (NAME + '.sig')).write_text('unsigned placeholder')
@@ -64,8 +74,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
           if [ "$1" = fetch ]; then return 0; fi
           if [ "$1" = show ]; then printf '%s' '{"version":"1.0.0"}'; else return 1; fi
         }'''
+        radio_in_installer = dict(self.manifest['firmware'], manifest=dict(version='1.0.0', radio=True))
+        normal_as_radio = dict(self.manifest['radio_firmware'], manifest=dict(version='1.0.0'))
         for field, value in [(None, None), ('version', '9.9.9'), ('test_signing', True),
-                             ('installer_sha256', 'b' * 64), ('source_revision', 'b' * 40)]:
+                             ('installer_sha256', 'b' * 64), ('source_revision', 'b' * 40),
+                             ('firmware', radio_in_installer), ('radio_firmware', None),
+                             ('radio_firmware', normal_as_radio)]:
             with self.subTest(field=field):
                 original = dict(self.manifest)
                 if field:
@@ -101,6 +115,61 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.data = b'tampered with consistent checksums'
         self.prepare()
         self.assertNotEqual(self.run_shell('Check the downloaded assets belong to this tag', prelude).returncode, 0)
+
+    def test_publish_ships_the_radio_build_as_its_own_asset_and_never_as_the_installer_firmware(self):
+        annotation = json.dumps({'object': {'type': 'commit', 'sha': 'a' * 40},
+                                 'message': 'Trusted tag notes', 'tagger': {'date': '2026-01-01T00:00:00Z'}})
+        prelude = '''gh() {
+          case "$2" in
+            */git/ref/tags/v1.0.0) printf '%s' '{"object":{"type":"tag","sha":"annotation"}}' ;;
+            */git/tags/annotation) printf '%s' 'ANNOTATION' ;;
+            *) return 1 ;;
+          esac
+        }'''.replace('ANNOTATION', annotation)
+        step = 'Check the downloaded assets belong to this tag'
+        self.prepare()
+        self.assertEqual(self.run_shell(step, prelude).returncode, 0)
+        sums = (self.assets / 'SHA256SUMS').read_text()
+        summed = [line.split('  ', 1)[1] for line in sums.splitlines()]
+        self.assertIn(RADIO, summed)
+        self.assertIn('touchdeck.tdfw', summed)
+        original = json.loads(json.dumps(self.manifest))
+        cases = {
+            'the installer firmware is the radio build': ('firmware', dict(original['firmware'], manifest=dict(radio=True))),
+            'no radio build': ('radio_firmware', None),
+            'the radio file is the normal build': ('radio_firmware', dict(original['radio_firmware'], manifest={})),
+            'the radio file has another name': ('radio_firmware', dict(original['radio_firmware'], asset='touchdeck-radio.tdfw')),
+            'the radio file is not the one built': ('radio_firmware', dict(original['radio_firmware'], sha256='b' * 64)),
+        }
+        for case, (field, value) in cases.items():
+            with self.subTest(case=case):
+                self.manifest = json.loads(json.dumps(original))
+                self.manifest[field] = value
+                for path in self.assets.iterdir():
+                    path.unlink()
+                self.prepare()
+                self.assertNotEqual(self.run_shell(step, prelude).returncode, 0)
+        self.manifest = original
+        for path in self.assets.iterdir():
+            path.unlink()
+        self.prepare()
+        (self.assets / RADIO).unlink()
+        self.assertNotEqual(self.run_shell(step, prelude).returncode, 0)
+
+    def test_draft_check_requires_the_radio_asset(self):
+        self.prepare()
+        for name, expect in [(None, 0), (RADIO, 1)]:
+            with self.subTest(missing=name):
+                if name:
+                    (self.assets / name).unlink()
+                # What the draft release lists: the same files and sizes as the build, as gh prints them.
+                (self.root / 'listing.txt').write_text(''.join(
+                    f'{p.name} {p.stat().st_size}\n' for p in sorted(self.assets.iterdir())), newline='\n')
+                prelude = '''gh() {
+                  if [ "$3" = "$RELEASE_TAG" ] && [ "$4" = --json ] && [ "$5" = assets ]; then cat "$RUNNER_TEMP/listing.txt"; fi
+                }'''
+                result = self.run_shell('Check draft assets', prelude)
+                self.assertEqual(result.returncode != 0, bool(expect), result.stdout + result.stderr)
 
     @unittest.skipUnless(shutil.which('node'), 'node required')
     def test_sign_step_signs_with_the_release_secrets_and_version(self):

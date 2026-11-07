@@ -492,8 +492,12 @@ time counts toward the task it interrupted.
 ## Radio build
 
 The radio build is an opt-in second Firmware configuration with Wi-Fi, lwIP
-and NimBLE. Releases ship the normal build only, and it stays radio-free. Build
-the radio build into a directory of its own. From `firmware/`:
+and NimBLE. The installer's Firmware is the normal build, and it stays
+radio-free. A release also ships the radio build as a separate file,
+`touchdeck-radio-<version>.tdfw`, and the Companion carries both. Device
+settings in the app switches a Device between them, both ways; an update keeps
+the build the Device runs. Build the radio build into a directory of its own.
+From `firmware/`:
 
 ```sh
 idf.py -B <abs>/build-radio -DTD_RADIO_BUILD=1 build
@@ -580,7 +584,12 @@ build. CI builds both configurations on every Firmware change. It uploads the
 normal bundle as `firmware-tdfw` and the radio bundle as `firmware-radio-tdfw`,
 named `touchdeck-radio-<version>.tdfw`. A radio bundle's `manifest.json` has
 `"radio": true`, and the installer recipe refuses such a bundle as
-`--firmware-bundle`.
+`--firmware-bundle`. It takes one only as `--radio-firmware-bundle`, which
+refuses a normal bundle.
+
+The radio build's link-v2 hello carries `radio: true`; the normal build sends
+no `radio` field (see [link-v2.md](../schema/protocol/link-v2.md)). The
+Companion reports it as the Device's Firmware `channel`.
 
 ## Layout format
 

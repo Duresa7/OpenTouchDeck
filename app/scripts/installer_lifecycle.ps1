@@ -157,6 +157,12 @@ function Assert-Installed([string]$Version) {
     $manifest = Get-Content -LiteralPath (Join-Path $installDir 'resources\install-manifest.json') -Raw | ConvertFrom-Json
     $firmwareHash = (Get-FileHash -LiteralPath (Join-Path $installDir 'resources\firmware\touchdeck.tdfw') -Algorithm SHA256).Hash
     Assert-That ($manifest.firmware.sha256 -eq $firmwareHash) 'The installed Firmware bundle matches the install manifest.'
+    if ($manifest.radio_firmware) {
+        $radioPath = Join-Path $installDir "resources\firmware\$($manifest.radio_firmware.bundle)"
+        Assert-That (Test-Path -LiteralPath $radioPath -PathType Leaf) 'The install contains the radio build.'
+        $radioHash = (Get-FileHash -LiteralPath $radioPath -Algorithm SHA256).Hash
+        Assert-That ($manifest.radio_firmware.sha256 -eq $radioHash) 'The installed radio build matches the install manifest.'
+    }
     $entries = @(Get-UninstallEntries)
     Assert-That ($entries.Count -eq 1) 'Exactly one per-user uninstall entry exists.'
     Assert-That ($entries[0].DisplayVersion -eq $Version) "The uninstall entry reports version $Version."

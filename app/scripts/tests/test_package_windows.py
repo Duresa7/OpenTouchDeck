@@ -1,7 +1,10 @@
+import argparse
 import importlib.util
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 
 spec = importlib.util.spec_from_file_location("package_windows", Path(__file__).parents[1] / "package_windows.py")
@@ -28,6 +31,58 @@ class ProductionCompanionTests(unittest.TestCase):
     def test_captured_output_is_utf8_on_any_code_page(self):
         script = "import sys; sys.stdout.buffer.write('\\u201dOpen TouchDeck\\u201d'.encode('utf-8'))"
         self.assertEqual(package.capture([sys.executable, "-c", script]), "”Open TouchDeck”")
+
+
+FIXTURES = Path(__file__).resolve().parents[2] / "crates/td-link/tests/fixtures"
+NORMAL = FIXTURES / "touchdeck-test.tdfw"
+RADIO = FIXTURES / "touchdeck-test-radio.tdfw"
+
+
+class PrebuiltFirmwareTests(unittest.TestCase):
+    """Test-signed candidates may reuse built bundles, but each build only through its own option."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.out = Path(self.temp.name)
+        (self.out / "payload").mkdir()
+
+    def test_the_normal_bundle_alone_carries_no_radio_build(self):
+        normal, radio = package.prebuilt_firmware(self.out, "a" * 40, NORMAL)
+        self.assertEqual(normal["bundle"], "touchdeck.tdfw")
+        self.assertNotIn("radio", normal["manifest"])
+        self.assertIsNone(radio)
+
+    def test_both_bundles_land_apart_and_each_is_its_own_build(self):
+        normal, radio = package.prebuilt_firmware(self.out, "a" * 40, NORMAL, RADIO)
+        self.assertEqual((normal["bundle"], radio["bundle"]), ("touchdeck.tdfw", "touchdeck-radio.tdfw"))
+        self.assertTrue(radio["manifest"]["radio"])
+        self.assertEqual(radio["sha256"], package.sha(RADIO.read_bytes()))
+        self.assertEqual(package.radio_asset("1.2.3"), "touchdeck-radio-1.2.3.tdfw")
+
+    def test_a_radio_bundle_is_never_the_normal_firmware(self):
+        with self.assertRaisesRegex(ValueError, "--firmware-bundle holds the radio build"):
+            package.prebuilt_firmware(self.out, "a" * 40, RADIO)
+
+    def test_a_normal_bundle_is_never_the_radio_firmware(self):
+        with self.assertRaisesRegex(ValueError, "--radio-firmware-bundle holds the normal build"):
+            package.prebuilt_firmware(self.out, "a" * 40, NORMAL, NORMAL)
+
+    def test_a_packed_bundle_must_be_the_build_its_name_says(self):
+        self.assertTrue(package.checked_bundle(RADIO, radio=True)["radio"])
+        with self.assertRaisesRegex(ValueError, "is the radio build, not the normal build"):
+            package.checked_bundle(RADIO, radio=False)
+        with self.assertRaisesRegex(ValueError, "is the normal build, not the radio build"):
+            package.checked_bundle(NORMAL, radio=True)
+
+    def test_the_radio_bundle_option_needs_the_normal_one(self):
+        args = argparse.Namespace(test_signing=True, public_key_file=None, firmware_bundle=None,
+                                  radio_firmware_bundle=RADIO)
+        with mock.patch.object(package.sys, "platform", "win32"), mock.patch.dict(package.os.environ, clear=False):
+            for key in [key for key in package.os.environ if key.upper().startswith("TAURI_SIGNING_PRIVATE_KEY")]:
+                del package.os.environ[key]
+            with self.assertRaisesRegex(ValueError, "--radio-firmware-bundle needs --firmware-bundle"):
+                package.build(args)
 
 
 if __name__ == "__main__":

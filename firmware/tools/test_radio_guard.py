@@ -287,7 +287,7 @@ class RealNormalBuildTests(unittest.TestCase):
 @unittest.skipUnless(os.environ.get("TD_GUARD_RADIO_BUILD"), "set TD_GUARD_RADIO_BUILD to check a real radio build")
 class RealRadioBuildTests(unittest.TestCase):
     """A real radio build passes its own guard, image check included, and fails the normal guard and the release
-    audit, so it can never ship as a release."""
+    audit, so it can never ship as the installer's Firmware."""
 
     build = Path(os.environ.get("TD_GUARD_RADIO_BUILD", "."))
 
