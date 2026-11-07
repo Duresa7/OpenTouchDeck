@@ -8,6 +8,7 @@ pub mod icon_packs;
 pub mod integrations;
 pub mod jobs;
 pub mod layouts;
+pub mod pairings;
 pub mod system;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_hooks;

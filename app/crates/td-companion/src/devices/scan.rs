@@ -373,6 +373,9 @@ impl Inner {
             incoming,
             mirror,
         );
+        if carrier == Carrier::Usb {
+            self.resend_on_link(id, &handle);
+        }
         let link = LinkState::Connected {
             port,
             since_ms: session_id,
