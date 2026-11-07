@@ -616,8 +616,12 @@ python firmware/tools/qemu_net_check.py <abs>/build-qemu
 
 [radio/qemu.defaults](../firmware/radio/qemu.defaults) sets
 `CONFIG_TD_QEMU_TEST`, which runs only the link and the net-v2 service, opens a
-pairing window at boot and logs its code. `qemu_net_check.py` starts QEMU with
-port 47820 forwarded to the image. Its client,
+pairing window at boot and logs its code. The image has no PSRAM, because QEMU
+crashes when the app brings up the board's octal PSRAM, so the net-v2 service
+runs from internal RAM there. It also runs flash at 40 MHz, with ESP-IDF's
+default cache layout. `qemu_net_check.py` starts QEMU with
+port 47820 forwarded to the image, one TCG thread, and the serial port in
+`<build>/qemu_serial.log`. Its client,
 `firmware/tools/qemu/net_v2_client.mjs`, built on
 [net-ref](../schema/protocol/net-ref/), pairs with the logged code, opens a
 session, sends `hello`, `link.state` and `net.state` in records, checks that
