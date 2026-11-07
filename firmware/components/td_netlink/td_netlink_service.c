@@ -698,6 +698,14 @@ static int open_listener(void)
     return fd;
 }
 
+/* The service's state, records and task stack live in PSRAM. Only the QEMU test image runs without PSRAM, since QEMU's
+ * PSRAM model crashes at boot with this Firmware's settings. */
+#if CONFIG_SPIRAM
+#define NET_CAPS (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+#else
+#define NET_CAPS (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+#endif
+
 esp_err_t td_netlink_start(void)
 {
     if (n) {
@@ -706,9 +714,9 @@ esp_err_t td_netlink_start(void)
     if (!td_netlink_crypto_init()) {
         return ESP_FAIL;
     }
-    n = heap_caps_calloc(1, sizeof *n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    n = heap_caps_calloc(1, sizeof *n, NET_CAPS);
     s_out = xMessageBufferCreateWithCaps(OUT_RECORDS * (TD_NETLINK_PLAIN_MAX + sizeof(size_t)),
-                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                                         NET_CAPS);
     s_cmd_lock = xSemaphoreCreateMutex();
     s_cmd_done = xSemaphoreCreateBinary();
     s_save_done = xSemaphoreCreateBinary();
@@ -747,7 +755,7 @@ esp_err_t td_netlink_start(void)
         return ESP_FAIL;
     }
     if (xTaskCreatePinnedToCoreWithCaps(net_task, "td_netlink", TASK_STACK, NULL, TASK_PRIORITY, NULL, TASK_CORE,
-                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+                                        NET_CAPS) != pdPASS) {
         close(s_listen);
         s_listen = -1;
         publish();

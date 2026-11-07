@@ -8,16 +8,15 @@ CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 # QEMU runs far slower than the chip, so the watchdogs would fire on emulation, not on a hang.
 CONFIG_ESP_TASK_WDT_INIT=n
 CONFIG_ESP_INT_WDT=n
-# Code runs from flash: QEMU's PSRAM holds data only here.
-CONFIG_SPIRAM_XIP_FROM_PSRAM=n
-# QEMU's flash and PSRAM models don't take MSPI timing tuning, high-performance-mode commands or the memory protection
-# lock, so the image keeps them off: 40 MHz flash and PSRAM need no tuning.
+# QEMU crashed (SIGSEGV) as the app started with the board's octal PSRAM, so the image runs from internal RAM: the
+# net-v2 service falls back to it when there is no PSRAM. It also keeps to what QEMU models: 40 MHz flash, which needs
+# no MSPI timing tuning, no flash high-performance mode, no memory protection or brownout detector, and ESP-IDF's
+# default cache layout.
+CONFIG_SPIRAM=n
 CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
-CONFIG_SPIRAM_SPEED_40M=y
 CONFIG_SPI_FLASH_HPM_DIS=y
 CONFIG_ESP_SYSTEM_MEMPROT=n
 CONFIG_ESP_BROWNOUT_DET=n
-# ESP-IDF's default cache layout, which QEMU's cache and MMU model are known to run.
 CONFIG_ESP32S3_INSTRUCTION_CACHE_16KB=y
 CONFIG_ESP32S3_DATA_CACHE_32KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_32B=y

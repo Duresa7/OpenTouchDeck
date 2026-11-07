@@ -119,7 +119,12 @@ void app_main(void)
              chip_info.revision / 100, chip_info.revision % 100);
     ESP_LOGI(TAG, "Flash: %" PRIu32 " MB", flash_size / (1024 * 1024));
     // The display frame buffers will need PSRAM, so confirm it came up.
+#if CONFIG_SPIRAM
     ESP_LOGI(TAG, "PSRAM: %u KB", (unsigned)(esp_psram_get_size() / 1024));
+#else
+    /* Only the QEMU test image (firmware/radio/qemu.defaults) has no PSRAM. */
+    ESP_LOGI(TAG, "PSRAM: none");
+#endif
 
     const esp_partition_t *running = esp_ota_get_running_partition();
     if (running) {
