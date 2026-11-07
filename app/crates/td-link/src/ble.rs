@@ -38,6 +38,13 @@ pub fn valid_address(address: &str) -> bool {
         })
 }
 
+/// An address in either case, as the Firmware takes it, in the lower case the Device lists. `None` when it isn't six
+/// hex bytes separated by colons.
+pub fn normalize_address(address: &str) -> Option<String> {
+    let lower = address.to_ascii_lowercase();
+    valid_address(&lower).then_some(lower)
+}
+
 /// Whether the controller and the host run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -87,7 +94,8 @@ pub struct BleState {
     /// Whether a pairing passkey is on the Device's screen.
     pub passkey: bool,
     pub advertising: BleAdvertising,
-    /// Listed only while `state` is `on`.
+    /// The bonded hosts the Device knows of. The list may have hosts in any state: after a host reset it says
+    /// `starting` and still lists them.
     pub bonds: Vec<BleBond>,
     /// The same number as `caps.ble_hid`.
     pub bonds_max: u32,
@@ -99,7 +107,6 @@ impl BleState {
     fn valid(&self) -> bool {
         (1..=BONDS_MAX).contains(&self.bonds_max)
             && self.bonds.len() <= self.bonds_max as usize
-            && (self.state == BleStack::On || self.bonds.is_empty())
             && self.pairing_ms <= PAIRING_MS
             && (self.pairing || self.pairing_ms == 0)
             && self.battery <= 100
@@ -217,15 +224,16 @@ pub fn ble_pair(session: &Session, open: bool) -> Result<BleState, BleError> {
     )?)
 }
 
-/// Forgets the bonded host at `address`, or every one when `None`.
+/// Forgets the bonded host at `address`, in either case, or every one when `None`. The address goes to the Device in
+/// lower case.
 pub fn ble_forget(session: &Session, address: Option<&str>) -> Result<BleForgotten, BleError> {
-    let request = match address {
-        Some(address) if !valid_address(address) => {
+    let request = match address.map(|address| normalize_address(address).ok_or(())) {
+        Some(Err(())) => {
             return Err(BleError::Invalid(
-                "A Bluetooth address is six lower-case hex bytes, aa:bb:cc:dd:ee:ff.",
+                "A Bluetooth address is six hex bytes, aa:bb:cc:dd:ee:ff.",
             ));
         }
-        Some(address) => json!({"m": "ble.forget", "address": address}),
+        Some(Ok(address)) => json!({"m": "ble.forget", "address": address}),
         None => json!({"m": "ble.forget"}),
     };
     let reply = call(session, request, REQUEST_TIMEOUT)?;
@@ -278,6 +286,12 @@ mod tests {
         assert!(!valid_address("0:00:5e:00:53:01a"));
         assert!(!valid_address("g0:00:5e:00:53:01"));
         assert!(!valid_address(""));
+        assert_eq!(
+            normalize_address("00:00:5E:00:53:0A").as_deref(),
+            Some("00:00:5e:00:53:0a")
+        );
+        assert_eq!(normalize_address(PHONE).as_deref(), Some(PHONE));
+        assert_eq!(normalize_address("00-00-5E-00-53-01"), None);
     }
 
     #[test]
@@ -304,9 +318,11 @@ mod tests {
         assert_eq!((off.bonds_max, off.battery), (4, 100));
         assert!(off.bonds.is_empty());
 
-        let on = ble_set(&s, true).unwrap();
-        assert!(on.enabled);
-        assert_eq!(on.state, BleStack::On);
+        // As the Firmware: the start answers `starting`, and the host has synced by the next request.
+        let starting = ble_set(&s, true).unwrap();
+        assert!(starting.enabled);
+        assert_eq!(starting.state, BleStack::Starting);
+        assert_eq!(ble_state(&s).unwrap().state, BleStack::On);
 
         let open = ble_pair(&s, true).unwrap();
         assert!(open.pairing);
@@ -335,7 +351,7 @@ mod tests {
 
         let off = ble_set(&s, false).unwrap();
         assert_eq!(off.state, BleStack::Off);
-        assert!(off.bonds.is_empty(), "bonds are listed only while on");
+        assert!(off.bonds.is_empty(), "a Device that is off lists no bonds");
         assert_eq!(deck.ble_bonds().len(), 1, "turning off keeps the bonds");
         // What went over the link names no passkey.
         let received = serde_json::to_string(&deck.received()).unwrap();
@@ -351,7 +367,13 @@ mod tests {
         ble_set(&s, true).unwrap();
         assert_eq!(ble_state(&s).unwrap().bonds.len(), 2);
 
-        let one = ble_forget(&s, Some(PHONE)).unwrap();
+        // Either case: the Firmware takes upper case too, and the request carries lower case.
+        let one = ble_forget(&s, Some(&PHONE.to_ascii_uppercase())).unwrap();
+        let sent = deck.received();
+        assert_eq!(
+            sent.iter().rev().find(|r| r["m"] == "ble.forget").unwrap()["address"],
+            PHONE
+        );
         assert_eq!(one.forgotten, 1);
         assert_eq!(one.state.bonds.len(), 1);
         assert_eq!(one.state.bonds[0].address, LAPTOP);
@@ -416,7 +438,7 @@ mod tests {
         assert!(matches!(error, BleError::Refused { state: None, .. }));
         let before = deck.received().len();
         assert!(matches!(
-            ble_forget(&s, Some("00:00:5E:00:53:01")),
+            ble_forget(&s, Some("00-00-5e-00-53-01")),
             Err(BleError::Invalid(_))
         ));
         assert_eq!(deck.received().len(), before);
@@ -431,11 +453,78 @@ mod tests {
             json!({"m": "ble.set"}),
             json!({"m": "ble.set", "enabled": "yes"}),
             json!({"m": "ble.pair", "open": 1}),
-            json!({"m": "ble.forget", "address": "00:00:5E:00:53:01"}),
+            json!({"m": "ble.forget", "address": "00-00-5e-00-53-01"}),
+            json!({"m": "ble.forget", "address": 1}),
         ] {
             let reply = s.call(&request, REQUEST_TIMEOUT).unwrap();
             assert!(!reply.ok, "{request}");
             assert_eq!(reply.fields["reason"], "args", "{request}");
         }
+    }
+
+    #[test]
+    fn a_host_reset_says_starting_and_keeps_listing_the_bonds() {
+        let deck = radio();
+        deck.add_ble_bond(PHONE, false, true);
+        let s = session(&deck);
+        ble_set(&s, true).unwrap();
+        assert_eq!(ble_state(&s).unwrap().bonds.len(), 1);
+
+        deck.ble_hold_start(true);
+        deck.ble_host_reset();
+        let starting = ble_state(&s).unwrap();
+        assert_eq!(starting.state, BleStack::Starting);
+        assert_eq!(starting.bonds.len(), 1, "bonds may be listed in any state");
+        assert!(!starting.bonds[0].connected);
+        assert_eq!(ble_pair(&s, true).unwrap_err().reason(), Some("starting"));
+        let error = ble_forget(&s, None).unwrap_err();
+        assert_eq!(error.reason(), Some("starting"));
+        assert!(matches!(error, BleError::Refused { state: Some(_), .. }));
+
+        deck.ble_hold_start(false);
+        assert_eq!(ble_state(&s).unwrap().state, BleStack::On);
+    }
+
+    #[test]
+    fn a_failed_start_then_off_reads_off() {
+        let deck = radio();
+        deck.fail_ble_start(true);
+        let s = session(&deck);
+        assert_eq!(ble_set(&s, true).unwrap_err().reason(), Some("radio"));
+        let off = ble_set(&s, false).unwrap();
+        assert_eq!((off.enabled, off.state), (false, BleStack::Off));
+        assert_eq!(ble_state(&s).unwrap().state, BleStack::Off);
+    }
+
+    #[test]
+    fn storage_refusals_carry_the_state() {
+        let deck = radio();
+        deck.add_ble_bond(PHONE, false, false);
+        let s = session(&deck);
+        deck.fail_ble_storage(true);
+        let error = ble_set(&s, true).unwrap_err();
+        assert_eq!(error.reason(), Some("storage"));
+        assert!(
+            matches!(error, BleError::Refused { state: Some(ref state), .. } if !state.enabled)
+        );
+        assert!(!deck.ble_enabled());
+
+        deck.fail_ble_storage(false);
+        ble_set(&s, true).unwrap();
+        ble_state(&s).unwrap();
+        deck.fail_ble_storage(true);
+        let error = ble_forget(&s, Some(PHONE)).unwrap_err();
+        assert_eq!(error.reason(), Some("storage"));
+        assert_eq!(deck.ble_bonds().len(), 1);
+    }
+
+    #[test]
+    fn a_radio_build_answers_an_unknown_ble_message_unsupported() {
+        let deck = radio();
+        let s = session(&deck);
+        let reply = s.call(&json!({"m": "ble.scan"}), REQUEST_TIMEOUT).unwrap();
+        assert!(!reply.ok);
+        assert_eq!(reply.fields["reason"], "unsupported");
+        assert!(!reply.fields.contains_key("state"));
     }
 }

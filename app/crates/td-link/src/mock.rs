@@ -526,6 +526,22 @@ impl MockDeck {
         self.state().ble.start_fails = fail;
     }
 
+    /// Holds the host unsynced, so Bluetooth keeps answering `starting`; `false` lets it sync before the next request.
+    /// Without a hold the host syncs between requests, so `ble.set true` answers `starting` and the next request `on`.
+    pub fn ble_hold_start(&self, hold: bool) {
+        self.state().ble.hold_start = hold;
+    }
+
+    /// The Bluetooth host resets and starts again: `starting`, with the bonds still listed.
+    pub fn ble_host_reset(&self) {
+        self.state().ble.host_reset();
+    }
+
+    /// Makes the Device's storage writes fail: changing the setting or forgetting a bond answers `storage`.
+    pub fn fail_ble_storage(&self, fail: bool) {
+        self.state().ble.storage_fails = fail;
+    }
+
     /// A host starts pairing inside the window, so the Device shows a passkey; `false` takes it down.
     pub fn ble_show_passkey(&self, shown: bool) {
         let mut state = self.state();
@@ -1435,7 +1451,8 @@ impl MockDeck {
                 if !out.is_empty() {
                     let delay = self.state().reply_delay;
                     thread::sleep(delay);
-                    if to_host.send(out).is_err() {
+                    // A cable pulled while the Device was answering takes the reply with it.
+                    if self.state().generation != generation || to_host.send(out).is_err() {
                         return;
                     }
                 }

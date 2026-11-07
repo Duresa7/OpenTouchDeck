@@ -56,7 +56,8 @@ pub struct DeviceBluetooth {
     /// Whether the Device shows a six-digit passkey for a host to type.
     pub passkey: bool,
     pub advertising: BluetoothAdvertising,
-    /// Listed only while `state` is `on`.
+    /// The computers and phones the Device keeps. Accepted in any state: the Firmware lists none while `off`, and
+    /// still lists them while `starting` after a host reset.
     pub bonds: Vec<BluetoothBond>,
     /// The most bonds the Device keeps.
     pub bonds_max: u32,

@@ -24,6 +24,10 @@ interface Keyboard {
   enabled: boolean;
   since: number;
   failed: boolean;
+  /** Started, and the host hasn't synced yet: it syncs before the next request, as on the Firmware. */
+  syncing: boolean;
+  /** The host has read the bonds since it started, so they are listed, even while it starts again after a reset. */
+  listed: boolean;
   windowUntil: number | null;
   passkey: boolean;
   bonds: BluetoothBond[];
@@ -39,12 +43,14 @@ export function createFakeBluetooth(options: FakeBluetoothOptions) {
   const { devices, windowMs = 120_000, startMs = 0 } = options;
   const keyboards = new Map<string, Keyboard>();
   let startFails = false;
+  const holding = new Set<string>();
 
   function keyboard(id: string): Keyboard {
     let found = keyboards.get(id);
     if (!found) {
       const seed = options.seed?.[id];
-      found = { enabled: seed?.enabled ?? false, since: 0, failed: false, windowUntil: null, passkey: false, bonds: (seed?.bonds ?? []).map((b) => ({ ...b })) };
+      const enabled = seed?.enabled ?? false;
+      found = { enabled, since: 0, failed: false, syncing: false, listed: enabled, windowUntil: null, passkey: false, bonds: (seed?.bonds ?? []).map((b) => ({ ...b })) };
       keyboards.set(id, found);
     }
     if (found.windowUntil !== null && Date.now() >= found.windowUntil) {
@@ -57,7 +63,9 @@ export function createFakeBluetooth(options: FakeBluetoothOptions) {
   function stack(k: Keyboard): DeviceBluetooth['state'] {
     if (!k.enabled) return 'off';
     if (k.failed) return 'failed';
-    return Date.now() - k.since < startMs ? 'starting' : 'on';
+    if (k.syncing || Date.now() - k.since < startMs) return 'starting';
+    k.listed = true;
+    return 'on';
   }
 
   function view(id: string, bondsMax: number): DeviceBluetooth {
@@ -73,7 +81,7 @@ export function createFakeBluetooth(options: FakeBluetoothOptions) {
       pairing_ms: pairing && k.windowUntil !== null ? Math.max(0, k.windowUntil - Date.now()) : 0,
       passkey: pairing && k.passkey,
       advertising: !on ? 'off' : pairing ? 'pairing' : waiting ? 'fast' : 'off',
-      bonds: on ? k.bonds.map((b) => ({ ...b })) : [],
+      bonds: k.enabled && !k.failed && k.listed ? k.bonds.map((b) => ({ ...b, connected: on && b.connected })) : [],
       bonds_max: bondsMax,
       battery: 100,
     };
@@ -107,13 +115,21 @@ export function createFakeBluetooth(options: FakeBluetoothOptions) {
       return failure(400, 'request.invalid', 'The request body is invalid.', { part: 'body', reason: 'the body is {"enabled": boolean}' });
     }
     const k = keyboard(id);
-    if (enabled && !k.enabled) k.since = Date.now();
+    const starting = enabled && (!k.enabled || k.failed);
+    if (starting) {
+      k.since = Date.now();
+      k.syncing = true;
+      k.listed = false;
+    }
     k.enabled = enabled;
-    k.failed = enabled && startFails;
+    // Turning off clears a failed start, as on the Firmware.
+    k.failed = starting ? startFails : enabled && k.failed;
     if (!enabled || k.failed) {
       k.windowUntil = null;
       k.passkey = false;
+      k.syncing = false;
     }
+    if (!enabled) k.listed = false;
     if (k.failed) return refused(id, max, 'bluetooth.radio', "Bluetooth didn't start on the Device. The setting stays on.");
     return json(200, view(id, max));
   }
@@ -139,6 +155,9 @@ export function createFakeBluetooth(options: FakeBluetoothOptions) {
       const id = device.id;
       const max = device.capabilities?.ble_hid ?? 0;
       const method = request.method;
+      // The host syncs between requests unless a test holds it back.
+      const k = keyboard(id);
+      if (!holding.has(id)) k.syncing = false;
       const [, , rest, bond] = match;
       if (rest === undefined) {
         if (method === 'GET') return json(200, view(id, max));
@@ -149,7 +168,6 @@ export function createFakeBluetooth(options: FakeBluetoothOptions) {
         if (method !== 'POST' && method !== 'DELETE') return failure(405, 'route.method_not_allowed', 'Use POST or DELETE.');
         const blocked = notOn(id, max);
         if (blocked) return blocked;
-        const k = keyboard(id);
         if (method === 'DELETE') {
           k.windowUntil = null;
           k.passkey = false;
@@ -162,6 +180,22 @@ export function createFakeBluetooth(options: FakeBluetoothOptions) {
       }
       if (method !== 'DELETE') return failure(405, 'route.method_not_allowed', 'Use DELETE.');
       return forget(id, max, bond === undefined ? null : decodeURIComponent(bond).toLowerCase());
+    },
+
+    /** Holds the host unsynced, so the keyboard keeps saying `starting`; `false` lets it sync on the next request. */
+    holdStart(id: string, hold: boolean) {
+      if (hold) holding.add(id);
+      else holding.delete(id);
+    },
+
+    /** The host resets and starts again: `starting`, the window and links drop, and the bonds stay listed. */
+    hostReset(id: string) {
+      const k = keyboard(id);
+      if (!k.enabled || k.failed) return;
+      k.syncing = true;
+      k.windowUntil = null;
+      k.passkey = false;
+      k.bonds = k.bonds.map((b) => ({ ...b, connected: false }));
     },
 
     /** A computer or phone starts pairing in the open window, so the Device shows a passkey; `false` takes it down. */

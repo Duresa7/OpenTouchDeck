@@ -16,8 +16,8 @@ let fake: FakeCompanion;
 let companion: Companion;
 let stores: BluetoothStore[];
 
-function keyboardFor(device: DeviceSummary, pollMs = 1000): BluetoothStore {
-  const store = createBluetooth({ companion, device, pollMs });
+function keyboardFor(device: DeviceSummary, pollMs = 1000, retryMs = 1000): BluetoothStore {
+  const store = createBluetooth({ companion, device, pollMs, retryMs, retryMaxMs: retryMs * 4 });
   stores.push(store);
   return store;
 }
@@ -72,11 +72,13 @@ describe('the Bluetooth keyboard in words', () => {
     expect(bluetoothStatusText(state({ enabled: false, state: 'off' }), 'Desk')).toBe('Off. Turn it on to type on a computer or phone with Desk.');
     expect(bluetoothStatusText(state({ state: 'starting' }), 'Desk')).toBe('Starting…');
     expect(bluetoothStatusText(state({ state: 'failed' }), 'Desk')).toBe("Bluetooth didn't start on Desk. Restart Desk to try again.");
-    expect(bluetoothStatusText(state({ pairing: true, pairing_ms: 90_000 }), 'Desk')).toBe('Ready to pair. Waiting for a computer or phone…');
+    // The failure line shows only while the setting is on.
+    expect(bluetoothStatusText(state({ enabled: false, state: 'failed' }), 'Desk')).toBe('Off. Turn it on to type on a computer or phone with Desk.');
+    expect(bluetoothStatusText(state({ pairing: true, pairing_ms: 90_000 }), 'Desk')).toBe('Waiting for a computer or phone…');
     expect(bluetoothStatusText(state({ pairing: true, pairing_ms: 90_000, passkey: true }), 'Desk')).toBe('Desk shows a 6-digit code. Type it on the computer or phone.');
     expect(bluetoothStatusText(state({ bonds: DEMO_BONDS }), 'Desk')).toBe('On. Connected to a computer or phone.');
-    expect(bluetoothStatusText(state({ bonds: [DEMO_BONDS[1]] }), 'Desk')).toBe('On. Waiting for a paired computer or phone.');
-    expect(bluetoothStatusText(state(), 'Desk')).toBe('On. Pair a computer or phone to type with Desk.');
+    expect(bluetoothStatusText(state({ bonds: [DEMO_BONDS[1]] }), 'Desk')).toBe('On. Waiting for a computer or phone to connect.');
+    expect(bluetoothStatusText(state(), 'Desk')).toBe('On. Add a computer or phone to type with Desk.');
   });
 });
 
@@ -90,9 +92,58 @@ describe('the Bluetooth keyboard store', () => {
     expect(store.getState().bluetooth).toMatchObject({ enabled: false, state: 'off', bonds: [] });
     expect(fake.bluetooth.state('mock0001').bonds).toHaveLength(2);
 
+    // As the Firmware: a start answers `starting`, and the host has synced by the next read.
     expect(await store.setEnabled(true)).toBe(true);
-    expect(store.getState().bluetooth).toMatchObject({ enabled: true, state: 'on', bonds: DEMO_BONDS });
+    expect(store.getState().bluetooth).toMatchObject({ enabled: true, state: 'starting' });
     expect(store.getState().busy).toBeNull();
+    await store.load();
+    expect(store.getState().bluetooth).toMatchObject({ enabled: true, state: 'on', bonds: DEMO_BONDS });
+  });
+
+  test('after a host reset the keyboard says starting and still lists its hosts', async () => {
+    const store = keyboardFor(desk, 5);
+    await store.load();
+    fake.bluetooth.holdStart('mock0001', true);
+    fake.bluetooth.hostReset('mock0001');
+    await store.load();
+    expect(store.getState()).toMatchObject({ error: null, bluetooth: { state: 'starting' } });
+    expect(store.getState().bluetooth?.bonds.map((b) => b.address)).toEqual(DEMO_BONDS.map((b) => b.address));
+    expect(store.getState().bluetooth?.bonds.every((b) => !b.connected)).toBe(true);
+    expect(await store.forget(DEMO_BONDS[0].address)).toBe(false);
+    expect(store.getState().error).toBe('Bluetooth is still starting on Desk. Try again in a moment.');
+    fake.bluetooth.holdStart('mock0001', false);
+    await vi.waitFor(() => expect(store.getState().bluetooth?.state).toBe('on'));
+  });
+
+  test('a failed start, then off, reads off', async () => {
+    start({});
+    const store = keyboardFor(desk);
+    await store.load();
+    fake.bluetooth.failStart(true);
+    expect(await store.setEnabled(true)).toBe(false);
+    expect(await store.setEnabled(false)).toBe(true);
+    expect(store.getState()).toMatchObject({ error: null, bluetooth: { enabled: false, state: 'off' } });
+  });
+
+  test('a failed read is tried again, waiting longer each time, and a good read clears the error', async () => {
+    const store = keyboardFor(desk, 1000, 20);
+    const down = () => Promise.reject(new TypeError('Failed to fetch'));
+    vi.mocked(fetch).mockImplementationOnce(down).mockImplementationOnce(down);
+    await store.load();
+    expect(store.getState()).toMatchObject({ load: 'failed', retryIn: 20, error: "Couldn't reach Desk. Check that it's plugged in, then retry." });
+    await vi.waitFor(() => expect(store.getState().retryIn).toBe(40));
+    await vi.waitFor(() => expect(store.getState()).toMatchObject({ load: 'ready', error: null, retryIn: null, bluetooth: { state: 'on' } }));
+  });
+
+  test('pause stops the retries', async () => {
+    const store = keyboardFor(desk, 1000, 10);
+    vi.mocked(fetch).mockImplementation(() => Promise.reject(new TypeError('Failed to fetch')));
+    await store.load();
+    store.pause();
+    const before = bluetoothCalls();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(bluetoothCalls()).toBe(before);
+    expect(store.getState().retryIn).toBeNull();
   });
 
   test('opens the pairing window, sees the code go up on the Device, and a new bond closes it', async () => {
@@ -138,7 +189,7 @@ describe('the Bluetooth keyboard store', () => {
     const store = keyboardFor(desk);
     await store.load();
     expect(await store.openPairing()).toBe(false);
-    expect(store.getState().error).toBe('Desk keeps 4 computers and phones. Forget one to pair another.');
+    expect(store.getState().error).toBe('Desk keeps 4 computers and phones. Forget one to add another.');
     expect(store.getState().bluetooth).toMatchObject({ pairing: false, bonds: full });
   });
 

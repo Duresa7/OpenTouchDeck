@@ -305,7 +305,7 @@ test('every control in the panel is reachable with Tab and shows the focus ring'
     'device-panel-wifi-setup-join',
     'device-panel-wifi-begin',
     'device-panel-bluetooth-switch',
-    'device-panel-bluetooth-pair',
+    'device-panel-bluetooth-add',
     'device-panel-bluetooth-forget',
     'device-panel-bluetooth-forget',
     'device-panel-bluetooth-forget-all',

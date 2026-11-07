@@ -96,8 +96,17 @@ async fn a_radio_device_turns_on_pairs_and_turns_off() {
         .call::<BluetoothSet>(path(&id), NoQuery, on(true))
         .await
         .unwrap();
-    assert_eq!((started.enabled, started.state), (true, BluetoothStack::On));
+    // As the Firmware: a start answers `starting`, and the host has synced by the next request.
+    assert_eq!(
+        (started.enabled, started.state),
+        (true, BluetoothStack::Starting)
+    );
     assert!(td.deck("mock0001").ble_enabled());
+    let synced = td
+        .call::<BluetoothGet>(path(&id), NoQuery, ())
+        .await
+        .unwrap();
+    assert_eq!(synced.state, BluetoothStack::On);
 
     let open = td
         .call::<BluetoothPairingOpen>(path(&id), NoQuery, ())
@@ -138,7 +147,7 @@ async fn a_radio_device_turns_on_pairs_and_turns_off() {
         .await
         .unwrap();
     assert_eq!(off.state, BluetoothStack::Off);
-    assert!(off.bonds.is_empty(), "bonds are listed only while on");
+    assert!(off.bonds.is_empty(), "a Device that is off lists no bonds");
     assert_eq!(td.deck("mock0001").ble_bonds().len(), 1);
 }
 
@@ -331,4 +340,160 @@ async fn an_unknown_device_is_not_found() {
     )
     .await;
     assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn while_starting_the_window_and_forget_wait_and_the_bonds_stay_listed() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_radio_device("mock0001").await;
+    let base = format!("/devices/{id}/bluetooth", id = id.as_str());
+    let deck = td.deck("mock0001");
+    deck.add_ble_bond(PHONE, false, true);
+    deck.ble_hold_start(true);
+    let started = td
+        .call::<BluetoothSet>(path(&id), NoQuery, on(true))
+        .await
+        .unwrap();
+    assert_eq!(started.state, BluetoothStack::Starting);
+    for (method, route) in [
+        (reqwest::Method::POST, format!("{base}/pairing")),
+        (reqwest::Method::DELETE, format!("{base}/bonds/{PHONE}")),
+    ] {
+        let (status, body) = raw(&td, method, &route, None).await;
+        assert_eq!(status, 409, "{route}: {body}");
+        assert_eq!(body["error"]["code"], "bluetooth.starting");
+        assert_eq!(body["error"]["details"]["bluetooth"]["state"], "starting");
+    }
+
+    // After a host reset the Device says `starting` again and still lists its bonds.
+    deck.ble_hold_start(false);
+    assert_eq!(
+        td.call::<BluetoothGet>(path(&id), NoQuery, ())
+            .await
+            .unwrap()
+            .bonds
+            .len(),
+        1
+    );
+    deck.ble_hold_start(true);
+    deck.ble_host_reset();
+    let reset = td
+        .call::<BluetoothGet>(path(&id), NoQuery, ())
+        .await
+        .unwrap();
+    assert_eq!(reset.state, BluetoothStack::Starting);
+    assert_eq!(reset.bonds.len(), 1);
+    assert_eq!(reset.bonds[0].address, PHONE);
+    deck.ble_hold_start(false);
+    assert_eq!(
+        td.call::<BluetoothGet>(path(&id), NoQuery, ())
+            .await
+            .unwrap()
+            .state,
+        BluetoothStack::On
+    );
+}
+
+#[tokio::test]
+async fn a_storage_failure_says_so_and_changes_nothing() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_radio_device("mock0001").await;
+    let base = format!("/devices/{id}/bluetooth", id = id.as_str());
+    let deck = td.deck("mock0001");
+    deck.add_ble_bond(PHONE, false, false);
+    deck.fail_ble_storage(true);
+    let (status, body) = raw(
+        &td,
+        reqwest::Method::PUT,
+        &base,
+        Some(json!({"enabled": true})),
+    )
+    .await;
+    assert_eq!(status, 502, "{body}");
+    assert_eq!(body["error"]["code"], "bluetooth.storage");
+    assert_eq!(body["error"]["details"]["bluetooth"]["enabled"], false);
+    assert!(!deck.ble_enabled());
+
+    deck.fail_ble_storage(false);
+    td.call::<BluetoothSet>(path(&id), NoQuery, on(true))
+        .await
+        .unwrap();
+    td.call::<BluetoothGet>(path(&id), NoQuery, ())
+        .await
+        .unwrap();
+    deck.fail_ble_storage(true);
+    let (status, body) = raw(
+        &td,
+        reqwest::Method::DELETE,
+        &format!("{base}/bonds/{PHONE}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, 502, "{body}");
+    assert_eq!(body["error"]["code"], "bluetooth.storage");
+    assert_eq!(
+        body["error"]["details"]["bluetooth"]["bonds"][0]["address"],
+        PHONE
+    );
+    assert_eq!(deck.ble_bonds().len(), 1);
+}
+
+#[tokio::test]
+async fn an_unknown_ble_message_on_a_radio_device_needs_firmware() {
+    // The Companion sends only the four messages it knows. Should a radio build answer one of them `unsupported`,
+    // as it answers a `ble.*` message it doesn't know, the Companion says the Device needs Firmware.
+    let td = TestCompanion::start().await;
+    td.plug_radio_device("mock0001").await;
+    let session_reply = td.deck("mock0001").received().len();
+    let error =
+        td_companion::features::bluetooth::BluetoothError::from(td_link::ble::BleError::Refused {
+            reason: "unsupported".into(),
+            error: "Unknown Bluetooth message".into(),
+            state: None,
+        });
+    use td_companion::api::ApiError;
+    assert_eq!(
+        (error.status().as_u16(), error.code()),
+        (409, "device.needs_firmware")
+    );
+    assert_eq!(ble_requests(&td, "mock0001", session_reply), 0);
+}
+
+#[tokio::test]
+async fn unplugging_in_the_middle_of_a_request_fails_it_and_a_replug_works() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_radio_device("mock0001").await;
+    td.deck("mock0001")
+        .delay_replies(std::time::Duration::from_millis(1500));
+    let request = tokio::spawn(
+        td.request::<BluetoothSet>(path(&id), NoQuery, &on(true))
+            .send(),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    td.unplug("mock0001").await;
+    let response = tokio::time::timeout(std::time::Duration::from_secs(10), request)
+        .await
+        .expect("the request ends once the Device is gone")
+        .unwrap()
+        .unwrap();
+    let status = response.status().as_u16();
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    assert!(
+        [409, 502, 504].contains(&status),
+        "an unplugged Device fails the request: {status} {body}"
+    );
+    assert!(
+        body["error"]["code"]
+            .as_str()
+            .is_some_and(|code| code.starts_with("device.")),
+        "{body}"
+    );
+
+    td.deck("mock0001").delay_replies(std::time::Duration::ZERO);
+    let id = td.plug_radio_device("mock0001").await;
+    let state = td
+        .call::<BluetoothGet>(path(&id), NoQuery, ())
+        .await
+        .unwrap();
+    assert_eq!(state.bonds_max, 4);
 }

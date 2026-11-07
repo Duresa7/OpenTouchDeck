@@ -75,4 +75,12 @@ _Avoid_: transport, connection type
 
 **Pairing**:
 A Device's approval of one Companion to reach it over Wi-Fi or Bluetooth, given once by entering the code the Device shows. It lasts until someone removes it.
-_Avoid_: bond (Bluetooth's word for the Device's keyboard hosts), trust, registration
+_Avoid_: bond (see Keyboard host), trust, registration
+
+**Bluetooth keyboard**:
+The radio build's way for a Device to type keys and media keys on other computers and phones over Bluetooth, with no Companion involved. It is off until the person turns it on.
+_Avoid_: BLE HID, Bluetooth mode
+
+**Keyboard host**:
+A computer or phone the Device's Bluetooth keyboard types on. A person adds one by typing on it the 6-digit code the Device shows, and it stays until someone forgets it. The UI says "computer or phone" and uses the verb "add".
+_Avoid_: bond, paired device, Pairing (that is a Companion's approval)

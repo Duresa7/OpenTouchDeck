@@ -137,7 +137,8 @@ pairing_ms: number,
  */
 passkey: boolean, advertising: BluetoothAdvertising, 
 /**
- * Listed only while `state` is `on`.
+ * The computers and phones the Device keeps. Accepted in any state: the Firmware lists none while `off`, and
+ * still lists them while `starting` after a host reset.
  */
 bonds: Array<BluetoothBond>, 
 /**

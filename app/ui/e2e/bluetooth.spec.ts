@@ -39,7 +39,7 @@ test('shows the keyboard with its computers and phones, and turns it off and on'
   await expect(section(page)).toHaveAttribute('data-state', 'off');
   await expect(keyboardStatus(page)).toHaveText('Off. Turn it on to type on a computer or phone with Desk.');
   await expect(bonds(page)).toHaveCount(0);
-  await expect(page.getByTestId('device-panel-bluetooth-pair')).toHaveCount(0);
+  await expect(page.getByTestId('device-panel-bluetooth-add')).toHaveCount(0);
   expect(await kept(page)).toMatchObject({ enabled: false, bonds: [{ address: FIRST }, { address: SECOND }] });
 
   await toggle(page).click();
@@ -48,14 +48,14 @@ test('shows the keyboard with its computers and phones, and turns it off and on'
   await expect(bonds(page)).toHaveCount(2);
 });
 
-test('pairs a new phone with the code on the Device, and the new bond closes the window', async ({ page }) => {
+test('adds a phone with the code on the Device, and the new Keyboard host closes the window', async ({ page }) => {
   await openDesk(page);
-  await page.getByTestId('device-panel-bluetooth-pair').click();
+  await page.getByTestId('device-panel-bluetooth-add').click();
   const window_ = page.getByTestId('device-panel-bluetooth-window');
   await expect(window_).toBeVisible();
   await expect(window_).toContainText('Open Bluetooth on the computer or phone and choose Desk. Desk shows a 6-digit code; type it on the computer or phone.');
   await expect(page.getByTestId('device-panel-bluetooth-countdown')).toHaveText(/^(2:00|1:5\d)$/u);
-  await expect(keyboardStatus(page)).toHaveText('Ready to pair. Waiting for a computer or phone…');
+  await expect(keyboardStatus(page)).toHaveText('Waiting for a computer or phone…');
 
   await page.evaluate(() => window.touchdeckDemo?.bluetooth.passkey('mock0001', true));
   await expect(window_).toHaveAttribute('data-passkey', 'true');
@@ -69,13 +69,13 @@ test('pairs a new phone with the code on the Device, and the new bond closes the
   await expect(bonds(page).nth(2)).toHaveAttribute('data-connected', 'true');
 });
 
-test('stops the pairing window', async ({ page }) => {
+test('stops adding', async ({ page }) => {
   await openDesk(page);
-  await page.getByTestId('device-panel-bluetooth-pair').click();
+  await page.getByTestId('device-panel-bluetooth-add').click();
   await expect(page.getByTestId('device-panel-bluetooth-window')).toBeVisible();
-  await page.getByTestId('device-panel-bluetooth-close').click();
+  await page.getByTestId('device-panel-bluetooth-stop').click();
   await expect(page.getByTestId('device-panel-bluetooth-window')).toHaveCount(0);
-  await expect(page.getByTestId('device-panel-bluetooth-pair')).toBeVisible();
+  await expect(page.getByTestId('device-panel-bluetooth-add')).toBeVisible();
   await expect(keyboardStatus(page)).toHaveText('On. Connected to a computer or phone.');
 });
 
@@ -84,7 +84,7 @@ test('forgets one computer or phone, then all of them after a confirmation', asy
   await page.getByRole('button', { name: `Forget ${FIRST}` }).click();
   await expect(bonds(page)).toHaveCount(1);
   await expect(bonds(page).first()).toHaveAttribute('data-address', SECOND);
-  await expect(keyboardStatus(page)).toHaveText('On. Waiting for a paired computer or phone.');
+  await expect(keyboardStatus(page)).toHaveText('On. Waiting for a computer or phone to connect.');
 
   await page.getByTestId('device-panel-bluetooth-forget-all').click();
   const confirm = page.getByTestId('device-panel-bluetooth-confirm');
@@ -98,7 +98,7 @@ test('forgets one computer or phone, then all of them after a confirmation', asy
   await expect(bonds(page)).toHaveCount(0);
   await expect(confirm).toHaveCount(0);
   await expect(page.getByTestId('device-panel-bluetooth-forget-all')).toHaveCount(0);
-  await expect(keyboardStatus(page)).toHaveText('On. Pair a computer or phone to type with Desk.');
+  await expect(keyboardStatus(page)).toHaveText('On. Add a computer or phone to type with Desk.');
   expect(await kept(page)).toMatchObject({ enabled: true, bonds: [] });
 });
 
@@ -110,6 +110,12 @@ test('a radio that will not start says so', async ({ page }) => {
   await toggle(page).click();
   await expect(page.getByTestId('device-panel-bluetooth-error')).toHaveText("Bluetooth didn't start on Desk. Restart Desk to try again.");
   await expect(section(page)).toHaveAttribute('data-state', 'failed');
+  // Turning it off after a failed start reads off, not failed.
+  await page.evaluate(() => window.touchdeckDemo?.bluetooth.failStart(false));
+  await toggle(page).click();
+  await expect(section(page)).toHaveAttribute('data-state', 'off');
+  await expect(keyboardStatus(page)).toHaveText('Off. Turn it on to type on a computer or phone with Desk.');
+  await expect(page.getByTestId('device-panel-bluetooth-error')).toHaveCount(0);
 });
 
 test('over Wi-Fi the section is read-only and asks for a USB cable', async ({ page }) => {
@@ -120,7 +126,7 @@ test('over Wi-Fi the section is read-only and asks for a USB cable', async ({ pa
   await expect(section(page)).toHaveAttribute('data-usb', 'false');
   await expect(keyboardStatus(page)).toHaveText('Plug in Desk with a USB cable to change its Bluetooth keyboard.');
   await expect(toggle(page)).toHaveAttribute('data-disabled', '');
-  for (const id of ['device-panel-bluetooth-pair', 'device-panel-bluetooth-forget-all']) {
+  for (const id of ['device-panel-bluetooth-add', 'device-panel-bluetooth-forget-all']) {
     await expect(page.getByTestId(id)).toHaveAttribute('aria-disabled', 'true');
   }
   // aria-disabled buttons stay focusable, so a click still lands and must do nothing.
@@ -162,7 +168,7 @@ for (const theme of ['light', 'dark'] as const) {
 
     test('the pairing window with the code up', async ({ page }) => {
       await openDesk(page);
-      await page.getByTestId('device-panel-bluetooth-pair').click();
+      await page.getByTestId('device-panel-bluetooth-add').click();
       await page.evaluate(() => window.touchdeckDemo?.bluetooth.passkey('mock0001', true));
       await expect(page.getByTestId('device-panel-bluetooth-window')).toHaveAttribute('data-passkey', 'true');
       await shoot(page, 'pairing');
