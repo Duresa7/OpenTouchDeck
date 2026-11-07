@@ -801,8 +801,8 @@ impl super::DeviceManager {
             .map(|d| (d.address.to_string(), d.paired))
             .collect();
         let mut reg = self.inner.reg.lock();
-        // A paired Device that moved, as DHCP may move it, is tried at its new address. The
-        // session still proves it is the paired Device.
+        // A paired Device that moved, as DHCP may move it, is tried at its new address. A
+        // session there still needs the Pairing's key, so a false answer only fails.
         let mut moved = false;
         for d in &found {
             let device = device_id_of(&d.device_id);
