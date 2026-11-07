@@ -151,6 +151,7 @@ static void hello(const cJSON *request, cJSON *reply)
         ui_layout_info(&layout);
     }
     cJSON_AddStringToObject(reply, "layout", layout.from_storage ? "storage" : "builtin");
+    cJSON_AddStringToObject(reply, "carrier", td_link_current_carrier());
     if (v2) {
         uint8_t mac[6];
         esp_efuse_mac_get_default(mac);
@@ -189,6 +190,7 @@ static void state(const cJSON *request, cJSON *reply)
     cJSON_AddNumberToObject(reply, "crc_errors", value.crc_errors);
     cJSON_AddNumberToObject(reply, "dropped", value.dropped);
     cJSON_AddNumberToObject(reply, "last_rx_ms", (double)value.last_rx_ms);
+    cJSON_AddStringToObject(reply, "carrier", value.carrier);
 }
 
 /* A missing optional field takes its default. A field of the wrong type is refused. */
@@ -337,6 +339,26 @@ static const struct {
     { "v2.clock.set", td_link_clock_set },
 };
 
+/* The messages a network carrier may carry (schema/protocol/net-v2.md). Everything else, Firmware updates, wipes and
+ * network setup among them, is USB-only. */
+static const char *const s_network_messages[] = {
+    "hello", "ping", "link.state", "layout.get", "layout.put", "icon.put", "icon.list", "icon.rm", "settings.get",
+    "settings.put", "store.stat", "xfer.end", "widget.set", "dashboard.set", "v2.name.get", "v2.name.set",
+    "v2.asset.stat", "v2.asset.list", "v2.asset.put", "v2.asset.end", "v2.asset.delete", "v2.live.set",
+    "v2.photo.put", "v2.photo.end", "v2.idle.get", "v2.idle.set", "v2.clock.set",
+};
+
+static bool network_allowed(const char *name)
+{
+    for (size_t i = 0; i < sizeof s_network_messages / sizeof s_network_messages[0]; i++) {
+        if (!strcmp(name, s_network_messages[i])) {
+            return true;
+        }
+    }
+    const td_link_message_t *extra = td_link_extra_message(name);
+    return extra && !extra->usb_only;
+}
+
 #define ECHO_CHARS_MAX 64
 
 static void echo_name(const char *name, char out[4 * ECHO_CHARS_MAX + 1])
@@ -366,6 +388,11 @@ cJSON *td_link_dispatch(const cJSON *request)
     char name[4 * ECHO_CHARS_MAX + 1];
     echo_name(message->valuestring, name);
     cJSON_AddStringToObject(reply, "m", name);
+    if (td_link_current_network() && !network_allowed(message->valuestring)) {
+        cJSON_AddBoolToObject(reply, "ok", true);
+        v2_fail(reply, "usb-only", "Only over USB");
+        return reply;
+    }
     if (!strncmp(message->valuestring, "v2.", 3)) {
         cJSON_AddBoolToObject(reply, "ok", true);
         if (!s_v2 || !td_link_state().online) {
@@ -413,6 +440,12 @@ cJSON *td_link_dispatch(const cJSON *request)
             }
             return reply;
         }
+    }
+    const td_link_message_t *extra = td_link_extra_message(message->valuestring);
+    if (extra) {
+        cJSON_AddBoolToObject(reply, "ok", true);
+        extra->handler(request, reply);
+        return reply;
     }
     cJSON_AddBoolToObject(reply, "ok", false);
     cJSON_AddStringToObject(reply, "error", "unknown message");

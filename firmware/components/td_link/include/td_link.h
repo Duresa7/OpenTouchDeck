@@ -12,6 +12,8 @@ typedef struct {
     uint32_t crc_errors;
     uint32_t dropped;
     int64_t last_rx_ms;
+    /* The active carrier's name (td_link_carrier.h). */
+    const char *carrier;
 } td_link_state_t;
 
 typedef struct {
@@ -65,4 +67,18 @@ void td_link_input_cancel(void);
 td_link_state_t td_link_state(void);
 void td_link_hello(void);
 cJSON *td_link_dispatch(const cJSON *request);
+
+/* A message another component handles. A usb_only message is refused on a network carrier. */
+typedef struct {
+    const char *name;
+    void (*handler)(const cJSON *request, cJSON *reply);
+    bool usb_only;
+} td_link_message_t;
+
+#define TD_LINK_MESSAGE_TABLES 2
+
+/* Adds a table of messages, which must stay valid for good, before or after td_link_start, from a task. The link
+ * sees the whole table or none of it. ESP_ERR_INVALID_ARG for an empty table, ESP_ERR_NO_MEM when
+ * TD_LINK_MESSAGE_TABLES are in use. */
+esp_err_t td_link_messages_add(const td_link_message_t *messages, size_t count);
 const esp_console_cmd_t *td_link_console_commands(size_t *count);

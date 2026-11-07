@@ -3,4 +3,4 @@
 idf_component_register(SRCS "td_radio.c"
                        INCLUDE_DIRS "include"
                        REQUIRES console keys
-                       PRIV_REQUIRES td_console td_ble esp_wifi esp_netif esp_event esp_timer heap nvs_flash)
+                       PRIV_REQUIRES td_console td_ble esp_wifi esp_netif esp_event esp_timer heap nvs_flash esp_eth)
