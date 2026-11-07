@@ -1,6 +1,8 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "esp_console.h"
 #include "esp_err.h"
 #include "key_sink.h"
@@ -28,6 +30,13 @@ esp_err_t td_ble_boot(void);
 
 /* Every key report goes to a bonded, subscribed host while one is connected, and nowhere while none is. */
 key_sink_t td_ble_key_sink(void);
+
+/* Pairing needs the passkey on the Device's screen: the host types the six digits shown. td_ble calls the hook with
+ * show true and the code (0 to 999999) when a host starts pairing, and with show false when pairing ends, fails, its
+ * link drops, the window closes or the code times out. It runs on td_ble's tasks with td_ble's lock held, so it must
+ * not block or call td_ble. Any time, before or after td_ble_init. */
+typedef void (*td_ble_passkey_hook_t)(bool show, uint32_t passkey);
+void td_ble_set_passkey_hook(td_ble_passkey_hook_t hook);
 
 /* `ble state|on|off|pair|close|forget [address]`. */
 const esp_console_cmd_t *td_ble_console_commands(size_t *count);

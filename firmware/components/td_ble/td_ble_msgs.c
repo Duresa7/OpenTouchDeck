@@ -66,6 +66,8 @@ static void add_status(cJSON *reply, const td_ble_status_t *status)
     cJSON_AddStringToObject(reply, "state", state_name(status));
     cJSON_AddBoolToObject(reply, "pairing", status->pairing);
     cJSON_AddNumberToObject(reply, "pairing_ms", status->pairing_ms);
+    /* Whether a passkey is on the Device's screen. The code itself never leaves the screen. */
+    cJSON_AddBoolToObject(reply, "passkey", status->passkey);
     cJSON_AddStringToObject(reply, "advertising", advertising_name(status));
     cJSON *bonds = cJSON_AddArrayToObject(reply, "bonds");
     for (size_t i = 0; bonds && i < status->bond_count; i++) {

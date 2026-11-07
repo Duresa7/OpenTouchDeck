@@ -94,6 +94,8 @@ RADIO_BUILD_OPTIONS = {
     "BT_NIMBLE_SM_LEGACY": False,
     "BT_NIMBLE_SM_SC": True,
     "BT_NIMBLE_SM_SC_ONLY": 1,
+    # The controller resolves bonded hosts' private addresses (the resolving list td_ble writes with the accept list).
+    "BT_NIMBLE_HS_PVCY": True,
     "BT_NIMBLE_NVS_PERSIST": True,
     "BT_NIMBLE_MAX_CONNECTIONS": 1,
     "BT_NIMBLE_MAX_BONDS": 4,

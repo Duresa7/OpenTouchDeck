@@ -613,8 +613,8 @@ USB only: the link's `ble.*` messages
 or the console:
 
 - `ble state`: the setting, the stack (`off`, `starting`, `on`, `failed`), the
-  pairing window, the advertising (`off`, `pairing`, `fast`, `slow`), and the
-  bonded hosts, with the connected ones.
+  pairing window, whether a passkey is on screen, the advertising (`off`,
+  `pairing`, `fast`, `slow`), and the bonded hosts, with the connected ones.
 - `ble on` / `ble off`: stores the setting, then starts or stops the stack.
 - `ble pair` / `ble close`: opens the pairing window for 120 seconds, or closes
   it.
@@ -629,23 +629,44 @@ What a host sees:
 - A HID Service with a keyboard report (ID 1: modifiers, a reserved byte, six
   keys), its LED output report (ID 1, one byte), and a consumer report (ID 2:
   one 16-bit usage, 0 to 0x03FF), plus the boot keyboard reports. Every HID
-  characteristic needs an encrypted link with a bonded host to read, write or
-  subscribe. Report values carry no Report ID byte. Each connection starts in
-  Report Protocol.
+  characteristic (the report map, the reports, Protocol Mode, the Control Point
+  and HID Information) needs an encrypted, authenticated link with a bonded
+  host to read, write or subscribe: NimBLE checks the `_AUTHEN` flags and the
+  access callback checks the bond. Report values carry no Report ID byte. Each
+  connection starts in Report Protocol.
 - A Battery Service with a fixed level of 100: the board runs from USB and
-  can't measure a battery.
+  can't measure a battery. The level needs the same authenticated link.
 - A Device Information Service with the PnP ID: the vendor ID source is the
   Bluetooth SIG, the vendor is Espressif, and the product version is the GATT
-  version (`TD_BLE_GATT_VERSION`, now 2). A Device that boots with a new GATT
-  version raises Service Changed for its bonded hosts.
+  version (`TD_BLE_GATT_VERSION`, now 3). A Device that boots with a new GATT
+  version raises Service Changed for its bonded hosts. The PnP ID is the only
+  characteristic open to a link that isn't authenticated.
 
 How it behaves on the air, from the crash analysis in #275:
 
 - Pairing happens only inside the window. It uses LE Secure Connections only,
-  with Just Works and bonding, and keeps at most four bonds. The window refuses
-  to open with four. While it is open the Device advertises as general
+  with MITM protection and bonding, and keeps at most four bonds. The window
+  refuses to open with four. While it is open the Device advertises as general
   discoverable at 30-50 ms with its name in the scan response. A new bond closes
   the window. A host outside the window that isn't bonded is dropped.
+- The Device is display-only (`BLE_HS_IO_DISPLAY_ONLY`), so a host with a
+  keyboard pairs by passkey entry: the Device shows a random six-digit code
+  over the Page and the idle face, and the person types it on the host. The
+  code comes from the hardware random generator, never leaves the screen (no
+  log, no link message), and goes when pairing completes or fails, its link
+  drops, the window closes, Bluetooth turns off, or 60 seconds pass, which also
+  drops the link. If the screen is dark, a touch lights it without pressing
+  anything.
+- Passkey entry was chosen over numeric comparison because it keeps the Device
+  output-only: confirming a comparison would need a touch path from the UI into
+  pairing, where a stray tap or a press still held could confirm. A host that
+  can't type (no keyboard, or display and yes/no only) ends up in Just Works,
+  and a host that offers only legacy pairing is refused by Secure Connections
+  Only mode.
+- A link whose keys aren't authenticated Secure Connections keys with a 16-byte
+  key (a Just Works or legacy bond, or an old bond made that way) is dropped
+  and its bond deleted, whether it just paired or reconnects with stored keys.
+  `ble state` counts these in the stats as refused.
 - Reconnect advertising is for bonded hosts only (the controller's accept
   list), carries no name, runs at 20-30 ms for 30 seconds and then at 1-2.5 s
   until a host connects. It starts only from an event: the host syncing, a
@@ -653,6 +674,14 @@ How it behaves on the air, from the crash analysis in #275:
   a connection object, which exists before NimBLE delivers the late `CONNECT`
   event. The accept list is written only after the stack starts and when the
   bonds change. A failed start backs off 1, 2, 4, then 8 seconds.
+- Phones and computers reconnect from resolvable private addresses. With
+  `CONFIG_BT_NIMBLE_HS_PVCY` the controller resolves them before the accept
+  list, using the IRK each host gave when it bonded, so the accept list matches
+  the host's identity address. NimBLE loads the stored IRKs when the stack
+  starts and adds a new bond's IRK as it stores it. td_ble writes the resolving
+  list again from the bond store each time it writes the accept list, removing
+  each entry first so none is doubled. A failure there is counted and doesn't
+  stop advertising: a host on its identity address still gets in.
 - Every event is handled by its own connection handle. A Security Request goes
   out only on a link that isn't encrypted yet. After encryption the Device asks
   once for 7.5-50 ms, latency 0 and a 4-second supervision timeout, the same
@@ -667,7 +696,9 @@ messages and the GATT table with a fake radio and runs two host tests:
 - `tools/host/ble_hid_test.c` decodes the report map and checks the Report IDs,
   every Logical Minimum against its Maximum under the signed rule, each
   report's length against what is sent, one Report characteristic per report,
-  encryption on every HID characteristic, the Battery Service, the 512-byte
+  authenticated encryption on every HID characteristic, the Battery Level and
+  every Report Reference (the NimBLE flags themselves, which
+  `td_ble_nimble.c` asserts match NimBLE's), the Battery Service, the 512-byte
   limit, and the GATT layout's fingerprint against the version it is pinned to.
   A change to the report map or the table without a new `TD_BLE_GATT_VERSION`
   fails it.
@@ -676,8 +707,13 @@ messages and the GATT table with a fake radio and runs two host tests:
   advertising, and checks that nothing retries, the accept list isn't
   rewritten, no Security Request goes out on an encrypted link, and one
   parameter request does. It also checks that BLE stays off unless the stored
-  setting is on, the backoff, the fast and slow phases, the pairing window,
-  forgetting, and the `ble.*` messages.
+  setting is on, the backoff, the fast and slow phases, the pairing window, the
+  passkey (an unbiased six-digit draw, on screen until pairing completes, fails,
+  times out, its link drops, the window closes or Bluetooth turns off, and
+  refused outside the window or for any other pairing method), that Just Works,
+  legacy and short-key bonds are refused and deleted, that the resolving list
+  follows the bond store before advertising, forgetting, and the `ble.*`
+  messages.
 
 It needs a C compiler and one firmware build first, which fetches cJSON, like
 `test_link_carrier.py`.

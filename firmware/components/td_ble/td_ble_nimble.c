@@ -14,8 +14,10 @@
 #include "td_ble_hid.h"
 #include "td_ble_service.h"
 #include <string.h>
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -32,8 +34,25 @@
 #include "td_link.h"
 
 void ble_store_config_init(void);
-/* NimBLE defines this in ble_gap.c without declaring it in a public header. */
+/* NimBLE defines these in ble_gap.c and ble_hs_pvcy.c without declaring them in a public header. */
 void ble_gap_conn_foreach_handle(ble_gap_conn_foreach_handle_fn *cb, void *arg);
+int ble_hs_pvcy_add_entry(const uint8_t *addr, uint8_t addr_type, const uint8_t *irk);
+int ble_hs_pvcy_remove_entry(uint8_t addr_type, const uint8_t *addr);
+
+/* td_ble_hid.c builds NimBLE's flags from its own copies of these values, so the host tests check them. */
+_Static_assert(TD_BLE_GATT_F_READ == BLE_GATT_CHR_F_READ, "GATT flag");
+_Static_assert(TD_BLE_GATT_F_WRITE_NO_RSP == BLE_GATT_CHR_F_WRITE_NO_RSP, "GATT flag");
+_Static_assert(TD_BLE_GATT_F_WRITE == BLE_GATT_CHR_F_WRITE, "GATT flag");
+_Static_assert(TD_BLE_GATT_F_NOTIFY == BLE_GATT_CHR_F_NOTIFY, "GATT flag");
+_Static_assert(TD_BLE_GATT_F_READ_ENC == BLE_GATT_CHR_F_READ_ENC, "GATT flag");
+_Static_assert(TD_BLE_GATT_F_READ_AUTHEN == BLE_GATT_CHR_F_READ_AUTHEN, "GATT flag");
+_Static_assert(TD_BLE_GATT_F_WRITE_ENC == BLE_GATT_CHR_F_WRITE_ENC, "GATT flag");
+_Static_assert(TD_BLE_GATT_F_WRITE_AUTHEN == BLE_GATT_CHR_F_WRITE_AUTHEN, "GATT flag");
+_Static_assert(TD_BLE_GATT_F_NOTIFY_ENC == BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC, "GATT flag");
+_Static_assert(TD_BLE_GATT_F_NOTIFY_AUTHEN == BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN, "GATT flag");
+_Static_assert(TD_BLE_ATT_F_READ == BLE_ATT_F_READ, "ATT flag");
+_Static_assert(TD_BLE_ATT_F_READ_ENC == BLE_ATT_F_READ_ENC, "ATT flag");
+_Static_assert(TD_BLE_ATT_F_READ_AUTHEN == BLE_ATT_F_READ_AUTHEN, "ATT flag");
 
 static const char *TAG = "ble";
 
@@ -71,6 +90,8 @@ typedef struct {
 
 static ble_t *s;
 static portMUX_TYPE s_queue_lock = portMUX_INITIALIZER_UNLOCKED;
+/* In PSRAM like the rest of the state, so the hook costs no static internal RAM. */
+static EXT_RAM_BSS_ATTR td_ble_passkey_hook_t s_passkey_hook;
 /* The key sink posts the drain event only while the host's event queue exists; a stop waits for posts in flight. */
 static bool s_post_ok;
 static int s_posting;
@@ -160,7 +181,19 @@ static bool port_link(void *ctx, uint16_t conn, td_ble_link_t *out)
     }
     out->encrypted = desc.sec_state.encrypted;
     out->bonded = desc.sec_state.bonded;
+    out->authenticated = desc.sec_state.authenticated;
+    out->key_size = desc.sec_state.key_size;
     addr_from(&out->peer, &desc.peer_id_addr);
+    /* Whether the bond's keys came from Secure Connections is in the store; NimBLE writes a new bond there before it
+     * reports the encryption change. */
+    out->secure_connections = false;
+    if (desc.sec_state.bonded) {
+        struct ble_store_key_sec key = { .peer_addr = desc.peer_id_addr };
+        struct ble_store_value_sec value;
+        if (ble_store_read_peer_sec(&key, &value) == 0) {
+            out->secure_connections = value.sc;
+        }
+    }
     return true;
 }
 
@@ -208,6 +241,35 @@ static int port_accept_list(void *ctx, const td_ble_addr_t *peers, size_t count)
     const int rc = ble_gap_wl_set(addrs, (uint8_t)count);
     ESP_LOGI(TAG, "accept list: %u hosts, rc=%d", (unsigned)count, rc);
     return rc;
+}
+
+/* The controller resolves a bonded host's resolvable private address to its identity address with the IRK the host gave
+ * when it bonded, and the accept list then matches that identity. NimBLE loads the stored IRKs at sync and adds a new
+ * bond's IRK as it stores it; writing them again with the accept list keeps the two lists in step whatever NimBLE did.
+ * Each entry is removed first, so an entry already there is replaced, never doubled. Called only while nothing
+ * advertises and no connection exists, as the controller requires. */
+static int port_resolving_list(void *ctx, const td_ble_addr_t *peers, size_t count)
+{
+    (void)ctx;
+    int failed = 0;
+    size_t written = 0;
+    for (size_t i = 0; i < count; i++) {
+        struct ble_store_key_sec key = { 0 };
+        addr_to(&key.peer_addr, &peers[i]);
+        struct ble_store_value_sec value;
+        if (ble_store_read_peer_sec(&key, &value) != 0 || !value.irk_present) {
+            continue;
+        }
+        ble_hs_pvcy_remove_entry(value.peer_addr.type, value.peer_addr.val);
+        const int rc = ble_hs_pvcy_add_entry(value.peer_addr.val, value.peer_addr.type, value.irk);
+        if (rc != 0) {
+            failed = rc;
+        } else {
+            written++;
+        }
+    }
+    ESP_LOGI(TAG, "resolving list: %u of %u hosts, rc=%d", (unsigned)written, (unsigned)count, failed);
+    return failed;
 }
 
 /* The Device name in the scan response while pairing: complete when it fits, else cut at a character boundary. */
@@ -330,6 +392,26 @@ static int port_notify(void *ctx, uint16_t conn, td_ble_input_t input, const uin
     return om ? ble_gatts_notify_custom(conn, input_handle(input), om) : BLE_HS_ENOMEM;
 }
 
+static uint32_t port_random(void *ctx)
+{
+    (void)ctx;
+    return esp_random();
+}
+
+/* The code goes to the screen only. It is never logged, since the USB log is readable by the computer at the other end
+ * of the cable. */
+static void port_passkey_show(void *ctx, bool show, uint32_t passkey)
+{
+    (void)ctx;
+    const td_ble_passkey_hook_t hook = __atomic_load_n(&s_passkey_hook, __ATOMIC_SEQ_CST);
+    if (hook) {
+        hook(show, passkey);
+    } else if (show) {
+        ESP_LOGW(TAG, "no screen to show the passkey on");
+    }
+    ESP_LOGI(TAG, "passkey %s", show ? "on screen" : "taken down");
+}
+
 static void port_lock(void *ctx)
 {
     (void)ctx;
@@ -359,7 +441,7 @@ static int write_byte(struct ble_gatt_access_ctxt *ctxt, uint8_t *out)
 
 static int access_locked(uint16_t conn, const td_ble_chr_t *chr, struct ble_gatt_access_ctxt *ctxt)
 {
-    if ((chr->flags & TD_BLE_F_ENC) && !td_ble_core_may_access(&s->core, conn)) {
+    if ((chr->flags & (TD_BLE_F_ENC | TD_BLE_F_AUTHEN)) && !td_ble_core_may_access(&s->core, conn)) {
         return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
     }
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC) {
@@ -421,17 +503,6 @@ static int gatt_access(uint16_t conn, uint16_t attr_handle, struct ble_gatt_acce
     return rc;
 }
 
-static ble_gatt_chr_flags nimble_flags(uint8_t flags)
-{
-    const bool enc = flags & TD_BLE_F_ENC;
-    ble_gatt_chr_flags out = 0;
-    if (flags & TD_BLE_F_READ) out |= BLE_GATT_CHR_F_READ | (enc ? BLE_GATT_CHR_F_READ_ENC : 0);
-    if (flags & TD_BLE_F_WRITE) out |= BLE_GATT_CHR_F_WRITE | (enc ? BLE_GATT_CHR_F_WRITE_ENC : 0);
-    if (flags & TD_BLE_F_WRITE_NR) out |= BLE_GATT_CHR_F_WRITE_NO_RSP | (enc ? BLE_GATT_CHR_F_WRITE_ENC : 0);
-    if (flags & TD_BLE_F_NOTIFY) out |= BLE_GATT_CHR_F_NOTIFY | (enc ? BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC : 0);
-    return out;
-}
-
 /* NimBLE's service table, made once from td_ble_chrs into PSRAM: one service per run of characteristics with the same
  * service UUID, and a Report Reference descriptor on each Report characteristic. */
 static esp_err_t build_services(void)
@@ -469,13 +540,13 @@ static esp_err_t build_services(void)
         }
         *uuid = (ble_uuid16_t)BLE_UUID16_INIT(c->uuid);
         *chr = (struct ble_gatt_chr_def){ .uuid = &uuid->u, .access_cb = gatt_access, .arg = (void *)c,
-                                          .flags = nimble_flags(c->flags), .val_handle = &s->handles[c->attr] };
+                                          .flags = td_ble_gatt_flags(c->flags), .val_handle = &s->handles[c->attr] };
         uuid++;
         if (c->report_id) {
             *uuid = (ble_uuid16_t)BLE_UUID16_INIT(0x2908);
             dsc[0] = (struct ble_gatt_dsc_def){
                 .uuid = &uuid->u,
-                .att_flags = BLE_ATT_F_READ | ((c->flags & TD_BLE_F_ENC) ? BLE_ATT_F_READ_ENC : 0),
+                .att_flags = td_ble_report_ref_flags(c->flags),
                 .access_cb = gatt_access,
                 .arg = (void *)c,
             };
@@ -568,6 +639,29 @@ static int gap_event(struct ble_gap_event *event, void *arg)
          * already saw the return code, so there is nothing to do and nothing to lock. */
         return 0;
     }
+    if (event->type == BLE_GAP_EVENT_PASSKEY_ACTION) {
+        /* The core puts the code on screen and the answer goes to the Security Manager outside s_mutex, because a
+         * failed answer raises its pairing events from inside ble_sm_inject_io. */
+        const uint16_t conn = event->passkey.conn_handle;
+        const td_ble_io_t action =
+            event->passkey.params.action == BLE_SM_IOACT_DISP ? TD_BLE_IO_DISPLAY : TD_BLE_IO_OTHER;
+        uint32_t passkey = 0;
+        lock();
+        const bool answer = td_ble_core_passkey_action(&s->core, conn, action, &passkey);
+        unlock();
+        ESP_LOGI(TAG, "pairing conn=%u action=%u: %s", conn, event->passkey.params.action,
+                 answer ? "passkey shown" : "refused");
+        if (answer) {
+            struct ble_sm_io io = { .action = BLE_SM_IOACT_DISP, .passkey = passkey };
+            const int rc = ble_sm_inject_io(conn, &io);
+            if (rc != 0) {
+                lock();
+                td_ble_core_pairing_complete(&s->core, conn, rc);
+                unlock();
+            }
+        }
+        return 0;
+    }
     lock();
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
@@ -581,6 +675,10 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_ENC_CHANGE:
         ESP_LOGI(TAG, "encryption conn=%u status=%d", event->enc_change.conn_handle, event->enc_change.status);
         td_ble_core_enc_change(&s->core, event->enc_change.conn_handle, event->enc_change.status);
+        break;
+    case BLE_GAP_EVENT_PARING_COMPLETE:
+        ESP_LOGI(TAG, "pairing conn=%u status=%d", event->pairing_complete.conn_handle, event->pairing_complete.status);
+        td_ble_core_pairing_complete(&s->core, event->pairing_complete.conn_handle, event->pairing_complete.status);
         break;
     case BLE_GAP_EVENT_ADV_COMPLETE:
         td_ble_core_adv_complete(&s->core, event->adv_complete.reason == BLE_HS_ETIMEOUT);
@@ -628,10 +726,12 @@ static int port_stack_start(void *ctx)
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
-    /* LE Secure Connections only, Just Works, bonding, inside the pairing window the person opens. */
-    ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;
+    /* LE Secure Connections only, with MITM protection, bonding, inside the pairing window the person opens. The Device
+     * is display-only: the host pairs by typing the six-digit passkey the Device shows. A host that can't type gets
+     * Just Works, whose unauthenticated keys the core refuses (td_ble_core.h). */
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
     ble_hs_cfg.sm_bonding = 1;
-    ble_hs_cfg.sm_mitm = 0;
+    ble_hs_cfg.sm_mitm = 1;
     ble_hs_cfg.sm_sc = 1;
     ble_hs_cfg.sm_sc_only = 1;
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
@@ -756,6 +856,11 @@ const char *td_ble_state_name(void)
     return status.synced ? "on" : "starting";
 }
 
+void td_ble_set_passkey_hook(td_ble_passkey_hook_t hook)
+{
+    __atomic_store_n(&s_passkey_hook, hook, __ATOMIC_SEQ_CST);
+}
+
 static const td_link_extension_t s_extension = { .prefix = "ble.", .handle = td_ble_message, .caps = td_ble_caps };
 
 esp_err_t td_ble_init(void)
@@ -784,6 +889,7 @@ esp_err_t td_ble_init(void)
         .bond_delete = port_bond_delete,
         .keys_delete = port_keys_delete,
         .accept_list = port_accept_list,
+        .resolving_list = port_resolving_list,
         .adv_start = port_adv_start,
         .adv_stop = port_adv_stop,
         .security = port_security,
@@ -792,6 +898,8 @@ esp_err_t td_ble_init(void)
         .timer = port_timer,
         .timer_cancel = port_timer_cancel,
         .notify = port_notify,
+        .random = port_random,
+        .passkey_show = port_passkey_show,
         .lock = port_lock,
         .unlock = port_unlock,
     };

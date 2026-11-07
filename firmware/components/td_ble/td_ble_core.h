@@ -26,7 +26,13 @@ extern "C" {
  * - Every event is handled by its own connection handle. ENC_CHANGE before CONNECT is normal.
  * - A Security Request goes out only on a link that isn't encrypted yet. Connection parameters are requested at most
  *   once per connection, after encryption, and never again after a refusal.
- * - Pairing happens only inside a window the person opens, with at most TD_BLE_BONDS_MAX bonds.
+ * - Pairing happens only inside a window the person opens, with at most TD_BLE_BONDS_MAX bonds, and only as LE Secure
+ *   Connections with the passkey the Device shows (the Device is display-only). A link whose keys aren't
+ *   authenticated Secure Connections keys, such as a Just Works or legacy bond, is dropped and its bond deleted.
+ * - The passkey leaves the screen when pairing ends, fails, its link drops, the window closes or TD_BLE_PASSKEY_MS
+ *   passes.
+ * - The controller's resolving list holds the bonded hosts' IRKs, written with the accept list, so a host that
+ *   reconnects from a resolvable private address passes the accept-list filter.
  *
  * Not thread-safe: the caller serializes every call but td_ble_core_report. That one touches only the report queue,
  * which the port's lock guards, so the key sink may call it from any task without the caller's serialization.
@@ -40,6 +46,11 @@ extern "C" {
 #define TD_BLE_RETRY_MIN_MS 1000u
 #define TD_BLE_RETRY_MAX_MS 8000u
 #define TD_BLE_QUEUE_SIZE 32
+/* How long a passkey stays on screen waiting for the host to finish pairing. */
+#define TD_BLE_PASSKEY_MS 60000u
+#define TD_BLE_PASSKEY_MAX 999999u
+/* The key size a Secure Connections pairing gives; anything shorter is refused. */
+#define TD_BLE_KEY_SIZE 16
 
 typedef struct {
     uint8_t type;
@@ -58,9 +69,20 @@ typedef enum {
 typedef struct {
     bool encrypted;
     bool bonded;
+    /* The keys came from a pairing with MITM protection (the passkey). */
+    bool authenticated;
+    /* The bond's keys came from LE Secure Connections, not legacy pairing. */
+    bool secure_connections;
+    uint8_t key_size;
     /* The host's identity address. */
     td_ble_addr_t peer;
 } td_ble_link_t;
+
+/* What the Security Manager asks the Device to do for a pairing. The Device can only display. */
+typedef enum {
+    TD_BLE_IO_DISPLAY,
+    TD_BLE_IO_OTHER,
+} td_ble_io_t;
 
 /*
  * What the core asks of the radio and the store. Every function is called with the caller's serialization held,
@@ -87,6 +109,9 @@ typedef struct {
     /* Deletes a bond's stored keys only, keeping the link, for a bonded host that pairs again. */
     int (*keys_delete)(void *ctx, const td_ble_addr_t *peer);
     int (*accept_list)(void *ctx, const td_ble_addr_t *peers, size_t count);
+    /* Puts each bonded host's IRK in the controller's resolving list. Best effort: a host without an IRK reconnects
+     * from its identity address. */
+    int (*resolving_list)(void *ctx, const td_ble_addr_t *peers, size_t count);
     /* duration_ms 0 means until stopped. */
     int (*adv_start)(void *ctx, td_ble_adv_t mode, uint32_t duration_ms);
     void (*adv_stop)(void *ctx);
@@ -97,6 +122,10 @@ typedef struct {
     void (*timer)(void *ctx, uint32_t delay_ms);
     void (*timer_cancel)(void *ctx);
     int (*notify)(void *ctx, uint16_t conn, td_ble_input_t input, const uint8_t *data, size_t len);
+    /* 32 random bits from the hardware generator, for the passkey. */
+    uint32_t (*random)(void *ctx);
+    /* Shows a passkey on the Device's screen, or takes it down (show false). Must not block or call back. */
+    void (*passkey_show)(void *ctx, bool show, uint32_t passkey);
     /* Guard the report queue, which the key sink fills from other tasks. */
     void (*lock)(void *ctx);
     void (*unlock)(void *ctx);
@@ -137,6 +166,11 @@ typedef struct {
     uint32_t security_requests;
     uint32_t param_requests;
     uint32_t stack_starts;
+    uint32_t passkeys;
+    /* Pairings and links refused for keys that weren't authenticated Secure Connections keys, a passkey that timed
+     * out, or a pairing method other than the displayed passkey. */
+    uint32_t pairings_refused;
+    uint32_t resolve_failures;
 } td_ble_stats_t;
 
 typedef struct {
@@ -159,6 +193,9 @@ typedef struct {
     /* A notification the host couldn't queue: drain again from the current state at drain_at. */
     bool drain_due;
     uint32_t drain_at;
+    /* The connection a passkey is on screen for, or TD_BLE_CONN_NONE. */
+    uint16_t passkey_conn;
+    uint32_t passkey_until;
     td_ble_conn_t conns[TD_BLE_CONNS_MAX];
     td_ble_addr_t bonds[TD_BLE_BONDS_MAX];
     size_t bond_count;
@@ -182,6 +219,8 @@ typedef struct {
     bool synced;
     bool pairing;
     uint32_t pairing_ms;
+    /* A passkey is on the Device's screen. */
+    bool passkey;
     bool advertising;
     td_ble_adv_t adv_mode;
     size_t bond_count;
@@ -207,10 +246,16 @@ void td_ble_core_enc_change(td_ble_core_t *core, uint16_t conn, int status);
 void td_ble_core_adv_complete(td_ble_core_t *core, bool expired);
 void td_ble_core_subscribe(td_ble_core_t *core, uint16_t conn, td_ble_input_t input, bool notify);
 void td_ble_core_timer(td_ble_core_t *core);
+/* The Security Manager asks for the pairing's IO action. True when the caller must answer it with *passkey, which is
+ * on screen by then; false refuses the pairing, and the link is dropped. The caller answers outside its serialization
+ * and reports a failed answer through td_ble_core_pairing_complete. */
+bool td_ble_core_passkey_action(td_ble_core_t *core, uint16_t conn, td_ble_io_t action, uint32_t *passkey);
+/* Pairing ended, `status` 0 when it succeeded. Takes the passkey down; a failure drops the link. */
+void td_ble_core_pairing_complete(td_ble_core_t *core, uint16_t conn, int status);
 /* A bonded host wants to pair again: true lets it, inside the pairing window only, after deleting its old bond. */
 bool td_ble_core_repeat_pairing(td_ble_core_t *core, uint16_t conn);
 
-/* GATT access: the HID characteristics answer only an encrypted link with a bonded host. */
+/* GATT access: the HID characteristics answer only an encrypted, authenticated link with a bonded host. */
 bool td_ble_core_may_access(const td_ble_core_t *core, uint16_t conn);
 uint8_t td_ble_core_protocol(const td_ble_core_t *core, uint16_t conn);
 uint8_t td_ble_core_leds(const td_ble_core_t *core, uint16_t conn);

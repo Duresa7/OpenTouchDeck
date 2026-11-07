@@ -325,6 +325,58 @@ static void test_encode_lengths(void)
 }
 
 /*
+ * Every HID Service characteristic (Report Map, Reports, Protocol Mode, Control Point, HID Information, the boot
+ * reports) and the Battery Level needs an encrypted link whose keys came from an authenticated pairing, on every way in
+ * NimBLE offers: read, write, write without response, and turning notifications on. Only the PnP ID stays open.
+ */
+static void test_every_hid_characteristic_needs_authentication(void)
+{
+    unsigned hid = 0;
+    for (size_t c = 0; c < td_ble_chr_count; c++) {
+        const td_ble_chr_t *chr = &td_ble_chrs[c];
+        const uint32_t f = td_ble_gatt_flags(chr->flags);
+        const bool guarded = chr->service == TD_BLE_SVC_HID || chr->service == TD_BLE_SVC_BATTERY;
+        if (!guarded) {
+            CHECK(chr->uuid == 0x2A50, "0x%04x outside the HID and Battery services", chr->uuid);
+            CHECK(!(chr->flags & (TD_BLE_F_WRITE | TD_BLE_F_WRITE_NR | TD_BLE_F_NOTIFY)), "PnP ID is not read-only");
+            continue;
+        }
+        hid += chr->service == TD_BLE_SVC_HID;
+        CHECK((chr->flags & (TD_BLE_F_ENC | TD_BLE_F_AUTHEN)) == (TD_BLE_F_ENC | TD_BLE_F_AUTHEN),
+              "0x%04x does not need an authenticated link", chr->uuid);
+        if (chr->flags & TD_BLE_F_READ) {
+            CHECK((f & (TD_BLE_GATT_F_READ | TD_BLE_GATT_F_READ_ENC | TD_BLE_GATT_F_READ_AUTHEN)) ==
+                      (TD_BLE_GATT_F_READ | TD_BLE_GATT_F_READ_ENC | TD_BLE_GATT_F_READ_AUTHEN),
+                  "0x%04x reads without authentication: 0x%05lx", chr->uuid, (unsigned long)f);
+        }
+        if (chr->flags & (TD_BLE_F_WRITE | TD_BLE_F_WRITE_NR)) {
+            CHECK((f & (TD_BLE_GATT_F_WRITE_ENC | TD_BLE_GATT_F_WRITE_AUTHEN)) ==
+                      (TD_BLE_GATT_F_WRITE_ENC | TD_BLE_GATT_F_WRITE_AUTHEN),
+                  "0x%04x writes without authentication: 0x%05lx", chr->uuid, (unsigned long)f);
+        }
+        if (chr->flags & TD_BLE_F_NOTIFY) {
+            CHECK((f & (TD_BLE_GATT_F_NOTIFY | TD_BLE_GATT_F_NOTIFY_ENC | TD_BLE_GATT_F_NOTIFY_AUTHEN)) ==
+                      (TD_BLE_GATT_F_NOTIFY | TD_BLE_GATT_F_NOTIFY_ENC | TD_BLE_GATT_F_NOTIFY_AUTHEN),
+                  "0x%04x notifies without authentication: 0x%05lx", chr->uuid, (unsigned long)f);
+        }
+        if (chr->report_id) {
+            CHECK(td_ble_report_ref_flags(chr->flags) ==
+                      (TD_BLE_ATT_F_READ | TD_BLE_ATT_F_READ_ENC | TD_BLE_ATT_F_READ_AUTHEN),
+                  "the Report Reference of %u/%u reads without authentication", chr->report_id, chr->report_type);
+        }
+    }
+    CHECK(hid == 9, "%u HID Service characteristics, expected 9", hid);
+    /* The mapping itself: each property gets exactly its own security bits. */
+    CHECK(td_ble_gatt_flags(TD_BLE_F_READ) == TD_BLE_GATT_F_READ, "an open read got security bits");
+    CHECK(td_ble_gatt_flags(TD_BLE_F_READ | TD_BLE_F_ENC) == (TD_BLE_GATT_F_READ | TD_BLE_GATT_F_READ_ENC),
+          "an encrypted read");
+    CHECK(td_ble_gatt_flags(TD_BLE_F_WRITE_NR | TD_BLE_F_ENC | TD_BLE_F_AUTHEN) ==
+              (TD_BLE_GATT_F_WRITE_NO_RSP | TD_BLE_GATT_F_WRITE_ENC | TD_BLE_GATT_F_WRITE_AUTHEN),
+          "an authenticated write without response");
+    CHECK(td_ble_report_ref_flags(TD_BLE_F_READ) == TD_BLE_ATT_F_READ, "an open Report Reference");
+}
+
+/*
  * The layout a bonded host may cache, pinned to the version that announced it. Changing the report map or the GATT
  * table changes the fingerprint: bump TD_BLE_GATT_VERSION and add a row here, so bonded hosts get Service Changed and
  * a new PnP version.
@@ -334,6 +386,7 @@ static const struct {
     uint32_t fingerprint;
 } PINS[] = {
     { 2, 0x020347aau },
+    { 3, 0xb3dfd0fau },
 };
 
 static void test_version_pinned(void)
@@ -358,11 +411,12 @@ int main(void)
     test_signed_rule_catches_the_old_consumer_extent();
     test_gatt_table();
     test_encode_lengths();
+    test_every_hid_characteristic_needs_authentication();
     test_version_pinned();
     if (g_failures) {
         printf("ble hid: %d failures\n", g_failures);
         return 1;
     }
-    printf("ble hid: 5 tests passed\n");
+    printf("ble hid: 6 tests passed\n");
     return 0;
 }

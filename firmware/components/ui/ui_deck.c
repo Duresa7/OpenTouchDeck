@@ -843,6 +843,7 @@ void ui_build(void)
     load_locked(s.boot, &s.boot_info, esp_timer_get_time() - s_boot_prepare_us);
     show_boot_brand();
     ui_idle_start();
+    ui_passkey_start();
     xSemaphoreGive(s.reload_lock);
 }
 

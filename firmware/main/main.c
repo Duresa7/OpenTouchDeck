@@ -202,7 +202,9 @@ void app_main(void)
     BOOT_MARK("keys");
 
 #if CONFIG_TD_RADIO_BUILD
-    /* Before the link starts, so a v2 hello carries the Bluetooth capability. It starts no radio. */
+    /* Before the link starts, so a v2 hello carries the Bluetooth capability. It starts no radio. A host pairs by
+     * typing the passkey the UI shows. */
+    td_radio_set_passkey_hook(ui_passkey_set);
     td_radio_init();
 #endif
     esp_err_t link_err = td_link_start();

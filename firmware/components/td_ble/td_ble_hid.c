@@ -59,10 +59,12 @@ const td_ble_report_t td_ble_reports[] = {
 };
 const size_t td_ble_report_count = sizeof td_ble_reports / sizeof td_ble_reports[0];
 
-#define HID_ENC (TD_BLE_F_ENC)
+/* An encrypted link whose keys came from an authenticated pairing, the passkey shown on the Device. */
+#define HID_ENC (TD_BLE_F_ENC | TD_BLE_F_AUTHEN)
 
 const td_ble_chr_t td_ble_chrs[] = {
-    /* HID Service. Every characteristic needs an encrypted, bonded link (HOGP 6.1). */
+    /* HID Service. Every characteristic needs an encrypted, authenticated, bonded link (HOGP 6.1 asks for encryption;
+     * authentication keeps a silent Just Works bond or a man in the middle out). */
     { TD_BLE_SVC_HID, 0x2A4A, TD_BLE_ATTR_HID_INFO, TD_BLE_F_READ | HID_ENC, 0, 0 },
     { TD_BLE_SVC_HID, 0x2A4B, TD_BLE_ATTR_REPORT_MAP, TD_BLE_F_READ | HID_ENC, 0, 0 },
     { TD_BLE_SVC_HID, 0x2A4C, TD_BLE_ATTR_CONTROL_POINT, TD_BLE_F_WRITE_NR | HID_ENC, 0, 0 },
@@ -76,8 +78,8 @@ const td_ble_chr_t td_ble_chrs[] = {
     { TD_BLE_SVC_HID, 0x2A22, TD_BLE_ATTR_BOOT_KEYBOARD_IN, TD_BLE_F_READ | TD_BLE_F_NOTIFY | HID_ENC, 0, 0 },
     { TD_BLE_SVC_HID, 0x2A32, TD_BLE_ATTR_BOOT_KEYBOARD_OUT,
       TD_BLE_F_READ | TD_BLE_F_WRITE | TD_BLE_F_WRITE_NR | HID_ENC, 0, 0 },
-    /* Battery Service, which HOGP requires. The level is fixed and readable by any connected host. */
-    { TD_BLE_SVC_BATTERY, 0x2A19, TD_BLE_ATTR_BATTERY_LEVEL, TD_BLE_F_READ, 0, 0 },
+    /* Battery Service, which HOGP requires. The level is fixed, and only a bonded, authenticated host reads it. */
+    { TD_BLE_SVC_BATTERY, 0x2A19, TD_BLE_ATTR_BATTERY_LEVEL, TD_BLE_F_READ | HID_ENC, 0, 0 },
     /* Device Information: the PnP ID only. */
     { TD_BLE_SVC_DEVICE_INFO, 0x2A50, TD_BLE_ATTR_PNP_ID, TD_BLE_F_READ, 0, 0 },
 };
@@ -104,6 +106,27 @@ size_t td_ble_encode(const key_report_t *report, uint8_t protocol, uint8_t out[T
     memcpy(out + 2, report->kbd.keys, KEY_REPORT_KEYS);
     *input = protocol == 0 ? TD_BLE_IN_BOOT_KEYBOARD : TD_BLE_IN_KEYBOARD;
     return TD_BLE_KEYBOARD_BYTES;
+}
+
+uint32_t td_ble_gatt_flags(uint8_t flags)
+{
+    const bool enc = flags & (TD_BLE_F_ENC | TD_BLE_F_AUTHEN);
+    const bool authen = flags & TD_BLE_F_AUTHEN;
+    const uint32_t read = (enc ? TD_BLE_GATT_F_READ_ENC : 0) | (authen ? TD_BLE_GATT_F_READ_AUTHEN : 0);
+    const uint32_t write = (enc ? TD_BLE_GATT_F_WRITE_ENC : 0) | (authen ? TD_BLE_GATT_F_WRITE_AUTHEN : 0);
+    const uint32_t notify = (enc ? TD_BLE_GATT_F_NOTIFY_ENC : 0) | (authen ? TD_BLE_GATT_F_NOTIFY_AUTHEN : 0);
+    uint32_t out = 0;
+    if (flags & TD_BLE_F_READ) out |= TD_BLE_GATT_F_READ | read;
+    if (flags & TD_BLE_F_WRITE) out |= TD_BLE_GATT_F_WRITE | write;
+    if (flags & TD_BLE_F_WRITE_NR) out |= TD_BLE_GATT_F_WRITE_NO_RSP | write;
+    if (flags & TD_BLE_F_NOTIFY) out |= TD_BLE_GATT_F_NOTIFY | notify;
+    return out;
+}
+
+uint8_t td_ble_report_ref_flags(uint8_t flags)
+{
+    return (uint8_t)(TD_BLE_ATT_F_READ | ((flags & (TD_BLE_F_ENC | TD_BLE_F_AUTHEN)) ? TD_BLE_ATT_F_READ_ENC : 0) |
+                     ((flags & TD_BLE_F_AUTHEN) ? TD_BLE_ATT_F_READ_AUTHEN : 0));
 }
 
 static uint32_t fnv(uint32_t hash, const void *data, size_t len)

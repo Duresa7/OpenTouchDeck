@@ -81,6 +81,11 @@ key_sink_t td_radio_key_sink(void)
     return td_ble_key_sink();
 }
 
+void td_radio_set_passkey_hook(void (*hook)(bool show, uint32_t passkey))
+{
+    td_ble_set_passkey_hook(hook);
+}
+
 esp_err_t td_radio_start(void)
 {
     const esp_err_t err = start_station();

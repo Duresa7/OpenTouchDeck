@@ -109,9 +109,18 @@ static td_ble_conn_t *slot_get(td_ble_core_t *core, uint16_t conn)
     return slot;
 }
 
+/* encrypted and bonded are set only for a link that passed link_secure, so a trusted slot is also authenticated. */
 static bool slot_trusted(const td_ble_conn_t *slot)
 {
     return slot && slot->encrypted && slot->bonded;
+}
+
+/* Encrypted with a bond's keys that came from an authenticated LE Secure Connections pairing: the passkey, never Just
+ * Works or legacy pairing. */
+static bool link_secure(const td_ble_link_t *link)
+{
+    return link->encrypted && link->bonded && link->authenticated && link->secure_connections &&
+           link->key_size >= TD_BLE_KEY_SIZE;
 }
 
 /* The connection that gets the reports: up, encrypted, bonded, not suspended, and listening on some input. */
@@ -165,7 +174,31 @@ static bool refresh_bonds(td_ble_core_t *core)
     return changed;
 }
 
-/* ---- One one-shot timer serves the pairing window's end, the backoff retry and a drain retry. ---- */
+/* ---- The passkey on screen. ---- */
+
+/* Takes the passkey down when it is up for `conn`, or for any connection with TD_BLE_CONN_NONE. */
+static void passkey_hide(td_ble_core_t *core, uint16_t conn)
+{
+    if (core->passkey_conn == TD_BLE_CONN_NONE || (conn != TD_BLE_CONN_NONE && conn != core->passkey_conn)) {
+        return;
+    }
+    core->passkey_conn = TD_BLE_CONN_NONE;
+    PORT(core)->passkey_show(CTX(core), false, 0);
+}
+
+/* Six decimal digits, each code equally likely: 4294000000 is the largest multiple of 10^6 below 2^32, so a draw at or
+ * above it is drawn again. */
+static uint32_t draw_passkey(td_ble_core_t *core)
+{
+    uint32_t r;
+    do {
+        r = PORT(core)->random(CTX(core));
+    } while (r >= 4294000000u);
+    return r % (TD_BLE_PASSKEY_MAX + 1);
+}
+
+/* ---- One one-shot timer serves the pairing window's end, the passkey's end, the backoff retry and a drain retry.
+ * ---- */
 
 static void arm_timer(td_ble_core_t *core)
 {
@@ -176,7 +209,9 @@ static void arm_timer(td_ble_core_t *core)
     const struct {
         bool on;
         uint32_t at;
-    } due[] = { { core->pairing, core->pair_until }, { core->retry_armed, core->retry_at },
+    } due[] = { { core->pairing, core->pair_until },
+                { core->passkey_conn != TD_BLE_CONN_NONE, core->passkey_until },
+                { core->retry_armed, core->retry_at },
                 { core->drain_due, core->drain_at } };
     bool any = false;
     uint32_t deadline = 0;
@@ -213,6 +248,7 @@ static void close_window(td_ble_core_t *core)
         return;
     }
     core->pairing = false;
+    passkey_hide(core, TD_BLE_CONN_NONE);
     if (core->advertising && core->adv_mode == TD_BLE_ADV_PAIRING) {
         PORT(core)->adv_stop(CTX(core));
         core->advertising = false;
@@ -250,6 +286,12 @@ static void kick(td_ble_core_t *core)
             return;
         }
         if (core->accept_dirty) {
+            /* The resolving list first, so the accept list matches a bonded host's private address by the identity
+             * it resolves to. A failure only costs reconnecting from private addresses, so it doesn't stop
+             * advertising. */
+            if (PORT(core)->resolving_list(CTX(core), core->bonds, core->bond_count) != 0) {
+                core->stats.resolve_failures++;
+            }
             core->stats.accept_writes++;
             if (PORT(core)->accept_list(CTX(core), core->bonds, core->bond_count) != 0) {
                 backoff(core, now);
@@ -301,7 +343,7 @@ static void request_params(td_ble_core_t *core, td_ble_conn_t *slot)
 
 void td_ble_core_init(td_ble_core_t *core, const td_ble_port_t *port)
 {
-    *core = (td_ble_core_t){ .port = port };
+    *core = (td_ble_core_t){ .port = port, .passkey_conn = TD_BLE_CONN_NONE };
     core->queue.current[0] = key_report_kbd(0, 0);
     core->queue.current[1] = key_report_con(0);
 }
@@ -328,6 +370,7 @@ static void stop(td_ble_core_t *core)
         return;
     }
     core->pairing = false;
+    passkey_hide(core, TD_BLE_CONN_NONE);
     core->retry_armed = false;
     core->drain_due = false;
     PORT(core)->timer_cancel(CTX(core));
@@ -368,10 +411,30 @@ void td_ble_core_synced(td_ble_core_t *core)
 
 void td_ble_core_host_reset(td_ble_core_t *core)
 {
+    passkey_hide(core, TD_BLE_CONN_NONE);
     core->synced = false;
     core->advertising = false;
     memset(core->conns, 0, sizeof core->conns);
     update_online(core);
+}
+
+/* A link encrypted with keys that aren't authenticated Secure Connections keys: a Just Works or legacy pairing, or an
+ * old bond made that way. Its bond is deleted, so it can't come back without the passkey, and the link is dropped. */
+static void refuse(td_ble_core_t *core, td_ble_conn_t *slot, uint16_t conn, const td_ble_link_t *link)
+{
+    core->stats.pairings_refused++;
+    if (slot) {
+        slot->encrypted = false;
+        slot->bonded = false;
+    }
+    passkey_hide(core, conn);
+    if (link->bonded) {
+        PORT(core)->bond_delete(CTX(core), &link->peer);
+    }
+    PORT(core)->terminate(CTX(core), conn);
+    refresh_bonds(core);
+    update_online(core);
+    arm_timer(core);
 }
 
 void td_ble_core_connect(td_ble_core_t *core, uint16_t conn, int status)
@@ -397,12 +460,12 @@ void td_ble_core_connect(td_ble_core_t *core, uint16_t conn, int status)
     if (link.encrypted) {
         /* ENC_CHANGE came first, as it does when the host encrypts with a stored key before NimBLE delivers CONNECT.
          * No Security Request. */
-        slot->encrypted = true;
-        slot->bonded = link.bonded;
-        if (!link.bonded) {
-            PORT(core)->terminate(CTX(core), conn);
+        if (!link_secure(&link)) {
+            refuse(core, slot, conn, &link);
             return;
         }
+        slot->encrypted = true;
+        slot->bonded = true;
         request_params(core, slot);
     } else if (!core->pairing && !is_bonded(core, &link.peer)) {
         /* A stranger outside the pairing window. The accept list keeps them out; this is the second check. */
@@ -424,15 +487,22 @@ void td_ble_core_enc_change(td_ble_core_t *core, uint16_t conn, int status)
 {
     td_ble_conn_t *slot = slot_get(core, conn);
     td_ble_link_t link;
-    const bool ok = slot && status == 0 && PORT(core)->link(CTX(core), conn, &link) && link.encrypted && link.bonded;
+    const bool ok = slot && status == 0 && PORT(core)->link(CTX(core), conn, &link) && link.encrypted;
     if (!ok) {
         if (slot) {
             slot->encrypted = false;
         }
+        passkey_hide(core, conn);
         PORT(core)->terminate(CTX(core), conn);
         update_online(core);
+        arm_timer(core);
         return;
     }
+    if (!link_secure(&link)) {
+        refuse(core, slot, conn, &link);
+        return;
+    }
+    passkey_hide(core, conn);
     slot->encrypted = true;
     slot->bonded = true;
     slot->peer = link.peer;
@@ -453,6 +523,7 @@ void td_ble_core_disconnect(td_ble_core_t *core, uint16_t conn)
     if (slot) {
         memset(slot, 0, sizeof *slot);
     }
+    passkey_hide(core, conn);
     /* With one connection slot nothing advertises while connected, so whatever ran ended with the connection, even
      * when its CONNECT never arrived. A new reconnect episode starts fast. */
     core->advertising = false;
@@ -493,6 +564,13 @@ void td_ble_core_subscribe(td_ble_core_t *core, uint16_t conn, td_ble_input_t in
 void td_ble_core_timer(td_ble_core_t *core)
 {
     const uint32_t now = PORT(core)->now_ms(CTX(core));
+    if (core->passkey_conn != TD_BLE_CONN_NONE && reached(now, core->passkey_until)) {
+        /* The host never finished: take the code down and drop the link. */
+        const uint16_t conn = core->passkey_conn;
+        passkey_hide(core, conn);
+        core->stats.pairings_refused++;
+        PORT(core)->terminate(CTX(core), conn);
+    }
     if (core->pairing && reached(now, core->pair_until)) {
         close_window(core);
     }
@@ -504,6 +582,35 @@ void td_ble_core_timer(td_ble_core_t *core)
         td_ble_core_drain(core);
     }
     settle(core);
+}
+
+bool td_ble_core_passkey_action(td_ble_core_t *core, uint16_t conn, td_ble_io_t action, uint32_t *passkey)
+{
+    td_ble_conn_t *slot = slot_get(core, conn);
+    const bool busy = core->passkey_conn != TD_BLE_CONN_NONE && core->passkey_conn != conn;
+    /* Only the displayed passkey, only inside the window, one code at a time. A display-only Device's Security
+     * Manager never asks for numeric comparison, input or OOB; they are refused all the same. */
+    if (!core->pairing || !slot || action != TD_BLE_IO_DISPLAY || busy) {
+        core->stats.pairings_refused++;
+        PORT(core)->terminate(CTX(core), conn);
+        return false;
+    }
+    *passkey = draw_passkey(core);
+    core->passkey_conn = conn;
+    core->passkey_until = PORT(core)->now_ms(CTX(core)) + TD_BLE_PASSKEY_MS;
+    core->stats.passkeys++;
+    PORT(core)->passkey_show(CTX(core), true, *passkey);
+    arm_timer(core);
+    return true;
+}
+
+void td_ble_core_pairing_complete(td_ble_core_t *core, uint16_t conn, int status)
+{
+    passkey_hide(core, conn);
+    if (status != 0) {
+        PORT(core)->terminate(CTX(core), conn);
+    }
+    arm_timer(core);
 }
 
 bool td_ble_core_repeat_pairing(td_ble_core_t *core, uint16_t conn)
@@ -684,6 +791,7 @@ void td_ble_core_status(const td_ble_core_t *core, td_ble_status_t *out)
         .start_failed = core->start_failed,
         .synced = core->synced,
         .pairing = core->pairing,
+        .passkey = core->passkey_conn != TD_BLE_CONN_NONE,
         .advertising = core->advertising,
         .adv_mode = core->adv_mode,
         .bond_count = core->bond_count,

@@ -481,7 +481,7 @@ the unknown-message error for them.
 |---|---|---|
 | `ble.state` | none | Reports the state |
 | `ble.set` | `enabled`: Boolean | Stores the setting, then starts or stops BLE |
-| `ble.pair` | `open`: optional Boolean, default true | Opens the pairing window for 120000 ms, or closes it |
+| `ble.pair` | `open`: optional Boolean, default true | Opens the pairing window for 120000 ms, or closes it. A host pairs inside it by typing the six-digit passkey the Device shows |
 | `ble.forget` | `address`: optional `aa:bb:cc:dd:ee:ff` or null | Forgets that bonded host, or every one when absent or null. The reply adds `forgotten`, the number of bonds deleted |
 
 Every reply except an `args` or `unsupported` failure carries the state, after
@@ -493,6 +493,7 @@ the request took effect:
 | `state` | `off`, `starting` (the controller and host are coming up), `on`, or `failed` (they did not start) |
 | `pairing` | Whether the pairing window is open |
 | `pairing_ms` | Milliseconds left in the window, 0 when closed |
+| `passkey` | Whether a pairing passkey is on the Device's screen. The code itself is never sent |
 | `advertising` | `off`, `pairing`, `fast` (bonded hosts, 20-30 ms) or `slow` (bonded hosts, 1-2.5 s) |
 | `bonds` | Bonded hosts, each `{"address":"aa:bb:cc:dd:ee:ff","random":Boolean,"connected":Boolean}`. Listed only while `state` is `on`; empty otherwise |
 | `bonds_max` | The same number as `caps.ble_hid` |
@@ -500,7 +501,15 @@ the request took effect:
 
 Addresses are identity addresses, most significant byte first, in lower case.
 `random` is true for a random static identity address. `connected` means a link
-to that host is up, encrypted and bonded.
+to that host is up, encrypted with authenticated keys, and bonded.
+
+Pairing is LE Secure Connections with MITM protection only. When a host starts
+pairing in the window, the Device shows a random six-digit passkey on its
+screen and the person types it on the host; `passkey` is true while it shows.
+It goes when pairing completes or fails, the link drops, the window closes,
+BLE turns off, or 60 seconds pass. A host that can't type, or that pairs with
+Just Works or legacy pairing, is dropped and its bond deleted, and the window
+stays open.
 
 Additional reasons:
 
@@ -516,7 +525,7 @@ Additional reasons:
 
 ```json
 {"m":"ble.pair"}
-{"m":"ble.pair","ok":true,"enabled":true,"state":"on","pairing":true,"pairing_ms":120000,"advertising":"pairing","bonds":[],"bonds_max":4,"battery":100}
+{"m":"ble.pair","ok":true,"enabled":true,"state":"on","pairing":true,"pairing_ms":120000,"passkey":false,"advertising":"pairing","bonds":[],"bonds_max":4,"battery":100}
 ```
 
 ## Golden frames and verification

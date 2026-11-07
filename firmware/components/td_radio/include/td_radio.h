@@ -1,6 +1,8 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "esp_console.h"
 #include "esp_err.h"
 #include "key_sink.h"
@@ -30,6 +32,10 @@ esp_err_t td_radio_start(void);
 /* Key reports for a bonded Bluetooth host. Until Tiles choose their target (#277), every report goes there too while
  * one is connected. */
 key_sink_t td_radio_key_sink(void);
+
+/* Where the Bluetooth pairing passkey goes on screen (td_ble_set_passkey_hook): show true with the six-digit code, or
+ * false to take it down. The hook must not block. */
+void td_radio_set_passkey_hook(void (*hook)(bool show, uint32_t passkey));
 
 /* `radio state`: the build, the station, BLE, and the internal heap against the floor. `ble`: the Bluetooth
  * keyboard. */

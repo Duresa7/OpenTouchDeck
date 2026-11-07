@@ -4,7 +4,9 @@
  * #275 and check the rules it set: BLE stays off unless the stored setting is on; advertising starts only from events
  * and never while a connection object exists; the accept list is written only when the bonds change; a failed start
  * backs off 1, 2, 4, 8 s; reconnect advertising runs fast for 30 s, then slow; a Security Request only on a link that
- * isn't encrypted; one connection-parameter request after encryption; every event by its own handle.
+ * isn't encrypted; one connection-parameter request after encryption; every event by its own handle. And the pairing
+ * rules from the #306 security review: a passkey on screen is the only way to pair, it leaves the screen whenever
+ * pairing stops, Just Works and legacy keys are refused, and the resolving list follows the bond store.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +53,21 @@ typedef struct {
     int keys_deletes;
     int accept_writes;
     size_t accept_count;
+    /* The controller's resolving list, as the last write left it. */
+    int resolving_rc;
+    int resolving_writes;
+    size_t resolving_count;
+    td_ble_addr_t resolving[TD_BLE_BONDS_MAX];
+    /* The advertising starts made before the last resolving-list write. */
+    int adv_calls_at_resolving;
+    /* The hardware random numbers, in order, then 0. */
+    uint32_t randoms[4];
+    int random_next;
+    /* The screen. */
+    bool passkey_on;
+    uint32_t passkey_code;
+    int passkey_shows;
+    int passkey_hides;
     /* Advertising. */
     int adv_rc;
     int adv_calls;
@@ -199,6 +216,41 @@ static int fake_accept_list(void *ctx, const td_ble_addr_t *peers, size_t count)
     return 0;
 }
 
+static int fake_resolving_list(void *ctx, const td_ble_addr_t *peers, size_t count)
+{
+    (void)ctx;
+    /* The controller refuses changes to the resolving list while advertising or connected. */
+    if (F.advertising || fake_conn_count(NULL) > 0) {
+        return 12;
+    }
+    if (F.resolving_rc != 0) {
+        return F.resolving_rc;
+    }
+    F.resolving_writes++;
+    F.resolving_count = count;
+    memcpy(F.resolving, peers, count * sizeof peers[0]);
+    F.adv_calls_at_resolving = F.adv_calls;
+    return 0;
+}
+
+static uint32_t fake_random(void *ctx)
+{
+    (void)ctx;
+    return F.random_next < 4 ? F.randoms[F.random_next++] : 0;
+}
+
+static void fake_passkey_show(void *ctx, bool show, uint32_t passkey)
+{
+    (void)ctx;
+    F.passkey_on = show;
+    if (show) {
+        F.passkey_shows++;
+        F.passkey_code = passkey;
+    } else {
+        F.passkey_hides++;
+    }
+}
+
 static int fake_adv_start(void *ctx, td_ble_adv_t mode, uint32_t duration_ms)
 {
     (void)ctx;
@@ -327,6 +379,7 @@ static void reset(int stored)
         .bond_delete = fake_bond_delete,
         .keys_delete = fake_keys_delete,
         .accept_list = fake_accept_list,
+        .resolving_list = fake_resolving_list,
         .adv_start = fake_adv_start,
         .adv_stop = fake_adv_stop,
         .security = fake_security,
@@ -335,6 +388,8 @@ static void reset(int stored)
         .timer = fake_timer,
         .timer_cancel = fake_timer_cancel,
         .notify = fake_notify,
+        .random = fake_random,
+        .passkey_show = fake_passkey_show,
         .lock = fake_lock,
         .unlock = fake_unlock,
     };
@@ -359,16 +414,37 @@ static void link_up(uint16_t handle, const td_ble_addr_t *peer)
     F.advertising = false;
 }
 
-/* The host encrypted the link: with a stored key, or at the end of pairing, which stores a new bond. */
-static void encrypt(uint16_t handle, bool new_bond)
+/* The host encrypted the link with keys of the given kind: with a stored key, or at the end of pairing, which stores a
+ * new bond. */
+static void encrypt_with(uint16_t handle, bool new_bond, bool authenticated, bool secure_connections, uint8_t key_size)
 {
     fake_conn_t *c = fake_conn(handle);
     c->link.encrypted = true;
     c->link.bonded = true;
+    c->link.authenticated = authenticated;
+    c->link.secure_connections = secure_connections;
+    c->link.key_size = key_size;
     if (new_bond) {
         add_bond(&c->link.peer);
     }
     td_ble_core_enc_change(&CORE, handle, 0);
+}
+
+/* Keys from a passkey pairing: authenticated LE Secure Connections keys. */
+static void encrypt(uint16_t handle, bool new_bond)
+{
+    encrypt_with(handle, new_bond, true, true, TD_BLE_KEY_SIZE);
+}
+
+/* A whole passkey pairing on a link that is up: the Security Manager asks to display, the host types the code, the
+ * pairing completes and the link is encrypted with the new bond. */
+static void pair_with_passkey(uint16_t handle)
+{
+    uint32_t code = 0;
+    CHECK(td_ble_core_passkey_action(&CORE, handle, TD_BLE_IO_DISPLAY, &code), "passkey refused on %u", handle);
+    CHECK(F.passkey_on && F.passkey_code == code, "passkey %06u not on screen", (unsigned)code);
+    td_ble_core_pairing_complete(&CORE, handle, 0);
+    encrypt(handle, true);
 }
 
 static void link_down(uint16_t handle)
@@ -645,7 +721,8 @@ static void test_pairing_window(void)
     td_ble_core_connect(&CORE, 3, 0);
     CHECK(F.security_calls == 1, "%d Security Requests to a host that isn't encrypted", F.security_calls);
     CHECK(F.param_calls == 0, "connection parameters before encryption");
-    encrypt(3, true);
+    pair_with_passkey(3);
+    CHECK(!F.passkey_on, "the passkey stayed on screen after pairing");
     CHECK(F.param_calls == 1, "%d parameter requests after pairing", F.param_calls);
     td_ble_status_t status;
     td_ble_core_status(&CORE, &status);
@@ -655,6 +732,209 @@ static void test_pairing_window(void)
     link_down(3);
     CHECK(F.advertising && F.adv_mode == TD_BLE_ADV_FAST && F.accept_writes == 1 && F.accept_count == 1,
           "after the bond: advertising %d mode %d writes %d", F.advertising, F.adv_mode, F.accept_writes);
+}
+
+/* The Security Manager asks to display a passkey: six random digits, equally likely, on screen until pairing ends. */
+static void test_passkey_flow(void)
+{
+    reset(1);
+    boot_synced();
+    td_ble_core_pair(&CORE, true);
+    link_up(3, &STRANGER);
+    td_ble_core_connect(&CORE, 3, 0);
+    /* The first two draws are at or above the largest multiple of 10^6 below 2^32 and are drawn again. */
+    F.randoms[0] = 4294000000u;
+    F.randoms[1] = 0xFFFFFFFFu;
+    F.randoms[2] = 1234567u;
+    uint32_t code = 0;
+    CHECK(td_ble_core_passkey_action(&CORE, 3, TD_BLE_IO_DISPLAY, &code), "the displayed passkey was refused");
+    CHECK(code == 234567 && F.random_next == 3, "passkey %u after %d draws", (unsigned)code, F.random_next);
+    CHECK(F.passkey_on && F.passkey_code == 234567 && F.passkey_shows == 1, "passkey not on screen");
+    td_ble_status_t status;
+    td_ble_core_status(&CORE, &status);
+    CHECK(status.passkey && status.stats.passkeys == 1, "status: passkey %d, %u shown", status.passkey,
+          (unsigned)status.stats.passkeys);
+    cJSON *reply = message("{\"m\":\"ble.state\"}");
+    CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply, "passkey")), "ble.state does not say passkey");
+    char *text = cJSON_PrintUnformatted(reply);
+    CHECK(text && !strstr(text, "234567"), "ble.state carries the code: %s", text ? text : "");
+    free(text);
+    cJSON_Delete(reply);
+    CHECK(!td_ble_core_may_access(&CORE, 3), "the HID answered before pairing finished");
+
+    /* The host typed it: pairing completes, the code goes, the link is trusted. */
+    td_ble_core_pairing_complete(&CORE, 3, 0);
+    CHECK(!F.passkey_on && F.passkey_hides == 1, "passkey still on screen after pairing completed");
+    encrypt(3, true);
+    CHECK(td_ble_core_may_access(&CORE, 3) && F.bond_count == 1, "the passkey bond is not trusted");
+    td_ble_core_status(&CORE, &status);
+    CHECK(!status.passkey && status.stats.pairings_refused == 0, "status after pairing");
+}
+
+/* The code leaves the screen whenever pairing stops, and only the displayed passkey inside the window pairs. */
+static void test_passkey_cleared_and_refused(void)
+{
+    uint32_t code;
+    /* It times out: the code goes and the link drops. */
+    reset(1);
+    boot_synced();
+    td_ble_core_pair(&CORE, true);
+    link_up(3, &STRANGER);
+    td_ble_core_connect(&CORE, 3, 0);
+    CHECK(td_ble_core_passkey_action(&CORE, 3, TD_BLE_IO_DISPLAY, &code), "passkey refused");
+    advance(TD_BLE_PASSKEY_MS - 1);
+    CHECK(F.passkey_on && F.terminates == 0, "passkey gone before its time");
+    advance(1);
+    CHECK(!F.passkey_on && F.terminates == 1 && F.last_terminated == 3, "passkey timeout: on %d, %d drops",
+          F.passkey_on, F.terminates);
+    CHECK(CORE.stats.pairings_refused == 1 && CORE.pairing, "timeout: %u refused, window %d",
+          (unsigned)CORE.stats.pairings_refused, CORE.pairing);
+
+    /* Pairing fails: the code goes and the link drops. */
+    reset(1);
+    boot_synced();
+    td_ble_core_pair(&CORE, true);
+    link_up(3, &STRANGER);
+    td_ble_core_connect(&CORE, 3, 0);
+    td_ble_core_passkey_action(&CORE, 3, TD_BLE_IO_DISPLAY, &code);
+    td_ble_core_pairing_complete(&CORE, 3, 4);
+    CHECK(!F.passkey_on && F.terminates == 1, "failed pairing: on %d, %d drops", F.passkey_on, F.terminates);
+    CHECK(!F.timer_armed || F.timer_at == 1000 + TD_BLE_PAIR_MS, "the passkey's timer outlived it");
+
+    /* The link drops: the code goes. A failed encryption takes it down too. */
+    reset(1);
+    boot_synced();
+    td_ble_core_pair(&CORE, true);
+    link_up(3, &STRANGER);
+    td_ble_core_connect(&CORE, 3, 0);
+    td_ble_core_passkey_action(&CORE, 3, TD_BLE_IO_DISPLAY, &code);
+    link_down(3);
+    CHECK(!F.passkey_on, "passkey on screen after its link dropped");
+    link_up(4, &STRANGER);
+    td_ble_core_connect(&CORE, 4, 0);
+    td_ble_core_passkey_action(&CORE, 4, TD_BLE_IO_DISPLAY, &code);
+    td_ble_core_enc_change(&CORE, 4, 13);
+    CHECK(!F.passkey_on, "passkey on screen after encryption failed");
+
+    /* The window closes, or Bluetooth turns off: the code goes. */
+    link_down(4);
+    link_up(5, &STRANGER);
+    td_ble_core_connect(&CORE, 5, 0);
+    td_ble_core_passkey_action(&CORE, 5, TD_BLE_IO_DISPLAY, &code);
+    cJSON_Delete(message("{\"m\":\"ble.pair\",\"open\":false}"));
+    CHECK(!F.passkey_on, "passkey on screen after the window closed");
+    link_down(5);
+    td_ble_core_pair(&CORE, true);
+    link_up(6, &STRANGER);
+    td_ble_core_connect(&CORE, 6, 0);
+    td_ble_core_passkey_action(&CORE, 6, TD_BLE_IO_DISPLAY, &code);
+    cJSON_Delete(message("{\"m\":\"ble.set\",\"enabled\":false}"));
+    CHECK(!F.passkey_on, "passkey on screen after Bluetooth turned off");
+
+    /* No window, another pairing method, or a second code at once: refused, nothing on screen. */
+    reset(1);
+    add_bond(&HOST_A);
+    boot_synced();
+    link_up(7, &HOST_A);
+    td_ble_core_connect(&CORE, 7, 0);
+    CHECK(!td_ble_core_passkey_action(&CORE, 7, TD_BLE_IO_DISPLAY, &code) && !F.passkey_on && F.terminates == 1,
+          "a passkey outside the window");
+    reset(1);
+    boot_synced();
+    td_ble_core_pair(&CORE, true);
+    link_up(3, &STRANGER);
+    td_ble_core_connect(&CORE, 3, 0);
+    CHECK(!td_ble_core_passkey_action(&CORE, 3, TD_BLE_IO_OTHER, &code) && !F.passkey_on && F.terminates == 1,
+          "numeric comparison or input accepted");
+    link_down(3);
+    link_up(4, &STRANGER);
+    td_ble_core_connect(&CORE, 4, 0);
+    CHECK(td_ble_core_passkey_action(&CORE, 4, TD_BLE_IO_DISPLAY, &code), "passkey refused");
+    CHECK(!td_ble_core_passkey_action(&CORE, 9, TD_BLE_IO_DISPLAY, &code) && F.passkey_shows == 1,
+          "a second passkey while one is on screen");
+    CHECK(CORE.stats.pairings_refused == 2, "%u refused", (unsigned)CORE.stats.pairings_refused);
+}
+
+/* Keys without MITM protection or without Secure Connections never make a trusted link: the bond goes and the link
+ * drops, whether the pairing just ended or an old bond reconnects. */
+static void test_just_works_and_legacy_refused(void)
+{
+    const struct {
+        bool authenticated;
+        bool secure_connections;
+        uint8_t key_size;
+        const char *what;
+    } cases[] = {
+        { false, true, TD_BLE_KEY_SIZE, "Just Works" },
+        { true, false, TD_BLE_KEY_SIZE, "legacy passkey" },
+        { false, false, TD_BLE_KEY_SIZE, "legacy Just Works" },
+        { true, true, 7, "a 7-byte key" },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        reset(1);
+        boot_synced();
+        td_ble_core_pair(&CORE, true);
+        link_up(3, &STRANGER);
+        td_ble_core_connect(&CORE, 3, 0);
+        encrypt_with(3, true, cases[i].authenticated, cases[i].secure_connections, cases[i].key_size);
+        CHECK(!td_ble_core_may_access(&CORE, 3), "%s: the HID answers", cases[i].what);
+        CHECK(F.bond_count == 0 && F.bond_deletes == 1, "%s: bond kept (%u bonds)", cases[i].what,
+              (unsigned)F.bond_count);
+        CHECK(F.terminates == 1 && F.last_terminated == 3, "%s: link kept", cases[i].what);
+        CHECK(CORE.pairing && CORE.stats.pairings_refused == 1, "%s: window %d, %u refused", cases[i].what,
+              CORE.pairing, (unsigned)CORE.stats.pairings_refused);
+        td_ble_core_drain(&CORE);
+        CHECK(F.notifies == 0, "%s: a report went out", cases[i].what);
+    }
+
+    /* An old Just Works bond reconnects, encrypted before CONNECT arrives. */
+    reset(1);
+    add_bond(&HOST_A);
+    boot_synced();
+    link_up(9, &HOST_A);
+    fake_conn(9)->link = (td_ble_link_t){ .encrypted = true, .bonded = true, .authenticated = false,
+                                          .secure_connections = true, .key_size = TD_BLE_KEY_SIZE, .peer = HOST_A };
+    td_ble_core_connect(&CORE, 9, 0);
+    CHECK(!td_ble_core_may_access(&CORE, 9) && F.bond_count == 0 && F.terminates == 1,
+          "an unauthenticated bond reconnected: %u bonds, %d drops", (unsigned)F.bond_count, F.terminates);
+}
+
+/* The resolving list holds every bonded host and is written with the accept list, before advertising, so a host that
+ * reconnects from a resolvable private address resolves to an identity the accept list lets in. */
+static void test_resolving_list_follows_the_bonds(void)
+{
+    reset(1);
+    add_bond(&HOST_A);
+    add_bond(&HOST_B);
+    boot_synced();
+    CHECK(F.resolving_writes == 1 && F.resolving_count == 2 && addr_same(&F.resolving[0], &HOST_A) &&
+              addr_same(&F.resolving[1], &HOST_B),
+          "after sync: %d writes of %u hosts", F.resolving_writes, (unsigned)F.resolving_count);
+    CHECK(F.adv_calls_at_resolving == 0 && F.advertising, "the resolving list came after advertising started");
+
+    /* A new bond: written again, with all three, before reconnect advertising. */
+    td_ble_core_pair(&CORE, true);
+    link_up(3, &STRANGER);
+    td_ble_core_connect(&CORE, 3, 0);
+    pair_with_passkey(3);
+    const int calls = F.adv_calls;
+    link_down(3);
+    CHECK(F.resolving_writes == 2 && F.resolving_count == 3 && addr_same(&F.resolving[2], &STRANGER),
+          "after a new bond: %d writes of %u hosts", F.resolving_writes, (unsigned)F.resolving_count);
+    CHECK(F.adv_calls_at_resolving == calls && F.advertising, "reconnect advertising before the resolving list");
+
+    /* A forgotten bond leaves it. */
+    size_t forgotten = 0;
+    td_ble_core_forget(&CORE, &HOST_A, &forgotten);
+    CHECK(F.resolving_writes == 3 && F.resolving_count == 2 && addr_same(&F.resolving[0], &HOST_B),
+          "after forgetting: %d writes of %u hosts", F.resolving_writes, (unsigned)F.resolving_count);
+
+    /* A controller that refuses it still advertises: hosts on identity addresses reconnect. */
+    reset(1);
+    add_bond(&HOST_A);
+    F.resolving_rc = 7;
+    boot_synced();
+    CHECK(F.advertising && CORE.stats.resolve_failures == 1, "a resolving-list failure stopped advertising");
 }
 
 static void test_window_times_out_and_strangers_stay_out(void)
@@ -868,6 +1148,10 @@ int main(void)
     test_failed_start_backs_off();
     test_pairing_window();
     test_window_times_out_and_strangers_stay_out();
+    test_passkey_flow();
+    test_passkey_cleared_and_refused();
+    test_just_works_and_legacy_refused();
+    test_resolving_list_follows_the_bonds();
     test_window_refused_when_full();
     test_events_by_their_own_handle();
     test_suspend_and_failed_notify();
@@ -879,6 +1163,6 @@ int main(void)
         printf("ble core: %d failures\n", g_failures);
         return 1;
     }
-    printf("ble core: 15 tests passed\n");
+    printf("ble core: 19 tests passed\n");
     return 0;
 }
