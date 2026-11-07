@@ -520,6 +520,15 @@ What the radio build does:
 - Wi-Fi and lwIP buffers come from PSRAM where ESP-IDF allows it
   (`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP`), and the internal buffers are sized
   small. The Wi-Fi driver stores nothing in NVS.
+- NVS stays unencrypted, and no build burns an eFuse or enables flash
+  encryption. Both NVS encryption schemes on the ESP32-S3 are irreversible, so
+  the radio build waits for an operator decision
+  ([ADR 0010](adr/0010-nvs-stays-unencrypted-until-the-operator-decides.md)).
+  Anyone who dumps the Device's flash can read its Pairings and impersonate the
+  Device, because the long-term key is symmetric
+  ([net-v2](../schema/protocol/net-v2.md#the-long-term-key-is-symmetric)).
+  `radio_guard.py` fails either build when `NVS_ENCRYPTION`, flash encryption,
+  secure boot or anti-rollback is on.
 - Internal RAM is tuned to the floor. `malloc` puts blocks of 256 bytes and up
   in PSRAM first, not 16 KB and up. The heartbeat runs on an `esp_timer`, so
   `app_main` returns its stack. The lwIP, event, `esp_timer` and FreeRTOS timer

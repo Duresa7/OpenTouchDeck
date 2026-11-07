@@ -25,6 +25,18 @@ import sys
 
 TARGET = "esp32s3"
 
+# Options that burn an eFuse on the Device or start encrypting its flash. Burning is irreversible, so no build, normal or
+# radio, may turn one on until the operator decides (docs/adr/0010-nvs-stays-unencrypted-until-the-operator-decides.md).
+# NVS_ENCRYPTION is on the list because on the ESP32-S3 the first nvs_flash_init then burns an HMAC key into an eFuse
+# block.
+IRREVERSIBLE_OPTIONS = (
+    "NVS_ENCRYPTION",
+    "SECURE_FLASH_ENC_ENABLED",
+    "SECURE_BOOT",
+    "SECURE_BOOT_V2_ENABLED",
+    "BOOTLOADER_APP_ANTI_ROLLBACK",
+)
+
 # Options that turn a radio or the radio build on. Any one of them fails the normal build.
 RADIO_OPTIONS = (
     "ESP_WIFI_ENABLED",
@@ -136,6 +148,9 @@ def _common(settings):
         raise GuardError(f"IDF_TARGET is {settings.get('IDF_TARGET')!r}, not {TARGET!r}")
     if not settings.get("ESP_CONSOLE_USB_SERIAL_JTAG"):
         raise GuardError("Firmware must keep the USB-Serial/JTAG console")
+    for key in IRREVERSIBLE_OPTIONS:
+        if settings.get(key):
+            raise GuardError(f"Irreversible eFuse or flash-encryption option enabled: {key}")
 
 
 def radio_components(components):
