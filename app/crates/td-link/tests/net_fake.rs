@@ -247,27 +247,32 @@ fn a_lost_pair_stored_leaves_the_pairing_pending_until_a_session_works() {
 fn an_unpaired_companion_or_another_device_is_refused() {
     let device = fake();
     let paired = pair_with(&device, COMPANION);
+    // session.open names no id: a key the Device doesn't hold makes a tag it can't match.
     let stranger = Credential {
         companion_id: [0x20; 16],
+        ltk: [0x55; 32],
         ..paired.credential.clone()
     };
     assert!(matches!(
         try_connect_when_free(&device, &stranger).err(),
         Some(NetError::Refused(Refusal::Auth))
     ));
-    let elsewhere = Credential {
-        device_id: [2, 0, 0, 0, 0, 9],
-        ..paired.credential.clone()
-    };
-    assert!(matches!(
-        try_connect_when_free(&device, &elsewhere).err(),
-        Some(NetError::Refused(Refusal::Auth))
-    ));
-    let forged = Credential {
-        ltk: [0x55; 32],
-        ..paired.credential.clone()
-    };
-    assert!(NetCarrier::connect(&addr(&device), &forged, TIMEOUT).is_err());
+    // The right key with the wrong ids gets past the tag, but the transcript holds the ids the
+    // Device knows, so the proofs fail.
+    for wrong in [
+        Credential {
+            device_id: [2, 0, 0, 0, 0, 9],
+            ..paired.credential.clone()
+        },
+        Credential {
+            companion_id: [0x20; 16],
+            ..paired.credential.clone()
+        },
+    ] {
+        let error = try_connect_when_free(&device, &wrong).err();
+        assert!(matches!(error, Some(NetError::Auth(_))), "{error:?}");
+    }
+    assert_eq!(device.sessions(), 0);
 }
 
 #[test]

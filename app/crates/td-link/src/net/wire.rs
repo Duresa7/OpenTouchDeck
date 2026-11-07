@@ -31,6 +31,11 @@ pub const LTK_LEN: usize = 32;
 pub const SHARE_LEN: usize = 32;
 pub const WRAPPED_KEY_LEN: usize = 48;
 pub const TAG_LEN: usize = 16;
+/// `session.open` carries `open_tag[16], client_share[32]` and no id.
+pub const OPEN_TAG_LEN: usize = 16;
+/// The discovery nonce in a TXT record, and each hint.
+pub const ADVERT_NONCE_LEN: usize = 16;
+pub const HINT_LEN: usize = 8;
 pub const MIN_HANDSHAKE_BODY: usize = 3;
 pub const MAX_HANDSHAKE_BODY: usize = 512;
 pub const MIN_RECORD_BODY: usize = 24;
@@ -141,7 +146,7 @@ fn check_fields(kind: u8, fields: &[u8]) -> Result<(), NetError> {
         PAIR_CHALLENGE => 432,
         PAIR_PROOF | PAIR_COMMIT | PAIR_STORED | SESSION_PROOF | SESSION_READY => 32,
         PAIR_ACCEPT => 80,
-        SESSION_OPEN => 54,
+        SESSION_OPEN => OPEN_TAG_LEN + SHARE_LEN,
         SESSION_CHALLENGE => 64,
         ERROR => 1,
         _ => return Err(protocol(format!("unknown handshake kind 0x{kind:02x}"))),
@@ -263,6 +268,40 @@ pub fn hmac(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
         mac.update(part);
     }
     mac.finalize().into_bytes().into()
+}
+
+/// `derive(key, label) = HKDF-Expand-SHA256(key, "touchdeck/net-v2/" || label, 32)`, with a
+/// uniformly random 32-byte key (an LTK) as the PRK.
+pub fn derive(key: &[u8; 32], label: &str) -> [u8; 32] {
+    let hk = Hkdf::<Sha256>::from_prk(key).expect("a 32-byte PRK");
+    let mut out = [0u8; 32];
+    hk.expand(format!("touchdeck/net-v2/{label}").as_bytes(), &mut out)
+        .expect("HKDF expands 32 bytes");
+    out
+}
+
+/// `open_tag`: the first 16 bytes of `MAC(derive(LTK, "session/open"), "open" || client_share)`.
+/// It lets the Device find the Pairing without the ids crossing the network.
+pub fn open_tag(ltk: &[u8; LTK_LEN], client_share: &[u8; SHARE_LEN]) -> [u8; OPEN_TAG_LEN] {
+    let mut key = derive(ltk, "session/open");
+    let mut mac = hmac(&key, &[b"open", client_share]);
+    let mut tag = [0u8; OPEN_TAG_LEN];
+    tag.copy_from_slice(&mac[..OPEN_TAG_LEN]);
+    key.zeroize();
+    mac.zeroize();
+    tag
+}
+
+/// A Pairing's discovery key, `derive(LTK, "discovery")`. It only recognises hints: it can't
+/// open a session.
+pub fn discovery_key(ltk: &[u8; LTK_LEN]) -> [u8; 32] {
+    derive(ltk, "discovery")
+}
+
+/// A TXT hint: the first 8 bytes of `MAC(K_disc, "hint" || nonce)`.
+pub fn hint(discovery_key: &[u8; 32], nonce: &[u8; ADVERT_NONCE_LEN]) -> [u8; HINT_LEN] {
+    let mac = hmac(discovery_key, &[b"hint", nonce]);
+    mac[..HINT_LEN].try_into().expect("8 bytes")
 }
 
 /// HKDF-Extract with `salt`, then `HKDF-Expand(PRK, "touchdeck/net-v2/" || label, 32)` per label.

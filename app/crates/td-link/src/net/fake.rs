@@ -3,6 +3,9 @@
 //! Companion sees the same Device over Wi-Fi that `MockPorts` shows over USB. The test plays
 //! the person at the Device: it opens the pairing window, reads the code and taps Install.
 //!
+//! It announces itself through [`FakeNetDevice::advert_at`], the record a real Device sends,
+//! so tests discover it without real multicast.
+//!
 //! What it leaves out: per-peer backoff (every test peer is 127.0.0.1), takeover of an
 //! unproven owner, and BLE.
 
@@ -24,7 +27,7 @@ use super::wire::{
     PAIR_START, PAIR_STORED, PairKeys, Phase, RecordReceiver, RecordSender, SESSION_CHALLENGE,
     SESSION_OPEN, SESSION_PROOF, SESSION_READY, SessionKeys, SrpServer,
 };
-use super::{CompanionId, DeviceId, NetError, Refusal, random, random_exponent};
+use super::{CompanionId, DeviceId, NetError, Refusal, mdns, random, random_exponent};
 use crate::{MockDeck, Transport};
 
 const FIRST_ITEM: Duration = Duration::from_secs(2);
@@ -194,6 +197,23 @@ impl FakeNetDevice {
             bound: false,
         });
         Ok(())
+    }
+
+    /// The DNS-SD record the Device announces now, as if it were at `at`. In pairing mode it
+    /// carries the id, name and Pairing count. Otherwise it names nothing: a fresh nonce and four
+    /// hints, one per stored Pairing in slot order and a random filler per free slot.
+    pub fn advert_at(&self, at: SocketAddr) -> mdns::Resolved {
+        self.inner.advert(at)
+    }
+
+    /// Announces the Device at `at` for as long as it runs: each call gives its current record,
+    /// and `None` once the Device is dropped. Mock discovery browses through these.
+    pub fn announcer(&self, at: SocketAddr) -> Announcer {
+        Announcer {
+            device: Arc::downgrade(&self.inner),
+            device_id: self.inner.device_id,
+            at,
+        }
     }
 
     /// The person taps Cancel on the pairing screen.
@@ -443,9 +463,65 @@ fn refuse(items: &mut Items, reason: Refusal) {
     items.finish();
 }
 
+/// A fake Device's announcement, as [`FakeNetDevice::announcer`] makes it.
+#[derive(Clone)]
+pub struct Announcer {
+    device: std::sync::Weak<Inner>,
+    device_id: DeviceId,
+    at: SocketAddr,
+}
+
+impl Announcer {
+    /// The Device this announces. Tests use it to withdraw the announcement.
+    pub fn device_id(&self) -> DeviceId {
+        self.device_id
+    }
+
+    /// The record a browse sees now, or `None` once the Device is gone.
+    pub fn record(&self) -> Option<mdns::Resolved> {
+        let device = self.device.upgrade()?;
+        (!device.stopped.load(Ordering::Acquire)).then(|| device.advert(self.at))
+    }
+}
+
 impl Inner {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn advert(&self, at: SocketAddr) -> mdns::Resolved {
+        let mut nonce = [0u8; wire::ADVERT_NONCE_LEN];
+        random(&mut nonce);
+        let state = self.state();
+        let mut hints = String::new();
+        for pairing in state.pairings.values() {
+            hints += &wire::hex(&wire::hint(&wire::discovery_key(&pairing.ltk), &nonce));
+        }
+        for _ in state.pairings.len()..MAX_PAIRINGS {
+            let mut filler = [0u8; wire::HINT_LEN];
+            random(&mut filler);
+            hints += &wire::hex(&filler);
+        }
+        let mut txt = BTreeMap::from([
+            ("proto".to_owned(), "2".to_owned()),
+            ("n".to_owned(), wire::hex(&nonce)),
+            ("h".to_owned(), hints),
+        ]);
+        let pairing = locked(&state).is_none()
+            && state
+                .window
+                .as_ref()
+                .is_some_and(|w| w.ends > Instant::now());
+        if pairing {
+            txt.insert("id".into(), wire::hex(&self.device_id));
+            txt.insert("name".into(), self.deck.device_name());
+            txt.insert("paired".into(), state.pairings.len().to_string());
+        }
+        mdns::Resolved {
+            addresses: vec![at.ip()],
+            port: at.port(),
+            txt,
+        }
     }
 
     fn serve(&self, stream: TcpStream) {
@@ -629,23 +705,23 @@ impl Inner {
 
     fn session(&self, mut items: Items, fields: &[u8], started: Instant) {
         let deadline = started + SETUP;
-        let device_id: DeviceId = fields[..6].try_into().expect("checked length");
-        let companion_id: CompanionId = fields[6..22].try_into().expect("checked length");
-        let client_share: [u8; 32] = fields[22..54].try_into().expect("checked length");
-        if device_id != self.device_id {
-            return refuse(&mut items, Refusal::Auth);
+        let tag: [u8; wire::OPEN_TAG_LEN] = fields[..16].try_into().expect("checked length");
+        let client_share: [u8; 32] = fields[16..48].try_into().expect("checked length");
+        let device_id = self.device_id;
+        // Every Pairing's tag is computed before deciding, as the Device does.
+        let mut found = None;
+        for (id, pairing) in &self.state().pairings {
+            let matches = wire::same(&wire::open_tag(&pairing.ltk, &client_share), &tag);
+            if matches && found.is_none() {
+                found = Some((*id, pairing.name.clone(), pairing.ltk));
+            }
         }
+        let Some((companion_id, name, ltk)) = found else {
+            return refuse(&mut items, Refusal::Auth);
+        };
         if self.deck.usb_online() {
             return refuse(&mut items, Refusal::Busy);
         }
-        let Some((name, ltk)) = self
-            .state()
-            .pairings
-            .get(&companion_id)
-            .map(|p| (p.name.clone(), p.ltk))
-        else {
-            return refuse(&mut items, Refusal::Auth);
-        };
         let secret = EphemeralSecret::random();
         let device_share = PublicKey::from(&secret).to_bytes();
         let Ok(shared) = wire::agree(secret, &client_share) else {

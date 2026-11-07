@@ -492,6 +492,11 @@ impl MockDeck {
         self.state().device_name = name.into();
     }
 
+    /// The name a v2 hello reports.
+    pub fn device_name(&self) -> String {
+        self.state().device_name.clone()
+    }
+
     /// Answers `hello` as a board running other Firmware with this product.
     pub fn set_product(&self, product: &str) {
         self.state().hello.product = product.into();
