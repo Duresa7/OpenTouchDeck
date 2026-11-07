@@ -14,6 +14,7 @@ use td_core::{Request, Settings};
 use td_link::{
     LinkError,
     photo::{self, IdleSettings, PhotoError},
+    wifi::{self, WifiError, WifiPassword},
 };
 use ts_rs::TS;
 
@@ -525,6 +526,196 @@ impl Endpoint for SettingsPatch {
         })
     }
 }
+/// How the Device's Wi-Fi station is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum WifiConnection {
+    /// No network is stored.
+    Off,
+    Connecting,
+    Connected,
+    /// The last join failed or the connection dropped. The Device keeps retrying.
+    Failed,
+}
+/// The Device's Wi-Fi network. Never its password.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DeviceWifi {
+    pub configured: bool,
+    /// The stored network's name, `""` when none is stored.
+    pub ssid: String,
+    pub state: WifiConnection,
+    /// Why the station failed: `not-found`, `wrong-password`, `no-ip`, `security`, `refused`, `lost`, `driver` or
+    /// `other`. `null` unless `state` is `failed`.
+    pub reason: Option<String>,
+    /// The Device's IPv4 address while connected.
+    pub ip: Option<String>,
+    /// The signal in dBm while connected.
+    pub rssi: Option<i32>,
+}
+impl From<wifi::WifiState> for DeviceWifi {
+    fn from(state: wifi::WifiState) -> Self {
+        Self {
+            configured: state.configured,
+            ssid: state.ssid,
+            state: match state.state {
+                wifi::WifiStatus::Off => WifiConnection::Off,
+                wifi::WifiStatus::Connecting => WifiConnection::Connecting,
+                wifi::WifiStatus::Connected => WifiConnection::Connected,
+                wifi::WifiStatus::Failed => WifiConnection::Failed,
+            },
+            reason: state.reason,
+            ip: state.ip,
+            rssi: state.rssi,
+        }
+    }
+}
+/// A Wi-Fi password on its way to the Device. It is never printed, logged or sent back. A newtype struct, so serde
+/// reads and writes it as the bare string.
+#[derive(Clone, Default, Deserialize, Serialize, TS)]
+#[ts(type = "string")]
+pub struct WifiSecret(String);
+impl WifiSecret {
+    pub fn new(password: impl Into<String>) -> Self {
+        Self(password.into())
+    }
+}
+impl std::fmt::Debug for WifiSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WifiSecret(redacted)")
+    }
+}
+/// The network to join: an SSID of 1 to 32 bytes and a password that is empty for an open network, 8 to 63
+/// printable ASCII characters, or 64 hex digits.
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct WifiSetBody {
+    pub ssid: String,
+    pub password: WifiSecret,
+}
+impl From<WifiError> for DeviceError {
+    fn from(error: WifiError) -> Self {
+        match error {
+            WifiError::Link(error) => error.into(),
+            WifiError::Invalid(reason) => CommonError::invalid("body", reason).into(),
+            // A Device without the station has no `wifi.*` messages and answers the unknown-message error.
+            WifiError::Refused { reason, error }
+                if reason == "unsupported" || (reason.is_empty() && error == "unknown message") =>
+            {
+                Self::NeedsFirmware { field: "wifi" }
+            }
+            WifiError::Refused { reason, .. } if reason == "usb-only" => Self::UsbOnly,
+            WifiError::Refused { reason, error } if reason == "args" => {
+                CommonError::invalid("body", error).into()
+            }
+            error => Self::Link {
+                reason: error.to_string(),
+            },
+        }
+    }
+}
+/// Runs one Wi-Fi setup request on a Device whose Firmware has a Wi-Fi station (the radio build). The Device takes
+/// its network only over USB, so one connected over Wi-Fi hears nothing.
+async fn on_wifi_device(
+    ctx: &Ctx,
+    id: &DeviceId,
+    work: impl FnOnce(&td_link::Session) -> Result<wifi::WifiState, WifiError> + Send + 'static,
+) -> Result<DeviceWifi, DeviceError> {
+    let summary = ctx.devices.get(id).ok_or(DeviceError::NotFound)?;
+    if summary.capabilities.as_ref().and_then(|c| c.wifi) != Some(true) {
+        return Err(DeviceError::NeedsFirmware { field: "wifi" });
+    }
+    if summary.carrier == Some(crate::devices::Carrier::Wifi) {
+        return Err(DeviceError::UsbOnly);
+    }
+    let state = ctx.devices.call(id, work).await??;
+    Ok(state.into())
+}
+pub struct WifiGet;
+impl Endpoint for WifiGet {
+    const NAME: &'static str = "devices.wifi_get";
+    const METHOD: Method = Method::GET;
+    const PATH: &'static str = "/devices/{device}/wifi";
+    type Path = DevicePath;
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = DeviceWifi;
+    type Error = DeviceError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        on_wifi_device(&ctx, &req.path.device, wifi::wifi_state).await
+    }
+}
+pub struct WifiSet;
+impl Endpoint for WifiSet {
+    const NAME: &'static str = "devices.wifi_set";
+    const METHOD: Method = Method::PUT;
+    const PATH: &'static str = "/devices/{device}/wifi";
+    const BODY_LIMIT: usize = 4096;
+    type Path = DevicePath;
+    type Query = NoQuery;
+    type Body = WifiSetBody;
+    type Ok = DeviceWifi;
+    type Error = DeviceError;
+    /// A body that doesn't parse gets one fixed reason, so no part of it, the password included, comes back.
+    async fn read_body(
+        ctx: &Ctx,
+        headers: &axum::http::HeaderMap,
+        _client: Option<&crate::api::ClientInfo>,
+        body: axum::body::Body,
+    ) -> Result<WifiSetBody, CommonError> {
+        let bytes = tokio::time::timeout(
+            ctx.limits.body_read,
+            axum::body::to_bytes(body, Self::BODY_LIMIT),
+        )
+        .await
+        .map_err(|_| CommonError::Timeout)?
+        .map_err(|_| CommonError::TooLarge)?;
+        if !crate::api::is_json(headers) {
+            return Err(CommonError::MediaType);
+        }
+        serde_json::from_slice(&bytes).map_err(|_| {
+            CommonError::invalid(
+                "body",
+                "the body is {\"ssid\": string, \"password\": string}",
+            )
+        })
+    }
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        let WifiSetBody { ssid, password } = req.body;
+        let password = WifiPassword::new(password.0);
+        if !wifi::valid_ssid(&ssid) {
+            return Err(CommonError::invalid(
+                "body",
+                "ssid is 1 to 32 bytes without control characters",
+            )
+            .into());
+        }
+        if !wifi::valid_password(&password) {
+            return Err(CommonError::invalid(
+                "body",
+                "password is empty for an open network, 8 to 63 printable ASCII characters, or 64 hex digits",
+            )
+            .into());
+        }
+        on_wifi_device(&ctx, &req.path.device, move |s| {
+            wifi::wifi_set(s, &ssid, &password)
+        })
+        .await
+    }
+}
+pub struct WifiForget;
+impl Endpoint for WifiForget {
+    const NAME: &'static str = "devices.wifi_forget";
+    const METHOD: Method = Method::DELETE;
+    const PATH: &'static str = "/devices/{device}/wifi";
+    type Path = DevicePath;
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = DeviceWifi;
+    type Error = DeviceError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        on_wifi_device(&ctx, &req.path.device, wifi::wifi_forget).await
+    }
+}
 fn devices() -> Feature {
     Feature::new("devices")
         .endpoint::<List>()
@@ -535,6 +726,9 @@ fn devices() -> Feature {
         .endpoint::<Restart>()
         .endpoint::<SettingsGet>()
         .endpoint::<SettingsPatch>()
+        .endpoint::<WifiGet>()
+        .endpoint::<WifiSet>()
+        .endpoint::<WifiForget>()
         .event::<DeviceAdded>()
         .event::<DeviceUpdated>()
         .event::<DeviceRemoved>()

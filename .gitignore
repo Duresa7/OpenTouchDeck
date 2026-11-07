@@ -30,6 +30,7 @@ build/
 build-crash/
 build-perf/
 build-newer/
+firmware/build-radio/
 out/
 dist/
 

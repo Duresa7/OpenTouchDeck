@@ -43,6 +43,9 @@ pub struct Capabilities {
     /// The most Tiles in a Layout that declare an `image` stream. Absent means none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_images: Option<u32>,
+    /// `true` on a radio build, which answers the `wifi.*` messages. Absent means no Wi-Fi station.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wifi: Option<bool>,
 }
 impl Capabilities {
     pub fn gif_enabled(&self) -> bool {

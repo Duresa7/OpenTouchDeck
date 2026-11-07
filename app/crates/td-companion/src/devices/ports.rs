@@ -142,7 +142,8 @@ pub enum BoardKind {
     Device,
     /// A Device with v1 Firmware: no id, name or capabilities in `hello`.
     DeviceV1,
-    /// A Device with v2 Firmware from the radio build: it advertises `caps.ble_hid` (four bonds) and answers `ble.*`.
+    /// A Device with v2 Firmware from the radio build: it advertises `caps.wifi` and `caps.ble_hid` (four bonds),
+    /// and answers `wifi.*` and `ble.*`.
     DeviceRadio,
     /// A board that never answers.
     Silent,
@@ -197,6 +198,7 @@ impl MockPorts {
                 BoardKind::Device => deck.set_name(&format!("Mock Device {serial}")),
                 BoardKind::DeviceRadio => {
                     deck.set_name(&format!("Mock Device {serial}"));
+                    deck.set_wifi_capability(true);
                     deck.set_ble_capability(Some(4));
                 }
                 BoardKind::Silent => deck.stop(),

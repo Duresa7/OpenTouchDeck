@@ -10,11 +10,13 @@ import { createFirmwareUpdate, type FirmwareUpdateStore } from '../../lib/device
 import { newerFirmware } from '../../lib/device/needs-firmware.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { createWifiPairing, type WifiStore } from '../../lib/device/wifi.ts';
+import { createWifiSetup, type WifiSetupStore } from '../../lib/device/wifi-setup.ts';
 
 interface DeviceStores {
   settings: DeviceSettingsStore;
   firmware: FirmwareUpdateStore;
   wifi: WifiStore;
+  wifiSetup: WifiSetupStore;
   bluetooth: BluetoothStore;
   observe(summary: DeviceSummary): void;
 }
@@ -31,6 +33,7 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
   if (!found) {
     let latest = device;
     const settings = createDeviceSettings({ companion, device });
+    const wifiSetup = createWifiSetup({ companion, device });
     const bluetooth = createBluetooth({ companion, device });
     const firmware = createFirmwareUpdate({
       companion,
@@ -41,10 +44,12 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
       settings,
       firmware,
       wifi: createWifiPairing({ companion, device: () => latest }),
+      wifiSetup,
       bluetooth,
       observe(summary) {
         latest = summary;
         settings.observe(summary);
+        wifiSetup.observe(summary);
         bluetooth.observe(summary);
       },
     };

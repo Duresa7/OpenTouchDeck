@@ -27,6 +27,7 @@ int64_t esp_timer_get_time(void)
 struct host_stream {
     uint8_t *buf;
     size_t cap, head, used;
+    bool owns_buf;
 };
 
 StreamBufferHandle_t xStreamBufferCreate(size_t size, size_t trigger)
@@ -35,7 +36,25 @@ StreamBufferHandle_t xStreamBufferCreate(size_t size, size_t trigger)
     struct host_stream *s = calloc(1, sizeof *s);
     s->buf = malloc(size);
     s->cap = size;
+    s->owns_buf = true;
     return s;
+}
+
+/* As FreeRTOS does it: one byte of the storage tells full from empty, so it holds size - 1. The caller owns both. */
+StreamBufferHandle_t xStreamBufferCreateStatic(size_t size, size_t trigger, uint8_t *storage,
+                                               StaticStreamBuffer_t *buffer)
+{
+    (void)trigger;
+    (void)buffer;
+    struct host_stream *s = calloc(1, sizeof *s);
+    s->buf = storage;
+    s->cap = size - 1;
+    return s;
+}
+
+BaseType_t xStreamBufferIsEmpty(StreamBufferHandle_t s)
+{
+    return s->used == 0;
 }
 
 size_t xStreamBufferSpacesAvailable(StreamBufferHandle_t s)
@@ -72,7 +91,9 @@ size_t xStreamBufferReceive(StreamBufferHandle_t s, void *data, size_t len, Tick
 
 void vStreamBufferDelete(StreamBufferHandle_t s)
 {
-    free(s->buf);
+    if (s->owns_buf) {
+        free(s->buf);
+    }
     free(s);
 }
 
@@ -245,10 +266,11 @@ HANDLER(td_link_idle_get)
 HANDLER(td_link_idle_set)
 HANDLER(td_link_clock_set)
 
+static esp_app_desc_t g_app = { .version = "host" };
+
 const esp_app_desc_t *esp_app_get_description(void)
 {
-    static const esp_app_desc_t app = { .version = "host" };
-    return &app;
+    return &g_app;
 }
 
 const esp_partition_t *esp_ota_get_running_partition(void)
@@ -269,7 +291,8 @@ td_asset_result_t td_asset_space(td_asset_space_t *out)
     return TD_ASSET_OK;
 }
 
-esp_err_t td_device_name_get(char out[TD_DEVICE_NAME_MAX + 1]) { strcpy(out, "Open TouchDeck"); return ESP_OK; }
+static char g_name[TD_DEVICE_NAME_MAX + 1] = "Open TouchDeck";
+esp_err_t td_device_name_get(char out[TD_DEVICE_NAME_MAX + 1]) { strcpy(out, g_name); return ESP_OK; }
 esp_err_t td_device_name_set(const char *name) { (void)name; return ESP_OK; }
 bool td_recovery_mode(void) { return false; }
 
@@ -322,6 +345,9 @@ static void reset(void)
         vQueueDelete(s_presses);
         vSemaphoreDelete(s_rx_mutex);
     }
+    free(s_frames_storage);
+    s_frames_storage = NULL;
+    s_frames_secret = false;
     s_frames = NULL;
     s_presses = NULL;
     s_rx_mutex = NULL;
@@ -786,6 +812,46 @@ static void test_unknown_carrier_dropped(void)
     CHECK(g_fake.frames == 0 && g_usb_len == 0);
 }
 
+/* ---- Wi-Fi: the `wifi.*` messages, added with td_link_extend as the radio build does, answer only over USB ---- */
+
+static int g_wifi_calls;
+static char g_wifi_last[32];
+
+static void wifi_handler(const cJSON *request, cJSON *reply)
+{
+    g_wifi_calls++;
+    snprintf(g_wifi_last, sizeof g_wifi_last, "%s",
+             cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(request, "m")));
+    cJSON_AddStringToObject(reply, "state", "off");
+}
+
+static void wifi_caps(cJSON *caps)
+{
+    cJSON_AddBoolToObject(caps, "wifi", true);
+}
+
+/* td_radio.c's extension, with a stand-in handler. test_extension_is_usb_only adds it. */
+static const td_link_extension_t g_wifi_extension = { .prefix = "wifi.", .handle = wifi_handler, .caps = wifi_caps };
+
+#define WIFI_SET "{\"m\":\"wifi.set\",\"ssid\":\"td-test-nonexistent\",\"password\":\"dummy-pass\"}"
+
+/* Before any extension, as in the normal build: every `wifi.*` message gets the unknown-message error, and hello has
+ * no wifi cap. Runs before test_extension_is_usb_only. */
+static void test_wifi_unknown_without_extension(void)
+{
+    start(true);
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    over_usb("{\"m\":\"hello\",\"proto\":2}", 1);
+    CHECK(usb_take(&frame, payload) && has(payload, "\"caps\":") && !has(payload, "\"wifi\""));
+    const char *const messages[] = { "{\"m\":\"wifi.state\"}", "{\"m\":\"wifi.forget\"}", WIFI_SET };
+    for (size_t i = 0; i < sizeof messages / sizeof messages[0]; i++) {
+        over_usb(messages[i], (uint8_t)(2 + i));
+        CHECK(usb_take(&frame, payload) && has(payload, "\"ok\":false") && has(payload, "\"error\":\"unknown message\""));
+        CHECK(!has(payload, "dummy-pass"));
+    }
+}
+
 static int g_extension_calls;
 
 static void extension_handle(const cJSON *request, cJSON *reply)
@@ -808,16 +874,16 @@ static void test_extension_is_usb_only(void)
     static const td_link_extension_t bad_prefix = { .prefix = "ble", .handle = extension_handle };
     static const td_link_extension_t v2 = { .prefix = "v2.ble.", .handle = extension_handle };
     static const td_link_extension_t no_handler = { .prefix = "wifi." };
-    static const td_link_extension_t other = { .prefix = "wifi.", .handle = extension_handle };
     static const td_link_extension_t third = { .prefix = "net.", .handle = extension_handle };
-    /* Runs last: the extensions it adds stay for the rest of the process, as they do on the Device. */
+    /* The extensions it adds stay for the rest of the process, as they do on the Device: the Wi-Fi tests after it use
+     * g_wifi_extension. */
     CHECK(td_link_extend(NULL) == ESP_ERR_INVALID_ARG);
     CHECK(td_link_extend(&bad_prefix) == ESP_ERR_INVALID_ARG);
     CHECK(td_link_extend(&v2) == ESP_ERR_INVALID_ARG);
     CHECK(td_link_extend(&no_handler) == ESP_ERR_INVALID_ARG);
     CHECK(td_link_extend(&ble) == ESP_OK);
     CHECK(td_link_extend(&ble) == ESP_ERR_INVALID_STATE);
-    CHECK(td_link_extend(&other) == ESP_OK);
+    CHECK(td_link_extend(&g_wifi_extension) == ESP_OK);
     CHECK(td_link_extend(&third) == ESP_ERR_NO_MEM);
 
     start(true);
@@ -839,6 +905,125 @@ static void test_extension_is_usb_only(void)
     CHECK(g_fake.frames == 2 && has(g_fake.payload, "\"ble_hid\":4"));
     over_usb("{\"m\":\"hello\"}", 4);
     CHECK(usb_take(&frame, payload) && !has(payload, "ble_hid"));
+}
+
+/* After test_extension_is_usb_only added g_wifi_extension. */
+static void test_wifi_over_usb_only(void)
+{
+    start(true);
+    g_wifi_calls = 0;
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+
+    over_usb("{\"m\":\"hello\",\"proto\":2}", 1);
+    CHECK(usb_take(&frame, payload) && has(payload, "\"wifi\":true"));
+    /* A v1 hello carries no caps at all. */
+    over_usb("{\"m\":\"hello\"}", 2);
+    CHECK(usb_take(&frame, payload) && !has(payload, "\"wifi\""));
+
+    over_usb("{\"m\":\"wifi.state\"}", 3);
+    CHECK(usb_take(&frame, payload) && frame.seq == 3 && has(payload, "\"m\":\"wifi.state\""));
+    CHECK(has(payload, "\"ok\":true") && has(payload, "\"state\":\"off\""));
+    CHECK(g_wifi_calls == 1 && !strcmp(g_wifi_last, "wifi.state"));
+
+    /* On any other carrier the handler never runs, so nothing is stored, read or forgotten. USB goes idle first, so
+     * the replies leave on the fake carrier; while USB is online they would leave on USB, still refused. */
+    g_now_ms += TD_LINK_IDLE_MS;
+    const char *const messages[] = { WIFI_SET, "{\"m\":\"wifi.state\"}", "{\"m\":\"wifi.forget\"}",
+                                     "{\"m\":\"wifi.scan\"}" };
+    for (size_t i = 0; i < sizeof messages / sizeof messages[0]; i++) {
+        over_fake(messages[i], (uint8_t)(10 + i));
+        CHECK(g_fake.last.seq == (uint8_t)(10 + i) && has(g_fake.payload, "\"ok\":false"));
+        CHECK(has(g_fake.payload, "\"reason\":\"usb-only\"") && has(g_fake.payload, "\"error\":\"Only over USB\""));
+        CHECK(!has(g_fake.payload, "dummy-pass"));
+    }
+    CHECK(g_wifi_calls == 1 && g_usb_len == 0);
+
+    /* Over USB the strict JSON rules of link-v2 apply: a control character escaped in a string never reaches the
+     * handler. */
+    over_usb("{\"m\":\"wifi.set\",\"ssid\":\"a\\nb\",\"password\":\"dummy-pass\"}", 20);
+    CHECK(usb_take(&frame, payload) && has(payload, "\"ok\":false") && has(payload, "\"reason\":\"args\""));
+    CHECK(g_wifi_calls == 1);
+    CHECK(!has(payload, "dummy-pass"));
+    over_usb("{\"m\":\"wifi.forget\"}", 21);
+    CHECK(usb_take(&frame, payload) && g_wifi_calls == 2 && !strcmp(g_wifi_last, "wifi.forget"));
+}
+
+static bool holds(const void *buf, size_t len, const char *text)
+{
+    const size_t n = strlen(text);
+    for (size_t i = 0; i + n <= len; i++) {
+        if (!memcmp((const uint8_t *)buf + i, text, n)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* No link buffer holds the password: not the receive packet, not the stream buffer between the carriers and the link
+ * task, not the frame body, not the message text. */
+static bool link_holds(const char *text)
+{
+    return holds(s_rx_packet, sizeof s_rx_packet, text) || holds(s_frames_storage, TD_LINK_STREAM_BYTES + 1, text) ||
+           holds(s_body, sizeof s_body, text) || holds(s_message, sizeof s_message, text);
+}
+
+/* After a `wifi.set`, handled, refused or stale, no link buffer still holds its password. */
+static void test_wifi_set_leaves_no_copy(void)
+{
+    start(true);
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    const char *const sets[] = {
+        WIFI_SET,
+        /* Refused by the strict JSON rules before the handler. */
+        "{\"m\":\"wifi.set\",\"ssid\":\"a\\nb\",\"password\":\"dummy-pass\"}",
+    };
+    for (size_t i = 0; i < sizeof sets / sizeof sets[0]; i++) {
+        over_usb(sets[i], (uint8_t)(30 + i));
+        CHECK(usb_take(&frame, payload) && !has(payload, "dummy-pass"));
+        CHECK(!link_holds("dummy-pass"));
+    }
+
+    /* While another frame waits behind it the stream buffer keeps its bytes; once it drains they are wiped. */
+    uint8_t body[TD_FRAME_BODY_MAX];
+    size_t len = request_body(WIFI_SET, 40, body);
+    g_usb_handler(body, len, g_usb_context);
+    len = request_body("{\"m\":\"ping\"}", 41, body);
+    g_usb_handler(body, len, g_usb_context);
+    CHECK(holds(s_frames_storage, TD_LINK_STREAM_BYTES + 1, "dummy-pass"));
+    handle_frame(0);
+    CHECK(usb_take(&frame, payload) && frame.seq == 40);
+    CHECK(holds(s_frames_storage, TD_LINK_STREAM_BYTES + 1, "dummy-pass") && s_frames_secret);
+    CHECK(!holds(s_body, sizeof s_body, "dummy-pass") && !holds(s_message, sizeof s_message, "dummy-pass"));
+    handle_frame(0);
+    CHECK(usb_take(&frame, payload) && frame.seq == 41);
+    CHECK(!link_holds("dummy-pass") && !s_frames_secret);
+
+    /* A `wifi.set` whose connection ended while it waited is never handled, and still leaves nothing. */
+    len = request_body(WIFI_SET, 42, body);
+    td_link_carrier_receive(body, len, &g_fake.carrier);
+    td_link_carrier_offline(&g_fake.carrier);
+    const int frames = g_fake.frames;
+    handle_frame(0);
+    CHECK(g_fake.frames == frames && !link_holds("dummy-pass"));
+}
+
+/* The longest v2 hello, with the wifi and ble_hid caps, a full Device name and a full version, still fits one frame. */
+static void test_wifi_hello_fits(void)
+{
+    start(false);
+    memset(g_name, 'N', TD_DEVICE_NAME_MAX);
+    g_name[TD_DEVICE_NAME_MAX] = '\0';
+    memset(g_app.version, 'v', sizeof g_app.version - 1);
+    g_app.version[sizeof g_app.version - 1] = '\0';
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    over_usb("{\"m\":\"hello\",\"proto\":2}", 1);
+    CHECK(usb_take(&frame, payload) && has(payload, "\"wifi\":true") && has(payload, "\"ble_hid\":4"));
+    CHECK(has(payload, g_name) && frame.len < TD_FRAME_PAYLOAD_MAX && td_link_state().dropped == 0);
+    strcpy(g_name, "Open TouchDeck");
+    strcpy(g_app.version, "host");
 }
 
 /* ---- Device names: the shared vectors in schema/protocol/name-vectors-v2.json ---- */
@@ -982,12 +1167,17 @@ int main(int argc, char **argv)
     test_frame_body_encoder();
     test_name_vectors_in_the_validator();
     test_name_set_refuses_vectors_with_args();
+    test_wifi_unknown_without_extension();
     test_extension_is_usb_only();
+    /* The rest run with the `ble.` and `wifi.` extensions it added, as the radio build does. */
+    test_wifi_over_usb_only();
+    test_wifi_hello_fits();
+    test_wifi_set_leaves_no_copy();
     reset();
     if (g_failures) {
         fprintf(stderr, "%d checks failed\n", g_failures);
         return 1;
     }
-    printf("link carrier: 16 tests passed\n");
+    printf("link carrier: 20 tests passed\n");
     return 0;
 }

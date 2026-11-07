@@ -24,7 +24,7 @@ export const GIF_CAPS: Capabilities = {
   anim: { image: [128, 128], min_delay_ms: 100, page_tiles: 4, page_pixels: 65536 },
 };
 
-/** A radio build: static Tiles only, and a Bluetooth keyboard that keeps four computers and phones. */
+/** A radio build: static Tiles only, a Wi-Fi station, and a Bluetooth keyboard that keeps four computers and phones. */
 export const RADIO_CAPS: Capabilities = {
   screen: [1024, 600],
   grid: [8, 8],
@@ -43,6 +43,7 @@ export const RADIO_CAPS: Capabilities = {
   series: 0,
   text_bytes: 0,
   live_images: 0,
+  wifi: true,
   ble_hid: 4,
 };
 
@@ -78,7 +79,7 @@ export const demoDevices: DeviceSummary[] = [
   sampleDevice('mock0002', 'Studio', connected('COM4')),
   sampleDevice('mock0003', 'Stream deck by the window', connected('COM5')),
 ];
-// Desk runs the radio build, so its Device settings show the Bluetooth keyboard.
+// Desk runs the radio build, so its Device settings show Wi-Fi and the Bluetooth keyboard.
 demoDevices[0].capabilities = RADIO_CAPS;
 if (demoDevices[1].firmware) demoDevices[1].firmware = { ...demoDevices[1].firmware, version: '1.4.0', update_available: '1.5.0' };
 
