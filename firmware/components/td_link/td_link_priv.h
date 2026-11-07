@@ -14,6 +14,9 @@ uint32_t td_link_v2_session(void);
  * carrier did not take it. */
 bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload, size_t len);
 
+/* True when the frame the link handles now arrived on USB. */
+bool td_link_request_on_usb(void);
+
 /* True while the link task handles a frame that arrived on a network carrier. */
 bool td_link_current_network(void);
 
