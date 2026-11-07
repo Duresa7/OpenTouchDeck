@@ -9,6 +9,7 @@ pub mod photo;
 pub mod recover;
 pub mod session;
 pub mod update;
+pub mod wifi;
 pub mod xfer;
 
 use std::io::{self, Read, Write};

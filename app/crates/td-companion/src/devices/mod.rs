@@ -117,6 +117,10 @@ pub struct Capabilities {
     pub text_bytes: u32,
     /// The most Tiles in a Layout that declare an `image` stream. Zero when the Firmware draws no cover art.
     pub live_images: u32,
+    /// `true` when the Device can join a Wi-Fi network (the radio build). Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wifi: Option<bool>,
 }
 impl From<&td_link::Capabilities> for Capabilities {
     fn from(c: &td_link::Capabilities) -> Self {
@@ -146,6 +150,7 @@ impl From<&td_link::Capabilities> for Capabilities {
             series: c.series,
             text_bytes: c.text_bytes,
             live_images: c.live_images.unwrap_or(0),
+            wifi: c.wifi.filter(|wifi| *wifi),
         }
     }
 }
