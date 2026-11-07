@@ -428,11 +428,13 @@
     "counter_limit": {
       "direction": "c2d",
       "plaintext": "010101000c007b226d223a2270696e67227d2f2e",
-      "last_counter": 4294967295,
-      "last": "00242741d1c37c8606dc4b1a22016601f4feec3e8b13ef3a7d47b29a4676f43a77c1c5b6d41b",
+      "limit": 16777216,
+      "at_limit": "end the session",
+      "last_counter": 16777215,
+      "last": "0024fbc6436153da6d9ad3645f1a06c8be8a920a7a2d01473cd63daf339bee1ab3014bf7af46",
       "last_expected": "accept",
-      "beyond_counter": 4294967296,
-      "beyond": "0024a231559d6c6be8ac24957c4040a66e6859c19851e6fcb05c13a350f821692451fca8244a",
+      "beyond_counter": 16777216,
+      "beyond": "0024de041fb3a3049203694e6f671daee61d0aed022bc3ee3b2c8c0566f4b1b712741bd259d8",
       "beyond_expected": "close"
     },
     "max_record": {
@@ -490,6 +492,25 @@
       ],
       "accepted_bytes": 2100,
       "expected": "close"
+    },
+    "version_error": {
+      "receiver": "companion",
+      "error": "00037f0202",
+      "expected": "stop",
+      "note": "An unauthenticated hint. The Companion sends no net-v1 item, no plaintext link and no retry of its own.",
+      "outcome": {
+        "reason": 2,
+        "fallback": null,
+        "versions": [
+          2
+        ],
+        "retry": "person"
+      },
+      "v1_item": {
+        "note": "the same error item with item version 1",
+        "wire": "00037f0102",
+        "expected": "close"
+      }
     },
     "x25519": {
       "rule": "A share with bit 255 set or u >= p closes before X25519. Otherwise a share the X25519 library refuses, or an all-zero Z, closes.",
@@ -565,7 +586,226 @@
   },
   "errors": {
     "busy": "00037f0201",
+    "version": "00037f0202",
     "closed": "00037f0209"
+  },
+  "management": {
+    "apps": [
+      {
+        "app_id": "101112131415161718191a1b1c1d1e1f",
+        "app_name": "Vector app 1"
+      },
+      {
+        "app_id": "202122232425262728292a2b2c2d2e2f",
+        "app_name": "Vector app 2"
+      },
+      {
+        "app_id": "303132333435363738393a3b3c3d3e3f",
+        "app_name": "Vector app 3"
+      },
+      {
+        "app_id": "404142434445464748494a4b4c4d4e4f",
+        "app_name": "Vector app 4"
+      }
+    ],
+    "base": {
+      "listening": true,
+      "port": 47820,
+      "ble": false,
+      "session": null,
+      "pairing": false,
+      "pair_failures": 1,
+      "locked_ms": 0
+    },
+    "steps": [
+      {
+        "note": "net.list over USB shows four Pairings",
+        "carrier": "usb",
+        "request": {
+          "m": "net.list"
+        },
+        "response": {
+          "m": "net.list",
+          "ok": true,
+          "listening": true,
+          "port": 47820,
+          "ble": false,
+          "session": null,
+          "pairing": false,
+          "pair_failures": 1,
+          "locked_ms": 0,
+          "paired": 4,
+          "free": 0,
+          "pairings": [
+            {
+              "app_id": "101112131415161718191a1b1c1d1e1f",
+              "app_name": "Vector app 1"
+            },
+            {
+              "app_id": "202122232425262728292a2b2c2d2e2f",
+              "app_name": "Vector app 2"
+            },
+            {
+              "app_id": "303132333435363738393a3b3c3d3e3f",
+              "app_name": "Vector app 3"
+            },
+            {
+              "app_id": "404142434445464748494a4b4c4d4e4f",
+              "app_name": "Vector app 4"
+            }
+          ]
+        }
+      },
+      {
+        "note": "net.pair over USB with four Pairings is full",
+        "carrier": "usb",
+        "request": {
+          "m": "net.pair"
+        },
+        "response": {
+          "m": "net.pair",
+          "ok": false,
+          "reason": "full",
+          "error": "Four apps are paired. Forget one first."
+        }
+      },
+      {
+        "note": "net.forget with an app_id removes one Pairing",
+        "carrier": "usb",
+        "request": {
+          "m": "net.forget",
+          "app_id": "202122232425262728292a2b2c2d2e2f"
+        },
+        "response": {
+          "m": "net.forget",
+          "ok": true,
+          "listening": true,
+          "port": 47820,
+          "ble": false,
+          "session": null,
+          "pairing": false,
+          "pair_failures": 1,
+          "locked_ms": 0,
+          "paired": 3,
+          "removed": 1
+        }
+      },
+      {
+        "note": "the same request again removes none and still succeeds",
+        "carrier": "usb",
+        "request": {
+          "m": "net.forget",
+          "app_id": "202122232425262728292a2b2c2d2e2f"
+        },
+        "response": {
+          "m": "net.forget",
+          "ok": true,
+          "listening": true,
+          "port": 47820,
+          "ble": false,
+          "session": null,
+          "pairing": false,
+          "pair_failures": 1,
+          "locked_ms": 0,
+          "paired": 3,
+          "removed": 0
+        }
+      },
+      {
+        "note": "net.pair over USB opens a window now that a slot is free",
+        "carrier": "usb",
+        "request": {
+          "m": "net.pair"
+        },
+        "response": {
+          "m": "net.pair",
+          "ok": true,
+          "listening": true,
+          "port": 47820,
+          "ble": false,
+          "session": null,
+          "pairing": true,
+          "pair_failures": 1,
+          "locked_ms": 0,
+          "paired": 3
+        }
+      },
+      {
+        "note": "net.forget over Wi-Fi is USB-only",
+        "carrier": "wifi",
+        "request": {
+          "m": "net.forget",
+          "app_id": "101112131415161718191a1b1c1d1e1f"
+        },
+        "response": {
+          "m": "net.forget",
+          "ok": false,
+          "reason": "usb-only",
+          "error": "Only over USB"
+        }
+      },
+      {
+        "note": "net.list over BLE is USB-only",
+        "carrier": "ble",
+        "request": {
+          "m": "net.list"
+        },
+        "response": {
+          "m": "net.list",
+          "ok": false,
+          "reason": "usb-only",
+          "error": "Only over USB"
+        }
+      },
+      {
+        "note": "net.forget with no app_id and no all is refused",
+        "carrier": "usb",
+        "request": {
+          "m": "net.forget"
+        },
+        "response": {
+          "m": "net.forget",
+          "ok": false,
+          "reason": "args",
+          "error": "Name an app_id, or send all:true"
+        }
+      },
+      {
+        "note": "net.forget with an app_id that is not 32 lowercase hex is refused",
+        "carrier": "usb",
+        "request": {
+          "m": "net.forget",
+          "app_id": "202122232425262728292A2B2C2D2E2F"
+        },
+        "response": {
+          "m": "net.forget",
+          "ok": false,
+          "reason": "args",
+          "error": "Invalid app_id"
+        }
+      },
+      {
+        "note": "net.forget with all:true wipes the rest and clears the lockout",
+        "carrier": "usb",
+        "request": {
+          "m": "net.forget",
+          "all": true
+        },
+        "response": {
+          "m": "net.forget",
+          "ok": true,
+          "listening": true,
+          "port": 47820,
+          "ble": false,
+          "session": null,
+          "pairing": false,
+          "pair_failures": 0,
+          "locked_ms": 0,
+          "paired": 0,
+          "removed": 3
+        }
+      }
+    ]
   },
   "ble": {
     "service": "6198f058-afef-4469-b47f-07315672e2dd",

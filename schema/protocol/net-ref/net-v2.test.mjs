@@ -6,11 +6,11 @@ import {
   derive, handshake, parseHandshake, acceptKey, share, x25519, sessionKeys,
   RecordSender, RecordReceiver, fragment, Reassembler, receiveLimit, creditValue, gatt,
   MAX_ITEM, MIN_INITIAL_CREDIT, FORMAT_RANGES, nameAllowed, PeerBackoff, COUNTED, NOT_COUNTED,
-  HANGUL_FILLERS, closeOutcome, PairFailures,
+  HANGUL_FILLERS, closeOutcome, PairFailures, PairingStore, manage, FULL_ERROR,
 } from './net-v2.mjs';
 import { buildNameVectors, readNameVectors, serialize, namesPath } from './name-vectors.mjs';
 import { readFileSync } from 'node:fs';
-import { inputs, goldenFrames, pairing, session, buildVectors, readVectors } from './vectors-v2.mjs';
+import { inputs, goldenFrames, pairing, session, buildVectors, readVectors, managementVectors } from './vectors-v2.mjs';
 
 const fixture = readVectors();
 const pair = pairing();
@@ -85,6 +85,7 @@ test('net-v2: non-contributory X25519 shares close the handshake', () => {
 test('net-v2: handshake items carry version 2 and refuse net-v1 items', () => {
   for (const wire of Object.values(fixture.session.wire)) assert.equal(bytes(wire)[3], 2);
   assert.equal(fixture.errors.busy, '00037f0201');
+  assert.equal(fixture.errors.version, '00037f0202');
   assert.equal(fixture.errors.closed, '00037f0209');
   assert.throws(() => handshake(0x7f, Buffer.from([10])), /invalid error/);
   const v1 = Buffer.from(bytes(fixture.session.wire.proof));
@@ -421,4 +422,42 @@ test('names: the shared name vectors match the generator and the net-v2 table', 
   assert.deepEqual(shared.hangul_fillers, HANGUL_FILLERS.map((cp) => cp.toString(16)));
   for (const { label, name } of shared.accepted) assert.equal(nameAllowed(name), true, label);
   for (const { label, name } of shared.rejected) assert.equal(nameAllowed(name), false, label);
+});
+
+test('net-v2: net.list and net.forget manage Pairings, and only over USB', () => {
+  const { apps, base, steps } = managementVectors();
+  const store = new PairingStore();
+  apps.forEach((app, i) => store.add({ companionId: bytes(app.app_id), name: app.app_name, ltk: Buffer.alloc(32, i + 1) }));
+  assert.equal(store.full, true);
+  assert.throws(() => store.add({ companionId: Buffer.alloc(16, 9), name: 'Fifth', ltk: Buffer.alloc(32) }), /full/);
+  for (const { note, carrier, request, response } of steps) {
+    assert.deepEqual(manage(store, request, carrier, base), response, note);
+  }
+  assert.deepEqual(fixture.management, managementVectors());
+  const [list, full, one, again, pair, wifi, ble, bare, upper, all] = steps.map((step) => step.response);
+  assert.equal(list.free, 0);
+  assert.deepEqual(list.pairings.map((entry) => entry.app_name),
+    ['Vector app 1', 'Vector app 2', 'Vector app 3', 'Vector app 4']);
+  assert.deepEqual([full.ok, full.reason, full.error], [false, 'full', FULL_ERROR]);
+  assert.ok(Buffer.byteLength(FULL_ERROR) <= 96);
+  assert.deepEqual([one.ok, one.removed, one.paired, one.pair_failures], [true, 1, 3, 1]);
+  assert.deepEqual([again.ok, again.removed, again.paired], [true, 0, 3]);
+  assert.deepEqual([pair.ok, pair.pairing], [true, true]);
+  for (const refused of [wifi, ble]) assert.deepEqual([refused.ok, refused.reason, refused.error], [false, 'usb-only', 'Only over USB']);
+  for (const refused of [bare, upper]) assert.deepEqual([refused.ok, refused.reason], [false, 'args']);
+  assert.deepEqual([all.ok, all.removed, all.paired, all.pair_failures, all.locked_ms], [true, 3, 0, 0, 0]);
+});
+
+test('net-v2: forgetting one Pairing frees exactly one slot and keeps the others', () => {
+  const store = new PairingStore();
+  const id = (n) => Buffer.alloc(16, n);
+  for (let n = 1; n <= 4; n++) store.add({ companionId: id(n), name: `App ${n}`, ltk: Buffer.alloc(32, n) });
+  assert.throws(() => store.add({ companionId: id(1), name: 'Again', ltk: Buffer.alloc(32) }), /full/);
+  assert.equal(store.forget(id(2).toString('hex')), 1);
+  assert.equal(store.ltk(id(2)), undefined);
+  assert.ok(store.ltk(id(3)).equals(Buffer.alloc(32, 3)));
+  store.add({ companionId: id(5), name: 'App 5', ltk: Buffer.alloc(32, 5) });
+  assert.deepEqual(store.list().map((entry) => entry.app_name), ['App 1', 'App 3', 'App 4', 'App 5']);
+  assert.equal(store.forgetAll(), 4);
+  assert.equal(store.count, 0);
 });
