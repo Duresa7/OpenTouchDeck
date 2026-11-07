@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" build
 
-      - name: Test Firmware file loaders, key events, link carriers, Assets, Tile geometry and td_ui_core on the host
+      - name: Test Firmware file loaders, key events, link carriers, Assets, Tile geometry, td_ui_core and net-v2 on the host
         # After the build: the LittleFS test compiles the pinned managed component it fetched.
         # The IDF virtualenv has pip; the system Python in this image does not.
         shell: bash
@@ -65,6 +65,7 @@ jobs:
           python -B firmware/tools/test_playback.py
           python -B firmware/tools/test_gif_ui.py
           python -B firmware/tools/test_ui_core.py
+          python -B firmware/tools/test_netlink.py
           TD_GUARD_NORMAL_BUILD="$FIRMWARE_BUILD" python -B firmware/tools/test_radio_guard.py
 
       - name: Check the firmware is esp32s3 and radio-free
