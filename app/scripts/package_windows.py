@@ -21,6 +21,9 @@ FEED = "https://github.com/Duresa7/OpenTouchDeck/releases/download"
 TEST_HOOK_MARKERS = (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts", b"--test-real-device-console")
 BUNDLE = "touchdeck.tdfw"
 RADIO_BUNDLE = "touchdeck-radio.tdfw"
+# The radio build is embedded in the Companion and published as a release asset; the installer copies only the normal
+# bundle into resources, so the radio bundle stays out of the payload.
+RADIO_FOLDER = Path("build/radio-firmware")
 
 
 def build_environment(env=None):
@@ -134,7 +137,7 @@ def firmware(out, revision, lock_path):
         run([sys.executable, idf, "-C", ROOT / "firmware", "-B", build, "size", "--format", "json2",
              "--output-file", size])
         audit = audit_radio_build(build, size)
-        bundle, manifest = pack(build, folder, RADIO_BUNDLE, radio=True)
+        bundle, manifest = pack(build, out / RADIO_FOLDER, RADIO_BUNDLE, radio=True)
         radio = {"source_revision": revision, "bundle": bundle.name,
                  "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": audit}
         return normal, radio
@@ -157,7 +160,8 @@ def prebuilt_firmware(out, revision, source, radio_source=None):
               "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": None}
     if radio_source is None:
         return normal, None
-    bundle = folder / RADIO_BUNDLE
+    (out / RADIO_FOLDER).mkdir(parents=True)
+    bundle = out / RADIO_FOLDER / RADIO_BUNDLE
     shutil.copyfile(radio_source, bundle)
     manifest = bundle_tool().check_bundle(bundle)
     if not manifest.get("radio"):
@@ -245,7 +249,7 @@ def build(args):
     (payload / "licenses").mkdir()
     shutil.copyfile(ROOT / "app/icons/builtin/LICENSE-lucide.txt", payload / "licenses/LICENSE-lucide.txt")
     write_json(payload / "install-manifest.json", {"source_revision": revision, "version": version, "firmware": fw,
-                                                   "radio_firmware": radio})
+                                                   "radio_firmware": radio and {**radio, "embedded_in": "td-companion.exe"}})
 
     env = build_environment()
     for key in ("CARGO_BUILD_TARGET", "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS"):
@@ -253,9 +257,13 @@ def build(args):
     env["RUSTFLAGS"] = "-C target-feature=+crt-static"
     env["CARGO_TARGET_DIR"] = str(out / "build/app")
     env["TOUCHDECK_FIRMWARE_BUNDLE"] = str(payload / "firmware" / fw["bundle"])
-    env.pop("TOUCHDECK_RADIO_FIRMWARE_BUNDLE", None)
+    env["TOUCHDECK_FIRMWARE_BUNDLE_SHA256"] = fw["sha256"]
+    for key in ("TOUCHDECK_RADIO_FIRMWARE_BUNDLE", "TOUCHDECK_RADIO_FIRMWARE_BUNDLE_SHA256"):
+        env.pop(key, None)
     if radio:
-        env["TOUCHDECK_RADIO_FIRMWARE_BUNDLE"] = str(payload / "firmware" / radio["bundle"])
+        # build.rs embeds the file only when its SHA-256 is the one recorded in the manifests.
+        env["TOUCHDECK_RADIO_FIRMWARE_BUNDLE"] = str(out / RADIO_FOLDER / radio["bundle"])
+        env["TOUCHDECK_RADIO_FIRMWARE_BUNDLE_SHA256"] = radio["sha256"]
     env["CSC_IDENTITY_AUTO_DISCOVERY"] = "false"
     key_path = None
     try:
@@ -303,7 +311,7 @@ def build(args):
                   "electron-builder": json.loads((ELECTRON / "node_modules/electron-builder/package.json").read_text(encoding="utf-8"))["version"]}})
     shutil.copyfile(payload / "firmware" / fw["bundle"], assets / fw["bundle"])
     if radio:
-        shutil.copyfile(payload / "firmware" / radio["bundle"], assets / radio_asset(version))
+        shutil.copyfile(out / RADIO_FOLDER / radio["bundle"], assets / radio_asset(version))
     paths = sorted(path for path in assets.iterdir() if path.is_file())
     (assets / "SHA256SUMS").write_text("".join(f"{sha(path.read_bytes())}  {path.name}\n" for path in paths),
                                      encoding="utf-8", newline="\n")

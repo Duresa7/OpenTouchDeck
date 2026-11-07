@@ -56,6 +56,16 @@ fn embed_firmware(variable: &str, file: &str, radio: bool) {
         }
         None => Vec::new(),
     };
+    // The release recipe names the SHA-256 it recorded in the release manifest, so the Companion embeds exactly
+    // that file.
+    let pinned = format!("{variable}_SHA256");
+    println!("cargo:rerun-if-env-changed={pinned}");
+    if let Some(want) = env::var_os(&pinned) {
+        let got = td_link::bundle::sha256(&bytes);
+        if bytes.is_empty() || !got.eq_ignore_ascii_case(&want.to_string_lossy()) {
+            panic!("{variable} has SHA-256 {got}, not the {pinned} the release recorded");
+        }
+    }
     fs::write(
         Path::new(&env::var_os("OUT_DIR").unwrap()).join(file),
         bytes,

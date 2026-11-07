@@ -125,12 +125,17 @@ jobs:
             [ "$version" = "${GITHUB_REF_NAME#v}" ]
           fi
           # The installer carries the normal build; the opt-in radio build ships beside it as its own file.
-          jq -e --arg sha "$EXPECTED_SHA256" --arg revision "$SOURCE_REVISION" '
+          # A missing firmware record refuses: its manifest must be there, without the radio mark.
+          radio="touchdeck-radio-$version.tdfw"
+          jq -e --arg sha "$EXPECTED_SHA256" --arg revision "$SOURCE_REVISION" --arg radio "$radio" '
             .test_signing == false and .source_revision == $revision and
             ((has("installer_sha256") | not) or .installer_sha256 == $sha) and
-            (.firmware.manifest.radio // false) == false and .radio_firmware.manifest.radio == true and
-            .radio_firmware.asset == "touchdeck-radio-\(.version).tdfw"
+            .firmware.bundle == "touchdeck.tdfw" and (.firmware.manifest | type) == "object" and
+            (.firmware.manifest.radio // false) == false and
+            .radio_firmware.asset == $radio and .radio_firmware.manifest.radio == true
           ' release-assets/release-manifest.json >/dev/null
+          echo "$(jq -r .firmware.sha256 release-assets/release-manifest.json)  release-assets/touchdeck.tdfw" | sha256sum --strict -c -
+          echo "$(jq -r .radio_firmware.sha256 release-assets/release-manifest.json)  release-assets/$radio" | sha256sum --strict -c -
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
       - name: Sign the checked installer
         env:
@@ -229,7 +234,8 @@ jobs:
           # The normal build stays the installer's Firmware, and the radio build is a separate, named asset.
           radio="touchdeck-radio-$version.tdfw"
           jq -e --arg radio "$radio" '
-            .firmware.bundle == "touchdeck.tdfw" and (.firmware.manifest.radio // false) == false and
+            .firmware.bundle == "touchdeck.tdfw" and (.firmware.manifest | type) == "object" and
+            (.firmware.manifest.radio // false) == false and
             .radio_firmware.asset == $radio and .radio_firmware.manifest.radio == true
           ' release-manifest.json >/dev/null
           echo "$(jq -r .firmware.sha256 release-manifest.json)  touchdeck.tdfw" | sha256sum --strict -c -

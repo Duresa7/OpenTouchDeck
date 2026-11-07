@@ -250,7 +250,7 @@ A session can install only two kinds of Firmware bundle: the one bundled with th
 
 Implementation decisions for #77:
 
-- `TOUCHDECK_FIRMWARE_BUNDLE` selects the `.tdfw` embedded at build time, and `TOUCHDECK_RADIO_FIRMWARE_BUNDLE` the radio build's. Source builds without them report `firmware.bundle_invalid` for the bundled selection of that build; they never substitute mock Firmware on real ports. When one is set, `build.rs` runs `Bundle::parse` on the file and fails the build if the bundle is malformed or is the other build: the normal variable refuses a manifest with `"radio": true`, and the radio variable refuses one without it.
+- `TOUCHDECK_FIRMWARE_BUNDLE` selects the `.tdfw` embedded at build time, and `TOUCHDECK_RADIO_FIRMWARE_BUNDLE` the radio build's. Source builds without them report `firmware.bundle_invalid` for the bundled selection of that build; they never substitute mock Firmware on real ports. When one is set, `build.rs` runs `Bundle::parse` on the file and fails the build if the bundle is malformed or is the other build: the normal variable refuses a manifest with `"radio": true`, and the radio variable refuses one without it. When `<variable>_SHA256` is also set, as the release recipe does, `build.rs` also fails unless the file has that SHA-256.
 - Versions that cannot be ordered as semantic versions require confirmation unless the version strings match.
 - The Device manager reserves the target, lends its existing session for OTA, closes the session before ROM recovery or reconnect, and resumes discovery on every exit path.
 - A newly installed board uses `needs-setup`, overriding the ordinary discovery default of `ready`.

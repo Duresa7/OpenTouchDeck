@@ -88,7 +88,29 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 result = self.run_shell('Check build hash and version', prelude)
                 self.assertEqual(result.returncode == 0, field is None, result.stderr)
                 self.manifest = original
+        # The firmware record and both bundles are checked before anything is signed.
+        original = json.loads(json.dumps(self.manifest))
+        cases = {
+            'no firmware record': lambda: self.manifest.pop('firmware'),
+            'a firmware record without its manifest': lambda: self.manifest['firmware'].pop('manifest'),
+            'the installer bundle under another name': lambda: self.manifest['firmware'].update(bundle='other.tdfw'),
+            'a normal bundle that is not the one built': lambda: setattr(self, 'normal', b'tampered normal'),
+            'a radio bundle that is not the one built': lambda: setattr(self, 'radio', b'tampered radio'),
+        }
+        for case, change in cases.items():
+            with self.subTest(case=case):
+                self.manifest, self.normal, self.radio = json.loads(json.dumps(original)), b'synthetic normal firmware', b'synthetic radio firmware'
+                change()
+                for path in self.assets.iterdir():
+                    path.unlink()
+                self.prepare()
+                result = self.run_shell('Check build hash and version', prelude)
+                self.assertNotEqual(result.returncode, 0, case)
+        self.manifest, self.normal, self.radio = original, b'synthetic normal firmware', b'synthetic radio firmware'
+        for path in self.assets.iterdir():
+            path.unlink()
         self.prepare()
+        self.assertEqual(self.run_shell('Check build hash and version', prelude).returncode, 0)
         self.env['GITHUB_REF_NAME'] = 'v2.0.0'
         self.assertNotEqual(self.run_shell('Check build hash and version', prelude).returncode, 0)
 
@@ -136,6 +158,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         original = json.loads(json.dumps(self.manifest))
         cases = {
             'the installer firmware is the radio build': ('firmware', dict(original['firmware'], manifest=dict(radio=True))),
+            'no firmware record': ('firmware', None),
+            'a firmware record without its manifest': ('firmware', dict(original['firmware'], manifest=None)),
             'no radio build': ('radio_firmware', None),
             'the radio file is the normal build': ('radio_firmware', dict(original['radio_firmware'], manifest={})),
             'the radio file has another name': ('radio_firmware', dict(original['radio_firmware'], asset='touchdeck-radio.tdfw')),

@@ -56,6 +56,9 @@ class PrebuiltFirmwareTests(unittest.TestCase):
     def test_both_bundles_land_apart_and_each_is_its_own_build(self):
         normal, radio = package.prebuilt_firmware(self.out, "a" * 40, NORMAL, RADIO)
         self.assertEqual((normal["bundle"], radio["bundle"]), ("touchdeck.tdfw", "touchdeck-radio.tdfw"))
+        # Only the normal build is installed as a file; the radio build stays out of the payload.
+        self.assertEqual(sorted(p.name for p in (self.out / "payload/firmware").iterdir()), ["touchdeck.tdfw"])
+        self.assertTrue((self.out / package.RADIO_FOLDER / "touchdeck-radio.tdfw").is_file())
         self.assertTrue(radio["manifest"]["radio"])
         self.assertEqual(radio["sha256"], package.sha(RADIO.read_bytes()))
         self.assertEqual(package.radio_asset("1.2.3"), "touchdeck-radio-1.2.3.tdfw")
