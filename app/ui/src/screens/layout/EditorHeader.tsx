@@ -7,7 +7,7 @@ import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { saveState, type EditorStore } from '../../lib/editor/store.ts';
 import type { Orientation } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
-import { statusOf } from '../home-model.ts';
+import { deviceStatus } from '../home-model.ts';
 import { DevicePanel } from './DevicePanel.tsx';
 import { useEditorState } from './editor.ts';
 import { Tip } from './Tip.tsx';
@@ -86,7 +86,7 @@ export interface EditorHeaderProps {
 
 export function EditorHeader({ store, device, onImport, onExport }: EditorHeaderProps) {
   const name = device.name ?? 'Unnamed Device';
-  const status = statusOf(device.link.state);
+  const status = deviceStatus(device);
   const orientation = useEditorState(store, (s) => s.orientation);
   const mode = useEditorState(store, (s) => s.mode);
   const busy = useEditorState(store, (s) => s.busy);

@@ -2,8 +2,8 @@
 //! list with what it knows, and probes ports that are due. A port that didn't answer as a
 //! Device is probed again with backoff.
 use super::{
-    BoardProbe, Capabilities, DeviceAdded, DeviceId, DeviceSummary, Entry, FirmwareInfo, Inner,
-    LinkState, LostReason, NewBoard, NewBoardAdded, NewBoardRemoved, PortInfo, PortRecord,
+    BoardProbe, Capabilities, Carrier, DeviceAdded, DeviceId, DeviceSummary, Entry, FirmwareInfo,
+    Inner, LinkState, LostReason, NewBoard, NewBoardAdded, NewBoardRemoved, PortInfo, PortRecord,
     PortSource, PortStatus, Registry, SetupState, actor,
 };
 use std::{
@@ -52,10 +52,10 @@ pub(super) fn run(inner: Arc<Inner>) {
 
 /// A Device that answered, with the session that becomes its link.
 pub(super) struct Found {
-    session: Session,
-    incoming: td_link::IncomingReceiver,
-    identity: Identity,
-    hello: td_core::Hello,
+    pub session: Session,
+    pub incoming: td_link::IncomingReceiver,
+    pub identity: Identity,
+    pub hello: td_core::Hello,
 }
 pub(super) enum Probed {
     Device(Box<Found>),
@@ -245,6 +245,14 @@ impl Inner {
         let Some(entry) = reg.devices.get_mut(id) else {
             return;
         };
+        // A Wi-Fi link isn't the port's; it keeps going.
+        if entry
+            .actor
+            .as_ref()
+            .is_some_and(|a| a.carrier == Carrier::Wifi)
+        {
+            return;
+        }
         let linked = entry.actor.take().is_some();
         entry.auto = true;
         let link = if linked || matches!(entry.summary.link, LinkState::Lost { .. }) {
@@ -257,6 +265,8 @@ impl Inner {
             LinkState::Offline
         };
         self.set_link(reg, id, link);
+        // A paired Device falls back to Wi-Fi.
+        self.wifi_due_now(reg, id);
     }
     /// Records a probe's result.
     pub(super) fn apply(self: &Arc<Self>, port: &str, id: &DeviceId, probed: Probed) {
@@ -269,12 +279,7 @@ impl Inner {
         }
         let record = reg.ports.get_mut(port).expect("checked above");
         record.probed_ms = Some(crate::now_ms());
-        let Found {
-            session,
-            incoming,
-            identity,
-            hello,
-        } = match probed {
+        let found = match probed {
             Probed::Device(found) => *found,
             Probed::Unavailable => {
                 retry(record);
@@ -315,20 +320,42 @@ impl Inner {
             }
         };
         record.status = PortStatus::Device {
-            protocol: identity.protocol,
-            version: identity.version.clone(),
+            protocol: found.identity.protocol,
+            version: found.identity.version.clone(),
         };
         record.backoff = FIRST_RETRY;
         let stable = record.stable;
         if let Some(usb) = record.info.usb_serial.as_deref()
-            && identity.id.is_some()
-            && !identity.matches_usb_serial(usb)
+            && found.identity.id.is_some()
+            && !found.identity.matches_usb_serial(usb)
         {
             eprintln!(
                 "Companion: {port} reports Device id {:?} but its USB serial is {usb}; using the USB serial.",
-                identity.id
+                found.identity.id
             );
         }
+        // USB wins: a Wi-Fi link gives way.
+        let old = self.link_up(&mut reg, id, port.into(), Carrier::Usb, stable, found);
+        drop(reg);
+        drop(old);
+    }
+    /// Starts the actor for a Device that answered on `carrier`, and records it as connected
+    /// through `port`. Returns the actor it replaced, to drop after the lock.
+    pub(super) fn link_up(
+        self: &Arc<Self>,
+        reg: &mut Registry,
+        id: &DeviceId,
+        port: String,
+        carrier: Carrier,
+        stable: bool,
+        found: Found,
+    ) -> Option<actor::Handle> {
+        let Found {
+            session,
+            incoming,
+            identity,
+            hello,
+        } = found;
         if reg.boards.remove(id).is_some() {
             self.events.publish(&NewBoardRemoved { id: id.clone() });
         }
@@ -339,14 +366,14 @@ impl Inner {
         let handle = actor::spawn(
             self.clone(),
             id.clone(),
-            generation,
+            (generation, carrier),
             session_id,
             session,
             incoming,
             mirror,
         );
         let link = LinkState::Connected {
-            port: port.into(),
+            port,
             since_ms: session_id,
             protocol: identity.protocol,
         };
@@ -366,11 +393,12 @@ impl Inner {
         let capabilities = identity.capabilities.as_ref().map(Capabilities::from);
         match reg.devices.get_mut(id) {
             Some(entry) => {
-                entry.actor = Some(handle);
+                let old = entry.actor.replace(handle);
                 let saved_name = entry.summary.name.clone();
-                self.update(&mut reg, id, |d| {
+                self.update(reg, id, |d| {
                     d.name = identity.name.clone().or(saved_name);
                     d.link = link;
+                    d.carrier = Some(carrier);
                     d.firmware = Some(firmware);
                     d.diagnostics = Some(diagnostics);
                     d.capabilities = capabilities;
@@ -378,8 +406,9 @@ impl Inner {
                     d.stable_id = stable;
                 });
                 if identity.name.is_some() {
-                    self.save(&reg);
+                    self.save(reg);
                 }
+                old
             }
             None => {
                 let summary = DeviceSummary {
@@ -392,6 +421,7 @@ impl Inner {
                         SetupState::Ready
                     },
                     link,
+                    carrier: Some(carrier),
                     firmware: Some(firmware),
                     diagnostics: Some(diagnostics),
                     capabilities,
@@ -413,7 +443,8 @@ impl Inner {
                         reported_page: None,
                     },
                 );
-                self.save(&reg);
+                self.save(reg);
+                None
             }
         }
     }
@@ -421,8 +452,9 @@ impl Inner {
     /// serial is a New board.
     fn classify(&self, reg: &mut Registry, port: &str, id: &DeviceId, board: BoardProbe) {
         if let Some(entry) = reg.devices.get(id) {
-            // A lost link keeps retrying as `lost`; it was a Device a moment ago.
-            if matches!(entry.summary.link, LinkState::Lost { .. }) {
+            // A lost link keeps retrying as `lost`; it was a Device a moment ago. A Wi-Fi
+            // link keeps its state.
+            if matches!(entry.summary.link, LinkState::Lost { .. }) || entry.actor.is_some() {
                 return;
             }
             let link = match board {
@@ -473,7 +505,10 @@ impl Inner {
             at_ms: crate::now_ms(),
         };
         self.set_link(&mut reg, id, link);
-        if let Some(record) = reg.ports.values_mut().find(|r| &r.id == id) {
+        if actor.as_ref().is_some_and(|a| a.carrier == Carrier::Wifi) {
+            super::wifi::relinked(&mut reg, id, wait);
+            self.wifi.wake.kick();
+        } else if let Some(record) = reg.ports.values_mut().find(|r| &r.id == id) {
             // The Device may be restarting, so silence gets the boot grace again.
             let now = Instant::now();
             record.status = PortStatus::Pending;
@@ -496,9 +531,10 @@ fn wants_probe(reg: &Registry, id: &DeviceId) -> bool {
     if reg.updating.contains(id) {
         return false;
     }
+    // A Device linked over Wi-Fi is still probed on USB, which wins.
     reg.devices
         .get(id)
-        .is_none_or(|e| e.auto && e.actor.is_none())
+        .is_none_or(|e| e.auto && e.actor.as_ref().is_none_or(|a| a.carrier == Carrier::Wifi))
 }
 fn retry(record: &mut PortRecord) {
     record.due = Instant::now() + record.backoff;

@@ -3,7 +3,8 @@
 //! Layout and Asset work borrows the same session (see `crate::link`), since the port can
 //! only be open once.
 use super::{
-    DeviceConsole, DeviceEvent, DeviceId, DeviceKeyMirror, Inner, InputFactory, KeyMirrorState,
+    Carrier, DeviceConsole, DeviceEvent, DeviceId, DeviceKeyMirror, Inner, InputFactory,
+    KeyMirrorState,
 };
 use std::{
     sync::{
@@ -21,6 +22,7 @@ pub type Work = Box<dyn FnOnce(&Session) + Send>;
 /// Dropping the handle ends the work thread, which closes the session and frees the port.
 pub(super) struct Handle {
     pub connection: u64,
+    pub carrier: Carrier,
     pub opened: Instant,
     work: Sender<Work>,
     session: Arc<Session>,
@@ -38,7 +40,7 @@ impl Handle {
 pub(super) fn spawn(
     inner: Arc<Inner>,
     id: DeviceId,
-    connection: u64,
+    (connection, carrier): (u64, Carrier),
     session_id: u64,
     session: Session,
     incoming: td_link::IncomingReceiver,
@@ -82,6 +84,7 @@ pub(super) fn spawn(
         .expect("the Device forwarder starts");
     Handle {
         connection,
+        carrier,
         opened: Instant::now(),
         work,
         session: shared,

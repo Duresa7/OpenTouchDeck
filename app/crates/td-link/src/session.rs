@@ -132,6 +132,9 @@ impl Iterator for IncomingReceiver {
 pub enum LinkError {
     Timeout(Duration),
     Closed(String),
+    /// The request went out and the session ended before its reply came. The outcome is
+    /// unknown: the Device may not have got it, or may have acted and lost the reply.
+    Unanswered(String),
     Busy,
     TransferBusy,
     ConsoleBusy,
@@ -144,6 +147,10 @@ impl fmt::Display for LinkError {
         match self {
             LinkError::Timeout(after) => write!(f, "no reply within {} ms", after.as_millis()),
             LinkError::Closed(reason) => write!(f, "link closed: {reason}"),
+            LinkError::Unanswered(reason) => write!(
+                f,
+                "the link closed before the Device answered, so whether it did this is unknown: {reason}"
+            ),
             LinkError::Busy => f.write_str("255 requests are already waiting"),
             LinkError::TransferBusy => f.write_str("a transfer is already running"),
             LinkError::ConsoleBusy => f.write_str("a layout state reply is still pending"),
@@ -326,7 +333,9 @@ impl Shared {
                 forget();
                 Err(LinkError::Timeout(timeout))
             }
-            Err(RecvTimeoutError::Disconnected) => Err(self.closed()),
+            Err(RecvTimeoutError::Disconnected) => {
+                Err(LinkError::Unanswered(self.reason.lock().unwrap().clone()))
+            }
         }
     }
 

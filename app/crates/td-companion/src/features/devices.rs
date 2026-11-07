@@ -33,6 +33,10 @@ pub enum DeviceError {
     Timeout,
     #[error("The link to the Device failed: {reason}")]
     Link { reason: String },
+    #[error(
+        "The link closed before the Device answered, so it isn't known whether it did this. Check the Device, then try again if it didn't: {reason}"
+    )]
+    UnknownOutcome { reason: String },
     #[error("This needs newer Firmware on the Device.")]
     NeedsFirmware { field: &'static str },
     #[error("The console line isn't on the read-only allowlist.")]
@@ -47,6 +51,7 @@ impl ApiError for DeviceError {
         "device.connected",
         "device.timeout",
         "device.link",
+        "device.unknown_outcome",
         "device.needs_firmware",
         "console.forbidden",
     ];
@@ -57,7 +62,7 @@ impl ApiError for DeviceError {
                 StatusCode::CONFLICT
             }
             Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
-            Self::Link { .. } => StatusCode::BAD_GATEWAY,
+            Self::Link { .. } | Self::UnknownOutcome { .. } => StatusCode::BAD_GATEWAY,
             Self::ConsoleForbidden => StatusCode::FORBIDDEN,
             Self::Common(e) => e.status(),
         }
@@ -69,6 +74,7 @@ impl ApiError for DeviceError {
             Self::Connected => "device.connected",
             Self::Timeout => "device.timeout",
             Self::Link { .. } => "device.link",
+            Self::UnknownOutcome { .. } => "device.unknown_outcome",
             Self::NeedsFirmware { .. } => "device.needs_firmware",
             Self::ConsoleForbidden => "console.forbidden",
             Self::Common(e) => e.code(),
@@ -77,7 +83,9 @@ impl ApiError for DeviceError {
     fn details(&self) -> Option<serde_json::Value> {
         match self {
             Self::NotConnected { link } => Some(serde_json::json!({ "link": link })),
-            Self::Link { reason } => Some(serde_json::json!({ "reason": reason })),
+            Self::Link { reason } | Self::UnknownOutcome { reason } => {
+                Some(serde_json::json!({ "reason": reason }))
+            }
             Self::NeedsFirmware { field } => {
                 Some(serde_json::json!({ "field": field, "version": null }))
             }
@@ -98,6 +106,7 @@ impl From<LinkError> for DeviceError {
     fn from(error: LinkError) -> Self {
         match error {
             LinkError::Timeout(_) => Self::Timeout,
+            LinkError::Unanswered(reason) => Self::UnknownOutcome { reason },
             error => Self::Link {
                 reason: error.to_string(),
             },
@@ -373,7 +382,9 @@ impl Endpoint for SettingsPatch {
             .as_deref()
             .is_some_and(|n| !td_link::identity::valid_name(n))
         {
-            return Err(invalid("name is empty, too long or has control characters"));
+            return Err(invalid(
+                "name is empty, too long or has control, format or filler characters",
+            ));
         }
         if patch.brightness.is_some_and(|b| b > BRIGHTNESS_MAX) {
             return Err(invalid("brightness is a percentage from 0 to 100"));
