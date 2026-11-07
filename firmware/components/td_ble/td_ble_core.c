@@ -366,6 +366,8 @@ static td_ble_result_t start(td_ble_core_t *core)
 
 static void stop(td_ble_core_t *core)
 {
+    /* Off is off, even after a failed start that never got the stack running. */
+    core->start_failed = false;
     if (!core->running) {
         return;
     }

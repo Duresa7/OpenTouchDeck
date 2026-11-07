@@ -1125,6 +1125,50 @@ static void test_messages_reject_bad_requests(void)
     cJSON_Delete(reply);
 }
 
+static const char *state_of(const cJSON *reply)
+{
+    const char *s = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(reply, "state"));
+    return s ? s : "";
+}
+
+static void test_failed_start_then_off(void)
+{
+    reset(0);
+    td_ble_core_boot(&CORE);
+    F.stack_start_rc = 5;
+    cJSON *reply = message("{\"m\":\"ble.set\",\"enabled\":true}");
+    CHECK(!ok(reply) && !strcmp(reason(reply), "radio") && !strcmp(state_of(reply), "failed"), "failed start: %s %s",
+          reason(reply), state_of(reply));
+    cJSON_Delete(reply);
+    /* Turning it off after a failed start reads off, not failed. */
+    reply = message("{\"m\":\"ble.set\",\"enabled\":false}");
+    CHECK(ok(reply) && !strcmp(state_of(reply), "off"), "off after a failed start: %s", state_of(reply));
+    CHECK(!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply, "enabled")), "still enabled after off");
+    cJSON_Delete(reply);
+    reply = message("{\"m\":\"ble.state\"}");
+    CHECK(!strcmp(state_of(reply), "off"), "ble.state after off: %s", state_of(reply));
+    cJSON_Delete(reply);
+    /* A later start that works reads starting until the host syncs. */
+    F.stack_start_rc = 0;
+    reply = message("{\"m\":\"ble.set\",\"enabled\":true}");
+    CHECK(ok(reply) && !strcmp(state_of(reply), "starting"), "start after a failure: %s", state_of(reply));
+    cJSON_Delete(reply);
+}
+
+static void test_host_reset_keeps_the_bonds(void)
+{
+    reset(1);
+    add_bond(&HOST_A);
+    boot_synced();
+    td_ble_core_host_reset(&CORE);
+    /* The host is starting again, and the stored bonds are still listed. */
+    cJSON *reply = message("{\"m\":\"ble.state\"}");
+    const cJSON *bonds = cJSON_GetObjectItemCaseSensitive(reply, "bonds");
+    CHECK(!strcmp(state_of(reply), "starting") && cJSON_GetArraySize(bonds) == 1,
+          "after a host reset: %s with %d bonds", state_of(reply), cJSON_GetArraySize(bonds));
+    cJSON_Delete(reply);
+}
+
 static void test_caps(void)
 {
     cJSON *caps = cJSON_CreateObject();
@@ -1158,11 +1202,13 @@ int main(void)
     test_forget();
     test_repeat_pairing_only_in_window();
     test_messages_reject_bad_requests();
+    test_failed_start_then_off();
+    test_host_reset_keeps_the_bonds();
     test_caps();
     if (g_failures) {
         printf("ble core: %d failures\n", g_failures);
         return 1;
     }
-    printf("ble core: 19 tests passed\n");
+    printf("ble core: 21 tests passed\n");
     return 0;
 }
