@@ -47,6 +47,9 @@ removing colons and hyphens and folding ASCII case. A mismatch prevents automati
 association with a saved Device. It is identity, not authentication. This is the
 same factory identity net-v2 uses as `device_id`, never a randomized interface MAC.
 `name` follows the naming rules below. These fields never contain credentials.
+The opt-in radio build also sends `radio:true`, and the normal build sends no
+`radio` field. The Companion takes a missing field as the normal build and picks
+Firmware updates from the same build.
 
 Every capability below except `anim` and `live_images` is required. Bounds are ceilings, not promises of free
 memory. A Device advertises only implemented Tile kinds and formats. Integers

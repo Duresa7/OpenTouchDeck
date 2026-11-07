@@ -132,6 +132,11 @@ static void hello(const cJSON *request, cJSON *reply)
         snprintf(id, sizeof id, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         cJSON_AddStringToObject(reply, "id", id);
         cJSON_AddStringToObject(reply, "name", name);
+#if CONFIG_TD_RADIO_BUILD
+        /* Only the opt-in radio build says so, so the Companion picks its Firmware updates from the radio build too.
+         * The normal build's hello stays as it was. */
+        cJSON_AddBoolToObject(reply, "radio", true);
+#endif
         cJSON *caps = td_link_capabilities();
         if (strcmp(ui_layout_slot(), "portrait") == 0) {
             const int screen[] = {600, 1024};

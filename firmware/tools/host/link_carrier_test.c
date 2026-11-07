@@ -15,6 +15,11 @@
 #include "td_device.h"
 #include "td_recovery.h"
 
+/* test_link_carrier.py builds this test a second time with -DCONFIG_TD_RADIO_BUILD=1, as the radio build sets it. */
+#ifndef CONFIG_TD_RADIO_BUILD
+#define CONFIG_TD_RADIO_BUILD 0
+#endif
+
 /* ---- Host stand-ins: clock, FreeRTOS, console ---- */
 
 static int64_t g_now_ms;
@@ -564,6 +569,24 @@ static void test_online_is_per_carrier(void)
     CHECK(g_usb_len == 0);
 }
 
+/* Only the radio build marks its v2 hello with "radio":true. The v1 hello never carries it. This file is compiled
+ * twice, once with CONFIG_TD_RADIO_BUILD. */
+static void test_hello_marks_the_radio_build(void)
+{
+    start(false);
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    over_usb("{\"m\":\"hello\"}", 1);
+    CHECK(usb_take(&frame, payload) && !has(payload, "\"radio\""));
+    over_usb("{\"m\":\"hello\",\"proto\":2}", 2);
+    CHECK(usb_take(&frame, payload) && has(payload, "\"proto\":2"));
+#if CONFIG_TD_RADIO_BUILD
+    CHECK(has(payload, "\"radio\":true"));
+#else
+    CHECK(!has(payload, "\"radio\""));
+#endif
+}
+
 /* A frame from a carrier the link does not know is dropped, and nothing answers it. */
 static void test_unknown_carrier_dropped(void)
 {
@@ -584,11 +607,12 @@ int main(void)
     test_usb_is_preferred();
     test_online_is_per_carrier();
     test_unknown_carrier_dropped();
+    test_hello_marks_the_radio_build();
     reset();
     if (g_failures) {
         fprintf(stderr, "%d checks failed\n", g_failures);
         return 1;
     }
-    printf("link carrier: 8 tests passed\n");
+    printf("link carrier%s: 9 tests passed\n", CONFIG_TD_RADIO_BUILD ? " (radio build)" : "");
     return 0;
 }
