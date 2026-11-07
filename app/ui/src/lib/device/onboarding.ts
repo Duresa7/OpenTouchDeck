@@ -4,9 +4,10 @@ import type { Companion } from '../companion/client.ts';
 import { toApiError } from '../companion/errors.ts';
 import { readDraft, writeDraft, type DraftStorage } from '../editor/store.ts';
 import { canonical, counts, newLayout, parseLayout, starterLayout, type Layout, type Orientation } from '../layout/model.ts';
+import { offersWifi } from './radio-build.ts';
 import { NAME_BYTES, nameBreak, SPECIAL_CHARACTERS, type DeviceSettingsStore } from './settings.ts';
 
-export type StepId = 'name' | 'orientation' | 'layout' | 'firmware' | 'done';
+export type StepId = 'name' | 'orientation' | 'layout' | 'firmware' | 'wifi' | 'done';
 export type LayoutChoice = 'starter' | 'blank' | 'keep';
 
 export interface Flow {
@@ -16,12 +17,16 @@ export interface Flow {
 
 export type FlowEvent = { type: 'next' } | { type: 'back' } | { type: 'offer'; firmwareFirst: boolean };
 
-const WITHOUT_FIRMWARE: readonly StepId[] = ['name', 'orientation', 'layout', 'done'];
-const FIRMWARE_LAST: readonly StepId[] = ['name', 'orientation', 'layout', 'firmware', 'done'];
-const FIRMWARE_FIRST: readonly StepId[] = ['firmware', 'name', 'orientation', 'layout', 'done'];
+const SETUP: readonly StepId[] = ['name', 'orientation', 'layout'];
 
-export function startFlow({ firmware, firmwareFirst }: { firmware: boolean; firmwareFirst: boolean }): Flow {
-  const steps = !firmware ? WITHOUT_FIRMWARE : firmwareFirst ? FIRMWARE_FIRST : FIRMWARE_LAST;
+/** The steps in order. The Wi-Fi step, only for a Device on the radio build, comes last before done. */
+function stepsOf(firmware: boolean, firmwareFirst: boolean, wifi: boolean): readonly StepId[] {
+  const steps: StepId[] = !firmware ? [...SETUP] : firmwareFirst ? ['firmware', ...SETUP] : [...SETUP, 'firmware'];
+  return wifi ? [...steps, 'wifi', 'done'] : [...steps, 'done'];
+}
+
+export function startFlow({ firmware, firmwareFirst, wifi = false }: { firmware: boolean; firmwareFirst: boolean; wifi?: boolean }): Flow {
+  const steps = stepsOf(firmware, firmwareFirst, wifi);
   return { steps, at: steps[0] };
 }
 
@@ -35,7 +40,7 @@ export function flowStep(flow: Flow, event: FlowEvent): Flow {
     case 'offer': {
       if (flow.steps.includes('firmware')) return flow;
       const first = event.firmwareFirst && index === 0;
-      return { steps: first ? FIRMWARE_FIRST : FIRMWARE_LAST, at: first ? 'firmware' : flow.at };
+      return { steps: stepsOf(true, first, flow.steps.includes('wifi')), at: first ? 'firmware' : flow.at };
     }
     default: {
       const _exhaustive: never = event;
@@ -115,7 +120,7 @@ export function createSetup(deps: SetupDeps) {
   let device = deps.device;
   const v1 = (device.firmware?.protocol ?? 1) < 2;
   const store = createStore<SetupState>()(() => ({
-    flow: startFlow({ firmware: deps.firmware.offered !== null, firmwareFirst: v1 }),
+    flow: startFlow({ firmware: deps.firmware.offered !== null, firmwareFirst: v1, wifi: offersWifi(device) }),
     name: device.name ?? '',
     nameError: null,
     needsFirmware: false,

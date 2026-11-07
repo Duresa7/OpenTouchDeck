@@ -10,7 +10,7 @@ import { createDeviceSettings, nameProblem, type DeviceSettingsDeps, type Device
 const BASE = 'http://127.0.0.1:51234';
 const connected = { state: 'connected' as const, port: 'COM3', since_ms: 0, protocol: 2 };
 const desk = sampleDevice('mock0001', 'Desk', connected);
-const old = { ...sampleDevice('mock0002', 'Old', connected), firmware: { version: '1.2.0', protocol: 1, build: 'fake', recovery: false, update_available: null } };
+const old = { ...sampleDevice('mock0002', 'Old', connected), firmware: { version: '1.2.0', protocol: 1, build: 'fake', recovery: false, update_available: null, channel: 'normal' as const } };
 
 let fake: FakeCompanion;
 let companion: Companion;

@@ -242,14 +242,15 @@ A session can install only two kinds of Firmware bundle: the one bundled with th
 
 - `POST /firmware/bundles/pick` takes `{device}` (the Device or New board id) and opens the dialog on the PC, filtered to `*.tdfw`. It returns `{bundle: BundleInfo | null}`, where `null` means the user cancelled. The Companion parses and checks the file with `Bundle::parse` and keeps it for 10 minutes under a single-use `BundleId` bound to that Device. A different target cannot use it; accepting a Job consumes it, even if the user later declines.
 - A second pick while a dialog is open gets 409 `system.dialog_open`.
-- Firmware routes take `{bundle: "bundled" | BundleId}`.
+- Firmware routes take `{bundle: "bundled" | BundleId, channel?: "normal" | "radio"}`.
+- **Two builds.** The Companion carries the normal build and, in a release, the opt-in radio build with Wi-Fi and Bluetooth. A Device's v2 `hello` says `radio: true` when it runs the radio build, and `FirmwareInfo.channel` reports `"normal"` or `"radio"`. Without `channel`, a route installs the build the Device runs, and a New board gets the normal build. Naming the other build in `channel` asks to switch, and a switch always waits for the native consent dialog, which says what the radio build turns on, or that Wi-Fi and Bluetooth setup stays stored but unused after switching back. A bundle whose manifest is not the build asked for, such as a picked radio `.tdfw` for a Device on the normal build, gives 409 `firmware.channel_mismatch` with `details {channel, bundle}`, and nothing is written.
 - `firmware.install` on a New board, every `firmware.repair`, and a `firmware.update` to an older version wait for a native PC confirmation dialog owned by the Companion. It asks in plain words (install on this New board, repair this Device, or downgrade this Device) and names the exact target, its port, what it runs now if known, and the bundle version, each quoted with control, format and separator characters escaped. Consent is bound to that target and bundle; no API request can grant it. Until consent, no write starts and the Job state is `waiting_for_confirmation`. Declining fails the Job with `firmware.declined`.
 - A consent dialog nobody answers closes after 5 minutes, as an approval does, and fails the Job with `firmware.declined`. Cancelling the Job while the dialog waits closes the dialog and ends the Job as `cancelled` at once; an answer that lands after the cancel or the deadline is ignored. Either way nothing is written, the Device leaves `updating`, Device input is no longer suppressed and the install lock can be taken again.
 - Updating to the bundled build when it is the same or newer needs no confirmation and stays one click.
 
 Implementation decisions for #77:
 
-- `TOUCHDECK_FIRMWARE_BUNDLE` selects the `.tdfw` embedded at build time. Source builds without it report `firmware.bundle_invalid` for the bundled selection; they never substitute mock Firmware on real ports. When it is set, `build.rs` runs `Bundle::parse` on the file and fails the build if the bundle is malformed.
+- `TOUCHDECK_FIRMWARE_BUNDLE` selects the `.tdfw` embedded at build time, and `TOUCHDECK_RADIO_FIRMWARE_BUNDLE` the radio build's. Source builds without them report `firmware.bundle_invalid` for the bundled selection of that build; they never substitute mock Firmware on real ports. When one is set, `build.rs` runs `Bundle::parse` on the file and fails the build if the bundle is malformed or is the other build: the normal variable refuses a manifest with `"radio": true`, and the radio variable refuses one without it. When `<variable>_SHA256` is also set, as the release recipe does, `build.rs` also fails unless the file has that SHA-256.
 - Versions that cannot be ordered as semantic versions require confirmation unless the version strings match.
 - The Device manager reserves the target, lends its existing session for OTA, closes the session before ROM recovery or reconnect, and resumes discovery on every exit path.
 - A newly installed board uses `needs-setup`, overriding the ordinary discovery default of `ready`.
@@ -329,7 +330,7 @@ pub struct DeviceSummary {
     pub setup: SetupState,                     // NeedsSetup | Ready
     pub link: LinkState,
     pub carrier: Option<Carrier>,              // usb | wifi while connected, else null; see Wi-Fi Carrier
-    pub firmware: Option<FirmwareInfo>,        // {version, protocol, build, recovery, update_available: Option<String>}
+    pub firmware: Option<FirmwareInfo>,        // {version, protocol, build, recovery, update_available: Option<String>, channel: "normal" | "radio"}
     pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds, live_hz, live_total_hz, series, text_bytes. None on v1
     pub orientation: Option<Orientation>,      // the shown Layout's; null whenever `layout` is
@@ -606,9 +607,9 @@ Feature module `firmware`.
 
 | Name | Method and path | Request → Response |
 |---|---|---|
-| `firmware.bundled` | `GET /firmware/bundled` | → `{version, build}` of the build shipped with the Companion |
-| `firmware.pick` | `POST /firmware/bundles/pick` | `{device}` → `{bundle: BundleInfo {id, version, build, bytes} \| null}`. Opens a native file dialog on the PC; single-use, target-bound, expires after 10 minutes |
-| `firmware.update` | `POST /devices/{device}/firmware/update` | `{bundle: "bundled" \| BundleId}` → 202 Job `firmware.update` |
+| `firmware.bundled` | `GET /firmware/bundled` | → `{version, build, radio: {version, build} \| null}` of the normal build shipped with the Companion, and of the radio build when it ships one |
+| `firmware.pick` | `POST /firmware/bundles/pick` | `{device}` → `{bundle: BundleInfo {id, version, build, bytes, channel} \| null}`. Opens a native file dialog on the PC; single-use, target-bound, expires after 10 minutes |
+| `firmware.update` | `POST /devices/{device}/firmware/update` | `{bundle: "bundled" \| BundleId, channel?}` → 202 Job `firmware.update`. 409 `firmware.channel_mismatch` when the bundle is not the build asked for |
 | `firmware.repair` | `POST /devices/{device}/firmware/repair` | `{bundle}` → 202 Job `firmware.repair`, through the ROM bootloader |
 | `firmware.install` | `POST /new-boards/{device}/install` | `{bundle}` → 202 Job `firmware.install`. Waits for native PC confirmation. 404 `new_board.not_found` when no New board has that id |
 
@@ -1309,6 +1310,7 @@ Features add codes as they land. This list is the starting set.
 | `firmware.bundle_invalid` | 422 | The picked file isn't a valid bundle |
 | `firmware.bundle_not_found` | 404 | The `BundleId` expired, was consumed, belongs to another target or never existed |
 | `firmware.declined` | Job error | The user declined native confirmation, or didn't answer it within 5 minutes; no Firmware write occurred |
+| `firmware.channel_mismatch` | 409 | The bundle is the normal build where the radio build was asked for, or the other way round. `details {channel, bundle}`; no Firmware write occurred |
 | `firmware.failed` | Job error | The update failed. `details.reason` |
 | `firmware.rolled_back` | Job error | The Device rolled back to its previous Firmware |
 | `firmware.confirm_timeout` | Job error | The new Firmware didn't confirm in time |

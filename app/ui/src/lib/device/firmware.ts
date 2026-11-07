@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import type { ErrorBody, FirmwareProgress, FirmwareRequest, FirmwareResult, Job, PickResult } from '../companion/api.ts';
+import type { ErrorBody, FirmwareChannel, FirmwareProgress, FirmwareRequest, FirmwareResult, Job, PickResult } from '../companion/api.ts';
 import type { Companion } from '../companion/client.ts';
 import { toApiError } from '../companion/errors.ts';
 import type { JobsStore } from '../companion/jobs.ts';
@@ -16,6 +16,8 @@ export type UpdateView = { step: 'idle' } | JobView;
 export interface UpdateContext {
   device: string;
   version: string;
+  /** The build a switch installs. Absent for an update within the build the Device runs. */
+  switchTo?: FirmwareChannel;
 }
 
 type BundleRef = FirmwareRequest['bundle'];
@@ -39,6 +41,9 @@ function resultOf(value: unknown): FirmwareResult | null {
 
 const reasonOf = (details: unknown): string =>
   typeof details === 'object' && details !== null && 'reason' in details && typeof details.reason === 'string' ? details.reason : '';
+
+const channelIn = (details: unknown, key: 'channel' | 'bundle'): FirmwareChannel =>
+  typeof details === 'object' && details !== null && Reflect.get(details, key) === 'radio' ? 'radio' : 'normal';
 
 export function phaseText(progress: PhaseProgress | null): string {
   if (!progress) return 'Updating…';
@@ -70,6 +75,8 @@ export function failureText(error: { code: string; details: unknown }, { device,
       return `${device} didn't come back after restarting. Unplug it and plug it back in. If its screen stays blank, repair it from Troubleshooting.`;
     case 'firmware.declined':
       return `Declined on this PC. ${device} still runs ${version}.`;
+    case 'firmware.channel_mismatch':
+      return `That file is the ${channelIn(error.details, 'bundle')} build, and ${device} runs the ${channelIn(error.details, 'channel')} build. Nothing changed.`;
     case 'firmware.bundle_invalid':
       return "That file isn't a Firmware file for this Device.";
     case 'firmware.bundle_not_found':
@@ -91,7 +98,8 @@ export function failureText(error: { code: string; details: unknown }, { device,
   }
 }
 
-export function doneText(result: FirmwareResult): string {
+export function doneText(result: FirmwareResult, context?: UpdateContext): string {
+  if (context?.switchTo) return `Now on the ${context.switchTo} build, ${result.version}`;
   if (result.message === 'Firmware updated') return `Updated to ${result.version}`;
   if (result.message === 'Already on this build') return `Already on Firmware ${result.version}`;
   return `Done. ${result.message}.`;
@@ -100,7 +108,7 @@ export function doneText(result: FirmwareResult): string {
 export interface FirmwareWords {
   waiting: string;
   progress(progress: PhaseProgress | null): string;
-  done(result: FirmwareResult): string;
+  done(result: FirmwareResult, context?: UpdateContext): string;
   failed(error: { code: string; details: unknown }, context: UpdateContext): string;
 }
 
@@ -121,7 +129,7 @@ export function viewOf(job: Job, context: UpdateContext, words: FirmwareWords = 
     }
     case 'succeeded': {
       const result = resultOf(job.result) ?? { message: 'Firmware updated', version: context.version };
-      return { step: 'done', text: words.done(result), raw: result.message, version: result.version };
+      return { step: 'done', text: words.done(result, context), raw: result.message, version: result.version };
     }
     case 'failed': {
       const error: ErrorBody = job.error ?? { code: 'internal', message: 'The Job ended as failed.', details: null };
@@ -147,7 +155,7 @@ export interface FirmwareJobDeps {
   companion: Pick<Companion, 'jobs'>;
   jobs: JobsStore;
   context(): UpdateContext & { id: string };
-  run(id: string, bundle: BundleRef): Promise<Job>;
+  run(id: string, bundle: BundleRef, channel?: FirmwareChannel): Promise<Job>;
   words?: FirmwareWords;
   pollMs?: number;
 }
@@ -164,6 +172,8 @@ export function createFirmwareJob(deps: FirmwareJobDeps) {
   const { getState: state, setState: set } = store;
   let stop = () => {};
   let started: UpdateContext = { device: 'the Device', version: '' };
+  // While a start waits for its Job, the Device may already report it. The start follows it, with what it asked for.
+  let starting = false;
 
   function show(job: Job) {
     if (state().job !== job.id) return;
@@ -194,14 +204,19 @@ export function createFirmwareJob(deps: FirmwareJobDeps) {
   }
 
   return Object.assign(store, {
-    async start(bundle: BundleRef = 'bundled'): Promise<void> {
+    /** Starts an update. Naming a `channel` other than the one the Device runs asks to switch builds. */
+    async start(bundle: BundleRef = 'bundled', channel?: FirmwareChannel): Promise<void> {
       if (inProgress(state().view)) return;
       const { id, ...context } = deps.context();
-      started = context;
+      started = channel ? { ...context, switchTo: channel } : context;
       set({ view: { step: 'running', text: words.progress(null), raw: 'Starting', pct: null }, job: null, log: [] });
+      starting = true;
       try {
-        follow(await deps.run(id, bundle));
+        const job = await deps.run(id, bundle, channel);
+        starting = false;
+        follow(job);
       } catch (thrown) {
+        starting = false;
         const error = toApiError(thrown);
         const busy = error.code === 'device.busy' && typeof error.details === 'object' && error.details !== null && 'job' in error.details ? error.details.job : null;
         if (busy && typeof busy === 'object' && 'id' in busy && typeof busy.id === 'string') {
@@ -213,7 +228,7 @@ export function createFirmwareJob(deps: FirmwareJobDeps) {
     },
 
     attach(job: Job) {
-      if (state().job === job.id) return;
+      if (starting || state().job === job.id) return;
       const { id: _id, ...context } = deps.context();
       started = context;
       follow(job);
@@ -231,7 +246,10 @@ export function createFirmwareJob(deps: FirmwareJobDeps) {
 
 export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
   const { companion } = deps;
-  const update = createFirmwareJob({ ...deps, run: (id, bundle) => companion.firmware.update({ device: id }, null, { bundle }) });
+  const update = createFirmwareJob({
+    ...deps,
+    run: (id, bundle, channel) => companion.firmware.update({ device: id }, null, channel ? { bundle, channel } : { bundle }),
+  });
   const { getState: state, setState: set } = update;
   return Object.assign(update, {
     async startFromFile(): Promise<void> {

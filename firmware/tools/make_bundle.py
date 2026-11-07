@@ -68,7 +68,7 @@ def safe_version(version):
 
 
 def radio_build(build_dir):
-    """True for the opt-in radio build (idf.py -DTD_RADIO_BUILD=1), which a release must never ship."""
+    """True for the opt-in radio build (idf.py -DTD_RADIO_BUILD=1), which never ships as the installer's Firmware."""
     config = build_dir / "config/sdkconfig.json"
     return config.is_file() and bool(json.loads(config.read_text(encoding="utf-8")).get("TD_RADIO_BUILD"))
 

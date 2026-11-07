@@ -9,10 +9,10 @@ The installer is built with [electron-builder](https://www.electron.build/nsis) 
 | Path | What it is |
 |---|---|
 | `Open TouchDeck.exe` | The Electron window |
-| `td-companion.exe` | The Companion, with the UI and the Firmware bundle built in |
+| `td-companion.exe` | The Companion, with the UI and both Firmware bundles built in: the normal build and the opt-in radio build, so switching works offline |
 | `resources\app.asar` | The window's code |
-| `resources\firmware\touchdeck.tdfw` | The same Firmware bundle the Companion carries, for picking by hand |
-| `resources\install-manifest.json` | Source revision, version and the Firmware bundle's hashes |
+| `resources\firmware\touchdeck.tdfw` | The same normal-build bundle the Companion carries, for picking by hand. The radio build has no copy here. |
+| `resources\install-manifest.json` | Source revision, version, and both Firmware bundles' hashes; the radio build is recorded as embedded in `td-companion.exe` |
 | `resources\LICENSE.txt`, `resources\licenses\` | Licenses |
 | `Uninstall Open TouchDeck.exe` | The uninstaller |
 
@@ -43,8 +43,23 @@ OpenTouchDeck-windows-x64-setup.exe.sig
 latest.json
 release-manifest.json
 touchdeck.tdfw
+touchdeck-radio-X.Y.Z.tdfw
 SHA256SUMS
 ```
+
+`touchdeck.tdfw` is the normal, radio-free build the installer carries. `touchdeck-radio-X.Y.Z.tdfw` is the opt-in radio build, a separate file. The sign and publish jobs refuse a release that:
+
+- has no Firmware record, or whose installer Firmware is the radio build
+- lacks the radio file, or whose radio file is the normal build
+- has a bundle whose hash differs from `release-manifest.json`
+
+What protects each Firmware bundle:
+
+- **Neither `.tdfw` has a signature of its own.** Both builds reach a PC inside `td-companion.exe`, and the Companion installs only those embedded bundles or a file someone picks by hand.
+- **Embedding checks the hash.** The recipe records each bundle's SHA-256 in `release-manifest.json` and passes it to `build.rs` (`TOUCHDECK_FIRMWARE_BUNDLE_SHA256`, `TOUCHDECK_RADIO_FIRMWARE_BUNDLE_SHA256`). `build.rs` refuses to embed a file with any other hash.
+- **The installer has the update signature (ADR 0005).** The updater checks it before it runs an update. The installer is not Authenticode-signed, and a first install from a download is checked only against `SHA256SUMS`.
+- **The Companion checks a bundle before writing it.** Every file must match the SHA-256 in the bundle's own `manifest.json`, and `touchdeck.bin` must match `elf_sha256`. This catches a damaged file, not a forged one.
+- **The loose release files are covered only by `SHA256SUMS` and `release-manifest.json`.** The release jobs check both `.tdfw` files against them. A file picked by hand gets the per-file check above and nothing more.
 
 `latest.json` holds the version, notes, date and, for `windows-x86_64`, the installer URL, its signature and its size. Installed apps read `https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/latest.json`.
 
@@ -109,11 +124,11 @@ python scripts/package_windows.py build --out E:/touchdeck-artifacts/build-001 `
   --notes-file E:/touchdeck-artifacts/release-notes.md
 ```
 
-The recipe builds the Firmware and audits it radio-free, builds the UI, builds the Companion with `cargo build --release --locked -p td-companion` and the Firmware bundle embedded, refuses a Companion with test hooks, builds the Electron code with the updater public key, packages it with electron-builder. Durable releases leave the signature empty until the separate signing job; use the workflow to produce verified release assets.
+The recipe builds the Firmware and audits it radio-free, then builds the radio build in `build/firmware-radio` and holds it to `radio_guard.py radio` and the static internal RAM ceiling. It builds the UI, builds the Companion with `cargo build --release --locked -p td-companion` and both bundles embedded (`TOUCHDECK_FIRMWARE_BUNDLE` and `TOUCHDECK_RADIO_FIRMWARE_BUNDLE`, each pinned to its recorded SHA-256), keeps the radio bundle out of the installer payload, refuses a Companion with test hooks, builds the Electron code with the updater public key, packages it with electron-builder. Durable releases leave the signature empty until the separate signing job; use the workflow to produce verified release assets.
 
-For an unpublished candidate, pass `--test-signing` instead of `--public-key-file`, with no signing environment. It generates a throwaway key, builds the installer named `OpenTouchDeck-windows-x64-TEST-ONLY-setup.exe` and the next-patch installer for the lifecycle check, and deletes the private key. Never publish these assets. On a PC without ESP-IDF, a test-signed candidate can reuse a checked bundle with `--firmware-bundle <file.tdfw>`; releases always build the Firmware.
+For an unpublished candidate, pass `--test-signing` instead of `--public-key-file`, with no signing environment. It generates a throwaway key, builds the installer named `OpenTouchDeck-windows-x64-TEST-ONLY-setup.exe` and the next-patch installer for the lifecycle check, and deletes the private key. Never publish these assets. On a PC without ESP-IDF, a test-signed candidate can reuse a checked bundle with `--firmware-bundle <file.tdfw>`, and the radio build with `--radio-firmware-bundle <file.tdfw>` next to it. Each refuses the other build, and without `--radio-firmware-bundle` the candidate carries the normal build alone. Releases always build both.
 
-The recipe holds the shared `.verify/m3-build.lock` while it compiles Firmware and removes only its own lock. Never delete another owner's lock.
+The recipe holds the shared `.verify/m3-build.lock` while it compiles both Firmware builds and removes only its own lock. Never delete another owner's lock.
 
 The installer enforces current-user mode and `%LOCALAPPDATA%\Programs\Open TouchDeck` after resolving command-line and stored installation settings. `/allusers` and `/D=` cannot change that destination. A busy Device stops the installer with exit code 3. If the Companion passes authentication proof but the helper cannot confirm an install lock, the installer exits 4 and asks you to close Open TouchDeck from the tray before retrying.
 

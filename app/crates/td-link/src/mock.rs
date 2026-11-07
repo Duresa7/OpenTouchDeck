@@ -140,6 +140,8 @@ struct State {
     media_capabilities: bool,
     /// The radio build's Bluetooth keyboard.
     ble: MockBle,
+    /// Runs the radio build: a v2 hello says `"radio": true`.
+    radio: bool,
     settings: Settings,
     icons: BTreeSet<String>,
     icon_files: HashMap<String, Vec<u8>>,
@@ -176,7 +178,8 @@ struct State {
     press_seq: u32,
     input_seq: u32,
     update_sha: Option<String>,
-    update_pending: Option<(String, String)>,
+    /// The update that applies at the next connect: the image's elf_sha256, its slot, and whether it is a radio build.
+    update_pending: Option<(String, String, bool)>,
     restart: Option<(Duration, Duration)>,
     restart_window: Option<(Instant, Instant)>,
     update_mode: String,
@@ -366,6 +369,7 @@ impl MockDeck {
                 gif_capabilities: false,
                 media_capabilities: false,
                 ble: MockBle::default(),
+                radio: false,
                 settings: Settings::default(),
                 icons: BTreeSet::new(),
                 icon_files: HashMap::new(),
@@ -441,6 +445,15 @@ impl MockDeck {
     /// Layout. Off by default, like Firmware without them.
     pub fn set_media_capabilities(&self, enabled: bool) {
         self.state().media_capabilities = enabled;
+    }
+
+    /// Runs the radio build, or the normal build again. A v2 hello says which.
+    pub fn set_radio(&self, radio: bool) {
+        self.state().radio = radio;
+    }
+
+    pub fn radio(&self) -> bool {
+        self.state().radio
     }
 
     pub fn v2() -> Self {
@@ -567,6 +580,7 @@ impl MockDeck {
         state.hello.version = bundle.manifest.version.clone();
         state.hello.elf_sha256 = bundle.manifest.elf_sha256.clone();
         state.hello.running = "ota_0".into();
+        state.radio = bundle.manifest.radio;
         state.update_aborted = false;
         state.reboots += 1;
     }
@@ -606,13 +620,14 @@ impl MockDeck {
             {
                 return Err(io::Error::from(ErrorKind::NotFound));
             }
-            if !still_up && let Some((hash, slot)) = state.update_pending.take() {
+            if !still_up && let Some((hash, slot, radio)) = state.update_pending.take() {
                 state.reboots += 1;
                 if state.update_mode == "rollback" {
                     state.update_aborted = true;
                 } else {
                     state.hello.elf_sha256 = hash;
                     state.hello.running = slot;
+                    state.radio = radio;
                 }
                 state.booted = Instant::now();
             }
@@ -1636,6 +1651,9 @@ impl MockDeck {
                         reply.insert("id".into(), json!("020000000001"));
                         reply.insert("name".into(), json!(state.device_name));
                         reply.insert("caps".into(), state.capabilities());
+                        if state.radio {
+                            reply.insert("radio".into(), json!(true));
+                        }
                     }
                 }
                 Ok(reply)
@@ -1796,7 +1814,13 @@ impl MockDeck {
                 } else {
                     "ota_0"
                 };
-                state.update_pending = Some((hash, slot.into()));
+                // Real Firmware knows what it was built as. The mock can't, so it takes an image whose app descriptor
+                // version ends in `-radio` as a radio build, as tests/fixtures/touchdeck-test-radio.tdfw is made.
+                let radio = inbound.data[48..80]
+                    .split(|b| *b == 0)
+                    .next()
+                    .is_some_and(|version| version.ends_with(b"-radio"));
+                state.update_pending = Some((hash, slot.into(), radio));
                 if let Some((drop_after, down_for)) = state.restart {
                     let drop_at = Instant::now() + drop_after;
                     state.restart_window = Some((drop_at, drop_at + down_for));

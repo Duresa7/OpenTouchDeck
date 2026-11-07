@@ -344,15 +344,30 @@ class BundleMarkTests(unittest.TestCase):
         self.assertNotIn("radio", manifest)
         out = Path(self.tmp.name) / "package-normal"
         (out / "payload").mkdir(parents=True)
-        self.assertEqual(package.prebuilt_firmware(out, "rev", path)["manifest"], manifest)
+        normal, radio = package.prebuilt_firmware(out, "rev", path)
+        self.assertEqual(normal["manifest"], manifest)
+        self.assertIsNone(radio)
 
-    def test_radio_bundle_is_marked_and_refused(self):
+    def test_radio_bundle_is_marked_and_refused_as_the_normal_firmware(self):
         path, manifest = self.bundle("radio", radio=True)
         self.assertIs(manifest["radio"], True)
         out = Path(self.tmp.name) / "package-radio"
         (out / "payload").mkdir(parents=True)
         with self.assertRaisesRegex(ValueError, "radio build"):
             package.prebuilt_firmware(out, "rev", path)
+
+    def test_radio_bundle_ships_only_as_the_separate_radio_file(self):
+        normal_path, _ = self.bundle("normal", radio=False)
+        radio_path, manifest = self.bundle("radio", radio=True)
+        out = Path(self.tmp.name) / "package-both"
+        (out / "payload").mkdir(parents=True)
+        normal, radio = package.prebuilt_firmware(out, "rev", normal_path, radio_path)
+        self.assertNotIn("radio", normal["manifest"])
+        self.assertEqual((radio["bundle"], radio["manifest"]), ("touchdeck-radio.tdfw", manifest))
+        out = Path(self.tmp.name) / "package-swapped"
+        (out / "payload").mkdir(parents=True)
+        with self.assertRaisesRegex(ValueError, "normal build"):
+            package.prebuilt_firmware(out, "rev", normal_path, normal_path)
 
 
 @unittest.skipUnless(os.environ.get("TD_GUARD_NORMAL_BUILD"), "set TD_GUARD_NORMAL_BUILD to check a real normal build")
@@ -373,7 +388,7 @@ class RealNormalBuildTests(unittest.TestCase):
 @unittest.skipUnless(os.environ.get("TD_GUARD_RADIO_BUILD"), "set TD_GUARD_RADIO_BUILD to check a real radio build")
 class RealRadioBuildTests(unittest.TestCase):
     """A real radio build passes its own guard, image check included, and fails the normal guard and the release
-    audit, so it can never ship as a release."""
+    audit, so it can never ship as the installer's Firmware."""
 
     build = Path(os.environ.get("TD_GUARD_RADIO_BUILD", "."))
 

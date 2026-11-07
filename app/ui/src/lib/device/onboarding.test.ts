@@ -65,6 +65,14 @@ describe('the steps', () => {
     expect(flowStep(flow, { type: 'offer', firmwareFirst: true })).toBe(flow);
   });
 
+  test('a Device on the radio build gets the Wi-Fi step last, before done', () => {
+    expect(startFlow({ firmware: false, firmwareFirst: false, wifi: true }).steps).toEqual(['name', 'orientation', 'layout', 'wifi', 'done']);
+    expect(startFlow({ firmware: true, firmwareFirst: false, wifi: true }).steps).toEqual(['name', 'orientation', 'layout', 'firmware', 'wifi', 'done']);
+    const offered = flowStep(startFlow({ firmware: false, firmwareFirst: true, wifi: true }), { type: 'offer', firmwareFirst: true });
+    expect(offered).toEqual({ steps: ['firmware', 'name', 'orientation', 'layout', 'wifi', 'done'], at: 'firmware' });
+    expect(startFlow({ firmware: true, firmwareFirst: false }).steps).not.toContain('wifi');
+  });
+
   test('the count follows the place', () => {
     const flow = startFlow({ firmware: true, firmwareFirst: false });
     expect(stepCount(flow)).toEqual({ n: 1, total: 5 });
@@ -159,6 +167,12 @@ describe('setting up a Device', () => {
     }
     events.close();
     vi.unstubAllGlobals();
+  });
+
+  test('only a Device on the radio build is offered Wi-Fi setup, after its other steps', () => {
+    const radio: DeviceSummary = { ...shelf, firmware: shelf.firmware && { ...shelf.firmware, channel: 'radio' } };
+    expect(setup(radio).getState().flow.steps).toEqual(['name', 'orientation', 'layout', 'wifi', 'done']);
+    expect(setup(shelf).getState().flow.steps).not.toContain('wifi');
   });
 
   test('a name saves to the Device and marks it set up', async () => {

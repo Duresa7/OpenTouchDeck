@@ -9,6 +9,9 @@ pub struct Manifest {
     pub version: String,
     pub elf_sha256: String,
     pub files: Vec<FileEntry>,
+    /// Only the opt-in radio build's bundle carries `"radio": true`. A missing mark is the normal build.
+    #[serde(default)]
+    pub radio: bool,
 }
 #[derive(Debug, Deserialize)]
 pub struct FileEntry {

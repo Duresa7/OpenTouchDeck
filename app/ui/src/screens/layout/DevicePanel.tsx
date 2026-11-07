@@ -12,9 +12,10 @@ import { useFolderPicker } from '../../lib/companion/connection.ts';
 import { inProgress, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
 import { durationLabel, startAfterChoices } from '../../lib/device/photo-frame.ts';
+import { buildChoice } from '../../lib/device/radio-build.ts';
 import type { DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { button } from '../../shell/button.ts';
-import { useDeviceStores, useOfferedFirmware } from './device.ts';
+import { useBundledBuild, useDeviceStores, useOfferedFirmware } from './device.ts';
 import { Select } from './fields.tsx';
 import { BluetoothField } from './BluetoothField.tsx';
 import { WifiField } from './WifiField.tsx';
@@ -351,6 +352,98 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
   );
 }
 
+function BuildField({ device, name, firmware }: PanelProps & { firmware: FirmwareUpdateStore }) {
+  const id = useId();
+  const bundled = useBundledBuild();
+  const view = useStore(firmware, (s) => s.view);
+  const choice = buildChoice(device, bundled, name);
+  const [confirming, setConfirming] = useState(false);
+  // A switch is a Firmware update, so like one it needs the USB cable, never Wi-Fi.
+  const live = device.link.state === 'connected' && device.carrier !== 'wifi';
+  const busy = inProgress(view) || device.link.state === 'updating';
+  const toggle = useRef<HTMLButtonElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const back = useRef(false);
+  useEffect(() => setConfirming(false), [choice.current, live]);
+  // The switch gives way to its confirm, so focus moves to Cancel and, after Cancel, back to the switch.
+  useEffect(() => {
+    if (confirming) cancel.current?.focus();
+    else if (back.current) toggle.current?.focus();
+    back.current = false;
+  }, [confirming]);
+  if (!device.firmware) return null;
+  const ready = live && !busy;
+  return (
+    <div className="field" data-testid="device-panel-build" data-channel={choice.current}>
+      <div className="panel-row">
+        <span className="row-text">
+          <span className="row-title" id={`${id}-title`}>
+            Firmware build
+          </span>
+          <span className="row-sub" data-testid="device-panel-build-current">
+            {choice.title}
+          </span>
+        </span>
+        {choice.action && !confirming && (
+          <span className="panel-row-buttons">
+            <button
+              ref={toggle}
+              type="button"
+              className={button({ size: 'small' })}
+              aria-disabled={!ready}
+              aria-describedby={`${id}-hint`}
+              onClick={() => ready && setConfirming(true)}
+              data-testid="device-panel-build-switch"
+            >
+              {choice.action}
+            </button>
+          </span>
+        )}
+      </div>
+      <p className="field-hint" id={`${id}-hint`} data-testid="device-panel-build-hint">
+        {choice.missing ?? choice.note}
+      </p>
+      {confirming && (
+        <div className="panel-confirm" role="group" aria-labelledby={`${id}-confirm`} data-testid="device-panel-build-confirm">
+          <p className="panel-confirm-title" id={`${id}-confirm`}>
+            {choice.confirmTitle}
+          </p>
+          <p className={clsx('field-hint', choice.warn && 'is-warning')} data-testid="device-panel-build-note">
+            {choice.confirmNote}
+          </p>
+          <div className="panel-confirm-buttons">
+            <button
+              ref={cancel}
+              type="button"
+              className={button({ size: 'small' })}
+              onClick={() => {
+                back.current = true;
+                setConfirming(false);
+              }}
+              data-testid="device-panel-build-cancel"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={button({ kind: 'primary', size: 'small' })}
+              aria-disabled={!ready}
+              onClick={() => {
+                if (!ready) return;
+                setConfirming(false);
+                void firmware.start('bundled', choice.target);
+              }}
+              data-testid="device-panel-build-confirm-switch"
+            >
+              {choice.warn ? 'Switch' : 'Install'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Notice({ settings }: { settings: DeviceSettingsStore }) {
   const notice = useStore(settings, (s) => s.notice);
   return (
@@ -396,6 +489,7 @@ function PanelBody({ device }: { device: DeviceSummary }) {
       <WifiField device={device} name={name} wifi={wifi} setup={wifiSetup} live={live && !restarting} />
       <BluetoothField device={device} name={name} bluetooth={bluetooth} live={live && !restarting} />
       <FirmwareRow {...props} firmware={firmware} />
+      <BuildField {...props} firmware={firmware} />
       <Notice settings={settings} />
     </>
   );

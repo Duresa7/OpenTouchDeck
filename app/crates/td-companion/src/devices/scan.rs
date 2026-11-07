@@ -117,6 +117,7 @@ fn probe(source: &dyn PortSource, port: &str) -> Probed {
                 version: hello.version.clone(),
                 capabilities: None,
                 protocol: 1,
+                radio: false,
             }
         }
     };
@@ -383,6 +384,7 @@ impl Inner {
             build: hello.elf_sha256.clone(),
             recovery: hello.recovery,
             update_available: None,
+            channel: super::FirmwareChannel::of(identity.radio),
         };
         let diagnostics = super::DeviceDiagnostics {
             product: hello.product.clone(),

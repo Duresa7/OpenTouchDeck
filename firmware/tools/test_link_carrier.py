@@ -11,7 +11,7 @@ class LinkCarrierTest(unittest.TestCase):
     """The link's replies and events leave on the carrier they should, and Device names follow the shared vectors:
     tools/host/link_carrier_test.c."""
 
-    def test_link_messages_through_carriers(self):
+    def build_and_run(self, defines):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TD_TEST_OUT")) as tmp:
             out = Path(tmp)
             host = ROOT / "tools/host"
@@ -31,14 +31,23 @@ class LinkCarrierTest(unittest.TestCase):
                 # include gives every file the host's GCC atomics.
                 command = ["cl", "/nologo", "/std:clatest", "/W3", "/WX", "/wd4244", "/D_CRT_SECURE_NO_WARNINGS",
                            "/FIfreertos/FreeRTOS.h"]
+                command += ["/D" + define for define in defines]
                 command += ["/I" + str(p) for p in includes] + [str(p) for p in sources] + ["/Fe:" + str(exe)]
             else:
                 command = [os.environ.get("CC", "cc"), "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra",
                            "-Werror"]
+                command += ["-D" + define for define in defines]
                 command += ["-I" + str(p) for p in includes] + [str(p) for p in sources] + ["-lm", "-o", str(exe)]
             subprocess.run(command, cwd=out, check=True)
             names = ROOT.parent / "schema/protocol/name-vectors-v2.json"
             subprocess.run([str(exe), str(names)], cwd=out, check=True)
+
+    def test_link_messages_through_carriers(self):
+        self.build_and_run([])
+
+    def test_radio_build_hello(self):
+        # The radio build compiles the same link with CONFIG_TD_RADIO_BUILD set, which marks its v2 hello.
+        self.build_and_run(["CONFIG_TD_RADIO_BUILD=1"])
 
 
 if __name__ == "__main__":

@@ -149,6 +149,14 @@ function Get-RunValue {
     return $null
 }
 
+function Get-Field($Object, [string]$Name) {
+    # Strict mode refuses a missing property, and a missing field must read as absent.
+    if ($null -eq $Object) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($property) { return $property.Value }
+    return $null
+}
+
 function Assert-Installed([string]$Version) {
     foreach ($relative in @('Open TouchDeck.exe', 'td-companion.exe', 'resources\app.asar', 'resources\firmware\touchdeck.tdfw',
                             'resources\install-manifest.json', 'resources\LICENSE.txt', 'Uninstall Open TouchDeck.exe')) {
@@ -157,6 +165,15 @@ function Assert-Installed([string]$Version) {
     $manifest = Get-Content -LiteralPath (Join-Path $installDir 'resources\install-manifest.json') -Raw | ConvertFrom-Json
     $firmwareHash = (Get-FileHash -LiteralPath (Join-Path $installDir 'resources\firmware\touchdeck.tdfw') -Algorithm SHA256).Hash
     Assert-That ($manifest.firmware.sha256 -eq $firmwareHash) 'The installed Firmware bundle matches the install manifest.'
+    Assert-That ((Get-Field $manifest.firmware.manifest 'radio') -ne $true) 'The installed Firmware bundle is the normal build.'
+    # The radio build ships embedded in td-companion.exe, never as a file next to the normal build.
+    $radio = Get-Field $manifest 'radio_firmware'
+    Assert-That ($null -ne $radio) 'The install manifest records the radio build.'
+    Assert-That ((Get-Field (Get-Field $radio 'manifest') 'radio') -eq $true) 'The recorded radio build carries the radio mark.'
+    Assert-That ("$(Get-Field $radio 'sha256')" -match '^[0-9a-f]{64}$') 'The recorded radio build has a SHA-256.'
+    Assert-That ((Get-Field $radio 'embedded_in') -eq 'td-companion.exe') 'The radio build is recorded as embedded in the Companion.'
+    $loose = @(Get-ChildItem -LiteralPath (Join-Path $installDir 'resources\firmware') -File | Where-Object Name -ne 'touchdeck.tdfw')
+    Assert-That ($loose.Count -eq 0) 'The install holds no Firmware file besides the normal build.'
     $entries = @(Get-UninstallEntries)
     Assert-That ($entries.Count -eq 1) 'Exactly one per-user uninstall entry exists.'
     Assert-That ($entries[0].DisplayVersion -eq $Version) "The uninstall entry reports version $Version."
