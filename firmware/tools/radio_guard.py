@@ -10,7 +10,8 @@ lwIP and NimBLE, keep Wi-Fi and lwIP buffers in PSRAM and the BLE controller in 
 pairs only with LE Secure Connections. Only the Bluetooth keyboard (td_ble) may start BLE or advertise, and it does so
 only when the person's stored setting is on: the host tests in firmware/tools/test_ble.py check that, and
 test_radio_guard.py checks no other source calls those functions. Nothing in the linked image may scan, start a
-connection or use extended advertising, and the Wi-Fi station may start but never join a network or scan. It runs
+connection or use extended advertising. The Wi-Fi station may join the one network set over USB (the `wifi.*` link
+messages), and only the station's driver code (WIFI_JOIN_OWNER) may call the join, but it never scans. It runs
 net-v2's TCP service, and nothing from the QEMU test image (-DTD_QEMU_TEST=1), which opens a pairing window by
 itself, may be in it.
 
@@ -141,7 +142,13 @@ BLE_START_SYMBOLS = (
 )
 BLE_OWNER = "firmware/components/td_ble/td_ble_nimble.c"
 
-# Functions that would scan or connect over BLE, advertise in extended mode, or join or scan a Wi-Fi network. The radio
+# The join. Wi-Fi setup (#269) needs it, so the radio build must link it (REQUIRED_SYMBOLS), but only WIFI_JOIN_OWNER,
+# the station's driver, may call it, for the one network set over USB. The source test in test_radio_guard.py holds
+# every other file to that.
+WIFI_JOIN_SYMBOLS = ("esp_wifi_connect",)
+WIFI_JOIN_OWNER = "firmware/components/td_radio/td_radio.c"
+
+# Functions that would scan or connect over BLE, advertise in extended mode, or scan for a Wi-Fi network. The radio
 # build's image must define none of them: the linker drops every function that nothing calls, so a name missing from
 # the image is a call that cannot happen.
 DORMANT_SYMBOLS = (
@@ -150,15 +157,17 @@ DORMANT_SYMBOLS = (
     "ble_gap_ext_connect",
     "ble_gap_disc",
     "ble_gap_ext_disc",
-    "esp_wifi_connect",
     "esp_wifi_scan_start",
     "esp_wifi_wps_start",
     "esp_wifi_80211_tx",
     "esp_smartconfig_start",
     "esp_now_init",
 )
-# What proves the radio build wires its station, its Bluetooth keyboard and its network service at all.
-REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start", "td_ble_boot", "td_netlink_start")
+# What proves the radio build wires its station, its Bluetooth keyboard and its network service, and that the station
+# joins the stored network. td_wifi_quiet_logs turns down the ESP-IDF tags that log the network's name; the linker
+# keeps it only if it is called.
+REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start", "esp_wifi_connect", "td_wifi_quiet_logs",
+                    "td_ble_boot", "td_netlink_start")
 
 
 class GuardError(ValueError):
@@ -265,6 +274,7 @@ def check_radio(build, symbols=None):
         raise GuardError(f"Radio build does not link: {absent}")
     return {"kind": "radio", "usb_serial_jtag": True, "radio_components": radio_components(components),
             "dormant": list(DORMANT_SYMBOLS), "ble_start": list(BLE_START_SYMBOLS), "ble_owner": BLE_OWNER,
+            "wifi_join": list(WIFI_JOIN_SYMBOLS), "wifi_join_owner": WIFI_JOIN_OWNER,
             "build_components": components}
 
 

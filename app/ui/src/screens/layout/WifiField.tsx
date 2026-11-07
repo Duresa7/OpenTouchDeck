@@ -2,15 +2,23 @@ import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useStore } from 'zustand';
 import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { carrierText, CODE_DIGITS, type WifiStore } from '../../lib/device/wifi.ts';
+import type { WifiSetupStore } from '../../lib/device/wifi-setup.ts';
 import { button } from '../../shell/button.ts';
+import { WifiSetupField } from './WifiSetupField.tsx';
 
 interface WifiFieldProps {
   device: DeviceSummary;
   name: string;
   wifi: WifiStore;
+  /** The network the Device joins, set over USB. */
+  setup: WifiSetupStore;
+  /** Connected and not restarting. */
+  live: boolean;
 }
 
-function CodeForm({ name, wifi }: Omit<WifiFieldProps, 'device'>) {
+type PairingProps = Pick<WifiFieldProps, 'name' | 'wifi'>;
+
+function CodeForm({ name, wifi }: PairingProps) {
   const id = useId();
   const view = useStore(wifi, (s) => s.view);
   const problem = useStore(wifi, (s) => s.problem);
@@ -58,7 +66,7 @@ function CodeForm({ name, wifi }: Omit<WifiFieldProps, 'device'>) {
   );
 }
 
-function AddressForm({ name, wifi }: Omit<WifiFieldProps, 'device'>) {
+function AddressForm({ name, wifi }: PairingProps) {
   const id = useId();
   const view = useStore(wifi, (s) => s.view);
   const address = useStore(wifi, (s) => s.address);
@@ -104,8 +112,9 @@ function AddressForm({ name, wifi }: Omit<WifiFieldProps, 'device'>) {
   );
 }
 
-/** The Carrier the Device is on, its Wi-Fi Pairing, and the flow that makes one. */
-export function WifiField({ device, name, wifi }: WifiFieldProps) {
+/** Everything Wi-Fi for one Device, in the order a person needs it: the network it joins (set over USB, radio
+ * build only), its Pairing with this app over that network and the flow that makes one, then the Carrier it is on. */
+export function WifiField({ device, name, wifi, setup, live }: WifiFieldProps) {
   const id = useId();
   const pairing = useStore(wifi, (s) => s.pairing);
   const loaded = useStore(wifi, (s) => s.loaded);
@@ -122,16 +131,12 @@ export function WifiField({ device, name, wifi }: WifiFieldProps) {
   return (
     <div className="field" data-testid="device-panel-wifi" data-carrier={device.carrier ?? undefined}>
       <span className="field-label" id={id}>
-        Connection
+        Wi-Fi
       </span>
-      {carrier && (
-        <p className="field-hint" data-testid="device-panel-carrier">
-          {carrier}
-        </p>
-      )}
+      <WifiSetupField device={device} name={name} setup={setup} live={live} />
       <div className="panel-row" aria-labelledby={id} role="group">
         <span className="row-text">
-          <span className="row-title">Wi-Fi</span>
+          <span className="row-title">Pairing</span>
           <span className="row-sub" data-testid="device-panel-wifi-status" aria-live="polite">
             {sub}
           </span>
@@ -161,6 +166,11 @@ export function WifiField({ device, name, wifi }: WifiFieldProps) {
       {problem && (
         <p className="field-error" role="alert" data-testid="device-panel-wifi-problem">
           {problem}
+        </p>
+      )}
+      {carrier && (
+        <p className="field-hint" data-testid="device-panel-carrier">
+          {carrier}
         </p>
       )}
     </div>

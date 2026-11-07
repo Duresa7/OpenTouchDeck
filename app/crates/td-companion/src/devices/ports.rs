@@ -142,6 +142,8 @@ pub enum BoardKind {
     Device,
     /// A Device with v1 Firmware: no id, name or capabilities in `hello`.
     DeviceV1,
+    /// A Device with v2 Firmware from the radio build: it advertises `caps.wifi` and answers `wifi.*`.
+    DeviceRadio,
     /// A board that never answers.
     Silent,
     /// A board that answers `hello` as something else.
@@ -188,11 +190,15 @@ impl MockPorts {
     fn make(state: &mut MockState, serial: &str, kind: BoardKind) {
         if state.boards.get(serial).is_none_or(|(k, _)| *k != kind) {
             let deck = match kind {
-                BoardKind::Device => td_link::MockDeck::v2(),
+                BoardKind::Device | BoardKind::DeviceRadio => td_link::MockDeck::v2(),
                 _ => td_link::MockDeck::new(),
             };
             match kind {
                 BoardKind::Device => deck.set_name(&format!("Mock Device {serial}")),
+                BoardKind::DeviceRadio => {
+                    deck.set_name(&format!("Mock Device {serial}"));
+                    deck.set_wifi_capability(true);
+                }
                 BoardKind::Silent => deck.stop(),
                 BoardKind::OtherFirmware => deck.set_product("esp-at"),
                 BoardKind::DeviceV1 | BoardKind::Busy => {}

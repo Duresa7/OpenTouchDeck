@@ -19,6 +19,7 @@ use td_core::{
 use crate::asset::{ASSET_PAGE, AssetFormat, asset_id, refusal, valid_asset_id};
 use crate::live::{TTL_MAX_MS, TTL_MIN_MS, VALUE_MAX, layout_ref};
 use crate::photo::{IDLE_INTERVAL_S, IDLE_TIMEOUT_S, IdleSettings, PHOTO_BYTES_MAX};
+use crate::wifi::{WifiPassword, valid_password, valid_ssid};
 use crate::xfer::{ICON_BYTES, LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, crc32};
 use crate::{READ_TICK, Transport};
 
@@ -202,6 +203,62 @@ struct State {
     page_reports: bool,
     selections: u64,
     page_sent: Option<(u64, String, usize)>,
+    wifi: MockWifi,
+}
+
+/// The radio build's Wi-Fi station, as far as the link shows it.
+#[derive(Debug, Default)]
+struct MockWifi {
+    /// The Device answers `wifi.*` and advertises `caps.wifi`.
+    capability: bool,
+    /// Every `wifi.*` request arrives as if on a network Carrier.
+    usb_only: bool,
+    /// The networks in range, by SSID, with their passwords. Every one is made up.
+    networks: BTreeMap<String, String>,
+    /// The stored network, as NVS keeps it.
+    stored: Option<(String, String)>,
+    /// A set's join has not finished: the next `wifi.state` resolves it.
+    joining: bool,
+    /// `connected`, or `failed` with its reason, once the join resolved.
+    outcome: Option<Result<(), &'static str>>,
+}
+
+impl MockWifi {
+    fn fields(&self) -> Map<String, Value> {
+        let (state, reason, ip, rssi) = match (&self.stored, self.joining, self.outcome) {
+            (None, ..) => ("off", None, None, None),
+            (Some(_), true, _) | (Some(_), false, None) => ("connecting", None, None, None),
+            (Some(_), false, Some(Ok(()))) => ("connected", None, Some("192.0.2.10"), Some(-52)),
+            (Some(_), false, Some(Err(reason))) => ("failed", Some(reason), None, None),
+        };
+        Map::from_iter([
+            ("configured".to_owned(), json!(self.stored.is_some())),
+            (
+                "ssid".to_owned(),
+                json!(self.stored.as_ref().map_or("", |(ssid, _)| ssid.as_str())),
+            ),
+            ("state".to_owned(), json!(state)),
+            ("reason".to_owned(), json!(reason)),
+            ("ip".to_owned(), json!(ip)),
+            ("rssi".to_owned(), json!(rssi)),
+        ])
+    }
+
+    /// Finishes a join the way the station would: the network in range with the right password joins.
+    fn resolve(&mut self) {
+        if !self.joining {
+            return;
+        }
+        self.joining = false;
+        self.outcome = self
+            .stored
+            .as_ref()
+            .map(|(ssid, password)| match self.networks.get(ssid) {
+                None => Err("not-found"),
+                Some(expected) if expected != password => Err("wrong-password"),
+                Some(_) => Ok(()),
+            });
+    }
 }
 
 fn arrived(request: &Map<String, Value>) -> Value {
@@ -242,6 +299,9 @@ impl State {
             caps["text_bytes"] = json!(MEDIA_TEXT_BYTES);
             caps["streams"] = json!(4);
             caps["live_images"] = json!(MEDIA_LIVE_IMAGES);
+        }
+        if self.wifi.capability {
+            caps["wifi"] = json!(true);
         }
         caps
     }
@@ -364,6 +424,7 @@ impl MockDeck {
                 page_reports: true,
                 selections: 0,
                 page_sent: None,
+                wifi: MockWifi::default(),
             })),
         }
     }
@@ -392,6 +453,31 @@ impl MockDeck {
         let device = Self::new();
         device.state().v2 = true;
         device
+    }
+
+    /// Makes this a radio build: it answers `wifi.*` and a v2 hello advertises `caps.wifi`. Off by default, like the
+    /// normal build, which answers `unsupported`.
+    pub fn set_wifi_capability(&self, enabled: bool) {
+        self.state().wifi.capability = enabled;
+    }
+
+    /// Puts a made-up network in range. A set with this SSID and password joins; another password fails with
+    /// `wrong-password`, and an SSID not in range with `not-found`.
+    pub fn add_wifi_network(&self, ssid: &str, password: &str) {
+        self.state()
+            .wifi
+            .networks
+            .insert(ssid.into(), password.into());
+    }
+
+    /// Answers every `wifi.*` request with `usb-only`, as the Device does on a network Carrier.
+    pub fn set_wifi_usb_only(&self, usb_only: bool) {
+        self.state().wifi.usb_only = usb_only;
+    }
+
+    /// The stored network and its password, as the Device's NVS holds them.
+    pub fn wifi_network(&self) -> Option<(String, String)> {
+        self.state().wifi.stored.clone()
     }
 
     /// Sets the name a v2 hello reports, as a Device someone already named.
@@ -1422,7 +1508,12 @@ impl MockDeck {
                 return Vec::new();
             }
         };
-        self.state().received.push(Value::Object(request.clone()));
+        let mut recorded = request.clone();
+        if let Some(password) = recorded.get_mut("password") {
+            // The Device never keeps a request's password anywhere but NVS, and neither does this record.
+            *password = json!("(redacted)");
+        }
+        self.state().received.push(Value::Object(recorded));
         let m = request["m"].as_str().unwrap_or_default().to_owned();
         let fields = self.dispatch(&m, &request);
         let mut reply = Map::from_iter([
@@ -1494,6 +1585,7 @@ impl MockDeck {
                 }
                 Ok(reply)
             }
+            m if m.starts_with("wifi.") => self.wifi(m, request),
             m if m.starts_with("v2.asset.") && self.v2_selected() => Ok(self.asset(m, request)),
             "v2.live.set" if self.v2_selected() => Ok(self.live_set(request)),
             "v2.photo.put" | "v2.photo.end" | "v2.idle.get" | "v2.idle.set" | "v2.clock.set"
@@ -1738,6 +1830,53 @@ fn asset_space(state: &State) -> (u64, u64, u64, u64) {
 }
 
 impl MockDeck {
+    fn wifi(&self, m: &str, request: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+        let only = |keys: &[&str]| {
+            request
+                .keys()
+                .all(|key| key == "m" || keys.contains(&key.as_str()))
+        };
+        let mut state = self.state();
+        // The Device checks the Carrier before anything else: off USB, every `wifi.*` is refused.
+        let off_usb = state.link_network;
+        let wifi = &mut state.wifi;
+        if wifi.usb_only || off_usb {
+            return Ok(refusal("usb-only", "Only over USB"));
+        }
+        // Without a station the Device has no `wifi.*` messages at all, as with `ble.*` without `ble_hid`.
+        if !wifi.capability {
+            return Err("unknown message".into());
+        }
+        match m {
+            "wifi.state" if only(&[]) => wifi.resolve(),
+            "wifi.forget" if only(&[]) => {
+                *wifi = MockWifi {
+                    capability: wifi.capability,
+                    networks: std::mem::take(&mut wifi.networks),
+                    ..MockWifi::default()
+                }
+            }
+            "wifi.set" if only(&["ssid", "password"]) => {
+                let ssid = request.get("ssid").and_then(Value::as_str);
+                let password = request.get("password").and_then(Value::as_str);
+                let (Some(ssid), Some(password)) = (ssid, password) else {
+                    return Ok(refusal("args", "Invalid network name or password"));
+                };
+                if !valid_ssid(ssid) || !valid_password(&WifiPassword::new(password)) {
+                    return Ok(refusal("args", "Invalid network name or password"));
+                }
+                wifi.stored = Some((ssid.into(), password.into()));
+                wifi.joining = true;
+                wifi.outcome = None;
+            }
+            "wifi.state" | "wifi.forget" | "wifi.set" => {
+                return Ok(refusal("args", "Invalid request fields"));
+            }
+            _ => return Ok(refusal("unsupported", "Unsupported request")),
+        }
+        Ok(wifi.fields())
+    }
+
     fn v2_selected(&self) -> bool {
         let state = self.state();
         state.v2 && state.selected_v2 && state.online_since_hello

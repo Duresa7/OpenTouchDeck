@@ -467,3 +467,100 @@ async fn the_real_device_console_flag_refuses_to_start_without_a_data_folder() {
     assert!(!status.success());
     assert!(stderr.contains("TOUCHDECK_APP_DATA_DIR"), "{stderr}");
 }
+
+/// A Wi-Fi password set through the API reaches the Device and nothing else: no log line, no response and no event.
+#[tokio::test]
+async fn a_wifi_password_never_reaches_the_logs() {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+    const PASSWORD: &str = "dummy-pass-7319";
+    let root = tempfile::tempdir().unwrap();
+    let mut child = Process(
+        Command::new(env!("CARGO_BIN_EXE_td-companion"))
+            .args(["--mock-devices", "1"])
+            .env("TOUCHDECK_APP_DATA_DIR", root.path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let stdout = drain(child.0.stdout.take().unwrap());
+    let stderr = drain(child.0.stderr.take().unwrap());
+    let info = runtime(root.path()).await;
+    let client = client();
+    let token = session(&client, &info).await;
+    let base = url(&info);
+    let mut request = format!("{}/api/v1/events", base.replace("http:", "ws:"))
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        format!("touchdeck.v1, touchdeck.bearer.{token}")
+            .parse()
+            .unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let frames = tokio::spawn(async move {
+        let mut frames = Vec::new();
+        while let Some(Ok(message)) = socket.next().await {
+            if let Message::Text(text) = message {
+                frames.push(text.to_string());
+            }
+        }
+        frames
+    });
+    let plug = client
+        .post(format!("{base}/api/v1/test/ports"))
+        .bearer_auth(&token)
+        .json(&json!({"plug": {"id": "mock00a1", "kind": "device-radio"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(plug.status(), 204);
+    connected(&client, &info, &token, 2).await;
+
+    let wifi = format!("{base}/api/v1/devices/mock00a1/wifi");
+    let mut bodies = Vec::new();
+    for (method, body, expected) in [
+        (
+            reqwest::Method::PUT,
+            Some(json!({"ssid": "td-test-nonexistent", "password": PASSWORD})),
+            200,
+        ),
+        (reqwest::Method::GET, None, 200),
+        (
+            reqwest::Method::PUT,
+            Some(json!({"ssid": "td-test-nonexistent", "password": PASSWORD, "extra": PASSWORD})),
+            400,
+        ),
+        (
+            reqwest::Method::PUT,
+            Some(json!({"ssid": "", "password": PASSWORD})),
+            400,
+        ),
+        (reqwest::Method::DELETE, None, 200),
+    ] {
+        let mut request = client.request(method, &wifi).bearer_auth(&token);
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request.send().await.unwrap();
+        assert_eq!(response.status().as_u16(), expected);
+        bodies.push(response.text().await.unwrap());
+    }
+    assert!(bodies[1].contains("not-found"), "{}", bodies[1]);
+
+    stop(&mut child, &client, &info, &token).await;
+    let frames = tokio::time::timeout(Duration::from_secs(5), frames)
+        .await
+        .expect("shutdown closes the socket")
+        .unwrap();
+    let logs = [stdout.join().unwrap(), stderr.join().unwrap()];
+    assert!(!logs[1].is_empty(), "the mock Devices log to stderr");
+    for text in logs.iter().chain(&bodies).chain(&frames) {
+        assert!(
+            !text.contains(PASSWORD),
+            "the Wi-Fi password leaked: {text}"
+        );
+    }
+}
