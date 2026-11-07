@@ -19,6 +19,7 @@ use td_core::{
 use crate::asset::{ASSET_PAGE, AssetFormat, asset_id, refusal, valid_asset_id};
 use crate::live::{TTL_MAX_MS, TTL_MIN_MS, VALUE_MAX, layout_ref};
 use crate::mock_ble::{MockBle, MockBond};
+use crate::mock_net::{MockNet, Store};
 use crate::photo::{IDLE_INTERVAL_S, IDLE_TIMEOUT_S, IdleSettings, PHOTO_BYTES_MAX};
 use crate::wifi::{WifiPassword, valid_password, valid_ssid};
 use crate::xfer::{ICON_BYTES, LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, crc32};
@@ -207,6 +208,8 @@ struct State {
     selections: u64,
     page_sent: Option<(u64, String, usize)>,
     wifi: MockWifi,
+    /// The radio build's Pairings, for `net.*`.
+    net: MockNet,
 }
 
 /// The radio build's Wi-Fi station, as far as the link shows it.
@@ -432,6 +435,7 @@ impl MockDeck {
                 selections: 0,
                 page_sent: None,
                 wifi: MockWifi::default(),
+                net: MockNet::default(),
             })),
         }
     }
@@ -569,6 +573,47 @@ impl MockDeck {
     /// A host types the passkey and bonds inside the open window, which closes it. `false` when no window is open.
     pub fn ble_host_pairs(&self, address: &str, random: bool) -> bool {
         self.state().ble.host_pairs(address, random)
+    }
+
+    /// Stores a Pairing on the Device, as an app that paired earlier. Needs a radio build (`set_wifi_capability`) to
+    /// show in `net.list`. With the fake net-v2 Device in front, pair through it instead.
+    pub fn add_net_pairing(&self, app_id: [u8; 16], name: &str) {
+        let mut state = self.state();
+        let local = &mut state.net.local;
+        local.pairings.retain(|(id, _)| *id != app_id);
+        local.pairings.push((app_id, name.into()));
+    }
+
+    /// The Pairings `net.list` shows, oldest first: `(app_id, app_name)` each.
+    pub fn net_pairings(&self) -> Vec<([u8; 16], String)> {
+        let store = self.state().net.store.clone();
+        match store {
+            Some(store) => store.view().pairings,
+            None => self.state().net.local.pairings.clone(),
+        }
+    }
+
+    /// Makes the Pairing store's writes fail: a `net.forget` that removes something answers `storage`.
+    pub fn fail_net_storage(&self, fail: bool) {
+        self.state().net.storage_fails = fail;
+    }
+
+    /// The next `count` `net.forget` requests take effect but get no reply.
+    pub fn lose_net_forget_replies(&self, count: u32) {
+        self.state().net.lose_forget_replies = count;
+    }
+
+    /// Sets the failed-code counter and a lockout of `locked_for`, as wrong codes typed into a window would.
+    pub fn set_net_failures(&self, pair_failures: u32, locked_for: Duration) {
+        let mut state = self.state();
+        state.net.local.pair_failures = pair_failures;
+        state.net.local.locked_until = (!locked_for.is_zero()).then(|| Instant::now() + locked_for);
+    }
+
+    /// Puts the fake net-v2 Device's Pairing store in place of this Device's own.
+    #[cfg(feature = "fake")]
+    pub(crate) fn set_net_store(&self, store: Arc<dyn crate::mock_net::NetStore>) {
+        self.state().net.store = Some(store);
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -1594,6 +1639,13 @@ impl MockDeck {
         self.state().received.push(Value::Object(recorded));
         let m = request["m"].as_str().unwrap_or_default().to_owned();
         let fields = self.dispatch(&m, &request);
+        if m == "net.forget" {
+            let mut state = self.state();
+            if state.net.lose_forget_replies > 0 {
+                state.net.lose_forget_replies -= 1;
+                return Vec::new();
+            }
+        }
         let mut reply = Map::from_iter([
             ("m".to_owned(), json!(m)),
             ("ok".to_owned(), json!(fields.is_ok())),
@@ -1664,6 +1716,7 @@ impl MockDeck {
                 Ok(reply)
             }
             m if m.starts_with("wifi.") => self.wifi(m, request),
+            m if m.starts_with("net.") => self.net(m, request),
             m if m.starts_with("v2.asset.") && self.v2_selected() => Ok(self.asset(m, request)),
             "v2.live.set" if self.v2_selected() => Ok(self.live_set(request)),
             "v2.photo.put" | "v2.photo.end" | "v2.idle.get" | "v2.idle.set" | "v2.clock.set"
@@ -1958,6 +2011,37 @@ impl MockDeck {
             _ => return Ok(refusal("unsupported", "Unsupported request")),
         }
         Ok(wifi.fields())
+    }
+
+    /// `net.state` from any Carrier, and the USB-only `net.pair`, `net.list` and `net.forget`, on a radio build. The
+    /// normal build doesn't know `net.*`.
+    fn net(&self, m: &str, request: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+        let mut state = self.state();
+        if !state.wifi.capability
+            || !matches!(m, "net.state" | "net.pair" | "net.list" | "net.forget")
+        {
+            return Err("unknown message".into());
+        }
+        if m != "net.state" && state.link_network {
+            return Ok(refusal("usb-only", "Only over USB"));
+        }
+        let storage_fails = state.net.storage_fails;
+        // The fake Device's store takes its own lock, so the deck's lock goes first.
+        if let Some(store) = state.net.store.clone() {
+            drop(state);
+            return Ok(crate::mock_net::handle(
+                m,
+                request,
+                Store::Shared(store),
+                storage_fails,
+            ));
+        }
+        Ok(crate::mock_net::handle(
+            m,
+            request,
+            Store::Local(&mut state.net.local),
+            storage_fails,
+        ))
     }
 
     fn v2_selected(&self) -> bool {

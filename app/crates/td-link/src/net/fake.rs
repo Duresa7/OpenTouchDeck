@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -25,6 +25,7 @@ use super::wire::{
     SESSION_OPEN, SESSION_PROOF, SESSION_READY, SessionKeys, SrpServer,
 };
 use super::{CompanionId, DeviceId, NetError, Refusal, random, random_exponent};
+use crate::mock_net::{NetStore, NetView};
 use crate::{MockDeck, Transport};
 
 const FIRST_ITEM: Duration = Duration::from_secs(2);
@@ -100,6 +101,8 @@ enum Prompt {
 #[derive(Default)]
 struct State {
     pairings: BTreeMap<CompanionId, Stored>,
+    /// The Pairings oldest first, as `net.list` shows them.
+    order: Vec<CompanionId>,
     window: Option<Window>,
     pair_failures: u32,
     locked_until: Option<Instant>,
@@ -159,6 +162,10 @@ impl FakeNetDevice {
                 }
             })
             .expect("the fake Device listens");
+        // `net.list` and `net.forget` over USB reach this Device's Pairings.
+        inner
+            .deck
+            .set_net_store(Arc::new(Pairings(Arc::downgrade(&inner))));
         FakeNetDevice { inner }
     }
 
@@ -180,20 +187,7 @@ impl FakeNetDevice {
 
     /// The person chooses "Pair new app" on the Device. Fails while pairing is locked out.
     pub fn open_window(&self) -> Result<(), Duration> {
-        let mut state = self.state();
-        if let Some(left) = locked(&state) {
-            return Err(left);
-        }
-        let mut id = [0u8; 16];
-        random(&mut id);
-        state.window = Some(Window {
-            id,
-            ends: Instant::now() + WINDOW,
-            code: None,
-            failures: 0,
-            bound: false,
-        });
-        Ok(())
+        self.inner.open_window()
     }
 
     /// The person taps Cancel on the pairing screen.
@@ -221,10 +215,11 @@ impl FakeNetDevice {
 
     /// The names of stored Pairings.
     pub fn paired_names(&self) -> Vec<String> {
-        self.state()
+        self.inner
+            .view()
             .pairings
-            .values()
-            .map(|p| p.name.clone())
+            .into_iter()
+            .map(|(_, name)| name)
             .collect()
     }
 
@@ -245,14 +240,7 @@ impl FakeNetDevice {
 
     /// `net.forget` over USB: every Pairing, the counter and the lockout go.
     pub fn forget_all(&self) {
-        let mut state = self.state();
-        state.pairings.clear();
-        state.pair_failures = 0;
-        state.locked_until = None;
-        state.window = None;
-        if let Some((_, stream)) = state.owner.take() {
-            let _ = stream.shutdown(Shutdown::Both);
-        }
+        self.inner.forget_all();
     }
 
     /// The Companion name of the running session.
@@ -410,6 +398,34 @@ fn locked(state: &State) -> Option<Duration> {
         .filter(|left| !left.is_zero())
 }
 
+/// The fake Device's Pairing store, as the mock Device's `net.*` over USB sees it.
+struct Pairings(Weak<Inner>);
+
+impl NetStore for Pairings {
+    fn view(&self) -> NetView {
+        self.0
+            .upgrade()
+            .map(|inner| inner.view())
+            .unwrap_or_default()
+    }
+
+    fn open_window(&self) -> Result<(), Duration> {
+        self.0.upgrade().map_or(Ok(()), |inner| inner.open_window())
+    }
+
+    fn forget(&self, companion_id: &CompanionId) -> bool {
+        self.0
+            .upgrade()
+            .is_some_and(|inner| inner.forget(companion_id))
+    }
+
+    fn forget_all(&self) {
+        if let Some(inner) = self.0.upgrade() {
+            inner.forget_all();
+        }
+    }
+}
+
 /// Clears ownership when a carrier connection ends.
 struct Owned<'a>(&'a Inner, u64);
 
@@ -446,6 +462,68 @@ fn refuse(items: &mut Items, reason: Refusal) {
 impl Inner {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn open_window(&self) -> Result<(), Duration> {
+        let mut state = self.state();
+        if let Some(left) = locked(&state) {
+            return Err(left);
+        }
+        let mut id = [0u8; 16];
+        random(&mut id);
+        state.window = Some(Window {
+            id,
+            ends: Instant::now() + WINDOW,
+            code: None,
+            failures: 0,
+            bound: false,
+        });
+        Ok(())
+    }
+
+    fn view(&self) -> NetView {
+        let state = self.state();
+        NetView {
+            pairings: state
+                .order
+                .iter()
+                .filter_map(|id| state.pairings.get(id).map(|p| (*id, p.name.clone())))
+                .collect(),
+            pairing: state
+                .window
+                .as_ref()
+                .is_some_and(|w| w.ends > Instant::now()),
+            pair_failures: state.pair_failures,
+            locked_ms: locked(&state).map_or(0, |left| left.as_millis() as u64),
+            session: state.peer,
+        }
+    }
+
+    /// Removes one Pairing and ends its session.
+    fn forget(&self, companion_id: &CompanionId) -> bool {
+        let mut state = self.state();
+        let removed = state.pairings.remove(companion_id).is_some();
+        state.order.retain(|id| id != companion_id);
+        state.cooldowns.remove(companion_id);
+        if state.peer.as_ref() == Some(companion_id)
+            && let Some((_, stream)) = state.owner.take()
+        {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+        removed
+    }
+
+    /// Every Pairing, the counter and the lockout go; the window closes and any session ends.
+    fn forget_all(&self) {
+        let mut state = self.state();
+        state.pairings.clear();
+        state.order.clear();
+        state.pair_failures = 0;
+        state.locked_until = None;
+        state.window = None;
+        if let Some((_, stream)) = state.owner.take() {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
     }
 
     fn serve(&self, stream: TcpStream) {
@@ -615,6 +693,7 @@ impl Inner {
             let lose = {
                 let mut state = self.state();
                 state.pairings.insert(companion_id, Stored { name, ltk });
+                state.order.push(companion_id);
                 state.pair_failures = 0;
                 state.locked_until = None;
                 state.window = None;
