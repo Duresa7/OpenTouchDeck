@@ -54,7 +54,7 @@ export function sampleDevice(id: string, name: string | null, link: LinkState = 
     setup: name === null ? 'needs-setup' : 'ready',
     link,
     carrier: link.state === 'connected' ? 'usb' : null,
-    firmware: { version: '1.5.0', protocol: 2, build: 'fake', recovery: false, update_available: null },
+    firmware: { version: '1.5.0', protocol: 2, build: 'fake', recovery: false, update_available: null, channel: 'normal' },
     diagnostics: { product: 'touchdeck', running_from: 'ota_0', sinks: ['log', 'link'], current_layout: 'builtin' },
     capabilities: null,
     orientation: 'landscape',
@@ -75,6 +75,9 @@ export const demoDevices: DeviceSummary[] = [
 // Desk runs the radio build, so its Device settings show Wi-Fi.
 demoDevices[0].capabilities = RADIO_CAPS;
 if (demoDevices[1].firmware) demoDevices[1].firmware = { ...demoDevices[1].firmware, version: '1.4.0', update_available: '1.5.0' };
+// Desk and Stream deck by the window run the opt-in radio build: Desk shows the switch back, and Stream deck by the
+// window links over Wi-Fi, which only the radio build has. Studio stays on the normal build.
+for (const device of [demoDevices[0], demoDevices[2]]) if (device.firmware) device.firmware = { ...device.firmware, channel: 'radio' };
 
 const TILES: Record<string, string[]> = {
   media: ['Previous', 'Play/Pause', 'Next', 'Mute', 'Volume', 'Music', 'Work', 'Break'],

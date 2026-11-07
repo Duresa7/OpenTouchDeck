@@ -14,7 +14,7 @@ const STUDIO = { device: 'Studio', version: '1.4.0' };
 const connected = { state: 'connected' as const, port: 'COM4', since_ms: 0, protocol: 2 };
 const studio: DeviceSummary = {
   ...sampleDevice('mock0002', 'Studio', connected),
-  firmware: { version: '1.4.0', protocol: 2, build: 'fake', recovery: false, update_available: '1.5.0' },
+  firmware: { version: '1.4.0', protocol: 2, build: 'fake', recovery: false, update_available: '1.5.0', channel: 'normal' },
 };
 
 const progress = (phase: string, pct: number | null = null): FirmwareProgress => ({ phase, pct, bytes: pct === null ? 0 : pct * 15_729 });
@@ -62,6 +62,8 @@ describe('failures', () => {
     ['firmware.declined', null, 'Declined on this PC. Studio still runs 1.4.0.'],
     ['firmware.bundle_invalid', null, "That file isn't a Firmware file for this Device."],
     ['firmware.bundle_not_found', null, 'That file expired. Choose it again, then retry.'],
+    ['firmware.channel_mismatch', { channel: 'normal', bundle: 'radio' }, 'That file is the radio build, and Studio runs the normal build. Nothing changed.'],
+    ['firmware.channel_mismatch', { channel: 'radio', bundle: 'normal' }, 'That file is the normal build, and Studio runs the radio build. Nothing changed.'],
     ['device.busy', null, 'Studio is updating. Wait for it to finish.'],
     ['device.not_connected', null, "Studio isn't connected."],
     ['job.cancelled', null, 'Update stopped. Studio still runs 1.4.0.'],
@@ -199,6 +201,53 @@ describe('the update runner', () => {
     const update = runner(offline);
     await update.start('bundled');
     expect(update.getState().view).toEqual({ step: 'failed', text: "Desk isn't connected.", raw: 'Failed: The Device is not connected.', code: 'device.not_connected' });
+  });
+
+  test('an update keeps the build the Device runs', async () => {
+    const update = runner();
+    await update.start('bundled');
+    await vi.waitFor(() => expect(update.getState().view.step).toBe('done'));
+    expect((await companion.devices.get({ device: 'mock0002' })).firmware?.channel).toBe('normal');
+  });
+
+  test('a switch waits for consent on this PC, then installs the other build', async () => {
+    const update = runner();
+    await update.start('bundled', 'radio');
+    await vi.waitFor(() => expect(update.getState().log).toContain('Waiting for confirmation'));
+    await vi.waitFor(() => expect(update.getState().view.step).toBe('done'));
+    expect(update.getState().view).toMatchObject({ text: 'Now on the radio build, 1.5.0', version: '1.5.0' });
+    expect((await companion.devices.get({ device: 'mock0002' })).firmware?.channel).toBe('radio');
+
+    const back = runner({ ...studio, firmware: studio.firmware && { ...studio.firmware, version: '1.5.0', channel: 'radio' } });
+    await back.start('bundled', 'normal');
+    await vi.waitFor(() => expect(back.getState().view.step).toBe('done'));
+    expect(back.getState().view).toMatchObject({ text: 'Now on the normal build, 1.5.0' });
+    expect((await companion.devices.get({ device: 'mock0002' })).firmware?.channel).toBe('normal');
+  });
+
+  test('a switch keeps its words when the Device reports the Job before the start returns', async () => {
+    const update = runner();
+    const post = companion.firmware.update.bind(companion.firmware);
+    vi.spyOn(companion.firmware, 'update').mockImplementation(async (...args) => {
+      const started = await post(...args);
+      update.attach(started);
+      return started;
+    });
+    await update.start('bundled', 'radio');
+    await vi.waitFor(() => expect(update.getState().view.step).toBe('done'));
+    expect(update.getState().view).toMatchObject({ text: 'Now on the radio build, 1.5.0' });
+  });
+
+  test('a radio file for a Device on the normal build is refused and changes nothing', async () => {
+    fake.firmware.picks('radio-file');
+    const update = runner();
+    await update.startFromFile();
+    expect(update.getState().view).toMatchObject({
+      step: 'failed',
+      code: 'firmware.channel_mismatch',
+      text: 'That file is the radio build, and Studio runs the normal build. Nothing changed.',
+    });
+    expect((await companion.devices.get({ device: 'mock0002' })).firmware).toMatchObject({ version: '1.4.0', channel: 'normal' });
   });
 
   test('an expired bundle says to choose it again', async () => {

@@ -77,6 +77,23 @@ impl PartialEq<&str> for DeviceId {
     }
 }
 
+/// Which Firmware build a Device runs, and so which bundle its updates come from. The radio build is the opt-in build
+/// with Wi-Fi and Bluetooth; the normal build has no radio code.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum FirmwareChannel {
+    #[default]
+    Normal,
+    Radio,
+}
+impl FirmwareChannel {
+    pub fn of(radio: bool) -> Self {
+        if radio { Self::Radio } else { Self::Normal }
+    }
+    pub fn is_radio(self) -> bool {
+        self == Self::Radio
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct FirmwareInfo {
     pub version: String,
@@ -84,6 +101,9 @@ pub struct FirmwareInfo {
     pub build: String,
     pub recovery: bool,
     pub update_available: Option<String>,
+    /// The build the Device says it runs. Firmware that doesn't say runs the normal build.
+    #[serde(default)]
+    pub channel: FirmwareChannel,
 }
 /// What a v2 `hello` says the Device can show and store.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]

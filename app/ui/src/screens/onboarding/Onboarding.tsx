@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSP
 import clsx from 'clsx';
 import { useStore } from 'zustand';
 import { Dialog } from '@base-ui/react/dialog';
-import { LayoutGrid, Sparkles, Usb, X, type LucideIcon } from 'lucide-react';
+import { LayoutGrid, Sparkles, Usb, Wifi, X, type LucideIcon } from 'lucide-react';
 import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
 import { jobsStore, waitForJob } from '../../lib/companion/jobs.ts';
@@ -286,6 +286,26 @@ function FirmwareStep({ firmware, device, offered, headingId }: { firmware: Firm
   );
 }
 
+function WifiStep({ device, headingId }: { device: DeviceSummary; headingId: string }) {
+  const called = device.name ?? 'the Device';
+  return (
+    <>
+      <h3 className="onboarding-heading" id={headingId}>
+        Wi-Fi and Bluetooth
+      </h3>
+      <div className="onboarding-note" data-testid="onboarding-wifi">
+        <span className="choice-glyph" aria-hidden>
+          <Wifi size={18} strokeWidth={1.9} />
+        </span>
+        <p className="onboarding-text">
+          {opening(called)} runs the radio build. Wi-Fi and Bluetooth stay off until you set them up.
+        </p>
+      </div>
+      <p className="field-hint">Set up Wi-Fi in the Device panel, now or later. Until then, {called} works over USB as usual.</p>
+    </>
+  );
+}
+
 function DoneStep({ device, headingId }: { device: DeviceSummary; headingId: string }) {
   const called = device.name ?? 'the Device';
   return (
@@ -304,7 +324,7 @@ function stageLayout(state: Pick<SetupState, 'flow' | 'choice' | 'orientation' |
     if (choice === 'keep') return onDevice?.layout ?? null;
     return choice === 'starter' ? starterLayout(orientation) : newLayout(orientation);
   }
-  if (flow.at === 'done' || (flow.at === 'firmware' && flow.steps.indexOf('firmware') > flow.steps.indexOf('layout'))) return onDevice?.layout ?? null;
+  if (flow.at === 'done' || flow.at === 'wifi' || (flow.at === 'firmware' && flow.steps.indexOf('firmware') > flow.steps.indexOf('layout'))) return onDevice?.layout ?? null;
   return null;
 }
 
@@ -358,6 +378,7 @@ function Footer({ setup, firmware, device, onClose }: { setup: SetupStore; firmw
       case 'layout':
         return void setup.submitLayout();
       case 'firmware':
+      case 'wifi':
       case 'done':
         return setup.next();
       default: {
@@ -413,7 +434,7 @@ function Footer({ setup, firmware, device, onClose }: { setup: SetupStore; firmw
         className={button({ kind: 'primary' })}
         aria-disabled={!live || held || undefined}
         onClick={submit}
-        data-autofocus={at === 'firmware' || undefined}
+        data-autofocus={at === 'firmware' || at === 'wifi' || undefined}
         data-testid="onboarding-next"
       >
         {busy ? BUSY_LABEL[busy] : 'Next'}
@@ -493,6 +514,7 @@ export function Onboarding({ device, open, onClose, onClosed }: { device: Device
               {at === 'orientation' && <OrientationStep setup={setup} headingId={headingId} />}
               {at === 'layout' && <LayoutStep setup={setup} headingId={headingId} />}
               {at === 'firmware' && <FirmwareStep firmware={firmware} device={device} offered={offered} headingId={headingId} />}
+              {at === 'wifi' && <WifiStep device={device} headingId={headingId} />}
               {at === 'done' && <DoneStep device={device} headingId={headingId} />}
             </section>
             <Footer setup={setup} firmware={firmware} device={device} onClose={onClose} />

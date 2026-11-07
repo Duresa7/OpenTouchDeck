@@ -60,7 +60,7 @@ replaced: { [key in string]?: string }, };
 export type BrandfetchTheme = "light" | "dark" | "auto";
 export type BrowserKind = "browser";
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
-export type BundleInfo = { id: string, version: string, build: string, bytes: number, };
+export type BundleInfo = { id: string, version: string, build: string, bytes: number, channel: FirmwareChannel, };
 export type Capabilities = { anim?: AnimationCapabilities, gif_frames?: number, gif_pixels?: number, screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], photo_bytes: number, 
 /**
  * Live values: updates a stream and the whole Device take each second, samples a graph keeps, and bytes a
@@ -163,10 +163,21 @@ ip: string | null,
  */
 rssi: number | null, };
 export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
-export type FirmwareBuild = { version: string, build: string, };
-export type FirmwareInfo = { version: string, protocol: number, build: string, recovery: boolean, update_available: string | null, };
+export type FirmwareBuild = { version: string, build: string, radio: RadioBuild | null, };
+export type FirmwareChannel = "normal" | "radio";
+export type FirmwareInfo = { version: string, protocol: number, build: string, recovery: boolean, update_available: string | null, 
+/**
+ * The build the Device says it runs. Firmware that doesn't say runs the normal build.
+ */
+channel: FirmwareChannel, };
 export type FirmwareProgress = { phase: string, pct: number | null, bytes: number, };
-export type FirmwareRequest = { bundle: string, };
+export type FirmwareRequest = { bundle: string, 
+/**
+ * The build to install. Left out, it is the build the Device runs, or the normal build on a New board. Naming the
+ * other build is how the person asks to switch, and a switch always asks for consent. A bundle of any other build
+ * is refused with `firmware.channel_mismatch`.
+ */
+channel?: FirmwareChannel, };
 export type FirmwareResult = { message: string, version: string, };
 export type FirmwareTarget = { device: DeviceId, };
 export type Fit = "contain" | "cover";
@@ -346,6 +357,7 @@ export type PushReport = { state: DeviceLayoutState, bytes: number, chunks: numb
  * The pushed Layout's revision, for the next `If-Match`.
  */
 revision: string, };
+export type RadioBuild = { version: string, build: string, };
 export type RenderProgress = { frames_done: number, frames_total: number, };
 export type SecretHint = { hint: string, };
 export type SecretInput = { value: string, };
@@ -484,7 +496,7 @@ export const endpoints = {
   'wifi.pairings_forget': { method: 'DELETE', path: '/wifi/pairings/{device}', access: 'session' },
   'wifi.pairings_list': { method: 'GET', path: '/wifi/pairings', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'brandfetch.key_refused' | 'brandfetch.no_key' | 'brandfetch.no_keychain' | 'brandfetch.no_logo' | 'brandfetch.not_found' | 'brandfetch.quota' | 'brandfetch.store' | 'brandfetch.unavailable' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'device.unknown_outcome' | 'device.usb_only' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.version' | 'wifi.window_closed' | 'wifi.wrong_code';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'brandfetch.key_refused' | 'brandfetch.no_key' | 'brandfetch.no_keychain' | 'brandfetch.no_logo' | 'brandfetch.not_found' | 'brandfetch.quota' | 'brandfetch.store' | 'brandfetch.unavailable' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'device.unknown_outcome' | 'device.usb_only' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.channel_mismatch' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.version' | 'wifi.window_closed' | 'wifi.wrong_code';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
@@ -610,10 +622,28 @@ brightness: number | null, photo_frame: PhotoFramePatch | null, }, bearer?: stri
     },
     firmware: {
       bundled: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<FirmwareBuild>('firmware.bundled', path, query, body, bearer, headers, signal),
-      install: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.install', path, query, body, bearer, headers, signal),
+      install: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, 
+/**
+ * The build to install. Left out, it is the build the Device runs, or the normal build on a New board. Naming the
+ * other build is how the person asks to switch, and a switch always asks for consent. A bundle of any other build
+ * is refused with `firmware.channel_mismatch`.
+ */
+channel?: FirmwareChannel, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.install', path, query, body, bearer, headers, signal),
       pick: (path: Record<string, never> = {}, query: null = null, body: { device: DeviceId, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<PickResult>('firmware.pick', path, query, body, bearer, headers, signal),
-      repair: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.repair', path, query, body, bearer, headers, signal),
-      update: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.update', path, query, body, bearer, headers, signal),
+      repair: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, 
+/**
+ * The build to install. Left out, it is the build the Device runs, or the normal build on a New board. Naming the
+ * other build is how the person asks to switch, and a switch always asks for consent. A bundle of any other build
+ * is refused with `firmware.channel_mismatch`.
+ */
+channel?: FirmwareChannel, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.repair', path, query, body, bearer, headers, signal),
+      update: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, 
+/**
+ * The build to install. Left out, it is the build the Device runs, or the normal build on a New board. Naming the
+ * other build is how the person asks to switch, and a switch always asks for consent. A bundle of any other build
+ * is refused with `firmware.channel_mismatch`.
+ */
+channel?: FirmwareChannel, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.update', path, query, body, bearer, headers, signal),
     },
     icon_packs: {
       import: (path: Record<string, never> = {}, query: null = null, body: Blob, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<PackInfo>('icon_packs.import', path, query, body, bearer, headers, signal),

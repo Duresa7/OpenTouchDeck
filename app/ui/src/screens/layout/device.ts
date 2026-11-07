@@ -1,12 +1,12 @@
 import { useEffect } from 'react';
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import type { DeviceSummary } from '../../lib/companion/api.ts';
+import type { DeviceSummary, FirmwareBuild } from '../../lib/companion/api.ts';
 import type { Companion } from '../../lib/companion/client.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
 import { jobsStore } from '../../lib/companion/jobs.ts';
 import { createFirmwareUpdate, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
-import { newerFirmware } from '../../lib/device/needs-firmware.ts';
+import { offeredFor } from '../../lib/device/radio-build.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { createWifiPairing, type WifiStore } from '../../lib/device/wifi.ts';
 import { createWifiSetup, type WifiSetupStore } from '../../lib/device/wifi-setup.ts';
@@ -64,7 +64,7 @@ export function useDeviceStores(device: DeviceSummary): DeviceStores {
   return stores;
 }
 
-type Bundled = { state: 'asking' } | { state: 'known'; version: string } | { state: 'unknown' };
+type Bundled = { state: 'asking' } | { state: 'known'; build: FirmwareBuild } | { state: 'unknown' };
 
 const bundled = new WeakMap<Companion, StoreApi<Bundled>>();
 
@@ -73,7 +73,7 @@ function bundledFor(companion: Companion): StoreApi<Bundled> {
   if (!store) {
     const asking = createStore<Bundled>()(() => ({ state: 'asking' }));
     companion.firmware.bundled().then(
-      (build) => asking.setState({ state: 'known', version: build.version }),
+      (build) => asking.setState({ state: 'known', build }),
       () => asking.setState({ state: 'unknown' }),
     );
     bundled.set(companion, asking);
@@ -82,11 +82,13 @@ function bundledFor(companion: Companion): StoreApi<Bundled> {
   return store;
 }
 
-export function useBundledFirmware(): string | null {
-  return useStore(bundledFor(useCompanion()), (s) => (s.state === 'known' ? s.version : null));
+/** The Firmware this Companion carries: the normal build, and the radio build when it carries one. */
+export function useBundledBuild(): FirmwareBuild | null {
+  return useStore(bundledFor(useCompanion()), (s) => (s.state === 'known' ? s.build : null));
 }
 
+/** The newer Firmware offered to a Device, always of the build it runs. */
 export function useOfferedFirmware(device: Pick<DeviceSummary, 'firmware'>): string | null {
-  const bundled = useBundledFirmware();
-  return bundled ? newerFirmware(device, bundled) : (device.firmware?.update_available ?? null);
+  const bundled = useBundledBuild();
+  return bundled ? offeredFor(device, bundled) : (device.firmware?.update_available ?? null);
 }

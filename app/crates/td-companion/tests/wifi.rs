@@ -406,6 +406,7 @@ async fn a_firmware_update_over_wifi_asks_for_usb() {
         NoQuery,
         &FirmwareRequest {
             bundle: "bundled".into(),
+            channel: None,
         },
     ))
     .await;

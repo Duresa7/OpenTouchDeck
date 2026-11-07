@@ -84,6 +84,8 @@ pub struct Identity {
     pub version: String,
     pub capabilities: Option<Capabilities>,
     pub protocol: u32,
+    /// The Device runs the opt-in radio build: its v2 hello says `"radio": true`. Never true over protocol 1.
+    pub radio: bool,
 }
 /// The format characters (General_Category Cf) of Unicode 17.0 as inclusive ranges, pinned by
 /// link-v2.md and net-v2.md so no toolchain's Unicode version changes the rule.
@@ -157,6 +159,7 @@ impl Session {
                 version: hello.version,
                 capabilities: None,
                 protocol: 1,
+                radio: false,
             });
         }
         let selected = self.call(&json!({"m":"hello", "proto":2}), timeout)?;
@@ -171,6 +174,8 @@ impl Session {
                 name: String,
                 caps: Capabilities,
                 protocols: Vec<u32>,
+                #[serde(default)]
+                radio: bool,
             }
             let fields: Fields = selected.fields().map_err(LinkError::Reply)?;
             if fields.id.len() != 12
@@ -191,6 +196,7 @@ impl Session {
                 version: hello.version,
                 capabilities: Some(fields.caps),
                 protocol: 2,
+                radio: fields.radio,
             })
         })();
         if result.is_err() {
