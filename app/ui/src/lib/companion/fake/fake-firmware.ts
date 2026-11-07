@@ -1,4 +1,4 @@
-import type { BundleInfo, DeviceSummary, ErrorBody, FirmwareBuild, FirmwareProgress, FirmwareResult, Job, LinkState } from '../api.ts';
+import type { BundleInfo, DeviceSummary, ErrorBody, FirmwareBuild, FirmwareChannel, FirmwareProgress, FirmwareResult, Job, LinkState } from '../api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -10,7 +10,13 @@ export interface FakeFirmwareOptions {
 }
 
 type Mode = 'normal-update' | 'rollback' | 'no-confirm';
-export type FakePick = 'firmware-file' | 'closed' | 'not-firmware' | 'dialog-open';
+export type FakePick = 'firmware-file' | 'radio-file' | 'closed' | 'not-firmware' | 'dialog-open';
+type Target = { version: string; channel: FirmwareChannel };
+
+/** What the fake Companion carries unless a test says otherwise: the normal build and the radio build. */
+export const FAKE_BUNDLED: FirmwareBuild = { version: '1.5.0', build: 'fake', radio: { version: '1.5.0', build: 'fake-radio' } };
+
+const isChannel = (value: unknown): value is FirmwareChannel => value === 'normal' || value === 'radio';
 const MODES: readonly Mode[] = ['normal-update', 'rollback', 'no-confirm'];
 
 const json = (status: number, body: unknown) =>
@@ -26,7 +32,7 @@ const sending = (pct: number): FirmwareProgress => ({ phase: 'sending', pct, byt
 
 export function createFakeFirmware(options: FakeFirmwareOptions) {
   const { devices, publish, stepMs = 120 } = options;
-  const bundled = options.bundled ?? { version: '1.5.0', build: 'fake' };
+  const bundled = options.bundled ?? FAKE_BUNDLED;
   const jobs = new Map<string, Job>();
   const bundles = new Map<string, BundleInfo & { device: string }>();
   const modes = new Map<string, Mode>();
@@ -56,12 +62,14 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
 
   const connected = (port: string): LinkState => ({ state: 'connected', port, since_ms: Date.now(), protocol: 2 });
 
-  function finish(id: string, port: string, outcome: { result: FirmwareResult } | { error: ErrorBody }, version: string | null) {
+  function finish(id: string, port: string, outcome: { result: FirmwareResult } | { error: ErrorBody }, target: Target | null) {
     const job = jobs.get(id);
     if (!job || job.finished_ms !== null) return;
     const device = devices.get(job.scope.kind === 'device' ? job.scope.id : '');
     if (device?.firmware) {
-      const firmware = version ? { ...device.firmware, version, protocol: Math.max(device.firmware.protocol, 2), update_available: null } : device.firmware;
+      const firmware = target
+        ? { ...device.firmware, version: target.version, channel: target.channel, protocol: Math.max(device.firmware.protocol, 2), update_available: null }
+        : device.firmware;
       setDevice(device.id, { firmware, link: connected(port) });
     }
     update(job, 'result' in outcome
@@ -69,9 +77,9 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
       : { state: 'failed', error: outcome.error, cancellable: false, finished_ms: Date.now() });
   }
 
-  function run(id: string, device: DeviceSummary, port: string, target: { version: string }) {
+  function run(id: string, device: DeviceSummary, port: string, target: Target) {
     const mode = modes.get(device.id) ?? 'normal-update';
-    const same = device.firmware?.version === target.version;
+    const same = device.firmware?.version === target.version && device.firmware.channel === target.channel;
     const steps: FirmwareProgress[] = same ? [phase('checking')] : [phase('checking'), ...SENDING.map(sending), phase('rebooting'), phase('confirming')];
     let at = 0;
     const tick = () => {
@@ -90,7 +98,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
       if (same) finish(id, port, { result: { message: 'Already on this build', version: target.version } }, null);
       else if (mode === 'rollback') finish(id, port, { error: { code: 'firmware.rolled_back', message: 'The Device rolled back to its previous Firmware.', details: null } }, null);
       else if (mode === 'no-confirm') finish(id, port, { error: { code: 'firmware.confirm_timeout', message: "The new Firmware didn't confirm in time.", details: null } }, null);
-      else finish(id, port, { result: { message: 'Firmware updated', version: target.version } }, target.version);
+      else finish(id, port, { result: { message: 'Firmware updated', version: target.version } }, target);
     };
     setTimeout(tick, stepMs);
   }
@@ -111,20 +119,34 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
     const body: unknown = await request.json().catch(() => null);
     const bundle = typeof body === 'object' && body !== null && 'bundle' in body && typeof body.bundle === 'string' ? body.bundle : null;
     if (bundle === null) return failure(400, 'request.invalid', 'The body needs a bundle.', { part: 'body', reason: 'bundle' });
-    let target: { version: string } = bundled;
-    if (bundle !== 'bundled') {
+    const asked = typeof body === 'object' && body !== null && 'channel' in body ? body.channel : undefined;
+    if (asked !== undefined && asked !== null && !isChannel(asked)) return failure(400, 'request.invalid', 'Unknown channel.', { part: 'body', reason: 'channel' });
+    // As the Companion does: the Device's own build picks the bundle, and only a request naming the other build switches.
+    const running = device.firmware?.channel ?? 'normal';
+    const channel = isChannel(asked) ? asked : running;
+    let target: Target;
+    if (bundle === 'bundled') {
+      const version = channel === 'radio' ? bundled.radio?.version : bundled.version;
+      if (!version) return failure(422, 'firmware.bundle_invalid', 'The Firmware bundle is invalid or unavailable.');
+      target = { version, channel };
+    } else {
       const picked = bundles.get(bundle);
       if (!picked || picked.device !== id) return failure(404, 'firmware.bundle_not_found', 'The bundle expired, was used or belongs to another Device.');
+      if (picked.channel !== channel) {
+        return failure(409, 'firmware.channel_mismatch', `The bundle is the ${picked.channel} build, not the ${channel} build.`, { channel, bundle: picked.channel });
+      }
       bundles.delete(bundle);
       target = picked;
     }
+    const switching = channel !== running;
     minted += 1;
     const job: Job = {
       id: `job_firmware${String(minted).padStart(8, '0')}`,
       kind: 'firmware.update',
       scope: { kind: 'device', id },
-      state: 'running',
-      progress: phase('checking'),
+      // A switch waits for the PC's consent dialog first, which the fake answers yes after one step.
+      state: switching ? 'waiting_for_confirmation' : 'running',
+      progress: switching ? null : phase('checking'),
       result: null,
       error: null,
       cancellable: true,
@@ -136,7 +158,8 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
     ports.set(job.id, device.link.port);
     publish({ type: 'job.updated', data: job });
     setDevice(id, { link: { state: 'updating', job: job.id } });
-    run(job.id, device, device.link.port, target);
+    if (switching) setTimeout(() => run(job.id, device, device.link.state === 'connected' ? device.link.port : '', target), stepMs);
+    else run(job.id, device, device.link.port, target);
     return json(202, job);
   }
 
@@ -155,7 +178,10 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
         if (answer === 'not-firmware') return failure(422, 'firmware.bundle_invalid', 'The Firmware bundle is invalid or unavailable.');
         if (answer === 'dialog-open') return failure(409, 'system.dialog_open', 'A native file dialog is already open.');
         minted += 1;
-        const info: BundleInfo = { id: `bundle_fake${String(minted).padStart(8, '0')}`, version: bundled.version, build: bundled.build, bytes: BUNDLE_BYTES };
+        const radio = answer === 'radio-file' && bundled.radio;
+        const info: BundleInfo = radio
+          ? { id: `bundle_fake${String(minted).padStart(8, '0')}`, version: radio.version, build: radio.build, bytes: BUNDLE_BYTES, channel: 'radio' }
+          : { id: `bundle_fake${String(minted).padStart(8, '0')}`, version: bundled.version, build: bundled.build, bytes: BUNDLE_BYTES, channel: 'normal' };
         bundles.set(info.id, { ...info, device });
         return json(200, { bundle: info });
       }

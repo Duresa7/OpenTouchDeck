@@ -1,4 +1,4 @@
-import type { DeviceSummary, ErrorBody, FirmwareBuild, FirmwareProgress, FirmwareResult, Job, NewBoard } from '../api.ts';
+import type { DeviceSummary, ErrorBody, FirmwareBuild, FirmwareChannel, FirmwareProgress, FirmwareResult, Job, NewBoard } from '../api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -33,14 +33,14 @@ export function newBoard({ id, port, kind = 'other-firmware' }: { id: string; po
   return { id, port, seen_ms, probe: 'other-firmware', product: 'esp32s3', detail: 'ESP-ROM:esp32s3-20210327' };
 }
 
-export function freshDevice({ id, port, firmware }: { id: string; port: string; firmware: { version: string; protocol: number } }): DeviceSummary {
+export function freshDevice({ id, port, firmware }: { id: string; port: string; firmware: { version: string; protocol: number; channel?: FirmwareChannel } }): DeviceSummary {
   return {
     id,
     rev: 1,
     name: null,
     setup: 'needs-setup',
     link: { state: 'connected', port, since_ms: Date.now(), protocol: firmware.protocol },
-    firmware: { ...firmware, build: 'fake', recovery: false, update_available: null },
+    firmware: { channel: 'normal', ...firmware, build: 'fake', recovery: false, update_available: null },
     capabilities: null,
     diagnostics: null,
     orientation: 'landscape',

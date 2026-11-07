@@ -174,7 +174,7 @@ test('a cancelled update says it stopped, keeps the old version, and offers Upda
 test("a v1 Device's name and brightness say they need newer Firmware", async ({ page }) => {
   await openLayout(page);
   await page.evaluate(() => {
-    window.touchdeckDemo?.device('mock0001', { firmware: { version: '1.2.0', protocol: 1, build: 'old', recovery: false, update_available: null } });
+    window.touchdeckDemo?.device('mock0001', { firmware: { version: '1.2.0', protocol: 1, build: 'old', recovery: false, update_available: null, channel: 'normal' } });
   });
   await page.getByTestId('device-name').click();
   await expect(page.getByTestId('device-panel-name-hint')).toHaveText("Desk's Firmware can't change this yet.");
@@ -186,7 +186,7 @@ test('schema 1 Tiles carry no Needs Firmware badge, even on v1 Firmware', async 
   await openLayout(page);
   await page.getByTestId('start-starter').click();
   await page.evaluate(() => {
-    window.touchdeckDemo?.device('mock0001', { firmware: { version: '1.2.0', protocol: 1, build: 'old', recovery: false, update_available: null }, capabilities: null });
+    window.touchdeckDemo?.device('mock0001', { firmware: { version: '1.2.0', protocol: 1, build: 'old', recovery: false, update_available: null, channel: 'normal' }, capabilities: null });
   });
   await expect(page.getByTestId('tile').first()).toBeVisible();
   await expect(page.getByTestId('tile-needs')).toHaveCount(0);

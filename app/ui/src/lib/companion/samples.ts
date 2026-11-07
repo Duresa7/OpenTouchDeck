@@ -31,7 +31,7 @@ export function sampleDevice(id: string, name: string | null, link: LinkState = 
     name,
     setup: name === null ? 'needs-setup' : 'ready',
     link,
-    firmware: { version: '1.5.0', protocol: 2, build: 'fake', recovery: false, update_available: null },
+    firmware: { version: '1.5.0', protocol: 2, build: 'fake', recovery: false, update_available: null, channel: 'normal' },
     diagnostics: { product: 'touchdeck', running_from: 'ota_0', sinks: ['log', 'link'], current_layout: 'builtin' },
     capabilities: null,
     orientation: 'landscape',
@@ -50,6 +50,8 @@ export const demoDevices: DeviceSummary[] = [
   sampleDevice('mock0003', 'Stream deck by the window', connected('COM5')),
 ];
 if (demoDevices[1].firmware) demoDevices[1].firmware = { ...demoDevices[1].firmware, version: '1.4.0', update_available: '1.5.0' };
+// Desk runs the opt-in radio build, so the demo shows the switch back and the onboarding Wi-Fi step.
+if (demoDevices[0].firmware) demoDevices[0].firmware = { ...demoDevices[0].firmware, channel: 'radio' };
 
 const TILES: Record<string, string[]> = {
   media: ['Previous', 'Play/Pause', 'Next', 'Mute', 'Volume', 'Music', 'Work', 'Break'],

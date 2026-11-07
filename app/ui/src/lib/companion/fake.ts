@@ -6,7 +6,7 @@ import { createFakeBrandfetch, type FakeBrandfetchOptions } from './fake/fake-br
 import { createFakeConsole } from './fake/fake-console.ts';
 import { createFakeControls } from './fake/fake-controls.ts';
 import { createFakeDeviceSettings } from './fake/fake-device-settings.ts';
-import { createFakeFirmware } from './fake/fake-firmware.ts';
+import { createFakeFirmware, FAKE_BUNDLED } from './fake/fake-firmware.ts';
 import { createFakeIconPacks, type FakeIconPacksOptions } from './fake/fake-icon-packs.ts';
 import { createFakeIntegrations, type FakeIntegrationsOptions } from './fake/fake-integrations.ts';
 import { createFakeLayouts } from './fake/fake-layouts.ts';
@@ -124,7 +124,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs, wrote: controls.wrote });
   const settings = createFakeDeviceSettings({ devices, publish, brightness: options.brightness, photoFrame: options.photoFrame });
   const firmware = createFakeFirmware({ devices, publish, bundled: options.bundled, stepMs: options.jobMs });
-  const newBoards = createFakeNewBoards({ devices, publish, bundled: options.bundled ?? { version: '1.5.0', build: 'fake' }, boards: options.newBoards, stepMs: options.jobMs });
+  const newBoards = createFakeNewBoards({ devices, publish, bundled: options.bundled ?? FAKE_BUNDLED, boards: options.newBoards, stepMs: options.jobMs });
   const actions = createFakeActions({ devices, publish, stored: layouts.stored });
   const live = createFakeLive({ devices, stored: layouts.stored });
   const sessions = createFakeSessions({ browsers: options.browsers, onRevoke: signOut });

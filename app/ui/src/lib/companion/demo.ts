@@ -1,4 +1,4 @@
-import type { AssetSource, ControlLayout, Delivery, DeviceSummary, ErrorBody, Fit } from './api.ts';
+import type { AssetSource, ControlLayout, Delivery, DeviceSummary, ErrorBody, FirmwareChannel, Fit } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
 import type { FakeSearch } from './fake/fake-assets.ts';
@@ -42,7 +42,7 @@ declare global {
       device(id: string, change: Partial<Omit<DeviceSummary, 'id' | 'rev'>>): void;
       controls: { set(id: string, layout: ControlLayout): void; hold(id: string): void; release(id: string): void };
       firmware: { hold(id: string, at?: number | 'rebooting'): void; release(id: string): void; cancel(id: string): void; picks(...answers: FakePick[]): void };
-      fresh(id: string, firmware?: { version: string; protocol: number }): void;
+      fresh(id: string, firmware?: { version: string; protocol: number; channel?: FirmwareChannel }): void;
       newBoards: {
         plug(board: { id: string; port: string; kind?: BoardKind }): void;
         unplug(id: string): void;

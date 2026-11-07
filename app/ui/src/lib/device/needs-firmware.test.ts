@@ -25,7 +25,7 @@ const caps = (tile_kinds: string[]): Capabilities => ({
 
 const v1 = sampleDevice('mock0001', 'Desk');
 const v2 = { ...v1, capabilities: caps(['static', 'clock']) };
-const running = (version: string) => ({ firmware: { version, protocol: 2, build: 'fake', recovery: false, update_available: null } });
+const running = (version: string) => ({ firmware: { version, protocol: 2, build: 'fake', recovery: false, update_available: null, channel: 'normal' as const } });
 
 describe('tile kinds', () => {
   test('a schema 1 Tile has no render, so it is static', () => {
