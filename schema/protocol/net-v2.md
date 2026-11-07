@@ -711,10 +711,44 @@ sessions only. Over USB, `update.begin` works as before.
 | Firmware update prompt on the Device | 60000 ms |
 | Update prompt cooldown per Pairing after an unapproved prompt | 60000 ms doubling, at most 3600000 ms |
 
+## The long-term key is symmetric
+
+Both ends hold the same `LTK`, and each side's proofs are MACs under keys
+derived from it. Nothing in net-v2 tells the Device and the Companion apart by
+secret, so whoever has a copy of the key can play either side:
+
+* A copy from the Companion's OS credential store lets the thief open sessions
+  to the Device as that Companion, which the Pairing already allows for any
+  holder of the key.
+* A copy from the Device's NVS does that too, and also lets the thief
+  impersonate the Device to the Companion. The Companion accepts any peer that
+  proves it holds the LTK for that `device_id`, and a fake Device can then
+  answer link requests with chosen state and read everything the Companion
+  sends it.
+* Forward secrecy doesn't change this. It keeps recorded sessions closed, not
+  new ones.
+
+The Device's NVS isn't encrypted in the radio build, so a flash dump over USB
+(or a desoldered chip) yields every stored Pairing. NVS encryption needs an
+eFuse burn, so it waits for an operator decision
+([ADR 0010](../../docs/adr/0010-nvs-stays-unencrypted-until-the-operator-decides.md)).
+Until then:
+
+* Treat physical access to the Device as access to every Pairing on it.
+* After a Device is lost, resold or serviced by someone else, run `net.forget`
+  on it (or reflash and erase NVS), and forget the Device in each Companion.
+  Removing the Pairing from only one side doesn't end the other side's key.
+* Companions SHOULD tell the person this when they pair, and MUST NOT describe
+  a Pairing as proving the Device's identity against someone with its hardware.
+
+A design with a per-side secret (for example a Device identity key that the
+Companion pins, with the LTK only for the session) would close the
+impersonation half. It is a protocol change and out of scope for net-v2.
+
 ## Storage, management and secrets
 
 The Device stores Pairings in NVS, separate from Layouts and Wi-Fi
-credentials. net-v1 never shipped, so there's nothing to migrate. The
+credentials, and unencrypted (see above). net-v1 never shipped, so there's nothing to migrate. The
 Companion keeps LTKs in the OS credential store (Windows Credential Manager or
 the Secret Service on Linux, for example through the `keyring` crate). It may
 keep `device_id`, `companion_id` and the Device name in ordinary settings.
