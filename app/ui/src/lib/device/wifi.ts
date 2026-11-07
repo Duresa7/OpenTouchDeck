@@ -41,6 +41,8 @@ export interface WifiDeps {
   companion: Pick<Companion, 'wifi'>;
   /** The Device, read on each use so a rename shows in the messages. */
   device: () => Pick<DeviceSummary, 'id' | 'name'>;
+  /** How many apps the Device keeps, when it said over USB, or null. */
+  paired?: () => number | null;
 }
 
 export const CODE_DIGITS = 6;
@@ -70,6 +72,10 @@ function attemptsText(left: number) {
 
 /** The Pairings a Device holds when every slot is taken. */
 export const MAX_PAIRINGS = 4;
+
+/** What pairing means for anyone with the Device in hand (net-v2: physical access is access to every Pairing). */
+export const physicalAccess = (name: string) =>
+  `Whoever can get to ${name} can use every Pairing on it. If ${name} is lost or passed on, forget its paired apps.`;
 
 /** The advice for a Device with every slot taken, before pairing or after `full`. */
 export const fourApps = (name: string) => `Four apps are paired. Forget one first: on ${name}, use the paired apps screen, or plug it in with a USB cable.`;
@@ -125,7 +131,7 @@ export function wifiProblem(error: ApiError, name: string): string {
 /** Whether the error ends the attempt, so the flow goes back to the address field. */
 const endsAttempt = (code: string) => code !== 'wifi.wrong_code' && code !== 'wifi.keychain';
 
-export function createWifiPairing({ companion, device: current }: WifiDeps): WifiStore {
+export function createWifiPairing({ companion, device: current, paired = () => null }: WifiDeps): WifiStore {
   const id = current().id;
   const nameOf = () => current().name ?? 'the Device';
   return createStore<WifiState & WifiActions>()((set, get) => {
@@ -162,6 +168,9 @@ export function createWifiPairing({ companion, device: current }: WifiDeps): Wif
         } catch (error) {
           fail(error);
         }
+        // The count the Device gave over USB is newer than any advertisement.
+        const listed = paired();
+        if (listed !== null) full = listed >= MAX_PAIRINGS;
         if (get().view.step === 'finding') set({ view: { step: 'address', found: address !== '' }, address, ...(full ? { problem: fourApps(nameOf()) } : {}) });
       },
 
