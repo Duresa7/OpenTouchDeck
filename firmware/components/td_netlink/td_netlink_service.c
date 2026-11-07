@@ -97,7 +97,7 @@ typedef struct {
     td_netlink_conn_t conn;
     reader_t owner;
     /* Connections waiting for their first item while the owner is unproven, each in its deck.waiters slot: a
-     * session.open naming a stored companion_id takes over. */
+     * session.open with a stored Pairing's open_tag takes over. */
     reader_t waiters[TD_NETLINK_WAITERS];
     uint8_t waiter_body[TD_NETLINK_WAITERS][TD_NETLINK_HANDSHAKE_MAX];
     closer_t closers[CLOSERS];

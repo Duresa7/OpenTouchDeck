@@ -639,9 +639,12 @@ static void expect_share_closes(const uint8_t share[32], const char *label)
 {
     fresh_deck(true, 0, 0);
     connect_from(&g_conn, PEER_A);
-    uint8_t open[58];
+    /* A valid tag for this share, so the share check is what refuses it. */
+    uint8_t open[52], ltk[32];
     vec("session.wire.open", open, sizeof open);
-    memcpy(open + 2 + 2 + 6 + 16, share, 32);
+    vec("inputs.ltk", ltk, sizeof ltk);
+    memcpy(open + 2 + 2 + 16, share, 32);
+    CHECK(td_netlink_open_tag(ltk, share, open + 2 + 2));
     const td_netlink_action_t action = feed(&g_conn, open, sizeof open);
     CHECK(action == TD_NETLINK_CLOSE && g_out.len == 0);
     if (action != TD_NETLINK_CLOSE) {
@@ -676,8 +679,10 @@ static void test_x25519_negatives(void)
 
 static void test_session_negatives(void)
 {
-    static const char *const auth[] = { "negative.wrong_device_id", "negative.unknown_companion_id" };
-    for (size_t i = 0; i < 2; i++) {
+    /* A tag made with an LTK the Device lacks, a flipped tag bit, and a share swapped under the original tag. */
+    static const char *const auth[] = { "negative.unknown_open_tag", "negative.tampered_open_tag",
+                                        "negative.swapped_client_share" };
+    for (size_t i = 0; i < 3; i++) {
         char path[96];
         fresh_deck(true, 0, 0);
         connect_from(&g_conn, PEER_A);
@@ -687,16 +692,8 @@ static void test_session_negatives(void)
         CHECK(out_is(path));
         td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
         CHECK(g_rng_fill == 0);
+        CHECK(g_conn.end == TD_NETLINK_END_AUTH && td_netlink_backoff_left(&g_deck, PEER_A, 4) == 1000);
     }
-
-    fresh_deck(true, 0, 0);
-    connect_from(&g_conn, PEER_A);
-    rng_push_vec("inputs.deviceEphemeral");
-    CHECK(feed_vec(&g_conn, "negative.swapped_client_share.open") == TD_NETLINK_SEND);
-    CHECK(out_is("negative.swapped_client_share.challenge"));
-    CHECK(feed_vec(&g_conn, "negative.swapped_client_share.proof") == TD_NETLINK_CLOSE && g_out.len == 0);
-    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
-    CHECK(g_conn.end == TD_NETLINK_END_PROOF && td_netlink_backoff_left(&g_deck, PEER_A, 4) == 1000);
 
     /* The Companion's side of a swapped device share: the device_proof no longer checks. */
     VEC(challenge, "negative.swapped_device_share.challenge");
@@ -881,7 +878,7 @@ static void test_backoff(void)
 {
     fresh_deck(true, 0, 0);
     connect_from(&g_conn, PEER_A);
-    CHECK(feed_vec(&g_conn, "negative.unknown_companion_id.open") == TD_NETLINK_SEND_CLOSE);
+    CHECK(feed_vec(&g_conn, "negative.unknown_open_tag.open") == TD_NETLINK_SEND_CLOSE);
     td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
     CHECK(td_netlink_backoff_left(&g_deck, PEER_A, 4) == 1000);
     CHECK(td_netlink_backoff_left(&g_deck, PEER_B, 4) == 0);
@@ -894,7 +891,7 @@ static void test_backoff(void)
     CHECK(td_netlink_backoff_left(&g_deck, PEER_A, 4) == 1000);
     VEC(open, "session.wire.open");
     CHECK(td_netlink_names_stored(&g_deck, open + 2, open_len - 2));
-    VEC(unknown, "negative.unknown_companion_id.open");
+    VEC(unknown, "negative.unknown_open_tag.open");
     CHECK(!td_netlink_names_stored(&g_deck, unknown + 2, unknown_len - 2));
     open_session(&g_conn, PEER_A);
     td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_PEER);
@@ -1046,7 +1043,7 @@ static void test_waiter_items(void)
     fresh_deck(true, 0, 0);
     connect_from(&g_conn, PEER_A);
     CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
-    CHECK(waiter_first_item(slot, PEER_B, "negative.unknown_companion_id.open") == TD_NETLINK_SEND_CLOSE);
+    CHECK(waiter_first_item(slot, PEER_B, "negative.unknown_open_tag.open") == TD_NETLINK_SEND_CLOSE);
     CHECK(out_is_error(TD_NETLINK_AUTH) && td_netlink_backoff_left(&g_deck, PEER_B, 4) == 1000);
     CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
     CHECK(waiter_first_item(slot, PEER_B, "pairing.wire.request") == TD_NETLINK_SEND_CLOSE);
@@ -1156,6 +1153,137 @@ static void test_forget(void)
     CHECK(!td_netlink_forget(&g_deck) && g_deck.pairings.count == 0);
 }
 
+/* ---- Discovery privacy ---- */
+
+/* A Pairing with a synthetic id and LTK, each byte `fill`. */
+static td_netlink_pairing_t other_pairing(uint8_t fill)
+{
+    td_netlink_pairing_t p = { 0 };
+    memset(p.companion_id, fill, sizeof p.companion_id);
+    memset(p.ltk, fill, sizeof p.ltk);
+    p.name_len = 5;
+    memcpy(p.name, "Other", 5);
+    return p;
+}
+
+static void test_open_tags(void)
+{
+    VEC(ltk, "inputs.ltk");
+    VEC(share, "session.client_share");
+    VEC(tag, "session.open_tag");
+    VEC(open, "session.wire.open");
+    VEC(device_id, "inputs.deviceId");
+    VEC(companion_id, "inputs.companionId");
+    uint8_t mine[TD_NETLINK_OPEN_TAG_LEN];
+    CHECK(td_netlink_open_tag(ltk, share, mine) && !memcmp(mine, tag, sizeof mine));
+    /* The item is the tag and the share: no device_id, no companion_id. */
+    CHECK(open_len == 4 + TD_NETLINK_OPEN_TAG_LEN + 32 && !memcmp(open + 4, tag, TD_NETLINK_OPEN_TAG_LEN));
+    for (size_t i = 0; i + 6 <= open_len; i++) {
+        CHECK(memcmp(open + i, device_id, 6) != 0);
+    }
+    for (size_t i = 0; i + 16 <= open_len; i++) {
+        CHECK(memcmp(open + i, companion_id, 16) != 0);
+    }
+
+    /* With four Pairings the tag finds the fixture's in the third slot, and the session matches the vectors. */
+    reset_env();
+    td_netlink_pairings_t stored = { 0 };
+    stored.count = 4;
+    stored.entries[0] = other_pairing(0x30);
+    stored.entries[1] = other_pairing(0x40);
+    stored.entries[2] = vector_pairing();
+    stored.entries[3] = other_pairing(0x50);
+    td_netlink_deck_init(&g_deck, device_id, &stored, 0, 0, &g_env);
+    CHECK(td_netlink_names_stored(&g_deck, open + 2, open_len - 2));
+    open_session(&g_conn, PEER_A);
+    CHECK(!memcmp(g_conn.companion_id, companion_id, 16));
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
+
+    /* Without the fixture Pairing the same item names nothing. */
+    stored.entries[2] = other_pairing(0x60);
+    td_netlink_deck_init(&g_deck, device_id, &stored, 0, 0, &g_env);
+    CHECK(!td_netlink_names_stored(&g_deck, open + 2, open_len - 2));
+}
+
+static bool txt_is(const td_netlink_txt_t *txt, size_t count, const cJSON *want)
+{
+    if ((size_t)cJSON_GetArraySize(want) != count) {
+        return false;
+    }
+    for (size_t i = 0; i < count; i++) {
+        const cJSON *value = cJSON_GetObjectItemCaseSensitive(want, txt[i].key);
+        if (!cJSON_IsString(value) || strcmp(value->valuestring, txt[i].value) != 0) {
+            fprintf(stderr, "txt %s=%s\n", txt[i].key, txt[i].value);
+            return false;
+        }
+    }
+    return true;
+}
+
+static void test_advert(void)
+{
+    VEC(nonce, "discovery.nonce");
+    VEC(ltk, "inputs.ltk");
+    VEC(hint, "discovery.hint");
+    uint8_t mine[TD_NETLINK_HINT_LEN];
+    CHECK(td_netlink_hint(ltk, nonce, mine) && !memcmp(mine, hint, sizeof mine));
+
+    /* The fixture's free slots get the vector fillers; the first slot's bytes are overwritten by its hint. */
+    uint8_t fillers[TD_NETLINK_HINT_SLOTS * TD_NETLINK_HINT_LEN];
+    memset(fillers, 0xee, sizeof fillers);
+    const cJSON *entry;
+    int slot = 1;
+    cJSON_ArrayForEach(entry, at(g_vectors, "discovery.fillers")) {
+        unhex(entry->valuestring, fillers + slot * TD_NETLINK_HINT_LEN, TD_NETLINK_HINT_LEN);
+        slot++;
+    }
+    CHECK(slot == TD_NETLINK_HINT_SLOTS);
+    const char *name = at(g_vectors, "inputs.deviceName")->valuestring;
+    td_netlink_advert_t advert;
+    td_netlink_txt_t txt[TD_NETLINK_ADVERT_TXT_MAX];
+
+    fresh_deck(true, 0, 0);
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, name, &advert) && !advert.pairing);
+    CHECK(!strcmp(advert.label, at(g_vectors, "discovery.label")->valuestring));
+    CHECK(!strcmp(advert.instance, at(g_vectors, "discovery.instance")->valuestring));
+    CHECK(!strcmp(advert.host, at(g_vectors, "discovery.host")->valuestring));
+    size_t count = td_netlink_advert_txt(&advert, txt);
+    CHECK(count == 3 && txt_is(txt, count, at(g_vectors, "discovery.txt")));
+    /* Nothing stable outside pairing mode: no id, no name, in any field. */
+    char id_hex[13];
+    snprintf(id_hex, sizeof id_hex, "%s", at(g_vectors, "inputs.deviceId")->valuestring);
+    for (size_t i = 0; i < count; i++) {
+        CHECK(!strstr(txt[i].value, id_hex) && !strstr(txt[i].value, name));
+    }
+    CHECK(!strstr(advert.instance, id_hex) && !strstr(advert.host, id_hex));
+
+    /* Pairing mode adds the id, the name and the count. */
+    CHECK(td_netlink_window_open(&g_deck) == TD_NETLINK_REASON_NONE);
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, name, &advert) && advert.pairing);
+    count = td_netlink_advert_txt(&advert, txt);
+    CHECK(count == 6 && txt_is(txt, count, at(g_vectors, "discovery.pairing_txt")));
+
+    /* A name the wire refuses, or none, advertises as TouchDeck; a long one is cut on a character boundary. */
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, "De\xe2\x80\xaesk", &advert) && !strcmp(advert.name, "TouchDeck"));
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, NULL, &advert) && !strcmp(advert.name, "TouchDeck"));
+    char long_name[64];
+    memset(long_name, 'a', 47);
+    memcpy(long_name + 47, "\xc3\xa9\xc3\xa9", 5);
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, long_name, &advert) && strlen(advert.name) == 47);
+
+    /* No window, or a lockout, is not pairing mode. With no Pairings every slot is a filler. */
+    td_netlink_window_cancel(&g_deck);
+    fresh_deck(false, 0, 0);
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, name, &advert) && !advert.pairing);
+    char filler_hex[65];
+    for (size_t i = 0; i < sizeof fillers; i++) {
+        snprintf(filler_hex + 2 * i, 3, "%02x", fillers[i]);
+    }
+    CHECK(!strcmp(advert.h, filler_hex));
+    fresh_deck(true, 3, 60000);
+    CHECK(td_netlink_window_open(&g_deck) != TD_NETLINK_REASON_NONE && !td_netlink_pairing_mode(&g_deck));
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) {
@@ -1207,6 +1335,8 @@ int main(int argc, char **argv)
         { test_usb_wins, "usb wins" },
         { test_session_liveness, "session liveness" },
         { test_forget, "forget" },
+        { test_open_tags, "open tags" },
+        { test_advert, "discovery advertisement" },
     };
     const size_t count = sizeof tests / sizeof tests[0];
     for (size_t i = 0; i < count; i++) {
