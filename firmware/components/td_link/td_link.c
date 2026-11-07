@@ -9,12 +9,11 @@
 #include "ui.h"
 #include "ui_page_report.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "esp_attr.h"
-#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/idf_additions.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
@@ -26,17 +25,6 @@
 #define TD_LINK_PRESS_QUEUE 16
 #define TD_LINK_EVENTS_PER_TURN 16
 #define TD_LINK_PACKET_HEADER 7
-/* The radio build keeps the 8 KB frame stream in PSRAM, so the Wi-Fi station's start at boot finds that much more
- * internal RAM (#313). Only the console's receive task and the link task touch it, and no task runs while flash is
- * written. The normal build keeps it internal. */
-#if CONFIG_TD_RADIO_BUILD && CONFIG_SPIRAM
-#define TD_LINK_STREAM_CREATE() \
-    xStreamBufferCreateWithCaps(TD_LINK_STREAM_BYTES, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
-#define TD_LINK_STREAM_DELETE(s) vStreamBufferDeleteWithCaps(s)
-#else
-#define TD_LINK_STREAM_CREATE() xStreamBufferCreate(TD_LINK_STREAM_BYTES, 1)
-#define TD_LINK_STREAM_DELETE(s) vStreamBufferDelete(s)
-#endif
 
 _Static_assert(TD_RX_FRAME_MAX >= TD_FRAME_BODY_MAX, "receive buffer must hold a decoded maximum frame");
 
@@ -64,13 +52,30 @@ static uint32_t s_current_generation;
 static uint32_t s_transfer;
 static const td_link_message_t *s_tables[TD_LINK_MESSAGE_TABLES];
 static size_t s_table_counts[TD_LINK_MESSAGE_TABLES];
+/* The storage behind s_frames, which the link owns so it can wipe it (wipe_drained_frames). */
+static uint8_t *s_frames_storage;
+static StaticStreamBuffer_t s_frames_struct;
+/* Set from a `wifi.set` until s_frames has drained and its storage is wiped. Only the link task uses it. */
+static bool s_frames_secret;
 /* A packet in s_frames is the slot, the body length, the carrier's generation and the body. One receive at a time
- * fills this, under s_rx_mutex. */
-/* This and the three frame buffers below go to PSRAM in the radio build (EXT_RAM_BSS_ATTR with
- * CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY), where they pay for the internal RAM that linking BLE costs. Only the
- * link and console tasks use them, and the radio build runs code from PSRAM, so PSRAM stays readable while flash is
- * written. Elsewhere they stay internal. */
+ * fills this, under s_rx_mutex, and wipes the body once the stream buffer holds the copy. */
+/* This, the link task's frame body and message text below and the USB send buffer go to PSRAM in the radio build
+ * (EXT_RAM_BSS_ATTR with CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY), where they pay for the internal RAM that linking
+ * BLE costs. Only the link and console tasks use them, and the radio build runs code from PSRAM, so PSRAM stays
+ * readable while flash is written. Elsewhere they stay internal. */
 EXT_RAM_BSS_ATTR static uint8_t s_rx_packet[TD_LINK_PACKET_HEADER + TD_FRAME_BODY_MAX];
+/* The link task's frame body and message text. Both are wiped after a `wifi.set`, whose password they held. */
+EXT_RAM_BSS_ATTR static uint8_t s_body[TD_FRAME_BODY_MAX];
+EXT_RAM_BSS_ATTR static char s_message[TD_FRAME_PAYLOAD_MAX + 1];
+
+/* A wipe the compiler can't drop: every store goes through a volatile pointer. */
+static void wipe(void *p, size_t n)
+{
+    volatile unsigned char *b = p;
+    while (n--) {
+        *b++ = 0;
+    }
+}
 static QueueHandle_t s_presses;
 static uint32_t s_press_seq;
 static td_input_mailbox_t s_input;
@@ -365,6 +370,7 @@ void td_link_carrier_receive(const uint8_t *body, size_t len, void *carrier)
     memcpy(s_rx_packet + 3, &generation, sizeof generation);
     memcpy(s_rx_packet + TD_LINK_PACKET_HEADER, body, len);
     size_t sent = xStreamBufferSend(s_frames, s_rx_packet, len + TD_LINK_PACKET_HEADER, 0);
+    wipe(s_rx_packet + TD_LINK_PACKET_HEADER, len);
     xSemaphoreGive(s_rx_mutex);
     configASSERT(sent == len + TD_LINK_PACKET_HEADER);
 }
@@ -426,9 +432,41 @@ void td_link_fail(cJSON *reply, const char *error)
     cJSON_AddStringToObject(reply, "error", error);
 }
 
-static void handle_message(const td_frame_t *frame)
+/* True for a `wifi.set` request, whose password the link wipes from every buffer that held it. */
+static bool is_wifi_set(const td_frame_t *frame)
 {
-    EXT_RAM_BSS_ATTR static char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    const char *raw = NULL;
+    size_t raw_len = 0;
+    if (frame->type != TD_FRAME_MESSAGE ||
+        !td_v2_json_message((const char *)frame->payload, frame->len, &raw, &raw_len)) {
+        return false;
+    }
+    cJSON *name = cJSON_ParseWithLength(raw, raw_len);
+    const bool set = cJSON_IsString(name) && !strcmp(name->valuestring, "wifi.set");
+    cJSON_Delete(name);
+    return set;
+}
+
+/* Wipes s_frames' storage once a `wifi.set` has passed through it and nothing else waits there. Senders write only
+ * under s_rx_mutex and the link task is the only reader, so an empty buffer under the mutex holds no live byte. */
+static void wipe_drained_frames(void)
+{
+    if (!s_frames_secret) {
+        return;
+    }
+    xSemaphoreTake(s_rx_mutex, portMAX_DELAY);
+    if (xStreamBufferIsEmpty(s_frames)) {
+        wipe(s_frames_storage, TD_LINK_STREAM_BYTES + 1);
+        s_frames_secret = false;
+    }
+    xSemaphoreGive(s_rx_mutex);
+}
+
+/* Handles one message. A secret one (`wifi.set`) has its text wiped once it is parsed and refused or handled. */
+static void handle_message(const td_frame_t *frame, bool secret)
+{
+    char *const payload = s_message;
+    const size_t cap = sizeof s_message;
     memcpy(payload, frame->payload, frame->len);
     payload[frame->len] = '\0';
     const char *end = NULL;
@@ -440,7 +478,7 @@ static void handle_message(const td_frame_t *frame)
         recovered = cJSON_ParseWithLength(raw_message, message_len);
     }
     const char *message = cJSON_GetStringValue(recovered);
-    bool strict = message && (!strncmp(message, "v2.", 3) || !strcmp(message, "hello"));
+    bool strict = message && (!strncmp(message, "v2.", 3) || !strncmp(message, "wifi.", 5) || !strcmp(message, "hello"));
     cJSON *reply;
     if (strict && !td_v2_json_valid_live(payload, frame->len, !strcmp(message, "v2.live.set"))) {
         reply = cJSON_CreateObject();
@@ -453,6 +491,9 @@ static void handle_message(const td_frame_t *frame)
     } else if (!cJSON_IsObject(request) || end != payload + frame->len) {
         cJSON_Delete(recovered);
         cJSON_Delete(request);
+        if (secret) {
+            wipe(payload, cap);
+        }
         td_link_count_drop();
         return;
     } else {
@@ -460,7 +501,11 @@ static void handle_message(const td_frame_t *frame)
     }
     cJSON_Delete(recovered);
     cJSON_Delete(request);
-    bool printed = reply && cJSON_PrintPreallocated(reply, payload, sizeof payload, false);
+    if (secret) {
+        /* The handler wiped the parsed password; this is the request text. The reply is printed over it. */
+        wipe(payload, cap);
+    }
+    bool printed = reply && cJSON_PrintPreallocated(reply, payload, (int)cap, false);
     cJSON_Delete(reply);
     if (!printed) {
         td_link_count_drop();
@@ -472,9 +517,10 @@ static void handle_message(const td_frame_t *frame)
 /* Waits up to `wait` ticks for one frame, and handles it. */
 static void handle_frame(TickType_t wait)
 {
-    EXT_RAM_BSS_ATTR static uint8_t body[TD_FRAME_BODY_MAX];
+    uint8_t *const body = s_body;
     uint8_t header[TD_LINK_PACKET_HEADER];
     if (!read_bytes(header, sizeof header, wait)) {
+        wipe_drained_frames();
         return;
     }
     size_t len = header[1] | ((size_t)header[2] << 8);
@@ -486,6 +532,9 @@ static void handle_frame(TickType_t wait)
         td_link_count_drop();
         return;
     }
+    /* Even a stale `wifi.set` that is never handled leaves no copy behind. */
+    const bool secret = is_wifi_set(&frame);
+    s_frames_secret |= secret;
     portENTER_CRITICAL(&s_lock);
     /* A frame whose connection ended while it waited here is not handled: its reply would reach the next one. */
     const bool stale = s_carriers[header[0]].generation != generation;
@@ -499,7 +548,7 @@ static void handle_frame(TickType_t wait)
         /* A transfer moves only on the carrier connection that opened it. */
         td_link_count_drop();
     } else if (frame.type == TD_FRAME_MESSAGE && frame.flags == 0) {
-        handle_message(&frame);
+        handle_message(&frame, secret);
     } else if (frame.type == TD_FRAME_CHUNK && frame.flags == 0) {
         td_link_files_chunk(frame.seq, frame.payload, frame.len);
     } else if (frame.type == TD_FRAME_ACK && frame.flags == TD_FRAME_RESPONSE) {
@@ -507,6 +556,10 @@ static void handle_frame(TickType_t wait)
     } else {
         td_link_count_drop();
     }
+    if (secret) {
+        wipe(body, len);
+    }
+    wipe_drained_frames();
 }
 
 static void queue_press(const char *page, const char *tile, const char *kind, const char *part, uint32_t generation)
@@ -640,7 +693,11 @@ esp_err_t td_link_start(void)
     if (s_frames) {
         return ESP_ERR_INVALID_STATE;
     }
-    s_frames = TD_LINK_STREAM_CREATE();
+    /* The same internal heap xStreamBufferCreate would take, held where wipe_drained_frames can reach it. */
+    s_frames_storage = malloc(TD_LINK_STREAM_BYTES + 1);
+    s_frames = s_frames_storage ? xStreamBufferCreateStatic(TD_LINK_STREAM_BYTES + 1, 1, s_frames_storage,
+                                                           &s_frames_struct)
+                                : NULL;
     s_presses = xQueueCreate(TD_LINK_PRESS_QUEUE, sizeof(press_t));
     s_rx_mutex = xSemaphoreCreateMutex();
     if (s_frames && s_presses && s_rx_mutex && add_carrier(&s_usb) == ESP_OK
@@ -652,9 +709,11 @@ esp_err_t td_link_start(void)
     s_carrier_count = 0;
     portEXIT_CRITICAL(&s_lock);
     if (s_frames) {
-        TD_LINK_STREAM_DELETE(s_frames);
+        vStreamBufferDelete(s_frames);
         s_frames = NULL;
     }
+    free(s_frames_storage);
+    s_frames_storage = NULL;
     if (s_presses) {
         vQueueDelete(s_presses);
         s_presses = NULL;

@@ -35,8 +35,9 @@ RADIO_SETTINGS = {**NORMAL_SETTINGS, **guard.RADIO_BUILD_OPTIONS, "TD_RADIO_INTE
                   "TD_RADIO_BOOT_FLOOR": 16384}
 RADIO_COMPONENTS = NORMAL_COMPONENTS + ["td_radio", "td_ble", "td_netlink", "td_netlink_core", "esp_wifi",
                                         "esp_netif", "lwip", "bt", "esp_phy", "esp_coex", "wpa_supplicant"]
-RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "td_ble_boot", "td_netlink_start",
-                 "nimble_port_init", "ble_gap_adv_start", "ble_gatts_count_cfg"}
+RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "esp_wifi_connect",
+                 "td_wifi_quiet_logs", "td_ble_boot", "td_netlink_start", "nimble_port_init", "ble_gap_adv_start",
+                 "ble_gatts_count_cfg"}
 # Spelled out here, not read from the guard, so dropping a name from the guard fails a test.
 FORBIDDEN_OPTIONS = ("ESP_WIFI_ENABLED", "ESP_HOST_WIFI_ENABLED", "BT_ENABLED", "BT_CONTROLLER_ENABLED",
                      "BT_NIMBLE_ENABLED", "BT_BLUEDROID_ENABLED", "TD_RADIO_BUILD", "TD_QEMU_TEST", "ETH_USE_OPENETH")
@@ -45,7 +46,7 @@ FORBIDDEN_COMPONENTS = ("bt", "esp_wifi", "esp_phy", "esp_coex", "wpa_supplicant
                         "td_ble", "td_radio", "td_netlink", "td_netlink_core", "td_netlink_v2", "mdns",
                         "espressif__mdns")
 DORMANT = ("ble_gap_ext_adv_start", "ble_gap_disc", "ble_gap_ext_disc", "ble_gap_connect", "ble_gap_ext_connect",
-           "esp_wifi_connect", "esp_wifi_scan_start", "esp_wifi_wps_start", "esp_wifi_80211_tx",
+           "esp_wifi_scan_start", "esp_wifi_wps_start", "esp_wifi_80211_tx",
            "esp_smartconfig_start", "esp_now_init")
 # What only td_ble_nimble.c may call: starting the controller and host, advertising, and the accept list.
 BLE_START = ("esp_bt_controller_init", "esp_bt_controller_enable", "esp_nimble_init", "nimble_port_init",
@@ -206,7 +207,7 @@ class RadioBuildTests(unittest.TestCase):
             with self.subTest(component=component), self.assertRaisesRegex(ValueError, "missing components"):
                 guard.check_radio(build, symbols=RADIO_SYMBOLS)
 
-    def test_any_ble_scan_connect_or_wifi_join_fails(self):
+    def test_any_ble_scan_connect_or_wifi_scan_fails(self):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
         for symbol in DORMANT:
             with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, f"must stay dormant: \\['{symbol}'\\]"):
@@ -214,8 +215,18 @@ class RadioBuildTests(unittest.TestCase):
 
     def test_unwired_station_fails(self):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
-        with self.assertRaisesRegex(ValueError, "does not link: \\['esp_wifi_start'\\]"):
-            guard.check_radio(build, symbols=RADIO_SYMBOLS - {"esp_wifi_start"})
+        # td_wifi_quiet_logs turns down the ESP-IDF tags that log the network's name (#269 review).
+        for symbol in ("esp_wifi_start", "esp_wifi_connect", "td_wifi_quiet_logs"):
+            with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, f"does not link: \\['{symbol}'\\]"):
+                guard.check_radio(build, symbols=RADIO_SYMBOLS - {symbol})
+
+    def test_the_station_may_join_but_never_scan(self):
+        """Wi-Fi setup (#269) joins the network set over USB, so esp_wifi_connect is no longer dormant: it is required,
+        and only its owner may call it."""
+        self.assertNotIn("esp_wifi_connect", guard.DORMANT_SYMBOLS)
+        self.assertIn("esp_wifi_connect", guard.REQUIRED_SYMBOLS)
+        self.assertEqual(guard.WIFI_JOIN_SYMBOLS, ("esp_wifi_connect",))
+        self.assertIn("esp_wifi_scan_start", guard.DORMANT_SYMBOLS)
 
     def test_unwired_bluetooth_keyboard_fails(self):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
@@ -260,6 +271,19 @@ class RadioBuildTests(unittest.TestCase):
         used = {match.group(1) for match in call.finditer(owner.read_text(encoding="utf-8"))}
         self.assertIn("nimble_port_init", used)
         self.assertIn("ble_gap_adv_start", used)
+
+    def test_only_the_station_joins_wifi(self):
+        """Only td_radio.c's station driver calls esp_wifi_connect, which the host tests in test_wifi.py tie to the one
+        network set over USB. No other source joins a network."""
+        sources = [*(ROOT / "firmware/components").rglob("*.[ch]"), *(ROOT / "firmware/main").rglob("*.[ch]")]
+        owner = ROOT / guard.WIFI_JOIN_OWNER
+        self.assertIn(owner, sources)
+        call = re.compile(r"\b(" + "|".join(guard.WIFI_JOIN_SYMBOLS) + r")\s*\(")
+        found = [f"{path.relative_to(ROOT).as_posix()}: {match.group(1)}" for path in sources if path != owner
+                 for match in call.finditer(path.read_text(encoding="utf-8", errors="replace"))]
+        self.assertEqual(found, [])
+        used = [match.group(1) for match in call.finditer(owner.read_text(encoding="utf-8"))]
+        self.assertEqual(used, ["esp_wifi_connect"])
 
     def test_static_internal_ram_ceiling(self):
         report = Path(self.dirs.tmp.name) / "size.json"

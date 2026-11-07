@@ -48,7 +48,7 @@ association with a saved Device. It is identity, not authentication. This is the
 same factory identity net-v2 uses as `device_id`, never a randomized interface MAC.
 `name` follows the naming rules below. These fields never contain credentials.
 
-Every capability below except `anim` and `live_images` is required. Bounds are ceilings, not promises of free
+Every capability below except `anim`, `live_images` and `wifi` is required. Bounds are ceilings, not promises of free
 memory. A Device advertises only implemented Tile kinds and formats. Integers
 are nonnegative JSON integers. The complete hello MUST fit one 1,024-byte payload;
 Firmware must test its maximum escaped name and longest build version.
@@ -70,6 +70,7 @@ Firmware must test its maximum escaped name and longest build version.
 | `photo_bytes` | Maximum JPEG transfer, 0 to 131072; zero disables photos |
 | `live_hz`, `live_total_hz` | Maximum accepted updates per stream and Device per second, at most 2 and 20 |
 | `series`, `text_bytes`, `streams` | Maximum series length, text size, and streams per Tile, at most 32, 128, and 8 |
+| `wifi` | Optional `true` when the Device answers the `wifi.*` messages below (the radio build). Absent means no Wi-Fi station |
 | `ble_hid` | Optional. The radio build's Bluetooth keyboard: the most bonded hosts, 1 to 8 (the Firmware has 4). Absent means the Device has no Bluetooth keyboard and no `ble.*` messages |
 
 Payload, chunk, transfer window, and naming limits are fixed by this document.
@@ -149,6 +150,71 @@ namespace `td_device`, key `name`, separately from Layouts and network pairing.
 It acknowledges only after durable commit. An identical set causes no write.
 A failure preserves the old name. Missing NVS data uses the default; corrupt
 stored text is ignored. A normal Firmware update preserves the name.
+
+## Wi-Fi network
+
+Only the radio build has a Wi-Fi station. It keeps one network and joins it as
+a station, again after every restart and after every drop. Three messages set,
+read and forget that network. They are not `v2.` requests: they need no
+selected v2 session, and they work after a plain hello too. Every one of them
+is USB-only on every Carrier ([net-v2](net-v2.md)): a `wifi.*` message that
+arrives on any other Carrier gets `ok:false`, `reason:"usb-only"` and
+`error:"Only over USB"`, and changes nothing. A Device without `caps.wifi`,
+such as the normal build, returns the unknown-message error for them, as for
+`ble.*` without `caps.ble_hid`. A v2 hello advertises `caps.wifi:true` only on
+a Device that answers them.
+
+Requests follow the JSON rules of "Requests and errors" above. Unknown `wifi.*`
+names return `unsupported`; there is no scan message.
+
+| Request | Fields | Additional reasons |
+|---|---|---|
+| `wifi.state` | none | none |
+| `wifi.set` | `ssid`, `password` | `args`, `storage` |
+| `wifi.forget` | none | `storage` |
+
+`ssid` is 1 to 32 UTF-8 bytes. `password` is empty for an open network, 8 to
+63 printable ASCII characters (0x20 to 0x7e) for a WPA passphrase, or 64 hex
+digits for a raw key. Both obey the
+string rules above. `wifi.set` stores the network in NVS, in namespace
+`td_wifi`, apart from the Device name, the Layouts and network pairing, then
+leaves any other network and joins this one. A failed write keeps the old
+network and returns `storage`. `wifi.forget` erases it and leaves; forgetting
+nothing succeeds. A Layout reset and a normal Firmware update keep the network.
+
+Every successful reply, and `wifi.set` and `wifi.forget` too, carries the
+state after the request:
+
+| Field | Meaning |
+|---|---|
+| `configured` | `true` when a network is stored |
+| `ssid` | The stored network's name, `""` when none is stored |
+| `state` | `off` (none stored), `connecting` (the first join since the set or the boot is running), `connected`, or `failed` |
+| `reason` | `null` unless `state` is `failed`: `not-found`, `wrong-password`, `no-ip`, `security`, `refused`, `lost`, `driver` or `other` |
+| `ip` | The IPv4 address in dotted form while `connected`, else `null` |
+| `rssi` | The signal in dBm while `connected`, else `null` |
+
+`not-found` means no access point with that name answered. `wrong-password`
+means the access point refused the password or its handshake timed out.
+`no-ip` means the station joined but got no address within 15 seconds, or lost
+it. `security` means the network uses a mode the station doesn't support, such
+as WEP or WPA Enterprise. `refused` means the access point refused the
+association, for example because it is full. `lost` means a working connection
+dropped. `driver` means the Wi-Fi driver didn't start or refused the join.
+
+A failed station keeps retrying by itself, after 1, 2, 4 and 8 seconds and then
+every 30 seconds, and keeps reporting `failed` and its last reason until a join
+succeeds. A new `wifi.set` starts over at `connecting`.
+
+The password goes to the Device and never comes back: no reply, event, log line
+or console echo carries it. A reply never has a `password` field.
+
+```json
+{"m":"wifi.set","ssid":"td-test-network","password":"example-passphrase"}
+{"m":"wifi.set","ok":true,"configured":true,"ssid":"td-test-network","state":"connecting","reason":null,"ip":null,"rssi":null}
+{"m":"wifi.state","ok":true,"configured":true,"ssid":"td-test-network","state":"failed","reason":"not-found","ip":null,"rssi":null}
+{"m":"wifi.state","ok":true,"configured":true,"ssid":"td-test-network","state":"connected","reason":null,"ip":"192.0.2.10","rssi":-52}
+```
 
 ## Assets and bulk transfers
 

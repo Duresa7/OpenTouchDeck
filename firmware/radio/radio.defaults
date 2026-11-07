@@ -39,8 +39,10 @@ CONFIG_LV_USE_CUSTOM_MALLOC=y
 # 3072 -> 3584 -> 2216, with the heartbeat on it; Tmr Svc 1536 -> 1536 -> 940. ESP-IDF gives the first three 512
 # bytes more than their option. Every one keeps at least 940 bytes free. A later ticket that runs a TCP service or
 # logs more from these tasks measures again.
+# Wi-Fi setup (#269) runs the station logic on sys_evt: its handlers set the driver's config, join, and log a failed
+# join with its reason, so sys_evt gets 768 bytes more than the idle measure needed.
 CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=2048
-CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=1792
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=2560
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=3072
 CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=1536
 

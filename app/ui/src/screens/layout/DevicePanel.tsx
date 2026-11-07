@@ -370,7 +370,7 @@ function Notice({ settings }: { settings: DeviceSettingsStore }) {
 }
 
 function PanelBody({ device }: { device: DeviceSummary }) {
-  const { settings, firmware, wifi } = useDeviceStores(device);
+  const { settings, firmware, wifi, wifiSetup } = useDeviceStores(device);
   const name = device.name ?? 'Unnamed Device';
   const live = device.link.state === 'connected';
   const loaded = useStore(settings, (s) => s.load === 'ready');
@@ -392,7 +392,7 @@ function PanelBody({ device }: { device: DeviceSummary }) {
       <OrientationField {...props} />
       <BrightnessField {...props} />
       <PhotoFrameField {...props} />
-      <WifiField device={device} name={name} wifi={wifi} />
+      <WifiField device={device} name={name} wifi={wifi} setup={wifiSetup} live={live && !restarting} />
       <FirmwareRow {...props} firmware={firmware} />
       <Notice settings={settings} />
     </>
