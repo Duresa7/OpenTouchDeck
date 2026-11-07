@@ -187,6 +187,59 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  qemu:
+    name: esp32s3 radio build, net-v2 in QEMU
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v6.1
+    timeout-minutes: 60
+    env:
+      # The QEMU test image (-DTD_QEMU_TEST=1): Ethernet in place of Wi-Fi and a pairing window at boot. It is never
+      # packed or flashed, and radio_guard.py fails any build that has it.
+      FIRMWARE_BUILD: build/firmware-qemu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Build the QEMU test image
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . "$IDF_PATH/export.sh"
+          set -euo pipefail
+          idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" -DTD_RADIO_BUILD=1 -DTD_QEMU_TEST=1 build
+
+      - name: Check the radio guard rejects the QEMU test image
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          if python -B firmware/tools/radio_guard.py radio "$FIRMWARE_BUILD" > guard.log 2>&1; then
+            cat guard.log
+            echo "::error::radio_guard.py passed the QEMU test image"
+            exit 1
+          fi
+          grep 'test-only options' guard.log
+
+      - name: Install QEMU
+        shell: bash
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 \
+            libslirp0 > /dev/null
+          python3 "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa
+
+      - name: Pair with the image over net-v2 and exchange a hello
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          python -B firmware/tools/qemu_net_check.py "$FIRMWARE_BUILD"
+
   schema:
     name: layout schema
     runs-on: ubuntu-24.04
