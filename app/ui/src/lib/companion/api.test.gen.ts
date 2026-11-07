@@ -1,6 +1,6 @@
 // Generated from td-companion's test hooks. Do not edit.
 export type ApprovalScript = { answers: Array<ScriptAnswer>, };
-export type BoardKind = "device" | "device-v1" | "silent" | "other-firmware" | "busy";
+export type BoardKind = "device" | "device-v1" | "device-radio" | "silent" | "other-firmware" | "busy";
 export type ClockAdvance = { advance_ms: number, };
 export type ConsentAnswer = "accept" | "decline";
 export type ConsentScript = { answers: Array<ConsentAnswer>, };

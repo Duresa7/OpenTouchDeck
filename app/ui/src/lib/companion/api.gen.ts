@@ -29,6 +29,24 @@ sent: Array<string>,
 unavailable: Array<string>, };
 export type AttemptPath = { attempt: string, };
 export type AuthRevoked = Record<string, never>;
+export type BluetoothAdvertising = "off" | "pairing" | "fast" | "slow";
+export type BluetoothBond = { 
+/**
+ * The host's identity address, `aa:bb:cc:dd:ee:ff` in lower case.
+ */
+address: string, 
+/**
+ * A random static identity address rather than a public one.
+ */
+random: boolean, 
+/**
+ * Connected, encrypted with authenticated keys, and bonded.
+ */
+connected: boolean, };
+export type BluetoothForgotten = { forgotten: number, bluetooth: DeviceBluetooth, };
+export type BluetoothSetBody = { enabled: boolean, };
+export type BluetoothStack = "off" | "starting" | "on" | "failed";
+export type BondPath = { device: DeviceId, address: string, };
 export type BrandfetchLogo = { 
 /**
  * A domain such as `example.com`, or a Brandfetch brand id.
@@ -61,7 +79,12 @@ export type BrandfetchTheme = "light" | "dark" | "auto";
 export type BrowserKind = "browser";
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
 export type BundleInfo = { id: string, version: string, build: string, bytes: number, };
-export type Capabilities = { anim?: AnimationCapabilities, gif_frames?: number, gif_pixels?: number, screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], photo_bytes: number, 
+export type Capabilities = { anim?: AnimationCapabilities, gif_frames?: number, gif_pixels?: number, 
+/**
+ * The radio build's Bluetooth keyboard: the most computers and phones it keeps bonded, 1 to 8. Absent when the
+ * Firmware has no Bluetooth keyboard.
+ */
+ble_hid?: number, screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], photo_bytes: number, 
 /**
  * Live values: updates a stream and the whole Device take each second, samples a graph keeps, and bytes a
  * text value holds. All zero when the Firmware has no Live tiles.
@@ -92,6 +115,35 @@ settable: boolean, };
 export type Delivery = { device: string, sent: number, error: string | null, };
 export type DeviceAdded = DeviceSummary;
 export type DeviceAssets = { ids: Array<string>, storage_free: number, };
+export type DeviceBluetooth = { 
+/**
+ * The stored setting. Off on a fresh Device.
+ */
+enabled: boolean, state: BluetoothStack, 
+/**
+ * Whether the pairing window is open.
+ */
+pairing: boolean, 
+/**
+ * Milliseconds left in the pairing window, 0 when it is closed.
+ */
+pairing_ms: number, 
+/**
+ * Whether the Device shows a six-digit passkey for a host to type.
+ */
+passkey: boolean, advertising: BluetoothAdvertising, 
+/**
+ * Listed only while `state` is `on`.
+ */
+bonds: Array<BluetoothBond>, 
+/**
+ * The most bonds the Device keeps.
+ */
+bonds_max: number, 
+/**
+ * The battery level the Device reports to hosts, 0 to 100.
+ */
+battery: number, };
 export type DeviceConsole = { device: DeviceId, line: string, };
 export type DeviceDiagnostics = { product: string, running_from: string, sinks: Array<string>, current_layout: string, };
 export type DeviceEvent = { device: DeviceId, event: JsonValue, };
@@ -408,6 +460,12 @@ export const endpoints = {
   'brandfetch.key_put': { method: 'PUT', path: '/brandfetch/key', access: 'session' },
   'brandfetch.key_test': { method: 'POST', path: '/brandfetch/key/test', access: 'session' },
   'console.send': { method: 'POST', path: '/devices/{device}/console', access: 'session' },
+  'devices.bluetooth_forget': { method: 'DELETE', path: '/devices/{device}/bluetooth/bonds/{address}', access: 'session' },
+  'devices.bluetooth_forget_all': { method: 'DELETE', path: '/devices/{device}/bluetooth/bonds', access: 'session' },
+  'devices.bluetooth_get': { method: 'GET', path: '/devices/{device}/bluetooth', access: 'session' },
+  'devices.bluetooth_pairing_close': { method: 'DELETE', path: '/devices/{device}/bluetooth/pairing', access: 'session' },
+  'devices.bluetooth_pairing_open': { method: 'POST', path: '/devices/{device}/bluetooth/pairing', access: 'session' },
+  'devices.bluetooth_set': { method: 'PUT', path: '/devices/{device}/bluetooth', access: 'session' },
   'devices.connect': { method: 'POST', path: '/devices/{device}/connect', access: 'session' },
   'devices.disconnect': { method: 'POST', path: '/devices/{device}/disconnect', access: 'session' },
   'devices.forget': { method: 'DELETE', path: '/devices/{device}', access: 'session' },
@@ -456,7 +514,7 @@ export const endpoints = {
   'wifi.pairings_forget': { method: 'DELETE', path: '/wifi/pairings/{device}', access: 'session' },
   'wifi.pairings_list': { method: 'GET', path: '/wifi/pairings', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'brandfetch.key_refused' | 'brandfetch.no_key' | 'brandfetch.no_keychain' | 'brandfetch.no_logo' | 'brandfetch.not_found' | 'brandfetch.quota' | 'brandfetch.store' | 'brandfetch.unavailable' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'device.unknown_outcome' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.version' | 'wifi.window_closed' | 'wifi.wrong_code';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'bluetooth.full' | 'bluetooth.off' | 'bluetooth.radio' | 'bluetooth.starting' | 'bluetooth.storage' | 'brandfetch.key_refused' | 'brandfetch.no_key' | 'brandfetch.no_keychain' | 'brandfetch.no_logo' | 'brandfetch.not_found' | 'brandfetch.quota' | 'brandfetch.store' | 'brandfetch.unavailable' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'device.unknown_outcome' | 'device.usb_only' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.version' | 'wifi.window_closed' | 'wifi.wrong_code';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
@@ -564,6 +622,12 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>, 
       send: (path: { device: DeviceId, }, query: null = null, body: { line: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('console.send', path, query, body, bearer, headers, signal),
     },
     devices: {
+      bluetooth_forget: (path: { device: DeviceId, address: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<BluetoothForgotten>('devices.bluetooth_forget', path, query, body, bearer, headers, signal),
+      bluetooth_forget_all: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<BluetoothForgotten>('devices.bluetooth_forget_all', path, query, body, bearer, headers, signal),
+      bluetooth_get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceBluetooth>('devices.bluetooth_get', path, query, body, bearer, headers, signal),
+      bluetooth_pairing_close: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceBluetooth>('devices.bluetooth_pairing_close', path, query, body, bearer, headers, signal),
+      bluetooth_pairing_open: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceBluetooth>('devices.bluetooth_pairing_open', path, query, body, bearer, headers, signal),
+      bluetooth_set: (path: { device: DeviceId, }, query: null = null, body: { enabled: boolean, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceBluetooth>('devices.bluetooth_set', path, query, body, bearer, headers, signal),
       connect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceSummary>('devices.connect', path, query, body, bearer, headers, signal),
       disconnect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceSummary>('devices.disconnect', path, query, body, bearer, headers, signal),
       forget: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('devices.forget', path, query, body, bearer, headers, signal),

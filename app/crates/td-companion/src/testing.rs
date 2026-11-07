@@ -238,6 +238,11 @@ impl TestCompanion {
     pub async fn plug_device(&self, id: &str) -> DeviceId {
         self.plug(id, BoardKind::Device).await
     }
+    /// Plugs in a mock Device with the radio build's v2 Firmware, which has a Bluetooth keyboard, and waits until
+    /// it's connected.
+    pub async fn plug_radio_device(&self, id: &str) -> DeviceId {
+        self.plug(id, BoardKind::DeviceRadio).await
+    }
     /// Plugs in a mock Device with v1 Firmware and waits until it's connected.
     pub async fn plug_device_v1(&self, id: &str) -> DeviceId {
         self.plug(id, BoardKind::DeviceV1).await

@@ -39,6 +39,8 @@ pub enum DeviceError {
     UnknownOutcome { reason: String },
     #[error("This needs newer Firmware on the Device.")]
     NeedsFirmware { field: &'static str },
+    #[error("The Device takes this only over USB. Plug it in with a USB cable.")]
+    UsbOnly,
     #[error("The console line isn't on the read-only allowlist.")]
     ConsoleForbidden,
     #[error(transparent)]
@@ -53,14 +55,16 @@ impl ApiError for DeviceError {
         "device.link",
         "device.unknown_outcome",
         "device.needs_firmware",
+        "device.usb_only",
         "console.forbidden",
     ];
     fn status(&self) -> StatusCode {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
-            Self::NotConnected { .. } | Self::Connected | Self::NeedsFirmware { .. } => {
-                StatusCode::CONFLICT
-            }
+            Self::NotConnected { .. }
+            | Self::Connected
+            | Self::NeedsFirmware { .. }
+            | Self::UsbOnly => StatusCode::CONFLICT,
             Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
             Self::Link { .. } | Self::UnknownOutcome { .. } => StatusCode::BAD_GATEWAY,
             Self::ConsoleForbidden => StatusCode::FORBIDDEN,
@@ -76,6 +80,7 @@ impl ApiError for DeviceError {
             Self::Link { .. } => "device.link",
             Self::UnknownOutcome { .. } => "device.unknown_outcome",
             Self::NeedsFirmware { .. } => "device.needs_firmware",
+            Self::UsbOnly => "device.usb_only",
             Self::ConsoleForbidden => "console.forbidden",
             Self::Common(e) => e.code(),
         }

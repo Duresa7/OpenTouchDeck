@@ -18,6 +18,7 @@ use td_core::{
 
 use crate::asset::{ASSET_PAGE, AssetFormat, asset_id, refusal, valid_asset_id};
 use crate::live::{TTL_MAX_MS, TTL_MIN_MS, VALUE_MAX, layout_ref};
+use crate::mock_ble::{MockBle, MockBond};
 use crate::photo::{IDLE_INTERVAL_S, IDLE_TIMEOUT_S, IdleSettings, PHOTO_BYTES_MAX};
 use crate::xfer::{ICON_BYTES, LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, crc32};
 use crate::{READ_TICK, Transport};
@@ -136,6 +137,8 @@ struct State {
     device_name: String,
     gif_capabilities: bool,
     media_capabilities: bool,
+    /// The radio build's Bluetooth keyboard.
+    ble: MockBle,
     settings: Settings,
     icons: BTreeSet<String>,
     icon_files: HashMap<String, Vec<u8>>,
@@ -224,6 +227,9 @@ impl State {
             caps["gif_frames"] = json!(60);
             caps["gif_pixels"] = json!(983040);
         }
+        if let Some(bonds) = self.ble.bonds_max {
+            caps["ble_hid"] = json!(bonds);
+        }
         if self.media_capabilities {
             let kinds = caps["tile_kinds"]
                 .as_array_mut()
@@ -299,6 +305,7 @@ impl MockDeck {
                 device_name: "Open TouchDeck".into(),
                 gif_capabilities: false,
                 media_capabilities: false,
+                ble: MockBle::default(),
                 settings: Settings::default(),
                 icons: BTreeSet::new(),
                 icon_files: HashMap::new(),
@@ -393,6 +400,55 @@ impl MockDeck {
 
     pub fn usb_serial(&self) -> &'static str {
         "02:00:00:00:00:01"
+    }
+
+    /// Makes this a radio build with a Bluetooth keyboard that keeps `bonds` bonds: a v2 hello advertises
+    /// `caps.ble_hid` and the Device answers `ble.*`. `None`, the default, is the normal build, which doesn't know
+    /// those messages. Bluetooth starts off, as on a fresh Device.
+    pub fn set_ble_capability(&self, bonds: Option<u32>) {
+        self.state().ble.bonds_max = bonds;
+    }
+
+    /// Puts a bond in the Device's bond store, as a host that paired earlier.
+    pub fn add_ble_bond(&self, address: &str, random: bool, connected: bool) {
+        let mut state = self.state();
+        state.ble.bonds.retain(|bond| bond.address != address);
+        state.ble.bonds.push(MockBond {
+            address: address.into(),
+            random,
+            connected,
+        });
+    }
+
+    /// The bond store, whether Bluetooth is on or off: `(address, random, connected)` each.
+    pub fn ble_bonds(&self) -> Vec<(String, bool, bool)> {
+        self.state()
+            .ble
+            .bonds
+            .iter()
+            .map(|bond| (bond.address.clone(), bond.random, bond.connected))
+            .collect()
+    }
+
+    /// Whether Bluetooth's stored setting is on.
+    pub fn ble_enabled(&self) -> bool {
+        self.state().ble.enabled
+    }
+
+    /// Makes the next starts fail, as a controller that won't come up: `ble.set` answers `radio`.
+    pub fn fail_ble_start(&self, fail: bool) {
+        self.state().ble.start_fails = fail;
+    }
+
+    /// A host starts pairing inside the window, so the Device shows a passkey; `false` takes it down.
+    pub fn ble_show_passkey(&self, shown: bool) {
+        let mut state = self.state();
+        state.ble.passkey = shown && state.ble.window_until.is_some();
+    }
+
+    /// A host types the passkey and bonds inside the open window, which closes it. `false` when no window is open.
+    pub fn ble_host_pairs(&self, address: &str, random: bool) -> bool {
+        self.state().ble.host_pairs(address, random)
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -1519,6 +1575,11 @@ impl MockDeck {
                 ))
             }
             "link.state" => Ok(self.link_state()),
+            m if m.starts_with("ble.") => {
+                let mut state = self.state();
+                let network = state.link_network;
+                state.ble.handle(m, request, network)
+            }
             "icon.list" => {
                 let state = self.state();
                 let cursor = request.get("cursor").and_then(Value::as_u64).unwrap_or(0) as usize;

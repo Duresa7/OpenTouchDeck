@@ -526,12 +526,20 @@ Feature modules `devices`, `ports` and `console`.
 | `devices.restart` | `POST /devices/{device}/restart` | → `()`, then `device.updated` events |
 | `devices.settings_get` | `GET /devices/{device}/settings` | → `DeviceSettings {idle_timeout_s, orientation, name?, brightness?, photo_frame?}`. v2 fields are `null` on v1 Firmware. `brightness` is a percentage from 0 to 100. `photo_frame` is `PhotoFrameSettings`, below, and `null` on Firmware without the photo frame |
 | `devices.settings_patch` | `PATCH /devices/{device}/settings` | `DeviceSettingsPatch`, every field optional → `{settings, restart_required}`. A v2 field on v1 Firmware gives 409 `device.needs_firmware`. A `brightness` above 100 gives 400 `request.invalid` first. `photo_frame` takes `PhotoFramePatch`, below |
+| `devices.bluetooth_get` | `GET /devices/{device}/bluetooth` | → `DeviceBluetooth`, below |
+| `devices.bluetooth_set` | `PUT /devices/{device}/bluetooth` | `{enabled}` → `DeviceBluetooth`. Stores the setting on the Device, then starts or stops Bluetooth |
+| `devices.bluetooth_pairing_open` | `POST /devices/{device}/bluetooth/pairing` | → `DeviceBluetooth`. Opens the pairing window for 120 seconds |
+| `devices.bluetooth_pairing_close` | `DELETE /devices/{device}/bluetooth/pairing` | → `DeviceBluetooth`. Closes the pairing window |
+| `devices.bluetooth_forget` | `DELETE /devices/{device}/bluetooth/bonds/{address}` | → `BluetoothForgotten {forgotten, bluetooth}`. Forgets the computer or phone at `aa:bb:cc:dd:ee:ff`, in either case; `forgotten` is 0 when the Device kept no such bond |
+| `devices.bluetooth_forget_all` | `DELETE /devices/{device}/bluetooth/bonds` | → `BluetoothForgotten {forgotten, bluetooth}`. Forgets every computer and phone |
 | `new_boards.list` | `GET /new-boards` | → `NewBoard[]` |
 | `ports.list` | `GET /ports` | → `PortProbe[]`, today's `Candidate` plus `usb_serial`. Never opens a port that a link holds |
 | `ports.rescan` | `POST /ports/rescan` | → `()` |
 | `console.send` | `POST /devices/{device}/console` | `{line}` → `()`. One line, at most 256 printable ASCII bytes, allowlist below |
 
 `PhotoFrameSettings` is `{enabled, timeout_s, interval_s, folder}`. The Device keeps the first three, from [link-v2.md](../schema/protocol/link-v2.md) "Photo frame, idle, and clock": `enabled` turns photo idle mode on, `timeout_s` is the idle time before the photo frame or clock shows, from 10 to 86400, and `interval_s` is the time between pictures, from 5 to 3600. The Companion keeps `folder` per Device in `photo-frame.json` in its data folder: the full path of a folder on this computer, or `null`. `PhotoFramePatch` has the same fields, each optional. A `folder` of `""` clears it. A time out of range, or a folder that is not the full path of an existing folder, gives 400 `request.invalid`. Firmware without `photo-frame` and `clock` in `caps.tile_kinds` and a nonzero `caps.photo_bytes` gives 409 `device.needs_firmware` with `details.field` `photo_frame`.
+
+The Bluetooth routes work only on a Device whose Firmware has the Bluetooth keyboard, the radio build, which says so with `capabilities.ble_hid`, the most computers and phones it keeps bonded. Any other Device gives 409 `device.needs_firmware` with `details.field` `bluetooth`, and the Companion sends it nothing. They follow [link-v2.md](../schema/protocol/link-v2.md) "Bluetooth keyboard (radio build)", which takes them only over USB: a Device connected over Wi-Fi gives 409 `device.usb_only`, and the Companion sends it nothing. `DeviceBluetooth` is `{enabled, state, pairing, pairing_ms, passkey, advertising, bonds, bonds_max, battery}`. `enabled` is the stored setting, off on a fresh Device. `state` is `off`, `starting`, `on` or `failed`; poll `devices.bluetooth_get` while it says `starting`. `pairing_ms` counts down the open window, and `passkey` says whether the Device shows the six-digit code a computer or phone types to pair; the code itself never leaves the Device. `advertising` is `off`, `pairing`, `fast` or `slow`. `bonds` lists `{address, random, connected}` for each computer or phone, only while `state` is `on`. `battery` is the level the Device reports to hosts, fixed at 100. A body other than `{enabled: boolean}` or an address other than six hex bytes gives 400 `request.invalid` before the Device hears of it. The Device's own refusals keep their reason: 409 `bluetooth.off` (Bluetooth is off, so there is no window to open and no bond to forget), 409 `bluetooth.starting` (ask again), 409 `bluetooth.full` (`bonds_max` computers and phones are bonded; forget one first), 502 `bluetooth.radio` (Bluetooth did not start; the setting stays on) and 502 `bluetooth.storage` (the Device couldn't save the change). Each of them carries the state after the request in `details.bluetooth` when the Device sent it.
 
 While a Device is connected with the photo frame on and a folder set, the Companion sends it one picture per interval while it is idle. It reads JPEG and PNG files at the folder's top level only, skips files it cannot read or decode, follows no links, and fits each picture to the screen as a JPEG within `caps.photo_bytes`. It sets the Device's clock on connect, every 10 minutes, and when the time zone changes.
 
@@ -1143,7 +1151,7 @@ One exception lets a board pass drive the real Device while the Companion owns i
 | `test.record` | `GET /test/devices/{device}/record` | → `{received, lines, settings, reboots, assets, layouts}` |
 | `test.emit` | `POST /test/devices/{device}/emit` | `{events, repeat?, every_ms?}` → `()`. Events: `key.report`, `key.resync`, `press` (with an optional renderer `part`), `v2.input` (`page`, `tile`, `stream`, `phase`, `value`) and `drop` |
 | `test.input_log` | `GET /test/input-log` | → `string[]` |
-| `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()` |
+| `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "device-radio" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()`. `device-radio` is a v2 Device with the Bluetooth keyboard |
 | `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |
 | `test.clock` | `POST /test/clock` | `{advance_ms}` → `()`. Moves the Companion's clock for expiry tests |
 | `test.firmware_script` | `POST /test/firmware/script` | `{answers: ("accept" \| "decline")[]}` → `()`. Replaces the native Firmware dialogs with a scripted prompter that gives these consent answers in order and waits once they run out. Its file picker returns the test bundle |
@@ -1280,6 +1288,12 @@ Features add codes as they land. This list is the starting set.
 | `device.link` | 502 | Link I/O failed or the Device refused. `details.reason` |
 | `device.unknown_outcome` | 502 | The link closed after the request went out and before its reply, so whether the Device acted is unknown. `details.reason` |
 | `device.needs_firmware` | 409 | The feature needs newer Firmware. `details.field` names the setting; `details.version` is the version that adds it, or `null` while no released Firmware has it (brightness today) |
+| `device.usb_only` | 409 | The Device is connected over Wi-Fi, and this setting changes only over USB. Nothing was sent |
+| `bluetooth.off` | 409 | Bluetooth is off on the Device. `details.bluetooth` |
+| `bluetooth.starting` | 409 | Bluetooth is still starting on the Device; ask again. `details.bluetooth` |
+| `bluetooth.full` | 409 | The Device keeps `bonds_max` computers and phones; forget one first. `details.bluetooth` |
+| `bluetooth.radio` | 502 | Bluetooth didn't start on the Device; the setting stays on. `details.bluetooth` when the Device sent it |
+| `bluetooth.storage` | 502 | The Device couldn't save the change. `details.bluetooth` when the Device sent it |
 | `new_board.not_found` | 404 | No New board with that id |
 | `layout.invalid` | 422 | The Layout fails validation. `details.issues` |
 | `layout.live_image_limit` | 422 | The Layout declares more image-stream Tiles than the Device's `live_images`. `details {limit, actual}` |

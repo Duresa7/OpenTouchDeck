@@ -1,4 +1,4 @@
-import type { Capabilities, DeviceSummary, Layout, LinkState, Page } from './api.ts';
+import type { BluetoothBond, Capabilities, DeviceSummary, Layout, LinkState, Page } from './api.ts';
 
 /** A Device that plays GIF Tiles, with the proposed GIF limits from docs/companion-api.md. */
 export const GIF_CAPS: Capabilities = {
@@ -23,6 +23,34 @@ export const GIF_CAPS: Capabilities = {
   gif_pixels: 983040,
   anim: { image: [128, 128], min_delay_ms: 100, page_tiles: 4, page_pixels: 65536 },
 };
+
+/** A radio build: static Tiles only, and a Bluetooth keyboard that keeps four computers and phones. */
+export const RADIO_CAPS: Capabilities = {
+  screen: [1024, 600],
+  grid: [8, 8],
+  pages: 8,
+  tiles: 64,
+  layout_bytes: 32768,
+  layout_schemas: [1, 2],
+  storage_free: 1_000_000,
+  tile_kinds: ['static'],
+  asset_bytes: 262144,
+  formats: ['tdi1'],
+  image: [64, 64],
+  photo_bytes: 0,
+  live_hz: 0,
+  live_total_hz: 0,
+  series: 0,
+  text_bytes: 0,
+  live_images: 0,
+  ble_hid: 4,
+};
+
+/** The computers and phones the demo's radio Device keeps bonded: documentation addresses (RFC 7042). */
+export const DEMO_BONDS: BluetoothBond[] = [
+  { address: '00:00:5e:00:53:01', random: false, connected: true },
+  { address: '00:00:5e:00:53:02', random: false, connected: false },
+];
 
 export function sampleDevice(id: string, name: string | null, link: LinkState = { state: 'offline' }): DeviceSummary {
   return {
@@ -50,6 +78,8 @@ export const demoDevices: DeviceSummary[] = [
   sampleDevice('mock0002', 'Studio', connected('COM4')),
   sampleDevice('mock0003', 'Stream deck by the window', connected('COM5')),
 ];
+// Desk runs the radio build, so its Device settings show the Bluetooth keyboard.
+demoDevices[0].capabilities = RADIO_CAPS;
 if (demoDevices[1].firmware) demoDevices[1].firmware = { ...demoDevices[1].firmware, version: '1.4.0', update_available: '1.5.0' };
 
 const TILES: Record<string, string[]> = {

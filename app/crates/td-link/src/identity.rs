@@ -17,6 +17,10 @@ pub struct AnimationCapabilities {
 pub struct Capabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anim: Option<AnimationCapabilities>,
+    /// The radio build's Bluetooth keyboard: the most bonded hosts, 1 to 8. Absent means no keyboard and no `ble.*`
+    /// messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ble_hid: Option<u32>,
     pub screen: [u32; 2],
     pub grid: [u32; 2],
     pub pages: u32,
@@ -72,6 +76,7 @@ impl Capabilities {
             && self.text_bytes <= 128
             && self.streams <= 8
             && self.live_images.is_none_or(|n| n <= 64)
+            && self.ble_hid.is_none_or(|n| n <= crate::ble::BONDS_MAX)
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

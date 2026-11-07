@@ -1211,6 +1211,14 @@ button {
   background: var(--accent);
 }
 
+.switch[data-disabled] {
+  cursor: not-allowed;
+}
+
+.switch[data-disabled][data-checked] {
+  background: var(--ink-disabled);
+}
+
 .switch-thumb {
   width: 18px;
   height: 18px;

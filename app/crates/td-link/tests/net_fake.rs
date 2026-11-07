@@ -506,3 +506,34 @@ fn a_request_cut_off_by_a_closed_session_has_an_unknown_outcome() {
         "{dropper:?}"
     );
 }
+
+#[test]
+fn the_bluetooth_keyboard_refuses_every_request_over_wifi() {
+    use td_link::ble::{self, BleError};
+    let deck = MockDeck::v2();
+    deck.set_ble_capability(Some(4));
+    deck.add_ble_bond("00:00:5e:00:53:01", false, false);
+    let device = FakeNetDevice::start(deck.clone());
+    let paired = pair_with(&device, COMPANION);
+    let (session, _incoming) = session(&device, &paired.credential);
+    assert_eq!(
+        session
+            .identity(TIMEOUT)
+            .unwrap()
+            .capabilities
+            .unwrap()
+            .ble_hid,
+        Some(4)
+    );
+    let refused = |result: Result<(), BleError>| {
+        let error = result.unwrap_err();
+        assert_eq!(error.reason(), Some("usb-only"), "{error}");
+        assert!(matches!(error, BleError::Refused { state: None, .. }));
+    };
+    refused(ble::ble_state(&session).map(drop));
+    refused(ble::ble_set(&session, true).map(drop));
+    refused(ble::ble_pair(&session, true).map(drop));
+    refused(ble::ble_forget(&session, None).map(drop));
+    assert!(!deck.ble_enabled());
+    assert_eq!(deck.ble_bonds().len(), 1);
+}
