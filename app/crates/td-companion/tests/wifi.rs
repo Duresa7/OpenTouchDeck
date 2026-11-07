@@ -506,7 +506,13 @@ async fn a_device_without_link_v2_is_not_linked_over_wifi() {
         )
         .await
         .unwrap();
-    let pairings = pairings_until(&td, |p| p[0].problem.is_some()).await;
+    // The pairing connection may still hold the Device, so the first try can be busy.
+    let pairings = pairings_until(&td, |p| {
+        p[0].problem
+            .as_deref()
+            .is_some_and(|problem| problem.contains("over USB"))
+    })
+    .await;
     assert!(
         pairings[0].problem.as_deref().unwrap().contains("over USB"),
         "{pairings:?}"
