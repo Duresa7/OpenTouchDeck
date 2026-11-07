@@ -495,7 +495,9 @@ impl Inner {
                 .is_some_and(|w| w.ends > Instant::now()),
             pair_failures: state.pair_failures,
             locked_ms: locked(&state).map_or(0, |left| left.as_millis() as u64),
-            session: state.peer,
+            session: state
+                .peer
+                .map(|id| (id, state.session.clone().unwrap_or_default())),
         }
     }
 

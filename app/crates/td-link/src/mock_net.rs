@@ -27,8 +27,8 @@ pub(crate) struct NetView {
     pub pairing: bool,
     pub pair_failures: u32,
     pub locked_ms: u64,
-    /// The Pairing of the network session, while there is one.
-    pub session: Option<CompanionId>,
+    /// The Pairing of the network session and its app's name, while there is one.
+    pub session: Option<(CompanionId, String)>,
 }
 
 /// A Device's Pairing store. The fake net-v2 Device implements it over its own state.
@@ -151,7 +151,9 @@ impl Store<'_> {
 fn state_fields(view: &NetView) -> Map<String, Value> {
     let fields = json!({
         "listening": true, "port": PORT, "ble": false,
-        "session": view.session.as_ref().map(hex),
+        "session": view.session.as_ref().map(|(id, name)| json!({
+            "app_id": hex(id), "app_name": name, "carrier": "wifi", "since_ms": 0,
+        })),
         "paired": view.pairings.len(), "pairing": view.pairing,
         "pair_failures": view.pair_failures, "locked_ms": view.locked_ms,
     });

@@ -1,5 +1,5 @@
-//! The apps a radio-build Device keeps Pairings with, as `schema/protocol/net-v2.md` § "Managing Pairings" defines
-//! them.
+//! The apps a radio-build Device keeps Pairings with, as `schema/protocol/net-v2.md` § "Storage, management and
+//! secrets" defines them.
 //!
 //! `net.list` lists them, oldest first, by app_id and name. `net.forget` forgets one by app_id, or every one with
 //! `all:true`, which also clears the failed-code counter and the lockout. `net.pair` opens the pairing window, as
@@ -155,7 +155,7 @@ fn parse_list(reply: &Reply) -> Option<NetPairings> {
     }
     let session = match reply.fields.get("session")? {
         Value::Null => None,
-        Value::String(text) => Some(parse_app_id(text)?),
+        Value::Object(session) => Some(parse_app_id(session.get("app_id")?.as_str()?)?),
         _ => return None,
     };
     Some(NetPairings {
