@@ -103,6 +103,8 @@ def main():
                  "-global", "driver=nvram.esp32s3.efuse,property=drive,value=efuse",
                  "-global", "driver=timer.esp32s3.timg,property=wdt_disable,value=true",
                  "-nic", f"user,model=open_eth,hostfwd=tcp:127.0.0.1:{PORT}-:{PORT}",
+                 # One TCG thread: multi-threaded TCG can crash QEMU's esp32s3 machine (espressif/qemu#175).
+                 "-accel", "tcg,thread=single",
                  "-display", "none", "-monitor", "none", "-serial", f"file:{serial}",
                  "-d", "guest_errors,unimp", "-D", str(build / "qemu_debug.log")]
     if config.get("SPIRAM_MODE_OCT"):
