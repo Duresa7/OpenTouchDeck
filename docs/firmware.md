@@ -569,9 +569,18 @@ What the radio build does:
   or the address, so the radio build sets those tags to errors only before the
   station starts, and `radio_guard.py` requires `td_wifi_quiet_logs` in the
   image.
-- A small Wi-Fi glyph at the right end of the title band shows the station
+- A small Wi-Fi glyph near the right end of the title band shows the station
   while a network is stored: grey when joined, dim while joining, amber after
   a failure. With no network stored it is hidden.
+- A gear at the right end of the title band opens Settings, a full-screen
+  panel on LVGL's top layer (`ui_settings.c`). It lists the paired apps by
+  name, with "n of 4", and forgets one, or all, only after a confirmation. Its
+  Pair new app button opens a pairing window. With four Pairings it opens none
+  and says to forget one first; during a lockout it shows the time left. A
+  Layout without a title band, or the idle face, shows no gear. The panel talks
+  to the net-v2 service through hooks (`ui_settings_hooks_t`) that never block
+  the UI: the net task does the work and the panel reads a snapshot four times
+  a second. The panel's state lives in PSRAM.
 - NimBLE is compiled in, with the controller in flash and NimBLE's memory in
   PSRAM. BLE is off until the person turns on the Bluetooth keyboard (see
   [Bluetooth keyboard](#bluetooth-keyboard-radio-build)). A fresh Device never
@@ -581,9 +590,11 @@ What the radio build does:
 - The net-v2 service (`td_netlink`, with the protocol in `td_netlink_core`)
   listens on TCP port 47820 and adds the `wifi` carrier to the link. It pairs
   and opens sessions as [net-v2](../schema/protocol/net-v2.md) describes, with
-  its crypto buffers, records and task stack in PSRAM. Only a USB request opens
-  a pairing window: the `net pair` console command or the `net.pair` link
-  message. The Device then shows the six-digit code, the time left and Cancel.
+  its crypto buffers, records and task stack in PSRAM. A pairing window opens
+  only from the Device or USB: Pair new app on the Settings panel, the
+  `net pair` console command or the `net.pair` link message. The Device then
+  shows the six-digit code, the time left and Cancel, and wakes its screen for
+  it (`power_wake()`, which the next touch read applies, as a touch would).
   The Pairings (up to four), the failed-code count and the lockout live in the
   `td_netlink` NVS namespace. While USB is online, a network session can't
   open, and an open one closes. mDNS discovery is not built yet.
@@ -630,13 +641,17 @@ What the radio build does:
   error, the hello has no `wifi` capability, and there is no `wifi` command.
 - `net state` replies with net-v2's `net.state` fields: `listening`, `port`,
   `ble`, `session`, `paired`, `pairing`, `pair_failures` and `locked_ms`.
-  `net pair` opens a pairing window, and `net forget all` erases every Pairing
-  and ends the session. They fail with `reason` `locked`, `full` (four
-  Pairings: no window opens) or `storage`. The link has the same three as
-  `net.state`, `net.pair` and `net.forget`; the last two are USB-only.
-  `net.forget` needs `all:true` and replies with `removed`; a bare one, or one
-  with `app_id`, fails with `reason:"args"`. `net.list` and forgetting one app
-  aren't built yet.
+  `net list` adds `free` and writes one `op:"app"` line with `app_id` and
+  `app_name` for each Pairing, oldest first, before its reply, since four names
+  can outgrow one console line. `net pair` opens a pairing window.
+  `net forget <app_id>` erases one Pairing and ends that app's session;
+  `net forget all` erases every Pairing, the failed-code count and the lockout,
+  and ends any session. They fail with `reason` `locked`, `full` (four
+  Pairings: no window opens), `args` or `storage`. The link has the same four
+  as `net.state`, `net.list`, `net.pair` and `net.forget`, as net-v2 defines
+  them; all but `net.state` are USB-only. The JSON for them is in
+  `td_netlink_core` (`td_netlink_manage.c`), so the host tests run it. No reply
+  carries a key.
 - A session ends between requests once fewer than 1024 of its 2^24 records
   remain in either direction, and the Companion reconnects for fresh keys.
 
@@ -958,7 +973,9 @@ ESP-IDF's TF-PSA-Crypto for the host and runs every vector and negative in
 [net-v2-vectors.json](../schema/protocol/net-v2-vectors.json), then pairing with
 the right and the wrong code, the lockout and its persistence, records, the
 per-peer backoff, idle connections against a paired Companion, and the USB
-rules. It needs `IDF_PATH` and a C compiler, `cl`
+rules. It runs the `management` vector's USB steps through `net.list`,
+`net.pair` and `net.forget` and checks each answer exactly, then forgetting
+one app among four, the `args` refusals and a failed erase. It needs `IDF_PATH` and a C compiler, `cl`
 from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere.
 
 ## Protocol v2 identity
