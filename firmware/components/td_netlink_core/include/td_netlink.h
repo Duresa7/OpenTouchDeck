@@ -292,6 +292,9 @@ void td_netlink_conn_hello(td_netlink_conn_t *conn);
 /* Proven: a session past client_proof. Unproven owners that aren't bound to a pairing window can be taken over. */
 bool td_netlink_conn_proven(const td_netlink_conn_t *conn);
 bool td_netlink_conn_bound(const td_netlink_conn_t *conn, const td_netlink_deck_t *deck);
+/* A ready session with fewer than TD_NETLINK_COUNTER_MARGIN records left in either direction. The service ends it
+ * between requests, and the Companion reconnects for fresh keys. */
+bool td_netlink_conn_worn(const td_netlink_conn_t *conn);
 /* Ends the connection as `end` unless a step already decided its end: the Device took it over, or closed it for its own
  * reason. */
 void td_netlink_conn_end(td_netlink_conn_t *conn, td_netlink_deck_t *deck, td_netlink_end_t end);

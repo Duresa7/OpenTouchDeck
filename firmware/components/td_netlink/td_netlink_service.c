@@ -98,6 +98,7 @@ static SemaphoreHandle_t s_cmd_done;
 static SemaphoreHandle_t s_save_done;
 static _Atomic cmd_t s_cmd;
 static td_netlink_cmd_result_t s_cmd_result;
+static uint8_t s_cmd_removed;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static snapshot_t s_snap;
 static atomic_bool s_ready;
@@ -515,6 +516,12 @@ static void write_records(void)
         }
     }
     td_netlink_wipe(n->plain, sizeof n->plain);
+    /* Near the record limit, the session ends between requests: nothing waits to go out. */
+    if (n->owner.fd >= 0 && td_netlink_conn_worn(&n->conn) && xMessageBufferIsEmpty(s_out)) {
+        ESP_LOGI(TAG, "session at its record limit, closing");
+        td_netlink_conn_end(&n->conn, &n->deck, TD_NETLINK_END_LOCAL);
+        drop_owner(true, TD_NETLINK_GONE_DEVICE);
+    }
 }
 
 /* ---- The pairing screen and net.state ---- */
@@ -605,6 +612,7 @@ static void run_command(void)
             drop_owner(false, TD_NETLINK_GONE_DEVICE);
         }
         drop_contender(false);
+        s_cmd_removed = (uint8_t)n->deck.pairings.count;
         result = td_netlink_forget(&n->deck) ? TD_NETLINK_CMD_OK : TD_NETLINK_CMD_STORAGE;
         ESP_LOGI(TAG, "pairings erased%s", result == TD_NETLINK_CMD_OK ? "" : ", but the erase failed");
     }
@@ -789,7 +797,7 @@ void td_netlink_state_fields(cJSON *reply)
 }
 
 /* Hands the net task one command and waits for it. Callers take turns on the lock. */
-static td_netlink_cmd_result_t command(cmd_t cmd)
+static td_netlink_cmd_result_t command(cmd_t cmd, uint8_t *removed)
 {
     if (!atomic_load(&s_running) || xSemaphoreTake(s_cmd_lock, pdMS_TO_TICKS(COMMAND_WAIT_MS)) != pdTRUE) {
         return TD_NETLINK_CMD_DOWN;
@@ -801,16 +809,19 @@ static td_netlink_cmd_result_t command(cmd_t cmd)
         atomic_store(&s_cmd, CMD_NONE);
     }
     const td_netlink_cmd_result_t result = done ? s_cmd_result : TD_NETLINK_CMD_DOWN;
+    if (removed) {
+        *removed = result == TD_NETLINK_CMD_OK ? s_cmd_removed : 0;
+    }
     xSemaphoreGive(s_cmd_lock);
     return result;
 }
 
 td_netlink_cmd_result_t td_netlink_pair(void)
 {
-    return command(CMD_PAIR);
+    return command(CMD_PAIR, NULL);
 }
 
-td_netlink_cmd_result_t td_netlink_forget_all(void)
+td_netlink_cmd_result_t td_netlink_forget_all(uint8_t *removed)
 {
-    return command(CMD_FORGET);
+    return command(CMD_FORGET, removed);
 }

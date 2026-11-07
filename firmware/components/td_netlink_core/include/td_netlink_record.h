@@ -16,7 +16,10 @@ extern "C" {
 #define TD_NETLINK_SEALED_MIN (TD_NETLINK_PLAIN_MIN + TD_NETLINK_TAG_LEN)
 #define TD_NETLINK_SEALED_MAX (TD_NETLINK_PLAIN_MAX + TD_NETLINK_TAG_LEN)
 #define TD_NETLINK_RECORD_WIRE_MAX (2 + TD_NETLINK_SEALED_MAX)
-#define TD_NETLINK_COUNTER_LIMIT (UINT64_C(1) << 32)
+/* Each direction seals at most 2^24 records under its key. The session ends there; it never rekeys. */
+#define TD_NETLINK_COUNTER_LIMIT (UINT64_C(1) << 24)
+/* A sender ends the session between requests once fewer than this many records remain in either direction. */
+#define TD_NETLINK_COUNTER_MARGIN 1024u
 
 typedef enum {
     TD_NETLINK_C2D = 0,

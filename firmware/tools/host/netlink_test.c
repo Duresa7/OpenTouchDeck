@@ -531,8 +531,17 @@ static void test_pair_request_refusals(void)
     VEC(request, "pairing.wire.request");
     request[3] = 1;
     CHECK(feed(&g_conn, request, request_len) == TD_NETLINK_SEND_CLOSE && out_is_error(TD_NETLINK_BAD_VERSION));
+    CHECK(out_is("errors.version") && out_is("negative.version_error.error"));
     td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
     CHECK(td_netlink_backoff_left(&g_deck, PEER_A, 4) == 1000);
+
+    /* The version error item itself with item version 1 is malformed: the Device answers `version` and closes. */
+    fresh_deck(false, 0, 0);
+    td_netlink_window_open(&g_deck);
+    connect_from(&g_conn, PEER_A);
+    CHECK(feed_vec(&g_conn, "negative.version_error.v1_item.wire") == TD_NETLINK_SEND_CLOSE
+          && out_is("errors.version"));
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
 }
 
 /* Every accepted fixture name binds a window, and every refused one closes the carrier connection. */
@@ -736,6 +745,10 @@ static void test_record_limits(void)
     VEC(plain, "negative.counter_limit.plaintext");
     VEC(last, "negative.counter_limit.last");
     VEC(beyond, "negative.counter_limit.beyond");
+    const cJSON *limit = at(g_vectors, "negative.counter_limit.limit");
+    CHECK(cJSON_IsNumber(limit) && (uint64_t)limit->valuedouble == TD_NETLINK_COUNTER_LIMIT);
+    CHECK((uint64_t)at(g_vectors, "negative.counter_limit.last_counter")->valuedouble == TD_NETLINK_COUNTER_LIMIT - 1);
+    CHECK((uint64_t)at(g_vectors, "negative.counter_limit.beyond_counter")->valuedouble == TD_NETLINK_COUNTER_LIMIT);
     uint8_t wire[1100], body[1100];
     td_netlink_dir_t sender, receiver;
     td_netlink_dir_init(&sender, TD_NETLINK_C2D, c2d);
@@ -762,6 +775,19 @@ static void test_record_limits(void)
     CHECK(td_netlink_conn_record(&g_conn, &g_deck, max + 2, max_len - 2, body) && !memcmp(body, max_plain, max_plain_len));
     /* Replaying it closes the session: only the next counter is accepted. */
     CHECK(!td_netlink_conn_record(&g_conn, &g_deck, max + 2, max_len - 2, body));
+
+    /* A session wears out once fewer than 1024 records remain in either direction, and then ends between requests. */
+    fresh_deck(true, 0, 0);
+    open_session(&g_conn, PEER_A);
+    CHECK(!td_netlink_conn_worn(&g_conn));
+    g_conn.tx.counter = TD_NETLINK_COUNTER_LIMIT - TD_NETLINK_COUNTER_MARGIN;
+    CHECK(!td_netlink_conn_worn(&g_conn));
+    g_conn.tx.counter++;
+    CHECK(td_netlink_conn_worn(&g_conn));
+    g_conn.tx.counter = 0;
+    g_conn.rx.counter = TD_NETLINK_COUNTER_LIMIT - TD_NETLINK_COUNTER_MARGIN + 1;
+    CHECK(td_netlink_conn_worn(&g_conn));
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
 
     /* Length prefixes one past each phase's bounds close before any body is read. */
     const cJSON *entry;

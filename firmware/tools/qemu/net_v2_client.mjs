@@ -84,7 +84,11 @@ class Wire {
 // One handshake item, which must be `kind` and not an error.
 async function expect(wire, kind, timeoutMs = 30000) {
   const item = await wire.item(3, MAX_HANDSHAKE_BODY, timeoutMs);
-  if (item[2] === 0x7f) throw new Error(`refused: ${REASONS[item[4]] ?? item[4]}`);
+  // An error item is unauthenticated: stop on it, with no fallback and no retry. One with item version 1 is malformed.
+  if (item[2] === 0x7f) {
+    parseHandshake(item, 0x7f);
+    throw new Error(`refused: ${REASONS[item[4]] ?? item[4]}`);
+  }
   parseHandshake(item, kind);
   return item;
 }
@@ -187,7 +191,7 @@ async function main() {
   requireThat(net.ok === true && net.paired === 1 && net.session?.app_name === 'QEMU check'
     && net.session?.app_id === companionId.toString('hex') && net.session?.carrier === 'wifi', 'net.state session');
 
-  for (const m of ['net.pair', 'net.forget', 'update.begin']) {
+  for (const m of ['net.pair', 'net.list', 'net.forget', 'update.begin']) {
     const refused = await link.request({ m });
     requireThat(refused.ok === false && refused.reason === 'usb-only', `${m} refused as usb-only`);
   }

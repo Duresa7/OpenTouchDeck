@@ -554,10 +554,15 @@ What the radio build does:
   the normal build.
 - `net state` replies with net-v2's `net.state` fields: `listening`, `port`,
   `ble`, `session`, `paired`, `pairing`, `pair_failures` and `locked_ms`.
-  `net pair` opens a pairing window, and `net forget` erases every Pairing and
-  ends the session. They fail with `reason` `locked`, `full` or `storage`. The
-  link has the same three as `net.state`, `net.pair` and `net.forget`; the last
-  two are USB-only.
+  `net pair` opens a pairing window, and `net forget all` erases every Pairing
+  and ends the session. They fail with `reason` `locked`, `full` (four
+  Pairings: no window opens) or `storage`. The link has the same three as
+  `net.state`, `net.pair` and `net.forget`; the last two are USB-only.
+  `net.forget` needs `all:true` and replies with `removed`; a bare one, or one
+  with `app_id`, fails with `reason:"args"`. `net.list` and forgetting one app
+  aren't built yet.
+- A session ends between requests once fewer than 1024 of its 2^24 records
+  remain in either direction, and the Companion reconnects for fresh keys.
 
 `firmware/tools/radio_guard.py` checks a build directory for its kind:
 

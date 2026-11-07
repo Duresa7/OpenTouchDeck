@@ -22,7 +22,8 @@ typedef enum {
 } td_netlink_cmd_result_t;
 
 td_netlink_cmd_result_t td_netlink_pair(void);
-td_netlink_cmd_result_t td_netlink_forget_all(void);
+/* Erases every Pairing; removed receives how many there were. */
+td_netlink_cmd_result_t td_netlink_forget_all(uint8_t *removed);
 
 /* The net.state fields (schema/protocol/net-v2.md). Any task. */
 void td_netlink_state_fields(cJSON *reply);

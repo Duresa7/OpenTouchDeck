@@ -374,6 +374,12 @@ bool td_netlink_conn_proven(const td_netlink_conn_t *conn)
     return conn->state == TD_NETLINK_CONN_READY;
 }
 
+bool td_netlink_conn_worn(const td_netlink_conn_t *conn)
+{
+    const uint64_t last = TD_NETLINK_COUNTER_LIMIT - TD_NETLINK_COUNTER_MARGIN;
+    return conn->state == TD_NETLINK_CONN_READY && (conn->rx.counter > last || conn->tx.counter > last);
+}
+
 static bool pairing_state(const td_netlink_conn_t *conn)
 {
     return conn->state >= TD_NETLINK_CONN_PAIR_CODE && conn->state <= TD_NETLINK_CONN_PAIR_COMMIT;
