@@ -132,10 +132,11 @@ jobs:
       - run: pnpm test
       - name: Test the packaging recipe's disposable signing
         run: python -B -m unittest discover -s scripts/tests -p "test_package_signing.py" -v
-      - name: Test the packaging and catalog scripts
+      - name: Test the packaging, catalog and Icon pack scripts
         run: |
           python -B -m unittest discover -s scripts/tests -p "test_package_windows.py" -v
           python -B -m unittest discover -s scripts/tests -p "test_generate_catalog.py" -v
+          python -B -m unittest discover -s scripts/tests -p "test_generate_packs.py" -v
       - name: Test the release workflow steps
         if: runner.os == 'Linux'
         shell: bash

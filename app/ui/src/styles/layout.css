@@ -1610,6 +1610,17 @@
   font-stretch: var(--stretch-plate);
 }
 
+.pack-thumb {
+  display: block;
+  object-fit: contain;
+  user-select: none;
+}
+
+.pack-thumb.is-loading {
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--screen-ink) 8%, transparent);
+}
+
 .icon-cell-none {
   width: 22px;
   height: 22px;

@@ -104,7 +104,7 @@ Tower layers apply these to every request, including static UI files and the Web
 | 3 | `Sec-Fetch-Site`, if present, on `/api/*` | `same-origin` or `none` | 403 `security.origin` |
 | 4 | `Sec-Fetch-Site`, if present, on static `GET`s | Anything with `Sec-Fetch-Mode: navigate`, otherwise `same-origin` or `none` | 403 `security.origin` |
 | 5 | Auth on `/api/v1/*`, except the public routes below | A valid `Authorization: Bearer tds_…`, or the WebSocket subprotocol | 401 `auth.missing`, `auth.invalid`, `auth.revoked` or `auth.expired` |
-| 6 | Body size, set per endpoint | JSON 1 MiB by default. Image uploads 16 MiB | 413 `request.too_large` |
+| 6 | Body size, set per endpoint | JSON 1 MiB by default. Image uploads 16 MiB. Icon pack imports 32 MiB | 413 `request.too_large` |
 | 7 | `Content-Type` | `application/json` for JSON bodies, `image/*` for uploads | 415 `request.media_type` |
 
 - **Public routes.** `GET /system/ping` returns `{api: ["v1"]}`. `POST /auth/proof` returns the HMAC proof. `POST /auth/sessions` needs the pairing token. `POST /auth/pair` needs a pairing code. Features can't add public routes, because `Endpoint` has no auth switch. The auth module mounts these four itself, before the auth layer.
@@ -121,6 +121,7 @@ These initial limits are reversible; changing them requires updating this contra
 | Pending uploads | 8 per session, 64 MiB pending across the Companion; reserve count and bytes while receiving, free on consumption, expiry or session end |
 | Decoded images | At most 4096×4096 pixels; GIFs also at most 300 frames and 64 MiB total decoded data |
 | Asset render Jobs | 2 at a time across the Companion |
+| Icon pack installs | 2 Jobs at a time across the Companion, one per pack. Downloads come only from `registry.npmjs.org`, at most 32 MiB, within 120 s |
 | Connections | 128 open at once; the accept loop waits for a free slot |
 | Request headers | 5 s to arrive, then the connection is dropped |
 | Request body | 10 s to arrive, then 408 `request.timeout`. Public routes read at most 4 KiB |
@@ -151,7 +152,7 @@ Cross-Origin-Resource-Policy: same-origin
 Cache-Control: no-store
 ```
 
-Hashed static files override `Cache-Control` with `public, max-age=31536000, immutable`. `index.html` keeps `no-store`. The UI makes no third-party requests: the Companion fetches and caches icon catalogs, so `connect-src` and `img-src` stay on `'self'`. The UI never uses `dangerouslySetInnerHTML`.
+Hashed static files override `Cache-Control` with `public, max-age=31536000, immutable`. `index.html` keeps `no-store`. The UI makes no third-party requests: the Companion fetches and caches icon catalogs and downloads Icon packs, and the UI shows pack icons through the same-origin `icon_packs.thumbnail` route, so `connect-src` and `img-src` stay on `'self'`. The UI never uses `dangerouslySetInnerHTML`.
 
 ### How the Electron window gets its session
 
@@ -488,6 +489,7 @@ pub struct Job {
 | `layouts.push` | `{assets_sent, assets_total, bytes_sent, bytes_total}` | `PushReport {state, bytes, chunks, retransmits, elapsed_ms, assets: {sent, unavailable}}` | Before the Layout put starts |
 | `assets.render` | `{frames_done, frames_total}` | `AssetRef {id, kind, width, height, bytes}` | Yes |
 | `assets.prune` | `{removed, total}` | `{removed: AssetId[], kept_in_use: number}` | Yes |
+| `icon_packs.install` | `{stage: "download" \| "verify" \| "extract" \| "done"}` | `PackInfo` | Yes, between stages |
 
 - **One active Job per Device or New board scope**, including `waiting_for_confirmation`. A second one gets 409 `device.busy` with `details.job` set to the active Job, so a double click can attach to it. There's no queue. Companion-scoped Asset render Jobs instead share the two-Job limit in Limits.
 - `GET /jobs` lists active Jobs and the last 50 finished ones, kept for 10 minutes. `GET /jobs/{id}` reads one. `DELETE /jobs/{id}` cancels one, or returns 409 `job.not_cancellable`.
@@ -607,16 +609,35 @@ Feature module `assets`. Assets reach a Device through `layouts.push` and the in
 | `assets.suggest` | `POST /assets/builtin/suggest` | `{action: TileAction}` → `Builtin \| null` |
 | `assets.file` | `GET /assets/{asset}` | → the stored bytes with their media type: `application/vnd.touchdeck.tdi1`, `image/gif` or `image/png` |
 | `assets.create` | `POST /assets` | `{source: {kind: "app", path} \| {kind: "upload", upload} \| {kind: "catalog", catalog, id}, fit}` → 202 Job `assets.render`. For `app`, the Companion reads only the icon resource of that program |
-| `assets.upload` | `POST /uploads` | raw `image/*`, at most 16 MiB → `{id, media_type, bytes}`, kept for 1 hour |
-| `assets.catalog_search` | `GET /assets/catalog/search?q=&catalog=` | → `CatalogHit[]`. Searches the bundled catalogs offline; images are fetched on pick |
+| `assets.upload` | `POST /uploads` | raw `image/*` (PNG, JPEG, GIF or SVG), at most 16 MiB → `{id, media_type, bytes}`, kept for 1 hour |
+| `assets.catalog_search` | `GET /assets/catalog/search?q=&catalog=` | → `CatalogHit[]`, at most 500. Searches the bundled catalogs and installed Icon packs offline; catalog images are fetched on pick |
 | `assets.on_device` | `GET /devices/{device}/assets` | → `{ids: AssetId[], storage_free}` |
 | `assets.prune` | `POST /devices/{device}/assets/prune` | `{also_keep: AssetId[]}` → 202 Job `assets.prune`. Removes Assets no stored Layout uses |
 
 As built in #75:
 
-- `assets.create` takes `app`, `upload` and `catalog` sources. Uploads accept PNG, JPEG and GIF images. GIF headers are admitted without decoding; full GIF validation runs in the preparation Job. An expired, consumed or foreign upload returns `upload.not_found`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
+- `assets.create` takes `app`, `upload` and `catalog` sources. Uploads accept PNG, JPEG, GIF and SVG images. An SVG is drawn with nothing outside the file: an `<image>` draws nothing, whether it names a file, a URL or a `data:` image, and `currentColor` without a root `color` draws in the built-in icon ink `#f2f5fa`. An uploaded SVG with a `DOCTYPE` or `ENTITY` declaration, or gzip-compressed, gets 400 `request.invalid`. GIF headers are admitted without decoding; full GIF validation runs in the preparation Job. An expired, consumed or foreign upload returns `upload.not_found`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
 - `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does. It also keeps live cover Assets the Companion last sent successfully or whose reply is still unanswered. Obsolete cached covers may be removed and are forgotten by the upload cache. A Device delete refusal with reason `in-use` keeps that Asset and continues; other delete errors still fail the Job. The result's `kept_in_use` counts distinct listed Assets protected as live covers or refused `in-use`, including on repeat runs. It excludes Assets kept only by Layouts or `also_keep`.
 - `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
+
+### Icon packs
+
+Feature module `icon_packs`. An Icon pack is an Iconify JSON set someone installs. Nothing is installed by default.
+
+| Name | Method and path | Request → Response |
+|---|---|---|
+| `icon_packs.list` | `GET /icon-packs` | → `PackInfo[] {prefix, name, origin, installed, version, download_bytes, size_bytes, icons, license {title, spdx, url}, author {name, url}, attribution, brands, palette, samples}`: the curated packs in their offered order, then imported ones |
+| `icon_packs.install` | `POST /icon-packs/{prefix}` | → 202 Job `icon_packs.install`, progress `{stage: "download" \| "verify" \| "extract" \| "done"}`, result `PackInfo`. 404 `icon_pack.not_found`, before any Job, for a prefix that isn't curated, imported packs included |
+| `icon_packs.remove` | `DELETE /icon-packs/{prefix}` | → 204. Deletes the pack's folder. 404 `icon_pack.not_found` |
+| `icon_packs.import` | `POST /icon-packs/import` | raw Iconify JSON as `application/json`, at most 32 MiB → `PackInfo`. 409 `icon_pack.too_many` once 20 imported packs are installed |
+| `icon_packs.thumbnail` | `GET /assets/packs/{prefix}/{name}.svg` | → one icon as a standalone SVG, `image/svg+xml`, with the usual response headers except the policy: `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`. 404 `icon_pack.not_found` |
+
+- **Curated list.** `app/crates/td-host/src/packs.json`, written by `app/scripts/generate_packs.py`, pins each `@iconify-json/<prefix>` npm package by version, tarball URL and `dist.integrity`. It offers logos, devicon, skill-icons, fa6-brands, mdi, tabler and lucide. Simple Icons is left out because it ships as a catalog.
+- **Install.** The Job downloads the pinned tarball from `registry.npmjs.org` only, over HTTPS, following no redirect, and refuses it unless its SHA-512 matches the pinned integrity (`icon_pack.integrity`), and keeps only `icons.json`, `info.json` and the first license file (saved as `LICENSE`) in `<data>/packs/<prefix>/`. Nothing else in the package is unpacked or run. A tarball with a link entry, an absolute path, a drive or `:` in a path, a `..` component, a bad header checksum or no end marker is refused whole (`icon_pack.invalid`), on Linux and Windows alike. A leftover folder at `<data>/packs/<prefix>/` that holds no usable pack is replaced. Installing an installed pack succeeds without a download.
+- **Validation.** Installed and imported files must be Iconify JSON with a valid prefix: lowercase letters and digits in hyphen-separated parts, so a pack's folder name means the same on case-sensitive and case-insensitive file systems. Icons with an invalid name, an out-of-range box or a body that isn't self-contained are dropped. Each body is parsed as XML and checked against an allowlist: SVG-namespace elements only, no `script`, `foreignObject` or `style` element in any namespace, no `on*` attribute, no DTD, every `href` must point at a `#fragment`, and after character references and CSS escapes are decoded every `url()` must too, with no `@import` or `javascript:`. Animations may not retarget an `href`. Pack and catalog SVGs may carry a `DOCTYPE` but no `ENTITY` declaration, and no embedded `data:` image is drawn. A file with no usable icon gets 422 `icon_pack.invalid`.
+- **Import.** An imported pack's license reads "Custom (you provided it)". A prefix that an installed or curated pack uses gets 409 `icon_pack.exists`. At most 20 imported packs are installed at once; the next import gets 409 `icon_pack.too_many` until one is removed.
+- **Search.** `assets.catalog_search` merges installed packs into the catalog ranking: exact, prefix, then substring matches on icon names and plain aliases, catalog hits first within a rank. A pack hit's `source` is `iconify:<prefix>`, its `id` is the icon name, and its `license`, `license_url` and `attribution` come from the pack. `catalog=iconify:<prefix>` searches one pack. Packs load on first use and stay in memory.
+- **Render.** `assets.create` with `{kind: "catalog", catalog: "iconify:<prefix>", id: <name>}` builds a standalone SVG from the pack (box, `left`/`top` viewBox, aliases, rotation and flips) and draws it through the catalog SVG path, then padding, background and tint. Monochrome `currentColor` icons draw in `#f2f5fa`, the built-in Lucide ink.
 
 ### Actions and approvals
 
@@ -1259,6 +1280,13 @@ Features add codes as they land. This list is the starting set.
 | `asset.render_failed` | Job error | The image or icon couldn't be rendered. GIF failures carry `details.reason` (Animated GIF Assets) |
 | `asset.store_full` | 507, Job error | Storing a prepared Asset would pass the Asset store quota and nothing can be swept. `details: {limit, actual, unit: "bytes"}` (Asset store) |
 | `upload.not_found` | 404 | The upload expired or never existed |
+| `icon_pack.not_found` | 404 | No offered or installed Icon pack has that prefix, or it has no such icon |
+| `icon_pack.exists` | 409 | An installed or curated Icon pack already uses the imported file's prefix |
+| `icon_pack.busy` | 409 | That Icon pack is being installed |
+| `icon_pack.too_many` | 409 | 20 imported Icon packs are installed already |
+| `icon_pack.invalid` | 422, Job error | The file isn't usable Iconify JSON, or the package holds none |
+| `icon_pack.integrity` | Job error | The downloaded tarball doesn't match its pinned SHA-512, so nothing was unpacked |
+| `icon_pack.download_failed` | Job error | The tarball didn't download or passed 32 MiB |
 | `job.not_found` | 404 | No Job with that id |
 | `job.not_cancellable` | 409 | The Job's current phase can't be cancelled |
 | `job.cancelled` | Job error | The Job was cancelled |

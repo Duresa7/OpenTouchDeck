@@ -7,6 +7,7 @@ import type { Appearance } from '../state/theme.ts';
 import { useUi, type SettingsSection } from '../state/ui.ts';
 import { button } from './button.ts';
 import { About } from './settings/About.tsx';
+import { IconPacksView } from './settings/IconPacks.tsx';
 import { PairedBrowsers } from './settings/PairedBrowsers.tsx';
 import { StartAtSignIn } from './settings/StartAtSignIn.tsx';
 import { TroubleshootingView } from './settings/Troubleshooting.tsx';
@@ -17,13 +18,15 @@ const appearances: { value: Appearance; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 
-function GeneralView({ onTroubleshooting, focusEntry }: { onTroubleshooting(): void; focusEntry: boolean }) {
+function GeneralView({ onTroubleshooting, onIconPacks, focusEntry }: { onTroubleshooting(): void; onIconPacks(): void; focusEntry: SettingsSection | null }) {
   const appearance = useUi((s) => s.appearance);
   const setAppearance = useUi((s) => s.setAppearance);
   const entry = useRef<HTMLButtonElement>(null);
+  const packsEntry = useRef<HTMLButtonElement>(null);
   const ids = useId();
   useEffect(() => {
-    if (focusEntry) entry.current?.focus();
+    if (focusEntry === 'troubleshooting') entry.current?.focus();
+    if (focusEntry === 'icon-packs') packsEntry.current?.focus();
   }, [focusEntry]);
 
   return (
@@ -67,6 +70,13 @@ function GeneralView({ onTroubleshooting, focusEntry }: { onTroubleshooting(): v
 
       <section className="settings-section">
         <div className="group">
+          <button ref={packsEntry} type="button" className="row row-button" onClick={onIconPacks} data-testid="settings-icon-packs">
+            <span className="row-text">
+              <span className="row-title">Icon packs</span>
+              <span className="row-sub">Download Icon packs to search offline, or import your own.</span>
+            </span>
+            <ChevronRight className="row-chevron" size={18} strokeWidth={1.9} aria-hidden />
+          </button>
           <button ref={entry} type="button" className="row row-button" onClick={onTroubleshooting}>
             <span className="row-text">
               <span className="row-title">Troubleshooting</span>
@@ -90,16 +100,19 @@ function GeneralView({ onTroubleshooting, focusEntry }: { onTroubleshooting(): v
 function SettingsViews() {
   const section = useUi((s) => s.settingsSection);
   const show = useUi((s) => s.showSettingsSection);
-  const [moved, setMoved] = useState(false);
+  const [moved, setMoved] = useState<SettingsSection | null>(null);
   const go = (next: SettingsSection) => {
-    setMoved(true);
+    setMoved(section);
     show(next);
   };
-  return section === 'troubleshooting' ? (
-    <TroubleshootingView onBack={() => go('general')} focusBack={moved} />
-  ) : (
-    <GeneralView onTroubleshooting={() => go('troubleshooting')} focusEntry={moved} />
-  );
+  switch (section) {
+    case 'troubleshooting':
+      return <TroubleshootingView onBack={() => go('general')} focusBack={moved !== null} />;
+    case 'icon-packs':
+      return <IconPacksView onBack={() => go('general')} focusBack={moved !== null} />;
+    default:
+      return <GeneralView onTroubleshooting={() => go('troubleshooting')} onIconPacks={() => go('icon-packs')} focusEntry={moved} />;
+  }
 }
 
 export function SettingsDialog() {

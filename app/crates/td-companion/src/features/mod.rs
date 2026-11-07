@@ -2,6 +2,7 @@ pub mod actions;
 pub mod assets;
 pub mod devices;
 pub mod firmware;
+pub mod icon_packs;
 pub mod integrations;
 pub mod jobs;
 pub mod layouts;

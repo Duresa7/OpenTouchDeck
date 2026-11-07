@@ -67,6 +67,12 @@ def safe_version(version):
     return cleaned or "unknown"
 
 
+def radio_build(build_dir):
+    """True for the opt-in radio build (idf.py -DTD_RADIO_BUILD=1), which a release must never ship."""
+    config = build_dir / "config/sdkconfig.json"
+    return config.is_file() and bool(json.loads(config.read_text(encoding="utf-8")).get("TD_RADIO_BUILD"))
+
+
 def make_bundle(build_dir, out_dir, version=None):
     contents = {}
     for name, relative in FILES:
@@ -98,6 +104,9 @@ def make_bundle(build_dir, out_dir, version=None):
             **({"role": "update-image"} if name == "touchdeck.bin" else {}),
         } for name, _ in FILES],
     }
+    # Only a radio build carries the mark, so a normal bundle's manifest stays as it was.
+    if radio_build(build_dir):
+        manifest["radio"] = True
     out_dir.mkdir(parents=True, exist_ok=True)
     bundle = out_dir / f"touchdeck-{safe_version(version)}.tdfw"
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:

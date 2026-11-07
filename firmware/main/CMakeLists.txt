@@ -7,3 +7,9 @@ idf_component_register(SRCS "main.c"
 if(TD_TEST_BOOT_CRASH)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE TD_TEST_BOOT_CRASH=1)
 endif()
+
+# Only the radio build (-DTD_RADIO_BUILD=1) has td_radio, whose Kconfig sets CONFIG_TD_RADIO_BUILD. A requirement
+# cannot depend on Kconfig, so main links it here.
+if(CONFIG_TD_RADIO_BUILD)
+    target_link_libraries(${COMPONENT_LIB} PRIVATE idf::td_radio)
+endif()

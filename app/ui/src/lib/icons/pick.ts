@@ -46,7 +46,7 @@ export function catalogProblem(error: unknown, name: string): string {
 export function uploadProblem(error: unknown, file: string): string {
   if (isApiError(error, 'client.unreachable')) return UNREACHABLE;
   if (isApiError(error, 'limits.exceeded')) return BUSY;
-  return `Couldn't upload “${file}”. Choose a PNG or JPEG image up to 16 MB.`;
+  return `Couldn't upload “${file}”. Choose a PNG, JPEG or SVG image up to 16 MB.`;
 }
 
 export function appProblem(error: unknown): string {

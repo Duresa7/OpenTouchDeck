@@ -4,6 +4,8 @@ import { expect, test, type Page } from '@playwright/test';
 import { openCopyTile, picker } from './icon-picker-helpers.ts';
 
 const folder = process.env.TD_BENCH ?? '';
+// A demo URL to measure, such as `/?packs=mdi,logos` for installed Icon packs.
+const path = process.env.TD_BENCH_PATH ?? '/';
 const RUNS = 20;
 
 type Run = { ms: number; inDom: number; press: number; cells: number };
@@ -69,13 +71,13 @@ test.describe('icon picker open time', () => {
     const cold: Run[] = [];
     for (let i = 0; i < RUNS; i++) {
       const page = await watched();
-      await openCopyTile(page);
+      await openCopyTile(page, path);
       await page.waitForTimeout(300);
       cold.push(await timeOpen(page));
       await page.close();
     }
     const page = await watched();
-    await openCopyTile(page);
+    await openCopyTile(page, path);
     const warm: Run[] = [];
     for (let i = 0; i < RUNS; i++) {
       await page.waitForTimeout(150);

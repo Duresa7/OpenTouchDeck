@@ -1,0 +1,26 @@
+menu "TouchDeck radio build"
+
+    # No prompt: the option is on exactly when this component is in the build, which only -DTD_RADIO_BUILD=1 does.
+    config TD_RADIO_BUILD
+        bool
+        default y
+        help
+            Set in the radio build, which has Wi-Fi, lwIP and NimBLE. The normal build does not have this
+            component, so the option does not exist there, and the radio guards fail any normal build that has it.
+
+    config TD_RADIO_INTERNAL_FLOOR
+        int "Internal RAM the radio build keeps free in steady state, in bytes"
+        range 24576 131072
+        default 24576
+        help
+            The display, the render tasks and the perf task need internal RAM. With the Wi-Fi station started, the
+            radio build logs an error when less than this is free once it reaches steady state, and `radio state`
+            reports floor_ok false. It also reports floor_ok false while the station is not started. The radio
+            guard fails a build that sets it below 24576.
+
+    config TD_RADIO_STEADY_MS
+        int "Time from radio start to the steady-state heap report, in milliseconds"
+        range 1000 600000
+        default 30000
+
+endmenu

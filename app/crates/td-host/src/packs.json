@@ -1,0 +1,214 @@
+{
+ "packs": [
+  {
+   "prefix": "logos",
+   "name": "SVG Logos",
+   "package": "@iconify-json/logos",
+   "version": "1.2.19",
+   "tarball": "https://registry.npmjs.org/@iconify-json/logos/-/logos-1.2.19.tgz",
+   "integrity": "sha512-ICjDNu2RW4xMk+0YAHyrTj/pW2BHgywcYyvf9DS16upalmSUbg+WqkEYJRim8iVOuVylyo9FFjzWLzACFhj8oA==",
+   "unpacked_size": 8743040,
+   "icons": 2064,
+   "license": {
+    "title": "CC0",
+    "spdx": "CC0-1.0",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/master/LICENSE.txt"
+   },
+   "author": {
+    "name": "Gil Barbara",
+    "url": "https://github.com/gilbarbara/logos"
+   },
+   "attribution": false,
+   "brands": true,
+   "palette": true,
+   "samples": [
+    "npm-icon",
+    "uikit",
+    "patreon",
+    "serverless",
+    "vue",
+    "modernizr"
+   ]
+  },
+  {
+   "prefix": "devicon",
+   "name": "Devicon",
+   "package": "@iconify-json/devicon",
+   "version": "1.2.77",
+   "tarball": "https://registry.npmjs.org/@iconify-json/devicon/-/devicon-1.2.77.tgz",
+   "integrity": "sha512-yH3tZ5ypBUHVTkZOUh+IzkC9qrUH+1bYGgpfMVScXvKJpjVFb6qvi0TidyX54G3rlXBQyg3ilF4zYeE4araNDg==",
+   "unpacked_size": 5429359,
+   "icons": 1104,
+   "license": {
+    "title": "MIT",
+    "spdx": "MIT",
+    "url": "https://github.com/devicons/devicon/blob/master/LICENSE"
+   },
+   "author": {
+    "name": "konpa",
+    "url": "https://github.com/devicons/devicon/tree/master"
+   },
+   "attribution": false,
+   "brands": true,
+   "palette": true,
+   "samples": [
+    "windows8",
+    "tensorflow",
+    "logstash",
+    "stackblitz",
+    "fsharp",
+    "vite"
+   ]
+  },
+  {
+   "prefix": "skill-icons",
+   "name": "Skill Icons",
+   "package": "@iconify-json/skill-icons",
+   "version": "1.2.4",
+   "tarball": "https://registry.npmjs.org/@iconify-json/skill-icons/-/skill-icons-1.2.4.tgz",
+   "integrity": "sha512-S6iRKHGlGCb/zfx3Isv1TBe5PunbDE5FEwJcaXji60+yRZMrcFFtYEI1xivKqaGKXyVZ508yjGDItsehQdJmSg==",
+   "unpacked_size": 1676441,
+   "icons": 400,
+   "license": {
+    "title": "MIT",
+    "spdx": "MIT",
+    "url": "https://github.com/tandpfun/skill-icons/blob/main/LICENSE"
+   },
+   "author": {
+    "name": "tandpfun",
+    "url": "https://github.com/tandpfun/skill-icons"
+   },
+   "attribution": false,
+   "brands": true,
+   "palette": true,
+   "samples": [
+    "markdown-light",
+    "vuejs-dark",
+    "html",
+    "fastapi",
+    "vuejs-light",
+    "gamemakerstudio"
+   ]
+  },
+  {
+   "prefix": "fa6-brands",
+   "name": "Font Awesome 6 Brands",
+   "package": "@iconify-json/fa6-brands",
+   "version": "1.2.6",
+   "tarball": "https://registry.npmjs.org/@iconify-json/fa6-brands/-/fa6-brands-1.2.6.tgz",
+   "integrity": "sha512-twL3X4KWcxAhbc1vz/mIDsVr+CAItk1/EIfxKUVQtpv6O4eydk5KNYqTZWdvJNHGInUgd6vKg21aWfVgb5DXEg==",
+   "unpacked_size": 510409,
+   "icons": 495,
+   "license": {
+    "title": "CC BY 4.0",
+    "spdx": "CC-BY-4.0",
+    "url": "https://creativecommons.org/licenses/by/4.0/"
+   },
+   "author": {
+    "name": "Dave Gandy",
+    "url": "https://github.com/FortAwesome/Font-Awesome"
+   },
+   "attribution": true,
+   "brands": true,
+   "palette": false,
+   "samples": [
+    "strava",
+    "css3",
+    "y-combinator",
+    "unsplash",
+    "vuejs",
+    "google-drive"
+   ]
+  },
+  {
+   "prefix": "mdi",
+   "name": "Material Design Icons",
+   "package": "@iconify-json/mdi",
+   "version": "1.2.3",
+   "tarball": "https://registry.npmjs.org/@iconify-json/mdi/-/mdi-1.2.3.tgz",
+   "integrity": "sha512-O3cLwbDOK7NNDf2ihaQOH5F9JglnulNDFV7WprU2dSoZu3h3cWH//h74uQAB87brHmvFVxIOkuBX2sZSzYhScg==",
+   "unpacked_size": 3472864,
+   "icons": 7447,
+   "license": {
+    "title": "Apache 2.0",
+    "spdx": "Apache-2.0",
+    "url": "https://github.com/Templarian/MaterialDesign/blob/master/LICENSE"
+   },
+   "author": {
+    "name": "Pictogrammers",
+    "url": "https://github.com/Templarian/MaterialDesign"
+   },
+   "attribution": false,
+   "brands": false,
+   "palette": false,
+   "samples": [
+    "account-check",
+    "bell-alert-outline",
+    "calendar-edit",
+    "skip-previous",
+    "home-variant",
+    "lock-open-outline"
+   ]
+  },
+  {
+   "prefix": "tabler",
+   "name": "Tabler Icons",
+   "package": "@iconify-json/tabler",
+   "version": "1.2.43",
+   "tarball": "https://registry.npmjs.org/@iconify-json/tabler/-/tabler-1.2.43.tgz",
+   "integrity": "sha512-EKhyOj6nASi25ZjuRpEhPL1fwiKVtg/e/VX6v6X3FPKpjG9og26ypW8ItnWYSTn6fdNuQe3VPeyuThWlP6QuWw==",
+   "unpacked_size": 2148914,
+   "icons": 6257,
+   "license": {
+    "title": "MIT",
+    "spdx": "MIT",
+    "url": "https://github.com/tabler/tabler-icons/blob/master/LICENSE"
+   },
+   "author": {
+    "name": "Paweł Kuna",
+    "url": "https://github.com/tabler/tabler-icons"
+   },
+   "attribution": false,
+   "brands": false,
+   "palette": false,
+   "samples": [
+    "alien",
+    "device-desktop",
+    "photo",
+    "chevron-right",
+    "check",
+    "square-root"
+   ]
+  },
+  {
+   "prefix": "lucide",
+   "name": "Lucide",
+   "package": "@iconify-json/lucide",
+   "version": "1.2.151",
+   "tarball": "https://registry.npmjs.org/@iconify-json/lucide/-/lucide-1.2.151.tgz",
+   "integrity": "sha512-OCp+cNzynOlOI7zHq8bFGhBBzmSSWFICvOSTxZrajhFJC4YizvlLiBJMbaLzzlpMaGRidmZmAA8GpovoDKiy/w==",
+   "unpacked_size": 664842,
+   "icons": 2020,
+   "license": {
+    "title": "ISC",
+    "spdx": "ISC",
+    "url": "https://github.com/lucide-icons/lucide/blob/main/LICENSE"
+   },
+   "author": {
+    "name": "Lucide Contributors",
+    "url": "https://github.com/lucide-icons/lucide"
+   },
+   "attribution": false,
+   "brands": false,
+   "palette": false,
+   "samples": [
+    "circle-check",
+    "award",
+    "house",
+    "check",
+    "mountain",
+    "chevron-up"
+   ]
+  }
+ ]
+}

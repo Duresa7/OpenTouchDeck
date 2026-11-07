@@ -92,6 +92,7 @@ declare global {
         holdGifs(on: boolean): void;
         failGif(error: ErrorBody): void;
       };
+      iconPacks: { failInstall(prefix: string, error: ErrorBody): void; installed(): string[] };
     };
   }
 }
@@ -166,6 +167,8 @@ export function demoEnvironment(target: Window): Environment {
     },
     assets: { ...(params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {}), ...renderMs(params.get('render-ms')) },
     wifi: worst ? undefined : demoWifi(devices),
+    // `?packs=logos,mdi` starts with those Icon packs installed.
+    iconPacks: { installed: params.get('packs')?.split(',') ?? [] },
   });
   const update = params.get('update');
   const offer = worst && update === 'available' ? worstOffer : isCheckName(update) ? checks[update] : checks.none;
@@ -209,6 +212,7 @@ export function demoEnvironment(target: Window): Environment {
       holdGifs: (on) => fake.assets.holdGifs(on),
       failGif: (error) => fake.assets.failGif(error),
     },
+    iconPacks: { failInstall: (prefix, error) => fake.iconPacks.failInstall(prefix, error), installed: () => fake.iconPacks.installed() },
   };
   const network = target.fetch.bind(target);
   target.fetch = (input, init) => {

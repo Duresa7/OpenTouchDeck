@@ -42,8 +42,35 @@ pub fn index() -> &'static Index {
         serde_json::from_str(include_str!("catalog/index.json")).expect("bundled catalog")
     })
 }
+/// How well `query` (trimmed and lowercased) matches one of `terms`: 0 exact, 1 prefix,
+/// 2 substring, or `None`.
+pub fn rank<S: AsRef<str>>(query: &str, terms: impl IntoIterator<Item = S>) -> Option<u8> {
+    terms
+        .into_iter()
+        .filter_map(|s| rank_one(query, &s.as_ref().to_lowercase()))
+        .min()
+}
+/// [`rank`] for one term that is already lowercase.
+pub fn rank_one(query: &str, term: &str) -> Option<u8> {
+    if term == query {
+        Some(0)
+    } else if term.starts_with(query) {
+        Some(1)
+    } else if term.contains(query) {
+        Some(2)
+    } else {
+        None
+    }
+}
 /// Exact, prefix, then substring matches; ties retain the generated name/source/id order.
 pub fn search(query: &str, source: Option<&str>) -> Vec<&'static Entry> {
+    search_ranked(query, source)
+        .into_iter()
+        .map(|(_, e)| e)
+        .collect()
+}
+/// [`search`] with each hit's rank, so other sources can merge into the same order.
+pub fn search_ranked(query: &str, source: Option<&str>) -> Vec<(u8, &'static Entry)> {
     let query = query.trim().to_lowercase();
     let mut hits: Vec<_> = index()
         .entries
@@ -54,27 +81,15 @@ pub fn search(query: &str, source: Option<&str>) -> Vec<&'static Entry> {
                     && (e.license.contains("NC") || e.license.contains("ND")))
         })
         .filter_map(|e| {
-            let rank = std::iter::once(&e.name)
-                .chain(&e.aliases)
-                .chain(&e.tags)
-                .filter_map(|s| {
-                    let s = s.to_lowercase();
-                    if s == query {
-                        Some(0)
-                    } else if s.starts_with(&query) {
-                        Some(1)
-                    } else if s.contains(&query) {
-                        Some(2)
-                    } else {
-                        None
-                    }
-                })
-                .min()?;
+            let rank = rank(
+                &query,
+                std::iter::once(&e.name).chain(&e.aliases).chain(&e.tags),
+            )?;
             Some((rank, e))
         })
         .collect();
     hits.sort_by_key(|(rank, _)| *rank);
-    hits.into_iter().map(|(_, e)| e).collect()
+    hits
 }
 #[derive(Debug)]
 pub enum Error {
@@ -117,6 +132,45 @@ impl Fetcher for HttpFetcher {
             .body_mut()
             .with_config()
             .limit(4 * 1024 * 1024)
+            .read_to_vec()
+            .map_err(|e| Error::Fetch(e.to_string()))
+    }
+}
+/// Like [`HttpFetcher`] with its own byte cap and timeout, for larger downloads such as
+/// Icon packs. It fetches over HTTPS only and follows no redirect, so a download never lands
+/// anywhere but the URL it was given.
+pub struct HttpDownload {
+    limit: u64,
+    timeout: Duration,
+    https_only: bool,
+}
+impl HttpDownload {
+    pub fn new(limit: u64, timeout: Duration) -> Self {
+        Self {
+            limit,
+            timeout,
+            https_only: true,
+        }
+    }
+}
+impl Fetcher for HttpDownload {
+    fn fetch(&self, url: &str) -> Result<Vec<u8>, Error> {
+        let mut response = ureq::get(url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .https_only(self.https_only)
+            .max_redirects(0)
+            .build()
+            .call()
+            .map_err(|e| Error::Fetch(e.to_string()))?;
+        let status = response.status();
+        if status != ureq::http::StatusCode::OK {
+            return Err(Error::Fetch(format!("the server answered {status}")));
+        }
+        response
+            .body_mut()
+            .with_config()
+            .limit(self.limit)
             .read_to_vec()
             .map_err(|e| Error::Fetch(e.to_string()))
     }
@@ -345,6 +399,61 @@ mod tests {
             self.0.fetch_add(1, Ordering::SeqCst);
             Ok(vec![1; 4])
         }
+    }
+
+    /// A local HTTP server: `/ok` answers `pack`, anything else redirects to `/ok`. Returns
+    /// its base URL and the paths it was asked for.
+    fn redirecting_server() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = asked.clone();
+        let location = format!("{base}/ok");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut line = String::new();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                reader.read_line(&mut line).unwrap();
+                let path = line.split(' ').nth(1).unwrap_or("").to_owned();
+                while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                    line.clear();
+                }
+                let reply = if path == "/ok" {
+                    "HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\npack".into()
+                } else {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nlocation: {location}\r\ncontent-length: 0\r\n\
+                         connection: close\r\n\r\n"
+                    )
+                };
+                log.lock().unwrap().push(path);
+                stream.write_all(reply.as_bytes()).unwrap();
+            }
+        });
+        (base, asked)
+    }
+
+    #[test]
+    fn downloads_follow_no_redirect_and_need_https() {
+        let (base, asked) = redirecting_server();
+        let plain = HttpDownload {
+            https_only: false,
+            ..HttpDownload::new(1024, Duration::from_secs(5))
+        };
+        assert_eq!(plain.fetch(&format!("{base}/ok")).unwrap(), b"pack");
+        let error = plain
+            .fetch(&format!("{base}/moved"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("302"), "{error}");
+        assert_eq!(*asked.lock().unwrap(), ["/ok", "/moved"]);
+
+        // The real downloader refuses plain HTTP before it connects.
+        let real = HttpDownload::new(1024, Duration::from_secs(5));
+        assert!(real.fetch(&format!("{base}/ok")).is_err());
+        assert_eq!(asked.lock().unwrap().len(), 2);
     }
     #[test]
     fn offline_search_ranking_licenses_and_metadata() {

@@ -8,6 +8,8 @@ type Frame = Record<string, unknown> & { type: string };
 export interface FakeAssetsOptions {
   publish(frame: Frame): void;
   hits?: readonly CatalogHit[];
+  /** Hits from installed Icon packs, searched after the catalog within a rank. */
+  packHits?: () => readonly CatalogHit[];
   renderMs?: number;
   searchMs?: number;
 }
@@ -25,7 +27,8 @@ const failure = (status: number, code: string, message: string, details: unknown
 
 const UPLOAD_MAX = 16 * 1024 * 1024;
 const GIF_SIDE = 128;
-const UPLOAD_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/gif']);
+const UPLOAD_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml']);
+const SEARCH_LIMIT = 500;
 
 function pause(ms: number | Promise<void>, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -92,6 +95,7 @@ export function searchHits(hits: readonly CatalogHit[], q: string, catalog: stri
 export function createFakeAssets(options: FakeAssetsOptions) {
   const { publish, renderMs = 250, searchMs = 30 } = options;
   let hits = options.hits ?? RECORDED_HITS;
+  const everything = () => [...hits, ...(options.packHits?.() ?? [])];
   const files = new Map<string, Uint8Array>();
   const uploads = new Map<string, Uint8Array>();
   const jobs = new Map<string, Job>();
@@ -129,7 +133,7 @@ export function createFakeAssets(options: FakeAssetsOptions) {
   async function render(source: AssetSource, fit: Fit): Promise<{ file: Uint8Array } | { problem: string }> {
     switch (source.kind) {
       case 'catalog': {
-        const hit = hits.find((h) => h.source === source.catalog && h.id === source.id);
+        const hit = everything().find((h) => h.source === source.catalog && h.id === source.id);
         if (!hit) return { problem: 'Catalog icon or variant not found' };
         if (failing.has(source.id)) return { problem: 'Icon download failed: the CDN did not answer' };
         return { file: disc(`catalog:${source.catalog}:${source.id}`, source.tint) };
@@ -244,7 +248,7 @@ export function createFakeAssets(options: FakeAssetsOptions) {
           entry.aborted = true;
           throw error;
         }
-        return json(200, searchHits(hits, entry.q, entry.catalog));
+        return json(200, searchHits(everything(), entry.q, entry.catalog).slice(0, SEARCH_LIMIT));
       }
       if (path === '/assets/builtin') return method === 'GET' ? json(200, await listBuiltins()) : failure(405, 'route.method_not_allowed', 'Use GET.');
       if (path === '/assets/builtin/suggest') {
@@ -257,7 +261,7 @@ export function createFakeAssets(options: FakeAssetsOptions) {
       if (path === '/uploads') {
         if (method !== 'POST') return failure(405, 'route.method_not_allowed', 'Use POST.');
         const type = request.headers.get('Content-Type') ?? '';
-        if (!UPLOAD_TYPES.has(type)) return failure(415, 'request.media_type', 'Uploads take PNG, JPEG or GIF images.');
+        if (!UPLOAD_TYPES.has(type)) return failure(415, 'request.media_type', 'Uploads take PNG, JPEG, GIF or SVG images.');
         const bytes = new Uint8Array(await request.arrayBuffer());
         if (bytes.length > UPLOAD_MAX) return failure(413, 'request.too_large', 'The image is larger than 16 MiB.');
         const id = `upl_${String(uploads.size + 1).padStart(16, '0')}`;

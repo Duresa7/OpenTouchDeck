@@ -175,7 +175,22 @@ impl Endpoint for Upload {
         Ok(req.body.0)
     }
 }
+/// The longer side an uploaded SVG is drawn at before it is fitted to the Tile.
+const SVG_SIDE: u32 = 256;
+/// Whether an upload is an SVG document: it opens with markup and names an `<svg` root early.
+fn is_svg(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_ascii_lowercase();
+    head.trim_start_matches('\u{feff}')
+        .trim_start()
+        .starts_with('<')
+        && head.contains("<svg")
+}
 pub(crate) fn decode(bytes: &[u8]) -> Result<image::RgbaImage, CommonError> {
+    if is_svg(bytes) {
+        // Drawn with nothing outside the file: no linked images, files or URLs.
+        return td_host::icon_pack::render_svg_upload(bytes, SVG_SIDE)
+            .map_err(|e| CommonError::invalid("image", e));
+    }
     let invalid = |e| CommonError::invalid("image", e);
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
@@ -184,7 +199,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<image::RgbaImage, CommonError> {
         reader.format(),
         Some(image::ImageFormat::Png | image::ImageFormat::Jpeg)
     ) {
-        return Err(CommonError::invalid("image", "Upload a PNG or JPEG image."));
+        return Err(CommonError::invalid(
+            "image",
+            "Upload a PNG, JPEG or SVG image.",
+        ));
     }
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(4096);

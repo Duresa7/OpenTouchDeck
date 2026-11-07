@@ -1,0 +1,49 @@
+# The radio build's options. `idf.py -DTD_RADIO_BUILD=1` layers this file over sdkconfig.defaults (see
+# firmware/CMakeLists.txt), into a build directory and an sdkconfig of its own. Never merge these into sdkconfig or
+# sdkconfig.defaults: the normal build stays radio-free, and its guards check that. firmware/tools/radio_guard.py
+# checks the radio build against the options below.
+
+# Internal RAM is what the radios cost. The RGB panel's bounce buffers, the render tasks and the perf task need it,
+# and the first Wi-Fi attempt left about 1 KB free with the station up. Wi-Fi and lwIP buffers come from PSRAM where
+# ESP-IDF allows it. The static RX buffers and the driver's queues must stay internal, so they are sized for the app
+# link's few KB a second, not for throughput. The Wi-Fi driver keeps no network in NVS.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_ESP_WIFI_NVS_ENABLED=n
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=2
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=2
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_RX_BA_WIN=2
+CONFIG_ESP_WIFI_RX_MGMT_BUF_NUM_DEF=3
+CONFIG_ESP_WIFI_MGMT_SBUF_NUM=6
+# IRAM and DRAM share the same internal SRAM on the ESP32-S3, so code kept in IRAM for speed is heap the panel loses.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_LWIP_IRAM_OPTIMIZATION=n
+# malloc() puts blocks under 16 KB in internal RAM by default. In the radio build, blocks of 256 bytes and up go to
+# PSRAM first, which the Wi-Fi station's share of internal RAM needs. Code runs from PSRAM (XIP), so PSRAM stays
+# readable while flash is written.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=256
+
+# Task stacks sized from the board run with the station up. `perf mem` at these sizes, as option -> stack the task
+# got -> minimum free bytes (high-water mark): tcpip 2048 -> 2560 -> 1400; sys_evt 1792 -> 2304 -> 1172; esp_timer
+# 3072 -> 3584 -> 2216, with the heartbeat on it; Tmr Svc 1536 -> 1536 -> 940. ESP-IDF gives the first three 512
+# bytes more than their option. Every one keeps at least 940 bytes free. A later ticket that runs a TCP service or
+# logs more from these tasks measures again.
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=2048
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=1792
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=3072
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=1536
+
+# NimBLE is compiled in and stays dormant: nothing starts the controller or the host, so the Device never advertises,
+# scans or connects. A later opt-in setting, default off, starts it. The controller runs from flash and NimBLE takes
+# its memory from PSRAM. No observer or central role is compiled in, so the Device cannot scan or start a connection.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n

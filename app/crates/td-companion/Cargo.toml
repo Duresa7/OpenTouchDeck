@@ -46,6 +46,7 @@ windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInst
 td-link.workspace = true
 
 [dev-dependencies]
+flate2 = "1"
 gif = { version = "0.14", default-features = false, features = ["std"] }
 td-companion = { path = ".", features = ["test-hooks"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }

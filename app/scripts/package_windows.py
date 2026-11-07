@@ -59,20 +59,18 @@ def clean_revision():
     return capture(["git", "rev-parse", "HEAD"])
 
 
+def radio_guard():
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location("radio_guard", ROOT / "firmware/tools/radio_guard.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def audit_radio(build):
-    config = (build / "config/sdkconfig.json").read_text(encoding="utf-8")
-    settings = json.loads(config)
-    for key in ("ESP_WIFI_ENABLED", "BT_ENABLED", "BT_NIMBLE_ENABLED", "BT_BLUEDROID_ENABLED"):
-        if settings.get(key):
-            raise ValueError(f"Radio enabled: {key}")
-    if not settings.get("ESP_CONSOLE_USB_SERIAL_JTAG"):
-        raise ValueError("Firmware must keep the USB-Serial/JTAG console")
-    description = json.loads((build / "project_description.json").read_text(encoding="utf-8"))
-    components = description["build_components"]
-    forbidden = {"td_net", "td_ble", "esp_wifi", "bt", "esp_phy"}.intersection(components)
-    if forbidden:
-        raise ValueError(f"Radio components linked: {sorted(forbidden)}")
-    return {"usb_serial_jtag": True, "radio_components": [], "build_components": components}
+    """The release ships the normal build only, so it must be radio-free. CI runs the same guard on every build."""
+    result = radio_guard().check_normal(build)
+    return {"usb_serial_jtag": True, "radio_components": [], "build_components": result["build_components"]}
 
 
 def verify_production_companion(binary):
@@ -115,6 +113,8 @@ def prebuilt_firmware(out, revision, source):
     bundle = folder / "touchdeck.tdfw"
     shutil.copyfile(source, bundle)
     manifest = bundle_tool().check_bundle(bundle)
+    if manifest.get("radio"):
+        raise ValueError("--firmware-bundle holds the radio build; an installer ships the normal Firmware only")
     return {"source_revision": None, "requested_revision": revision, "bundle": bundle.name,
             "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": None}
 

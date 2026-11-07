@@ -53,6 +53,10 @@ _Avoid_: widget
 An icon, image or animation prepared for a Device and stored on it.
 _Avoid_: resource, media file
 
+**Icon pack**:
+An installable, licensed set of icons that the icon picker searches offline. A person downloads a curated one in Settings or imports an Iconify JSON file; nothing is installed by default.
+_Avoid_: icon set, icon library, icon theme
+
 **Pushed copy**:
 The Layout this Companion last sent to a Device, kept on the PC. Controls on a Tile only act when the Device shows exactly its Pushed copy.
 _Avoid_: trusted copy, authority copy

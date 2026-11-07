@@ -79,8 +79,10 @@ pub fn render_svg_fit(
     height: u32,
     cover: bool,
 ) -> Result<RgbaImage, String> {
-    let tree = usvg::Tree::from_data(svg, &usvg::Options::default())
-        .map_err(|error| format!("svg: {error}"))?;
+    draw(&parse_svg(svg)?, width, height, cover)
+}
+
+fn draw(tree: &usvg::Tree, width: u32, height: u32, cover: bool) -> Result<RgbaImage, String> {
     let size = tree.size();
     let sx = width as f32 / size.width();
     let sy = height as f32 / size.height();
@@ -89,7 +91,7 @@ pub fn render_svg_fit(
     let dy = (height as f32 - size.height() * scale) / 2.0;
     let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or("svg: empty canvas")?;
     resvg::render(
-        &tree,
+        tree,
         tiny_skia::Transform::from_row(scale, 0.0, 0.0, scale, dx, dy),
         &mut pixmap.as_mut(),
     );
@@ -99,6 +101,126 @@ pub fn render_svg_fit(
         *out = Rgba([color.red(), color.green(), color.blue(), color.alpha()]);
     }
     Ok(image)
+}
+
+/// The ink monochrome icons draw with: the stroke colour of the built-in Lucide icons. An SVG
+/// that paints with `currentColor` gets it through its root `color` attribute.
+pub const INK: &str = "#f2f5fa";
+
+/// The most XML nodes one SVG may hold. Icons hold a few hundred.
+const MAX_SVG_NODES: u32 = 200_000;
+/// The largest `.svgz` once decompressed.
+const MAX_SVGZ: u64 = 16 << 20;
+
+/// Where an SVG comes from, which sets what it may hold. Neither kind reads anything outside
+/// the document, and neither draws embedded `data:` images: resvg is built without raster
+/// decoders, and a nested SVG image draws nothing either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SvgSource {
+    /// A catalog or Icon pack icon. A DOCTYPE is fine, but an `ENTITY` declaration is not, so
+    /// no entity can expand.
+    Catalog,
+    /// A file someone uploaded: no DOCTYPE, no ENTITY and no compression.
+    Upload,
+}
+
+/// Parses a catalog or Icon pack SVG. See [`SvgSource::Catalog`].
+pub fn parse_svg(svg: &[u8]) -> Result<usvg::Tree, String> {
+    parse_svg_from(svg, SvgSource::Catalog)
+}
+
+pub fn parse_svg_from(svg: &[u8], source: SvgSource) -> Result<usvg::Tree, String> {
+    let unzipped;
+    let svg = if svg.starts_with(&[0x1f, 0x8b]) {
+        if source == SvgSource::Upload {
+            return Err("svg: compressed SVGs aren't accepted".into());
+        }
+        unzipped = gunzip(svg)?;
+        &unzipped[..]
+    } else {
+        svg
+    };
+    let text = std::str::from_utf8(svg).map_err(|_| "svg: not UTF-8".to_owned())?;
+    let document = parse_xml(text, source)?;
+    let options = usvg::Options {
+        resources_dir: None,
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    };
+    usvg::Tree::from_xmltree(&document, &options).map_err(|error| format!("svg: {error}"))
+}
+
+fn gunzip(data: &[u8]) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(data)
+        .take(MAX_SVGZ + 1)
+        .read_to_end(&mut out)
+        .map_err(|error| format!("svg: {error}"))?;
+    if out.len() as u64 > MAX_SVGZ {
+        return Err("svg: the SVG is larger than 16 MiB once decompressed".into());
+    }
+    Ok(out)
+}
+
+fn parse_xml(text: &str, source: SvgSource) -> Result<roxmltree::Document<'_>, String> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    if contains_ignore_case(text, b"<!entity") {
+        return Err("svg: ENTITY declarations aren't accepted".into());
+    }
+    if source == SvgSource::Upload && contains_ignore_case(text, b"<!doctype") {
+        return Err("svg: DOCTYPE declarations aren't accepted".into());
+    }
+    // A DTD that declares no entity can't expand anything, and none is ever fetched.
+    let options = roxmltree::ParsingOptions {
+        allow_dtd: source == SvgSource::Catalog,
+        nodes_limit: MAX_SVG_NODES,
+    };
+    roxmltree::Document::parse_with_options(text, options).map_err(|error| format!("svg: {error}"))
+}
+
+/// Whether `text` holds `needle`, which is lowercase ASCII, in any case.
+fn contains_ignore_case(text: &str, needle: &[u8]) -> bool {
+    text.as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+/// Renders an uploaded SVG so its longer side is `max` pixels, keeping its aspect. A root
+/// without a `color` draws `currentColor` in [`INK`], the way a pack icon does. See
+/// [`SvgSource::Upload`] for what it may hold.
+pub fn render_svg_upload(svg: &[u8], max: u32) -> Result<RgbaImage, String> {
+    if svg.starts_with(&[0x1f, 0x8b]) {
+        return Err("svg: compressed SVGs aren't accepted".into());
+    }
+    let text = std::str::from_utf8(svg).map_err(|_| "svg: not UTF-8".to_owned())?;
+    let inked = with_root_color(text)?;
+    let tree = parse_svg_from(inked.as_bytes(), SvgSource::Upload)?;
+    let size = tree.size();
+    let scale = max as f32 / size.width().max(size.height());
+    let width = ((size.width() * scale).round() as u32).clamp(1, max);
+    let height = ((size.height() * scale).round() as u32).clamp(1, max);
+    draw(&tree, width, height, false)
+}
+
+/// Adds `color` to the root element when it sets none. The root is found by parsing, so an
+/// `<svg` inside a comment is never mistaken for it.
+fn with_root_color(svg: &str) -> Result<String, String> {
+    let svg = svg.strip_prefix('\u{feff}').unwrap_or(svg);
+    let document = parse_xml(svg, SvgSource::Upload)?;
+    let root = document.root_element();
+    if root.attribute("color").is_some() {
+        return Ok(svg.to_owned());
+    }
+    let start = root.range().start + 1;
+    let name = svg[start..]
+        .find(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+        .ok_or("svg: the root element isn't closed")?;
+    let at = start + name;
+    Ok(format!("{} color=\"{INK}\"{}", &svg[..at], &svg[at..]))
 }
 
 /// Contains an image inside a padded Tile, then applies tint and composites its background.

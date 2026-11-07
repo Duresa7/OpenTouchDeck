@@ -65,6 +65,7 @@ jobs:
           python -B firmware/tools/test_playback.py
           python -B firmware/tools/test_gif_ui.py
           python -B firmware/tools/test_ui_core.py
+          TD_GUARD_NORMAL_BUILD="$FIRMWARE_BUILD" python -B firmware/tools/test_radio_guard.py
 
       - name: Check the firmware is esp32s3 and radio-free
         shell: bash
@@ -75,7 +76,8 @@ jobs:
             echo "::error::The built sdkconfig enables Bluetooth"
             exit 1
           fi
-          # The release recipe's own audit: no Wi-Fi or Bluetooth config, no td_ble/td_net/bt/esp_wifi/esp_phy linked.
+          # The release recipe's own audit (firmware/tools/radio_guard.py): no Wi-Fi or Bluetooth option, no radio,
+          # network, mDNS or netlink component linked.
           python -B - <<'EOF'
           import importlib.util, json, os, sys
           from pathlib import Path
@@ -109,6 +111,78 @@ jobs:
         with:
           name: firmware-tdfw
           path: ${{ env.BUNDLE_OUT }}/*.tdfw
+          if-no-files-found: error
+          retention-days: 14
+
+  radio:
+    name: esp32s3 radio build
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v6.1
+    timeout-minutes: 60
+    env:
+      FIRMWARE_BUILD: build/firmware-radio
+      BUNDLE_OUT: build/bundle-radio
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Build the radio firmware
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . "$IDF_PATH/export.sh"
+          set -euo pipefail
+          idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" -DTD_RADIO_BUILD=1 build
+
+      - name: Check the radio build and that the release guards reject it
+        # Wi-Fi, lwIP and NimBLE on, buffers in PSRAM, the BLE controller in flash, nothing in the image that starts
+        # BLE, advertises, scans or joins a network, and static internal RAM under the ceiling that keeps the 24 KB
+        # floor measured on the board. The normal build's guard and the release audit must fail it.
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" size --format json2 --output-file "$FIRMWARE_BUILD/size.json"
+          python -B firmware/tools/radio_guard.py radio "$FIRMWARE_BUILD" --size-json "$FIRMWARE_BUILD/size.json"
+          TD_GUARD_RADIO_BUILD="$FIRMWARE_BUILD" python -B firmware/tools/test_radio_guard.py
+
+      - name: Report the radio build's static internal RAM
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          {
+            echo '### Radio build memory'
+            echo '```'
+            idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" size
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Pack and check the radio .tdfw bundle
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          python -B firmware/tools/make_bundle.py --build-dir "$FIRMWARE_BUILD" --out-dir "$BUNDLE_OUT"
+          for bundle in "$BUNDLE_OUT"/touchdeck-*.tdfw; do
+            radio="$BUNDLE_OUT/touchdeck-radio-${bundle##*/touchdeck-}"
+            mv "$bundle" "$radio"
+            python -B firmware/tools/make_bundle.py --check "$radio"
+          done
+
+      - name: Check the build left the checkout clean
+        # The radio build keeps its sdkconfig in its build directory, never in firmware/sdkconfig.
+        shell: bash
+        run: |
+          git status --porcelain --untracked-files=normal
+          test -z "$(git status --porcelain --untracked-files=normal)"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: firmware-radio-tdfw
+          path: ${{ env.BUNDLE_OUT }}/touchdeck-radio-*.tdfw
           if-no-files-found: error
           retention-days: 14
 

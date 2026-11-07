@@ -351,14 +351,56 @@ Opens from the Icon field in the Tile inspector.
 | Logo failed | Couldn't get {name}. Check the internet connection, then retry. |
 | Upload button | Upload image |
 | Uploading | Uploading “{file}”… |
-| Upload failed | Couldn't upload “{file}”. Choose a PNG or JPEG image up to 16 MB. |
+| Upload failed | Couldn't upload “{file}”. Choose a PNG, JPEG or SVG image up to 16 MB. |
+| Icon pack cell tooltip | {name} · {pack name} |
+| Icon packs button | Get more icons |
 | App icon button, launch actions only | Use app icon |
 | Getting the app icon | Getting icon… |
 | App icon failed | Couldn't get that app's icon. Check the app's path, or choose an icon. |
 | Recent app icon name | {program file name}, or App icon |
 | Too many icons rendering at once | Other icons are still being prepared. Wait a moment, then retry. |
 | Failure buttons | Retry, Details |
-| Credits | Icons: Simple Icons (CC0) · selfh.st/icons (CC BY 4.0, modified) · Logos belong to their owners |
+| Credits | Icons: Simple Icons (CC0) · selfh.st/icons (CC BY 4.0, modified)[ · {pack name} by {author} ({license}, modified), for each installed Icon pack that asks for credit] · Logos belong to their owners |
+
+### Icon packs
+
+Opens from Settings, and from Get more icons in the icon picker.
+
+| Element | String |
+| --- | --- |
+| Settings entry | Icon packs |
+| Settings entry subtitle | Download Icon packs to search offline, or import your own. |
+| View title | Icon packs |
+| Lede | Download Icon packs to search offline in the icon picker, or import your own. Nothing is installed until you choose. |
+| Curated heading | Packs |
+| Pack facts | {count} icons · {size} · {license}[ · Credit required][ · Logos] |
+| Loading | Loading… |
+| List failed | Icon packs didn't load. Restart Open TouchDeck, then retry. |
+| Download button | Download |
+| Install stages | Downloading…, Checking…, Unpacking…, Finishing… |
+| Remove button | Remove |
+| Removing | Removing… |
+| Checksum mismatch | {pack} didn't match its checksum, so it wasn't installed. Retry later. |
+| Download failed (`icon_pack.download_failed`) | Couldn't download {pack}. Check the internet connection, then retry. |
+| Package unusable (`icon_pack.invalid`) | {pack} couldn't be unpacked, so it wasn't installed. Update Open TouchDeck, then retry. |
+| Couldn't write the pack (`internal`) | Couldn't save {pack} on this PC. Check that the disk has free space, then retry. |
+| Any other install failure | Couldn't install {pack}. Restart Open TouchDeck, then retry. |
+| Under any failure | Details, holding the Companion's own message |
+| Too many installs | Other packs are still downloading. Wait for them, then retry. |
+| Install cancelled | {pack} wasn't installed. |
+| Retry button | Retry |
+| Remove failed | Couldn't remove {pack}. Restart Open TouchDeck, then retry. |
+| Remove while installing | {pack} is still installing. Wait for it, then retry. |
+| Imported heading | Your packs |
+| Import button | Import a pack file |
+| Importing | Importing… |
+| No imported packs | Import an Iconify JSON file to search its icons here. Its license is yours to check. |
+| Imported license | Custom (you provided it) |
+| Import clash | A pack with the same prefix as “{file}” is already installed or offered above. |
+| Import too large | “{file}” is larger than 32 MB. |
+| Import invalid | “{file}” isn't an Iconify JSON pack. Choose an Iconify JSON file, such as icons.json. |
+| Too many imports | You can import up to 20 packs. Remove one, then import “{file}” again. |
+| Footnote | Downloads come from the npm registry and must match a pinned checksum. Logos belong to their owners. |
 
 ## Tooltip names for the bottom-left icons
 

@@ -89,7 +89,9 @@ The first attempt to start an unapproved program opens a native dialog on this P
 
 ### Icons, Assets and backups
 
-Use the Tile's **Icon** controls to choose a built-in symbol, search the catalog or use an app's icon where offered. Search uses the bundled catalog; picking an uncached catalog image needs internet access. The Companion prepares it as an Asset for the Device.
+Use the Tile's **Icon** controls to choose a built-in symbol, search the catalog, upload a PNG, JPEG or SVG image, or use an app's icon where offered. Search uses the bundled catalog and every installed Icon pack; picking an uncached catalog image needs internet access, while pack icons draw offline. The Companion prepares it as an Asset for the Device.
+
+For more icons, choose **Get more icons** in the picker, or open **Settings > Icon packs**. Download a curated pack such as SVG Logos or Material Design Icons, or choose **Import a pack file** for an Iconify JSON file of your own. Each pack shows its license and size; **Remove** deletes it from this PC. Packs whose license asks for credit are named in the picker's credits.
 
 Drafts are kept in this window or browser's local storage, separately for each Device and orientation. Export files for backups and transfers between browsers or PCs.
 

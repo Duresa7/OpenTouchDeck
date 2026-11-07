@@ -719,6 +719,25 @@ button {
   margin: var(--space-2) 0 0 2px;
 }
 
+.row-problem > p,
+.settings-problem > p {
+  margin: 0;
+}
+
+.problem-details {
+  color: var(--ink-2);
+}
+
+.problem-details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.problem-details p {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
 .row-button {
   width: 100%;
   border: 0;
@@ -738,6 +757,47 @@ button {
 .row-chevron {
   flex: none;
   color: var(--ink-2);
+}
+
+.pack-row .row-sub a {
+  color: inherit;
+}
+
+.pack-samples {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.pack-sample {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--screen-tile);
+  color: var(--screen-ink);
+}
+
+.pack-sample .icon-cell-mark {
+  font-size: 13px;
+}
+
+.pack-status {
+  flex: none;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+}
+
+.settings-footnote {
+  margin: var(--space-4) 0 0 2px;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-wrap: pretty;
 }
 
 .row-sub.is-ok {

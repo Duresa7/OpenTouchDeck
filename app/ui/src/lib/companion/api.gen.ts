@@ -120,6 +120,7 @@ export type Fit = "contain" | "cover";
 export type GifTarget = { width: number, height: number, background: [number, number, number], };
 export type Hello = { api: string, build: string, session: ClientInfo, };
 export type InstallLock = { lock: string, };
+export type InstallProgress = { stage: PackStage, };
 export type IntegrationPath = { integration: string, };
 export type IntegrationStatus = { state: string, message: string | null, delivery: Array<Delivery>, };
 export type IntegrationStatusEvent = IntegrationSummary;
@@ -178,6 +179,47 @@ export type NewBoardAdded = NewBoard;
 export type NewBoardRemoved = { id: DeviceId, };
 export type NoQuery = null;
 export type Orientation = "landscape" | "portrait";
+export type PackAuthor = { name: string, url: string | null, };
+export type PackFile = Blob;
+export type PackIconPath = { prefix: string, 
+/**
+ * The icon's name followed by `.svg`.
+ */
+icon: string, };
+export type PackInfo = { prefix: string, name: string, origin: PackOrigin, installed: boolean, 
+/**
+ * The pinned package version, for curated packs.
+ */
+version: string | null, 
+/**
+ * What a curated pack unpacks to before the Companion trims it, in bytes.
+ */
+download_bytes: number | null, 
+/**
+ * What the installed pack takes on disk, in bytes.
+ */
+size_bytes: number | null, icons: number, license: PackLicense, author: PackAuthor, 
+/**
+ * Whether the license asks for credit wherever the icons show.
+ */
+attribution: boolean, 
+/**
+ * Whether the pack holds brand logos.
+ */
+brands: boolean, 
+/**
+ * Whether its icons carry their own colours, rather than `currentColor`.
+ */
+palette: boolean, 
+/**
+ * A few icon names to preview it with.
+ */
+samples: Array<string>, };
+export type PackLicense = { title: string, spdx: string | null, url: string | null, };
+export type PackOrigin = "curated" | "imported";
+export type PackPath = { prefix: string, };
+export type PackStage = "download" | "verify" | "extract" | "done";
+export type PackSvg = Blob;
 export type Page = { "kind": "grid", id: string, title: string, rows: number, cols: number, tiles: Array<Tile>, } | { "kind": "dashboard", id: string, title: string, source: string, };
 export type PairCode = { 
 /**
@@ -341,6 +383,11 @@ export const endpoints = {
   'firmware.pick': { method: 'POST', path: '/firmware/bundles/pick', access: 'session' },
   'firmware.repair': { method: 'POST', path: '/devices/{device}/firmware/repair', access: 'session' },
   'firmware.update': { method: 'POST', path: '/devices/{device}/firmware/update', access: 'session' },
+  'icon_packs.import': { method: 'POST', path: '/icon-packs/import', access: 'session' },
+  'icon_packs.install': { method: 'POST', path: '/icon-packs/{prefix}', access: 'session' },
+  'icon_packs.list': { method: 'GET', path: '/icon-packs', access: 'session' },
+  'icon_packs.remove': { method: 'DELETE', path: '/icon-packs/{prefix}', access: 'session' },
+  'icon_packs.thumbnail': { method: 'GET', path: '/assets/packs/{prefix}/{icon}', access: 'session' },
   'integrations.config_put': { method: 'PUT', path: '/integrations/{integration}/config', access: 'session' },
   'integrations.get': { method: 'GET', path: '/integrations/{integration}', access: 'session' },
   'integrations.list': { method: 'GET', path: '/integrations', access: 'session' },
@@ -371,7 +418,7 @@ export const endpoints = {
   'wifi.pairings_forget': { method: 'DELETE', path: '/wifi/pairings/{device}', access: 'session' },
   'wifi.pairings_list': { method: 'GET', path: '/wifi/pairings', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.window_closed' | 'wifi.wrong_code';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.window_closed' | 'wifi.wrong_code';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
@@ -385,6 +432,7 @@ export type JobMap = {
   'firmware.install': { progress: FirmwareProgress; result: FirmwareResult };
   'firmware.repair': { progress: FirmwareProgress; result: FirmwareResult };
   'firmware.update': { progress: FirmwareProgress; result: FirmwareResult };
+  'icon_packs.install': { progress: InstallProgress; result: PackInfo };
   'layouts.push': { progress: PushProgress; result: PushReport };
 };
 export type EventMap = {
@@ -489,6 +537,17 @@ brightness: number | null, photo_frame: PhotoFramePatch | null, }, bearer?: stri
       pick: (path: Record<string, never> = {}, query: null = null, body: { device: DeviceId, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<PickResult>('firmware.pick', path, query, body, bearer, headers, signal),
       repair: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.repair', path, query, body, bearer, headers, signal),
       update: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.update', path, query, body, bearer, headers, signal),
+    },
+    icon_packs: {
+      import: (path: Record<string, never> = {}, query: null = null, body: Blob, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<PackInfo>('icon_packs.import', path, query, body, bearer, headers, signal),
+      install: (path: { prefix: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('icon_packs.install', path, query, body, bearer, headers, signal),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<PackInfo>>('icon_packs.list', path, query, body, bearer, headers, signal),
+      remove: (path: { prefix: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('icon_packs.remove', path, query, body, bearer, headers, signal),
+      thumbnail: (path: { prefix: string, 
+/**
+ * The icon's name followed by `.svg`.
+ */
+icon: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<PackSvg>('icon_packs.thumbnail', path, query, body, bearer, headers, signal),
     },
     integrations: {
       config_put: (path: { integration: string, }, query: null = null, body: number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<IntegrationView>('integrations.config_put', path, query, body, bearer, headers, signal),

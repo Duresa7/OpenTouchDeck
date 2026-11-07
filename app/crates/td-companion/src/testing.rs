@@ -51,6 +51,7 @@ impl TestCompanion {
             None,
             None,
             Box::new(NoCatalogNetwork),
+            None,
             Ports::Mock,
         )
         .await
@@ -59,7 +60,23 @@ impl TestCompanion {
         limits: crate::Limits,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
     ) -> Self {
-        Self::start_router(limits, false, None, None, fetcher, Ports::Mock).await
+        Self::start_router(limits, false, None, None, fetcher, None, Ports::Mock).await
+    }
+    /// Starts offering `curated` as the Icon pack list, downloaded through `fetcher`.
+    pub async fn start_with_packs(
+        curated: Vec<td_host::packs::Curated>,
+        fetcher: Box<dyn td_host::catalog::Fetcher>,
+    ) -> Self {
+        Self::start_router(
+            crate::Limits::default(),
+            false,
+            None,
+            None,
+            Box::new(NoCatalogNetwork),
+            Some((curated, fetcher)),
+            Ports::Mock,
+        )
+        .await
     }
     pub async fn start_release_router() -> Self {
         Self::start_router(
@@ -68,6 +85,7 @@ impl TestCompanion {
             None,
             None,
             Box::new(NoCatalogNetwork),
+            None,
             Ports::Mock,
         )
         .await
@@ -81,6 +99,7 @@ impl TestCompanion {
             None,
             None,
             Box::new(NoCatalogNetwork),
+            None,
             Ports::Real { device_console },
         )
         .await
@@ -93,6 +112,7 @@ impl TestCompanion {
             Some(grants),
             None,
             Box::new(NoCatalogNetwork),
+            None,
             Ports::Mock,
         )
         .await
@@ -103,6 +123,10 @@ impl TestCompanion {
         grants: Option<Arc<dyn GrantStore>>,
         desktop: Option<Arc<crate::tray::Desktop>>,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
+        packs: Option<(
+            Vec<td_host::packs::Curated>,
+            Box<dyn td_host::catalog::Fetcher>,
+        )>,
         mode: Ports,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -119,6 +143,18 @@ impl TestCompanion {
         ctx.catalog = std::sync::Arc::new(td_host::catalog::Catalog::new(
             data.path().join("cache/catalog"),
             fetcher,
+        ));
+        let (curated, pack_fetcher): (_, Box<dyn td_host::catalog::Fetcher>) = match packs {
+            Some(packs) => packs,
+            None => (
+                td_host::packs::curated().to_vec(),
+                Box::new(NoCatalogNetwork),
+            ),
+        };
+        ctx.packs = std::sync::Arc::new(td_host::packs::Packs::with_list(
+            data.path().join("packs"),
+            pack_fetcher,
+            curated,
         ));
         if let Some(desktop) = desktop {
             ctx.desktop = desktop;
@@ -178,6 +214,7 @@ impl TestCompanion {
             None,
             Some(desktop),
             Box::new(NoCatalogNetwork),
+            None,
             Ports::Mock,
         )
         .await;

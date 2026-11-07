@@ -411,25 +411,29 @@ fn render(
             padding,
             background,
             tint,
-        } => ctx
-            .catalog
-            .render(
-                &catalog,
-                &id,
-                match variant {
-                    CatalogVariant::Base => catalog::Variant::Base,
-                    CatalogVariant::Light => catalog::Variant::Light,
-                    CatalogVariant::Dark => catalog::Variant::Dark,
-                },
-                catalog::Options {
-                    cover: matches!(fit, Fit::Cover),
-                    padding,
-                    background,
-                    tint,
-                    ..Default::default()
-                },
-            )
-            .map_err(|e| AssetError::RenderFailed(e.to_string()))?,
+        } => {
+            let options = catalog::Options {
+                cover: matches!(fit, Fit::Cover),
+                padding,
+                background,
+                tint,
+                ..Default::default()
+            };
+            match catalog.strip_prefix(super::icon_packs::SOURCE) {
+                Some(prefix) => ctx.packs.render(prefix, &id, options),
+                None => ctx.catalog.render(
+                    &catalog,
+                    &id,
+                    match variant {
+                        CatalogVariant::Base => catalog::Variant::Base,
+                        CatalogVariant::Light => catalog::Variant::Light,
+                        CatalogVariant::Dark => catalog::Variant::Dark,
+                    },
+                    options,
+                ),
+            }
+            .map_err(|e| AssetError::RenderFailed(e.to_string()))?
+        }
         AssetSource::Upload { upload } => {
             let bytes = ctx
                 .uploads
@@ -641,13 +645,13 @@ impl Endpoint for CatalogSearch {
     type Body = ();
     type Ok = Vec<CatalogHit>;
     type Error = CommonError;
-    async fn handle(_: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        blocking(move || catalog::search(&req.query.q, req.query.catalog.as_deref()).into_iter().map(|e| CatalogHit {
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        blocking(move || super::icon_packs::search(&ctx.packs, &req.query.q, req.query.catalog.as_deref(), |e| CatalogHit {
             source: e.source.clone(), name: e.name.clone(), id: e.id.clone(), aliases: e.aliases.clone(), hex: e.hex.clone(),
             tags: e.tags.clone(), category: e.category.clone(), svg: e.svg, light: e.light, dark: e.dark,
             license: e.license.clone(), license_url: e.license_url.clone(), guidelines: e.guidelines.clone(), attribution_url: e.attribution_url.clone(),
             attribution: if e.source == "selfhst" { "Icons by selfh.st (CC BY 4.0); resized, padded or tinted. Logos belong to their owners." } else { "Icons by Simple Icons; see individual license and brand guidelines. Logos belong to their owners." }.into(),
-        }).collect()).await
+        })).await
     }
 }
 #[derive(Serialize, Deserialize, TS)]

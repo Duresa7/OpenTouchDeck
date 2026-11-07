@@ -489,6 +489,90 @@ core's busy share is 100 % less its idle task's share of run time, and interrupt
 time counts toward the task it interrupted.
 `firmware/components/display/display_perf.c` says how each figure is taken.
 
+## Radio build
+
+The radio build is an opt-in second Firmware configuration with Wi-Fi, lwIP
+and NimBLE. Releases ship the normal build only, and it stays radio-free. Build
+the radio build into a directory of its own. From `firmware/`:
+
+```sh
+idf.py -B <abs>/build-radio -DTD_RADIO_BUILD=1 build
+```
+
+`-DTD_RADIO_BUILD=1` adds the `td_radio` component and layers
+[radio/radio.defaults](../firmware/radio/radio.defaults) over
+`sdkconfig.defaults`. The build keeps its `sdkconfig` in the build directory,
+so the committed `sdkconfig` stays the normal one. CMake saves the option in
+the build directory, so every later build there is a radio build too, even
+without `-D`. Keep the radio build in its own directory. A radio build in the
+default `firmware/build`, the folder the normal Firmware is flashed from, stops
+with an error. Flash it with the same `-B` and `-D` options and
+`-p <port> flash`. For the perf tools as well, add
+`-D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;perf/tools.defaults"`; the radio
+options still go on top.
+
+What the radio build does:
+
+- Wi-Fi and lwIP buffers come from PSRAM where ESP-IDF allows it
+  (`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP`), and the internal buffers are sized
+  small. The Wi-Fi driver stores nothing in NVS.
+- Internal RAM is tuned to the floor. `malloc` puts blocks of 256 bytes and up
+  in PSRAM first, not 16 KB and up. The heartbeat runs on an `esp_timer`, so
+  `app_main` returns its stack. The lwIP, event, `esp_timer` and FreeRTOS timer
+  task stacks are sized from the board's high-water marks.
+- After the display and touch start, the Wi-Fi station starts. It joins no
+  network and doesn't scan: no network is set, and nothing calls
+  `esp_wifi_connect` or `esp_wifi_scan_start`.
+- NimBLE is compiled in, with the controller in flash and NimBLE's memory in
+  PSRAM. It stays dormant. Nothing starts the controller or the host, so the
+  Device never advertises, scans or connects. No observer or central role is
+  compiled in.
+- 30 seconds after the station starts, the log reports the steady-state
+  internal heap against the 24 KB floor (`CONFIG_TD_RADIO_INTERNAL_FLOOR`):
+  `radio: steady free_internal=N largest_internal=N floor=24576`. Below the
+  floor, it logs that line as an error with `below floor`. When the station
+  did not start, the floor is not measured: the line is an error, and
+  `floor_ok` stays false.
+- The console gets one more command, after `update`: `radio state` replies with
+  `build`, `wifi` (`started`, `failed` with `wifi_error`, or `off`), `joined`,
+  `ble` (`dormant`), `free_internal`, `largest_internal`, `floor`, `floor_ok`,
+  `steady`, and, after the steady-state report, `steady_free_internal` and
+  `steady_largest_internal`. `heap` and, in a perf build, `perf mem` work as in
+  the normal build.
+
+`firmware/tools/radio_guard.py` checks a build directory for its kind:
+
+```sh
+python firmware/tools/radio_guard.py normal <build dir>
+python firmware/tools/radio_guard.py radio <build dir>
+```
+
+- `normal` fails on any Wi-Fi, Bluetooth or `TD_RADIO_BUILD` option, and on
+  any radio or network component linked: `esp_wifi`, `esp_phy`, `esp_coex`,
+  `wpa_supplicant`, `bt`, `esp_netif`, `lwip`, `td_radio`, `td_net`, `td_ble`,
+  and any netlink or mDNS component. The release recipe's audit runs the same
+  check.
+- `radio` requires the radio options and components, and fails when one of
+  those options is missing or the floor is set below 24576. With
+  `--size-json <file>`, the output of `idf.py size --format json2`, it fails
+  when static internal RAM (DIRAM) is over 153,600 bytes. On the board, 151,083
+  bytes left 28,815 free in steady state, so raise that ceiling only with a new
+  board measurement. It also reads the linked
+  image with the toolchain's `nm`, and fails when the image contains any
+  function that starts the BLE controller or host, advertises, scans or
+  connects, or joins or scans a Wi-Fi network. The linker drops every function
+  that nothing calls, so a name missing from the image is a call that cannot
+  happen.
+
+`python -B firmware/tools/test_radio_guard.py` tests both checks, and checks
+the Firmware sources for those calls. With `TD_GUARD_NORMAL_BUILD` or
+`TD_GUARD_RADIO_BUILD` set to a build directory, it also checks that real
+build. CI builds both configurations on every Firmware change. It uploads the
+normal bundle as `firmware-tdfw` and the radio bundle as `firmware-radio-tdfw`,
+named `touchdeck-radio-<version>.tdfw`. A radio bundle's `manifest.json` has
+`"radio": true`, and the installer recipe refuses such a bundle as
+`--firmware-bundle`.
+
 ## Layout format
 
 The versioned [layout format](../schema/README.md) describes pages, tiles, icons,
