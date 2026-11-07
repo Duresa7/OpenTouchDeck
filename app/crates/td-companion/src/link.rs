@@ -22,6 +22,10 @@ pub enum DeviceLinkError {
     Timeout,
     #[error("The link to the Device failed: {0}")]
     Link(String),
+    #[error(
+        "The link closed before the Device answered, so it isn't known whether it did this. Check the Device, then try again if it didn't: {0}"
+    )]
+    UnknownOutcome(String),
     #[error(transparent)]
     Common(#[from] CommonError),
 }
@@ -29,6 +33,7 @@ impl DeviceLinkError {
     pub fn from_xfer(error: XferError) -> Self {
         match error {
             XferError::Link(LinkError::Timeout(_)) => Self::Timeout,
+            XferError::Link(LinkError::Unanswered(reason)) => Self::UnknownOutcome(reason),
             other => Self::Link(other.to_string()),
         }
     }
@@ -39,13 +44,14 @@ impl ApiError for DeviceLinkError {
         "device.not_connected",
         "device.timeout",
         "device.link",
+        "device.unknown_outcome",
     ];
     fn status(&self) -> StatusCode {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::NotConnected(_) => StatusCode::CONFLICT,
             Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
-            Self::Link(_) => StatusCode::BAD_GATEWAY,
+            Self::Link(_) | Self::UnknownOutcome(_) => StatusCode::BAD_GATEWAY,
             Self::Common(e) => e.status(),
         }
     }
@@ -55,13 +61,16 @@ impl ApiError for DeviceLinkError {
             Self::NotConnected(_) => "device.not_connected",
             Self::Timeout => "device.timeout",
             Self::Link(_) => "device.link",
+            Self::UnknownOutcome(_) => "device.unknown_outcome",
             Self::Common(e) => e.code(),
         }
     }
     fn details(&self) -> Option<serde_json::Value> {
         match self {
             Self::NotConnected(link) => Some(serde_json::json!({ "link": link })),
-            Self::Link(reason) => Some(serde_json::json!({ "reason": reason })),
+            Self::Link(reason) | Self::UnknownOutcome(reason) => {
+                Some(serde_json::json!({ "reason": reason }))
+            }
             Self::Common(e) => e.details(),
             _ => None,
         }

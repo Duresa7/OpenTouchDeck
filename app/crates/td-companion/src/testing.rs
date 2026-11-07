@@ -289,6 +289,10 @@ impl TestCompanion {
     pub fn device(&self, id: &DeviceId) -> Option<DeviceSummary> {
         self.ctx.devices.get(id)
     }
+    /// How many Devices the Companion knows.
+    pub fn device_count(&self) -> usize {
+        self.ctx.devices.summaries().len()
+    }
     pub fn firmware_prompter(
         &self,
         prompter: std::sync::Arc<dyn crate::features::firmware::Prompter>,
@@ -332,6 +336,69 @@ impl TestCompanion {
     /// The mock behind a USB serial, to drive it or read what it received.
     pub fn deck(&self, id: &str) -> td_link::MockDeck {
         self.ports.deck(id).expect("a plugged mock")
+    }
+    /// A fake net-v2 Device on loopback in front of the mock with this USB serial, made if
+    /// needed but not plugged in. Mock discovery finds it while `announce` is on. Mock
+    /// Devices report the id `020000000001`, so use that serial for USB and Wi-Fi to merge.
+    pub fn wifi_device(&self, serial: &str, announce: bool) -> td_link::net::fake::FakeNetDevice {
+        let deck = self.ports.board(serial, BoardKind::Device);
+        let fake = td_link::net::fake::FakeNetDevice::start(deck);
+        if announce {
+            self.wifi_network()
+                .announce(td_link::net::mdns::Discovered {
+                    device_id: fake.device_id(),
+                    name: format!("Mock Device {serial}"),
+                    address: fake.addr().into(),
+                    paired: Some(0),
+                });
+        }
+        fake
+    }
+    /// The in-memory keychain of Pairing keys.
+    pub fn wifi_keys(&self) -> crate::devices::MemoryKeys {
+        self.ctx.devices.wifi_mock().expect("mock Wi-Fi").0.clone()
+    }
+    /// What mock discovery finds.
+    pub fn wifi_network(&self) -> crate::devices::MockNetwork {
+        self.ctx.devices.wifi_mock().expect("mock Wi-Fi").1.clone()
+    }
+    /// Pairs with `fake` through the API, as a person reading the code off the Device would,
+    /// and waits until the Device is connected over Wi-Fi.
+    pub async fn pair_wifi(&self, fake: &td_link::net::fake::FakeNetDevice) -> DeviceId {
+        use crate::features::wifi::{
+            AttemptPath, PairCode, PairCodeEndpoint, PairStart, PairStartEndpoint,
+        };
+        fake.open_window()
+            .expect("the Device opens a pairing window");
+        let started = self
+            .call::<PairStartEndpoint>(
+                (),
+                crate::api::NoQuery,
+                PairStart {
+                    address: fake.addr().to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        let code = fake.code().expect("the Device shows a code");
+        self.call::<PairCodeEndpoint>(
+            AttemptPath {
+                attempt: started.attempt,
+            },
+            crate::api::NoQuery,
+            PairCode { code },
+        )
+        .await
+        .unwrap();
+        let id = started.device;
+        self.until(|td| {
+            td.device(&id).is_some_and(|d| {
+                d.carrier == Some(crate::devices::Carrier::Wifi)
+                    && matches!(d.link, LinkState::Connected { .. })
+            })
+        })
+        .await;
+        id
     }
     /// What the fake input sink typed, as `down <key>` and `up <key>`.
     pub fn input_log(&self) -> Vec<String> {
