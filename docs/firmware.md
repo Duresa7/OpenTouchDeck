@@ -657,8 +657,10 @@ build, with the other host tests.
 and the rest of the Device, from `firmware/tools/host/link/`. It sends link
 messages through the USB console's frame handler and through a fake carrier, and
 checks which carrier each reply and event leaves on, the USB wire bytes, and the
-online state per carrier. It needs a C compiler, `cl` from an x64 Visual Studio
-developer terminal on Windows or `cc` elsewhere, and one firmware build first,
+online state per carrier. It also runs the production Device name check against
+[name-vectors-v2.json](../schema/protocol/name-vectors-v2.json) and sends each
+refused name in `v2.name.set`, which must answer `args`. It needs a C compiler,
+`cl` from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere, and one firmware build first,
 which fetches cJSON into `firmware/managed_components`. It doesn't need
 `IDF_PATH`.
 
@@ -672,7 +674,8 @@ refuses association. The legacy discovery API remains available.
 
 The `td-link` CLI provides `discover-identities`, `identity`, `name`, and
 `set-name "Studio"`. Names default to `Open TouchDeck`, contain 1–48 UTF-8
-bytes, and persist in NVS separately from Layouts. See the
+bytes, hold no format character or Hangul filler, and persist in NVS separately
+from Layouts. See the
 [protocol contract](../schema/protocol/link-v2.md) for validation rules.
 It advertises the `static`, `graph`, `photo-frame`, and `clock` Tile kinds, the
 tdi1 format, and `photo_bytes` 131072. The live values, photo frame, idle, and

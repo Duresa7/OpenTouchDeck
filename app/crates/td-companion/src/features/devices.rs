@@ -373,7 +373,9 @@ impl Endpoint for SettingsPatch {
             .as_deref()
             .is_some_and(|n| !td_link::identity::valid_name(n))
         {
-            return Err(invalid("name is empty, too long or has control characters"));
+            return Err(invalid(
+                "name is empty, too long or has control, format or filler characters",
+            ));
         }
         if patch.brightness.is_some_and(|b| b > BRIGHTNESS_MAX) {
             return Err(invalid("brightness is a percentage from 0 to 100"));
