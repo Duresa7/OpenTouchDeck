@@ -29,6 +29,8 @@ extern "C" {
 #define TD_NETLINK_COMPANION_ID_LEN 16
 #define TD_NETLINK_PEER_LEN 16
 #define TD_NETLINK_PEERS 8
+/* Connections that wait for their first item while an owner exists, because one may take over an unproven owner. */
+#define TD_NETLINK_WAITERS 3
 
 #define TD_NETLINK_WINDOW_MS 120000u
 #define TD_NETLINK_FIRST_ITEM_MS 2000u
@@ -138,8 +140,6 @@ typedef struct {
     bool bound;
     /* Failed client proofs in this window. */
     uint8_t proofs;
-    /* This window already added to pair_failures, so dropping it adds nothing more. */
-    bool counted;
     char code[TD_NETLINK_CODE_LEN];
     uint8_t window_id[16];
     uint32_t opened_ms;
@@ -160,6 +160,16 @@ typedef struct {
     uint32_t last_ms;
 } td_netlink_peer_t;
 
+/* A carrier connection that started while an owner existed and waits for its first item. */
+typedef struct {
+    bool used;
+    /* A byte of its first item has arrived, so a newer connection can't push it out. */
+    bool started;
+    uint8_t peer_len;
+    uint8_t peer[TD_NETLINK_PEER_LEN];
+    uint32_t since_ms;
+} td_netlink_waiter_t;
+
 typedef struct {
     uint8_t device_id[TD_NETLINK_DEVICE_ID_LEN];
     td_netlink_pairings_t pairings;
@@ -169,6 +179,7 @@ typedef struct {
     uint32_t lock_until_ms;
     uint32_t lock_saved_ms;
     td_netlink_peer_t peers[TD_NETLINK_PEERS];
+    td_netlink_waiter_t waiters[TD_NETLINK_WAITERS];
     td_netlink_env_t env;
 } td_netlink_deck_t;
 
@@ -301,6 +312,43 @@ void td_netlink_conn_end(td_netlink_conn_t *conn, td_netlink_deck_t *deck, td_ne
 /* The carrier connection is gone. Records the end for per-peer backoff and pair_failures, erases every key, and
  * destroys a window it was bound to. */
 void td_netlink_conn_close(td_netlink_conn_t *conn, td_netlink_deck_t *deck, td_netlink_gone_t how);
+
+/* ---- Admission: the owner and the connections waiting to take it over ----
+ *
+ * A carrier connection that starts with no owner becomes the owner. While the owner is proven or bound to a window,
+ * every other one gets `busy` at once. While it is unproven, a new one waits in a slot for its first item, because a
+ * session.open naming a stored companion_id takes over. With every slot taken, the newest connection pushes out the
+ * oldest waiter that hasn't sent a byte, or else the oldest from a peer in backoff (it gets `busy`, which doesn't
+ * count), so idle connections can't keep a paired Companion out. A waiter that misses the 2000 ms first-item deadline, or closes before its first item, counts toward
+ * its peer's backoff. */
+typedef enum {
+    /* No owner: start a connection with td_netlink_conn_init. */
+    TD_NETLINK_ADMIT_OWNER,
+    /* Read its first item; *slot is its waiter slot. */
+    TD_NETLINK_ADMIT_WAIT,
+    /* Send td_netlink_busy_item and close. */
+    TD_NETLINK_ADMIT_BUSY,
+} td_netlink_admit_t;
+
+/* A new carrier connection. owner is the owner's connection, NULL when there is none. *evicted is the slot of a waiter
+ * to send `busy` and close first, or -1. */
+td_netlink_admit_t td_netlink_admit(td_netlink_deck_t *deck, const td_netlink_conn_t *owner, const uint8_t *peer,
+                                    size_t peer_len, int *slot, int *evicted);
+/* The first byte of a waiter's first item arrived. */
+void td_netlink_waiter_started(td_netlink_deck_t *deck, int slot);
+/* A waiter's whole first item. TD_NETLINK_NOTHING: it takes over (or there is no owner any more), so end the owner as
+ * TAKEOVER, start this connection with td_netlink_conn_init and feed it the item. TD_NETLINK_SEND_CLOSE: send out
+ * (`busy`, or `auth` for a session.open with an unknown companion_id) and close. The slot is free afterwards. */
+td_netlink_action_t td_netlink_waiter_item(td_netlink_deck_t *deck, const td_netlink_conn_t *owner, int slot,
+                                           const uint8_t *body, size_t len, td_netlink_out_t *out);
+/* Each poll, for each used slot: SEND_CLOSE with `expired` after 2000 ms without its first item (counted), or with
+ * `busy` once the owner is proven or bound (not counted). The slot is free after SEND_CLOSE. */
+td_netlink_action_t td_netlink_waiter_tick(td_netlink_deck_t *deck, const td_netlink_conn_t *owner, int slot,
+                                           td_netlink_out_t *out);
+/* The waiter's peer closed it (TCP FIN or RST) before its first item: counted. The slot is free afterwards. */
+void td_netlink_waiter_gone(td_netlink_deck_t *deck, int slot);
+/* The Device closed it for its own reason: not counted. */
+void td_netlink_waiter_drop(td_netlink_deck_t *deck, int slot);
 
 /* A complete `busy` error item, for a connection the Device refuses before it has any state. */
 extern const uint8_t td_netlink_busy_item[5];

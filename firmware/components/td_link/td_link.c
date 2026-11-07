@@ -22,15 +22,18 @@
 #define TD_LINK_POLL_MS 10
 #define TD_LINK_PRESS_QUEUE 16
 #define TD_LINK_EVENTS_PER_TURN 16
-#define TD_LINK_PACKET_HEADER 3
+#define TD_LINK_PACKET_HEADER 7
 
 _Static_assert(TD_RX_FRAME_MAX >= TD_FRAME_BODY_MAX, "receive buffer must hold a decoded maximum frame");
 
-/* One carrier's online state. A carrier is online from a hello on it until nothing arrived on it for TD_LINK_IDLE_MS. */
+/* One carrier's online state. A carrier is online from a hello on it until nothing arrived on it for TD_LINK_IDLE_MS.
+ * Its generation counts the connections it reported gone (td_link_carrier_offline), so a frame, a reply or a transfer
+ * of an ended network session never reaches the next one. */
 typedef struct {
     const td_link_carrier_t *carrier;
     bool online;
     int64_t last_rx_ms;
+    uint32_t generation;
 } carrier_slot_t;
 
 static StreamBufferHandle_t s_frames;
@@ -40,11 +43,14 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static td_link_state_t s_state;
 static carrier_slot_t s_carriers[TD_LINK_CARRIERS_MAX];
 static size_t s_carrier_count;
-/* The slot of the frame the link task handles now, or handled last. */
+/* The slot of the frame the link task handles now, or handled last, and that carrier's generation when it arrived. */
 static size_t s_current;
+static uint32_t s_current_generation;
+/* The origin of the open transfer (td_link_transfer_claim), or 0. */
+static uint32_t s_transfer;
 static const td_link_message_t *s_tables[TD_LINK_MESSAGE_TABLES];
 static size_t s_table_counts[TD_LINK_MESSAGE_TABLES];
-/* A packet in s_frames is the slot, the body length and the body. One receive at a time fills this, under s_rx_mutex. */
+/* A packet in s_frames is the slot, the body length, the carrier's generation and the body. One receive at a time fills this, under s_rx_mutex. */
 static uint8_t s_rx_packet[TD_LINK_PACKET_HEADER + TD_FRAME_BODY_MAX];
 static QueueHandle_t s_presses;
 static uint32_t s_press_seq;
@@ -120,9 +126,58 @@ void td_link_carrier_offline(const td_link_carrier_t *carrier)
     for (size_t slot = 0; slot < s_carrier_count; slot++) {
         if (s_carriers[slot].carrier == carrier) {
             s_carriers[slot].online = false;
+            s_carriers[slot].generation++;
         }
     }
     portEXIT_CRITICAL(&s_lock);
+}
+
+uint32_t td_link_carrier_generation(const td_link_carrier_t *carrier)
+{
+    uint32_t generation = 0;
+    portENTER_CRITICAL(&s_lock);
+    for (size_t slot = 0; slot < s_carrier_count; slot++) {
+        if (s_carriers[slot].carrier == carrier) {
+            generation = s_carriers[slot].generation;
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return generation;
+}
+
+/* The slot in the top byte and the generation in the rest, never 0. Call under s_lock. */
+static uint32_t origin_of(size_t slot, uint32_t generation)
+{
+    return (uint32_t)(slot + 1) << 24 | (generation & 0xffffffu);
+}
+
+static bool origin_live(uint32_t origin)
+{
+    const size_t slot = (origin >> 24) - 1;
+    return origin && slot < s_carrier_count && origin_of(slot, s_carriers[slot].generation) == origin;
+}
+
+void td_link_transfer_claim(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    s_transfer = s_carrier_count ? origin_of(s_current, s_current_generation) : 0;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+bool td_link_transfer_ours(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    const bool ours = s_carrier_count && s_transfer == origin_of(s_current, s_current_generation);
+    portEXIT_CRITICAL(&s_lock);
+    return ours;
+}
+
+bool td_link_transfer_live(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    const bool live = origin_live(s_transfer);
+    portEXIT_CRITICAL(&s_lock);
+    return live;
 }
 
 bool td_link_current_network(void)
@@ -268,6 +323,7 @@ void td_link_carrier_receive(const uint8_t *body, size_t len, void *carrier)
     }
     s_carriers[slot].last_rx_ms = now;
     s_state.frames_rx++;
+    const uint32_t generation = s_carriers[slot].generation;
     portEXIT_CRITICAL(&s_lock);
 
     xSemaphoreTake(s_rx_mutex, portMAX_DELAY);
@@ -279,6 +335,7 @@ void td_link_carrier_receive(const uint8_t *body, size_t len, void *carrier)
     s_rx_packet[0] = (uint8_t)slot;
     s_rx_packet[1] = (uint8_t)(len & 0xff);
     s_rx_packet[2] = (uint8_t)(len >> 8);
+    memcpy(s_rx_packet + 3, &generation, sizeof generation);
     memcpy(s_rx_packet + TD_LINK_PACKET_HEADER, body, len);
     size_t sent = xStreamBufferSend(s_frames, s_rx_packet, len + TD_LINK_PACKET_HEADER, 0);
     xSemaphoreGive(s_rx_mutex);
@@ -298,6 +355,17 @@ static bool read_bytes(uint8_t *buf, size_t len, TickType_t first_wait)
     return true;
 }
 
+/* The generation of the carrier connection the frame td_link_send hands a carrier belongs to. */
+static uint32_t s_send_generation;
+
+uint32_t td_link_send_generation(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    const uint32_t generation = s_send_generation;
+    portEXIT_CRITICAL(&s_lock);
+    return generation;
+}
+
 bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload, size_t len)
 {
     td_frame_t frame = { .type = type, .seq = seq, .flags = flags, .len = (uint16_t)len, .payload = payload };
@@ -305,8 +373,13 @@ bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *paylo
     const td_link_carrier_t *carrier = NULL;
     portENTER_CRITICAL(&s_lock);
     if (s_carrier_count) {
-        /* A reply or an ACK answers the frame being handled, on the carrier it came on. */
-        carrier = s_carriers[flags & TD_FRAME_RESPONSE ? s_current : active_slot(now)].carrier;
+        /* A reply or an ACK answers the frame being handled, on the carrier it came on, and only while the connection
+         * it came on lasts. */
+        const size_t slot = flags & TD_FRAME_RESPONSE ? s_current : active_slot(now);
+        if (!(flags & TD_FRAME_RESPONSE) || s_carriers[slot].generation == s_current_generation) {
+            carrier = s_carriers[slot].carrier;
+            s_send_generation = s_carriers[slot].generation;
+        }
     }
     portEXIT_CRITICAL(&s_lock);
     if (!carrier || !carrier->send(carrier, &frame)) {
@@ -378,6 +451,8 @@ static void handle_frame(TickType_t wait)
         return;
     }
     size_t len = header[1] | ((size_t)header[2] << 8);
+    uint32_t generation;
+    memcpy(&generation, header + 3, sizeof generation);
     read_bytes(body, len, portMAX_DELAY);
     td_frame_t frame;
     if (td_frame_decode(body, len, &frame) != TD_FRAME_OK) {
@@ -385,9 +460,18 @@ static void handle_frame(TickType_t wait)
         return;
     }
     portENTER_CRITICAL(&s_lock);
-    s_current = header[0];
+    /* A frame whose connection ended while it waited here is not handled: its reply would reach the next one. */
+    const bool stale = s_carriers[header[0]].generation != generation;
+    if (!stale) {
+        s_current = header[0];
+        s_current_generation = generation;
+    }
     portEXIT_CRITICAL(&s_lock);
-    if (frame.type == TD_FRAME_MESSAGE && frame.flags == 0) {
+    const bool transfer_frame = frame.type == TD_FRAME_CHUNK || frame.type == TD_FRAME_ACK;
+    if (stale || (transfer_frame && !td_link_transfer_ours())) {
+        /* A transfer moves only on the carrier connection that opened it. */
+        td_link_count_drop();
+    } else if (frame.type == TD_FRAME_MESSAGE && frame.flags == 0) {
         handle_message(&frame);
     } else if (frame.type == TD_FRAME_CHUNK && frame.flags == 0) {
         td_link_files_chunk(frame.seq, frame.payload, frame.len);

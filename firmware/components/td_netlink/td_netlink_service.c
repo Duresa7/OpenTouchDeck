@@ -39,6 +39,12 @@ static const char *TAG = "netlink";
 #define REFUSE_MS 100
 #define DRAIN_MS 100
 #define OUT_RECORDS 4
+/* Sockets the Device is closing: each writes its last error item and drains from the poll loop, so a refusal never
+ * blocks the net task. */
+#define CLOSERS 4
+#define CLOSER_ITEM_MAX 8
+/* An outgoing record in s_out: the generation of the carrier connection it belongs to, then the frame body. */
+#define QUEUED_HEADER 4
 #define SEND_WAIT_MS 100
 #define COMMAND_WAIT_MS 3000
 #define SCREEN_MS 1000
@@ -74,17 +80,31 @@ typedef struct {
     size_t got;
 } reader_t;
 
+/* A socket the Device is closing: it writes its last item within REFUSE_MS, shuts its write side, and reads whatever
+ * still arrives for DRAIN_MS, so the peer reads that item instead of losing it to a reset. */
+typedef struct {
+    int fd;
+    uint8_t item[CLOSER_ITEM_MAX];
+    uint8_t len;
+    uint8_t sent;
+    bool draining;
+    uint32_t until_ms;
+} closer_t;
+
 /* Everything the net task owns, in PSRAM, so only the save task and the SRP arithmetic touch internal RAM. */
 typedef struct {
     td_netlink_deck_t deck;
     td_netlink_conn_t conn;
     reader_t owner;
-    /* A second connection, while the owner is unproven: its first item may take over. */
-    reader_t contender;
-    uint8_t contender_body[TD_NETLINK_HANDSHAKE_MAX];
+    /* Connections waiting for their first item while the owner is unproven, each in its deck.waiters slot: a
+     * session.open naming a stored companion_id takes over. */
+    reader_t waiters[TD_NETLINK_WAITERS];
+    uint8_t waiter_body[TD_NETLINK_WAITERS][TD_NETLINK_HANDSHAKE_MAX];
+    closer_t closers[CLOSERS];
     td_netlink_out_t item;
     uint8_t body[TD_NETLINK_SEALED_MAX];
     uint8_t plain[TD_NETLINK_PLAIN_MAX];
+    uint8_t queued[QUEUED_HEADER + TD_NETLINK_PLAIN_MAX];
     uint8_t wire[TD_NETLINK_RECORD_WIRE_MAX];
 } net_t;
 
@@ -214,34 +234,72 @@ static bool write_all(int fd, const uint8_t *buf, size_t len, uint32_t timeout_m
     return true;
 }
 
-/* Shuts the write side and reads whatever still arrives for up to 100 ms, so the peer reads the last item before the
- * close instead of losing it to a reset. */
-static void close_orderly(int fd)
+/* Hands a socket to a closer, with its last item (none for len 0). With every closer in use, the item gets one try
+ * and the socket closes at once. */
+static void closer_add(int fd, const uint8_t *item, size_t len)
 {
-    shutdown(fd, SHUT_WR);
-    const int64_t until = esp_timer_get_time() + DRAIN_MS * 1000;
-    uint8_t sink[64];
-    for (;;) {
-        const int64_t left = until - esp_timer_get_time();
-        if (left <= 0) {
-            break;
+    len = len > CLOSER_ITEM_MAX ? 0 : len;
+    for (size_t i = 0; i < CLOSERS; i++) {
+        closer_t *c = &n->closers[i];
+        if (c->fd < 0) {
+            *c = (closer_t){ .fd = fd, .len = (uint8_t)len, .until_ms = now_ms() + REFUSE_MS };
+            if (len) {
+                memcpy(c->item, item, len);
+            }
+            return;
         }
-        fd_set r;
-        FD_ZERO(&r);
-        FD_SET(fd, &r);
-        struct timeval tv = { .tv_sec = 0, .tv_usec = (long)left };
-        if (select(fd + 1, &r, NULL, NULL, &tv) <= 0 || recv(fd, sink, sizeof sink, 0) <= 0) {
-            break;
-        }
+    }
+    if (len) {
+        send(fd, item, len, MSG_DONTWAIT);
     }
     close(fd);
 }
 
-/* `busy` within 100 ms, then the close. No SRP or X25519 state exists for the connection. */
-static void refuse(int fd)
+/* One step of each closer, never waiting. */
+static void closers_step(void)
 {
-    write_all(fd, td_netlink_busy_item, sizeof td_netlink_busy_item, REFUSE_MS);
-    close_orderly(fd);
+    const uint32_t now = now_ms();
+    for (size_t i = 0; i < CLOSERS; i++) {
+        closer_t *c = &n->closers[i];
+        if (c->fd < 0) {
+            continue;
+        }
+        if (!c->draining) {
+            if (c->sent < c->len) {
+                const ssize_t sent = send(c->fd, c->item + c->sent, c->len - c->sent, MSG_DONTWAIT);
+                if (sent > 0) {
+                    c->sent += (uint8_t)sent;
+                } else if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                    c->sent = c->len;
+                }
+            }
+            if (c->sent < c->len && (int32_t)(now - c->until_ms) < 0) {
+                continue;
+            }
+            shutdown(c->fd, SHUT_WR);
+            c->draining = true;
+            c->until_ms = now + DRAIN_MS;
+        }
+        uint8_t sink[64];
+        ssize_t got;
+        while ((got = recv(c->fd, sink, sizeof sink, MSG_DONTWAIT)) > 0) {
+        }
+        const bool open = got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK);
+        if (!open || (int32_t)(now - c->until_ms) >= 0) {
+            close(c->fd);
+            *c = (closer_t){ .fd = -1 };
+        }
+    }
+}
+
+static bool closers_busy(void)
+{
+    for (size_t i = 0; i < CLOSERS; i++) {
+        if (n->closers[i].fd >= 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void reader_reset(reader_t *r)
@@ -256,23 +314,25 @@ static void reader_reset(reader_t *r)
 static void session_ended(void)
 {
     if (atomic_exchange(&s_ready, false)) {
+        /* A new generation: whatever the link still holds or answers for this session never reaches the next. */
         td_link_carrier_offline(&s_carrier);
         size_t len;
-        while ((len = xMessageBufferReceive(s_out, n->plain, sizeof n->plain, 0)) > 0) {
+        while ((len = xMessageBufferReceive(s_out, n->queued, sizeof n->queued, 0)) > 0) {
         }
-        td_netlink_wipe(n->plain, sizeof n->plain);
+        td_netlink_wipe(n->queued, sizeof n->queued);
         ESP_LOGI(TAG, "session closed");
     }
 }
 
-/* The owner's connection is gone: how says whether the peer or the Device ended it. */
-static void drop_owner(bool orderly, td_netlink_gone_t how)
+/* The owner's connection is gone: how says whether the peer or the Device ended it. An orderly close hands the socket
+ * to a closer with its last item, if any. */
+static void drop_owner_with(bool orderly, const uint8_t *item, size_t len, td_netlink_gone_t how)
 {
     if (n->owner.fd < 0) {
         return;
     }
     if (orderly) {
-        close_orderly(n->owner.fd);
+        closer_add(n->owner.fd, item, len);
     } else {
         close(n->owner.fd);
     }
@@ -281,6 +341,11 @@ static void drop_owner(bool orderly, td_netlink_gone_t how)
     td_netlink_conn_close(&n->conn, &n->deck, how);
     td_netlink_wipe(n->body, sizeof n->body);
     session_ended();
+}
+
+static void drop_owner(bool orderly, td_netlink_gone_t how)
+{
+    drop_owner_with(orderly, NULL, 0, how);
 }
 
 static void act(td_netlink_action_t action)
@@ -299,8 +364,13 @@ static void act(td_netlink_action_t action)
         }
         break;
     case TD_NETLINK_SEND_CLOSE:
-        write_all(n->owner.fd, n->item.item, n->item.len, WRITE_MS);
-        drop_owner(true, TD_NETLINK_GONE_DEVICE);
+        if (n->item.len <= CLOSER_ITEM_MAX) {
+            /* An error item: the closer writes it. */
+            drop_owner_with(true, n->item.item, n->item.len, TD_NETLINK_GONE_DEVICE);
+        } else {
+            write_all(n->owner.fd, n->item.item, n->item.len, WRITE_MS);
+            drop_owner(true, TD_NETLINK_GONE_DEVICE);
+        }
         break;
     case TD_NETLINK_CLOSE:
         drop_owner(false, TD_NETLINK_GONE_DEVICE);
@@ -371,60 +441,66 @@ static void read_owner(void)
     }
 }
 
-/* ---- The contender ---- */
+/* ---- Connections waiting to take over ---- */
 
-static void drop_contender(bool busy)
+static const td_netlink_conn_t *owner_conn(void)
 {
-    if (n->contender.fd < 0) {
-        return;
-    }
-    if (busy) {
-        refuse(n->contender.fd);
-    } else {
-        close(n->contender.fd);
-    }
-    n->contender.fd = -1;
-    reader_reset(&n->contender);
+    return n->owner.fd >= 0 ? &n->conn : NULL;
 }
 
-static bool owner_holds(void)
+/* Hands the waiter's socket to a closer with its last item, or with none. The core slot is already free. */
+static void waiter_close(size_t i, const uint8_t *item, size_t len)
 {
-    return td_netlink_conn_proven(&n->conn) || td_netlink_conn_bound(&n->conn, &n->deck);
+    closer_add(n->waiters[i].fd, item, len);
+    n->waiters[i].fd = -1;
+    reader_reset(&n->waiters[i]);
+    td_netlink_wipe(n->waiter_body[i], sizeof n->waiter_body[i]);
 }
 
-/* A session.open naming a stored companion_id takes over from an unproven owner that no window is bound to. Any other
- * first item gets busy. */
-static void contender_item(size_t len)
+/* A waiter's whole first item: it takes over, becomes the owner of a Device without one, or is refused. */
+static void waiter_item(size_t i, size_t len)
 {
-    if (n->owner.fd >= 0 && !owner_holds() && td_netlink_names_stored(&n->deck, n->contender_body, len)) {
-        ESP_LOGI(TAG, "a stored app took over an unproven connection");
-        td_netlink_conn_end(&n->conn, &n->deck, TD_NETLINK_END_TAKEOVER);
-        drop_owner(false, TD_NETLINK_GONE_DEVICE);
-        const reader_t contender = n->contender;
-        n->contender.fd = -1;
-        reader_reset(&n->contender);
-        become_owner(contender.fd, contender.peer, contender.peer_len);
+    const td_netlink_action_t action =
+        td_netlink_waiter_item(&n->deck, owner_conn(), (int)i, n->waiter_body[i], len, &n->item);
+    if (action == TD_NETLINK_NOTHING) {
+        const reader_t waiter = n->waiters[i];
+        n->waiters[i].fd = -1;
+        reader_reset(&n->waiters[i]);
+        if (n->owner.fd >= 0) {
+            ESP_LOGI(TAG, "a stored app took over an unproven connection");
+            td_netlink_conn_end(&n->conn, &n->deck, TD_NETLINK_END_TAKEOVER);
+            drop_owner(false, TD_NETLINK_GONE_DEVICE);
+        }
+        become_owner(waiter.fd, waiter.peer, waiter.peer_len);
         td_netlink_conn_item_started(&n->conn, &n->deck);
-        act(td_netlink_conn_item(&n->conn, &n->deck, n->contender_body, len, &n->item));
+        act(td_netlink_conn_item(&n->conn, &n->deck, n->waiter_body[i], len, &n->item));
     } else {
-        drop_contender(true);
+        waiter_close(i, n->item.item, action == TD_NETLINK_SEND_CLOSE ? n->item.len : 0);
     }
-    td_netlink_wipe(n->contender_body, sizeof n->contender_body);
+    td_netlink_wipe(n->waiter_body[i], sizeof n->waiter_body[i]);
+    td_netlink_wipe(&n->item, sizeof n->item);
 }
 
-static void read_contender(void)
+static void read_waiter(size_t i)
 {
-    reader_t *r = &n->contender;
+    reader_t *r = &n->waiters[i];
     while (r->fd >= 0) {
-        uint8_t *dst = r->in_body ? n->contender_body + r->got : r->head + r->got;
+        uint8_t *dst = r->in_body ? n->waiter_body[i] + r->got : r->head + r->got;
         const size_t want = (r->in_body ? r->want : sizeof r->head) - r->got;
         const ssize_t got = recv(r->fd, dst, want, 0);
         if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             return;
         }
         if (got <= 0) {
-            drop_contender(false);
+            /* A FIN or RST before its first item counts against the peer. */
+            td_netlink_waiter_gone(&n->deck, (int)i);
+            close(r->fd);
+            r->fd = -1;
+            reader_reset(r);
             return;
+        }
+        if (!r->in_body && r->got == 0) {
+            td_netlink_waiter_started(&n->deck, (int)i);
         }
         r->got += (size_t)got;
         if (!r->in_body) {
@@ -433,7 +509,9 @@ static void read_contender(void)
             }
             const uint16_t len = (uint16_t)(r->head[0] << 8 | r->head[1]);
             if (len < TD_NETLINK_HANDSHAKE_MIN || len > TD_NETLINK_HANDSHAKE_MAX) {
-                drop_contender(true);
+                /* Not a session.open that could take over: busy, like any other first item. */
+                td_netlink_waiter_drop(&n->deck, (int)i);
+                waiter_close(i, td_netlink_busy_item, sizeof td_netlink_busy_item);
                 return;
             }
             r->got = 0;
@@ -442,12 +520,37 @@ static void read_contender(void)
             continue;
         }
         if (r->got == r->want) {
-            contender_item(r->want);
+            waiter_item(i, r->want);
             return;
         }
     }
 }
 
+static void tick_waiters(void)
+{
+    for (size_t i = 0; i < TD_NETLINK_WAITERS; i++) {
+        if (n->waiters[i].fd >= 0
+            && td_netlink_waiter_tick(&n->deck, owner_conn(), (int)i, &n->item) == TD_NETLINK_SEND_CLOSE) {
+            waiter_close(i, n->item.item, n->item.len);
+            td_netlink_wipe(&n->item, sizeof n->item);
+        }
+    }
+}
+
+static void drop_waiters(void)
+{
+    for (size_t i = 0; i < TD_NETLINK_WAITERS; i++) {
+        if (n->waiters[i].fd >= 0) {
+            td_netlink_waiter_drop(&n->deck, (int)i);
+            close(n->waiters[i].fd);
+            n->waiters[i].fd = -1;
+            reader_reset(&n->waiters[i]);
+        }
+    }
+}
+
+/* The backoff key. The listener is IPv4 only, so the zeroed key below is never used today. If an IPv6 listener is
+ * added, every IPv6 peer would share that one backoff entry: key them by address (or /64 prefix) first. */
 static void peer_of(const struct sockaddr_storage *addr, uint8_t *peer, uint8_t *len)
 {
     if (addr->ss_family == AF_INET) {
@@ -474,48 +577,69 @@ static void accept_one(void)
     uint8_t peer[TD_NETLINK_PEER_LEN];
     uint8_t peer_len;
     peer_of(&addr, peer, &peer_len);
-    if (n->owner.fd < 0) {
+    int slot, evicted;
+    const td_netlink_admit_t admit = td_netlink_admit(&n->deck, owner_conn(), peer, peer_len, &slot, &evicted);
+    if (evicted >= 0) {
+        /* The core reused its slot for this connection: the waiter it pushed out gets busy. */
+        waiter_close((size_t)evicted, td_netlink_busy_item, sizeof td_netlink_busy_item);
+    }
+    switch (admit) {
+    case TD_NETLINK_ADMIT_OWNER:
         become_owner(fd, peer, peer_len);
-    } else if (owner_holds() || n->contender.fd >= 0) {
-        refuse(fd);
-    } else {
-        n->contender.fd = fd;
-        memcpy(n->contender.peer, peer, peer_len);
-        n->contender.peer_len = peer_len;
-        n->contender.started_ms = now_ms();
-        reader_reset(&n->contender);
+        break;
+    case TD_NETLINK_ADMIT_WAIT: {
+        reader_t *w = &n->waiters[slot];
+        w->fd = fd;
+        memcpy(w->peer, peer, peer_len);
+        w->peer_len = peer_len;
+        w->started_ms = now_ms();
+        reader_reset(w);
+        break;
+    }
+    case TD_NETLINK_ADMIT_BUSY:
+        closer_add(fd, td_netlink_busy_item, sizeof td_netlink_busy_item);
+        break;
     }
 }
 
 /* ---- Records out ---- */
 
-/* On the td_link task: the frame body goes to the net task, which seals and writes it. */
+/* On the td_link task: the frame body goes to the net task, which seals and writes it, tagged with the generation of
+ * the session it belongs to. */
 static bool carrier_send(const td_link_carrier_t *carrier, const td_frame_t *frame)
 {
     (void)carrier;
-    static uint8_t body[TD_FRAME_BODY_MAX];
+    static uint8_t queued[QUEUED_HEADER + TD_FRAME_BODY_MAX];
     if (!s_out || !atomic_load(&s_ready)) {
         return false;
     }
-    const size_t len = td_frame_encode_body(frame, body, sizeof body);
-    const bool sent = len && xMessageBufferSend(s_out, body, len, pdMS_TO_TICKS(SEND_WAIT_MS)) == len;
-    td_netlink_wipe(body, len);
+    const uint32_t generation = td_link_send_generation();
+    memcpy(queued, &generation, QUEUED_HEADER);
+    const size_t len = td_frame_encode_body(frame, queued + QUEUED_HEADER, sizeof queued - QUEUED_HEADER);
+    const bool sent =
+        len && xMessageBufferSend(s_out, queued, QUEUED_HEADER + len, pdMS_TO_TICKS(SEND_WAIT_MS)) == QUEUED_HEADER + len;
+    td_netlink_wipe(queued, QUEUED_HEADER + len);
     return sent;
 }
 
 static void write_records(void)
 {
-    size_t len;
-    while ((len = xMessageBufferReceive(s_out, n->plain, sizeof n->plain, 0)) > 0) {
-        if (n->owner.fd < 0 || n->conn.state != TD_NETLINK_CONN_READY) {
+    size_t got;
+    while ((got = xMessageBufferReceive(s_out, n->queued, sizeof n->queued, 0)) > 0) {
+        uint32_t generation;
+        memcpy(&generation, n->queued, QUEUED_HEADER);
+        /* A record of a session that ended, queued before session_ended's flush or answered after it, is dropped. */
+        if (n->owner.fd < 0 || n->conn.state != TD_NETLINK_CONN_READY || got <= QUEUED_HEADER
+            || generation != td_link_carrier_generation(&s_carrier)) {
             continue;
         }
-        if (!td_netlink_conn_send(&n->conn, n->plain, len, n->wire)
+        const size_t len = got - QUEUED_HEADER;
+        if (!td_netlink_conn_send(&n->conn, n->queued + QUEUED_HEADER, len, n->wire)
             || !write_all(n->owner.fd, n->wire, 2 + len + TD_NETLINK_TAG_LEN, WRITE_MS)) {
             drop_owner(false, TD_NETLINK_GONE_DEVICE);
         }
     }
-    td_netlink_wipe(n->plain, sizeof n->plain);
+    td_netlink_wipe(n->queued, sizeof n->queued);
     /* Near the record limit, the session ends between requests: nothing waits to go out. */
     if (n->owner.fd >= 0 && td_netlink_conn_worn(&n->conn) && xMessageBufferIsEmpty(s_out)) {
         ESP_LOGI(TAG, "session at its record limit, closing");
@@ -611,7 +735,7 @@ static void run_command(void)
             td_netlink_conn_end(&n->conn, &n->deck, TD_NETLINK_END_LOCAL);
             drop_owner(false, TD_NETLINK_GONE_DEVICE);
         }
-        drop_contender(false);
+        drop_waiters();
         s_cmd_removed = (uint8_t)n->deck.pairings.count;
         result = td_netlink_forget(&n->deck) ? TD_NETLINK_CMD_OK : TD_NETLINK_CMD_STORAGE;
         ESP_LOGI(TAG, "pairings erased%s", result == TD_NETLINK_CMD_OK ? "" : ", but the erase failed");
@@ -643,21 +767,30 @@ static void net_task(void *arg)
         FD_ZERO(&r);
         FD_SET(s_listen, &r);
         int top = s_listen;
-        const int fds[] = { n->owner.fd, n->contender.fd };
-        for (size_t i = 0; i < 2; i++) {
+        bool waiting = false;
+        int fds[1 + TD_NETLINK_WAITERS];
+        fds[0] = n->owner.fd;
+        for (size_t i = 0; i < TD_NETLINK_WAITERS; i++) {
+            fds[1 + i] = n->waiters[i].fd;
+            waiting |= n->waiters[i].fd >= 0;
+        }
+        for (size_t i = 0; i < sizeof fds / sizeof fds[0]; i++) {
             if (fds[i] >= 0) {
                 FD_SET(fds[i], &r);
                 top = fds[i] > top ? fds[i] : top;
             }
         }
-        const bool busy = n->owner.fd >= 0 || n->deck.window.open || atomic_load(&s_ready);
+        const bool busy =
+            n->owner.fd >= 0 || waiting || closers_busy() || n->deck.window.open || atomic_load(&s_ready);
         struct timeval tv = { .tv_sec = 0, .tv_usec = (busy ? POLL_MS : IDLE_POLL_MS) * 1000 };
         if (select(top + 1, &r, NULL, NULL, &tv) > 0) {
             if (n->owner.fd >= 0 && FD_ISSET(n->owner.fd, &r)) {
                 read_owner();
             }
-            if (n->contender.fd >= 0 && FD_ISSET(n->contender.fd, &r)) {
-                read_contender();
+            for (size_t i = 0; i < TD_NETLINK_WAITERS; i++) {
+                if (n->waiters[i].fd >= 0 && FD_ISSET(n->waiters[i].fd, &r)) {
+                    read_waiter(i);
+                }
             }
             if (FD_ISSET(s_listen, &r)) {
                 accept_one();
@@ -667,11 +800,9 @@ static void net_task(void *arg)
         if (n->owner.fd >= 0) {
             act(td_netlink_conn_tick(&n->conn, &n->deck, &n->item));
         }
-        /* A contender waits for its first item only while the owner can still be taken over. */
-        if (n->contender.fd >= 0
-            && (n->owner.fd < 0 || owner_holds() || now_ms() - n->contender.started_ms >= TD_NETLINK_FIRST_ITEM_MS)) {
-            drop_contender(true);
-        }
+        /* A waiter waits for its first item only while the owner can still be taken over, and 2000 ms at most. */
+        tick_waiters();
+        closers_step();
         show_window();
         publish();
     }
@@ -715,7 +846,7 @@ esp_err_t td_netlink_start(void)
         return ESP_FAIL;
     }
     n = heap_caps_calloc(1, sizeof *n, NET_CAPS);
-    s_out = xMessageBufferCreateWithCaps(OUT_RECORDS * (TD_NETLINK_PLAIN_MAX + sizeof(size_t)),
+    s_out = xMessageBufferCreateWithCaps(OUT_RECORDS * (QUEUED_HEADER + TD_NETLINK_PLAIN_MAX + sizeof(size_t)),
                                          NET_CAPS);
     s_cmd_lock = xSemaphoreCreateMutex();
     s_cmd_done = xSemaphoreCreateBinary();
@@ -724,7 +855,12 @@ esp_err_t td_netlink_start(void)
         return ESP_ERR_NO_MEM;
     }
     n->owner.fd = -1;
-    n->contender.fd = -1;
+    for (size_t i = 0; i < TD_NETLINK_WAITERS; i++) {
+        n->waiters[i].fd = -1;
+    }
+    for (size_t i = 0; i < CLOSERS; i++) {
+        n->closers[i].fd = -1;
+    }
     /* The radio's start set up NVS; a second init is a no-op. */
     if (nvs_flash_init() != ESP_OK) {
         ESP_LOGW(TAG, "NVS unavailable, pairings will not persist");

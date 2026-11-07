@@ -549,6 +549,17 @@ What the radio build does:
   The Pairings (up to four), the failed-code count and the lockout live in the
   `td_netlink` NVS namespace. While USB is online, a network session can't
   open, and an open one closes. mDNS discovery is not built yet.
+- While the owner is unproven, up to three more connections wait for their
+  first item, since a `session.open` naming a stored app takes over. With every
+  slot taken, a new connection pushes out the oldest waiter that hasn't sent a
+  byte, or else the oldest from a peer in backoff, so idle sockets can't keep a
+  paired app out. A waiter that misses the 2-second first-item deadline or hangs
+  up first counts toward its address's backoff. Refusals and closes write their
+  last item and drain from the net task's poll loop, never blocking it.
+- Each carrier counts its ended connections. A request that waited in the link
+  while its session ended is not handled, a reply or event for an ended session
+  is dropped, and a transfer moves only on the connection that opened it: other
+  carriers' chunks are dropped, and the transfer is cut when its session ends.
 - 30 seconds after the station starts, the log reports the steady-state
   internal heap against the 24 KB floor (`CONFIG_TD_RADIO_INTERNAL_FLOOR`):
   `radio: steady free_internal=N largest_internal=N floor=24576`. Below the
@@ -705,7 +716,9 @@ build, with the other host tests.
 and the rest of the Device, from `firmware/tools/host/link/`. It sends link
 messages through the USB console's frame handler and through a fake carrier, and
 checks which carrier each reply and event leaves on, the USB wire bytes, and the
-online state per carrier. It also runs the production Device name check against
+online state per carrier, that an ended session's queued request and reply go
+nowhere, and that a transfer takes chunks only from the connection that opened
+it. It also runs the production Device name check against
 [name-vectors-v2.json](../schema/protocol/name-vectors-v2.json) and sends each
 refused name in `v2.name.set`, which must answer `args`. It needs a C compiler,
 `cl` from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere, and one firmware build first,
@@ -716,7 +729,8 @@ which fetches cJSON into `firmware/managed_components`. It doesn't need
 ESP-IDF's TF-PSA-Crypto for the host and runs every vector and negative in
 [net-v2-vectors.json](../schema/protocol/net-v2-vectors.json), then pairing with
 the right and the wrong code, the lockout and its persistence, records, the
-per-peer backoff and the USB rules. It needs `IDF_PATH` and a C compiler, `cl`
+per-peer backoff, idle connections against a paired Companion, and the USB
+rules. It needs `IDF_PATH` and a C compiler, `cl`
 from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere.
 
 ## Protocol v2 identity

@@ -226,7 +226,6 @@ static void window_end(td_netlink_deck_t *deck, td_netlink_reason_t why)
  * window. False when the counter could not be stored, which ends the window too. */
 static bool count_failure(td_netlink_deck_t *deck)
 {
-    deck->window.counted = true;
     deck->pair_failures++;
     if (deck->pair_failures >= TD_NETLINK_LOCK_AFTER) {
         deck->locked = true;
@@ -409,12 +408,14 @@ void td_netlink_conn_close(td_netlink_conn_t *conn, td_netlink_deck_t *deck, td_
                                                    : TD_NETLINK_END_LOCAL;
     }
     if (td_netlink_conn_bound(conn, deck)) {
-        /* A dropped window counts once, unless a person ended it, it expired, storage failed, it paired, or a failed
-         * proof in it already counted. */
+        /* A dropped window counts once, unless a person ended it, it expired, storage failed, it paired, or it ended on
+         * the failed proof that pair_proof already counted (`auth`, as the reference's windowEnded has it). A window
+         * dropped after an earlier failed proof returned to code entry still counts: each failure is its own. */
         const td_netlink_end_t end = conn->end;
         const bool free_end = end == TD_NETLINK_END_CANCELLED || end == TD_NETLINK_END_WINDOW_EXPIRED
-                              || end == TD_NETLINK_END_STORAGE || end == TD_NETLINK_END_PAIRED;
-        if (!free_end && !deck->window.counted) {
+                              || end == TD_NETLINK_END_STORAGE || end == TD_NETLINK_END_PAIRED
+                              || end == TD_NETLINK_END_AUTH;
+        if (!free_end) {
             count_failure(deck);
         }
         window_end(deck, TD_NETLINK_REASON_NONE);
@@ -424,6 +425,146 @@ void td_netlink_conn_close(td_netlink_conn_t *conn, td_netlink_deck_t *deck, td_
     td_netlink_dir_close(&conn->tx);
     td_netlink_wipe(&conn->hs, sizeof conn->hs);
     conn->state = TD_NETLINK_CONN_CLOSED;
+}
+
+/* ---- Admission ---- */
+
+static bool owner_holds(const td_netlink_conn_t *owner, const td_netlink_deck_t *deck)
+{
+    return td_netlink_conn_proven(owner) || td_netlink_conn_bound(owner, deck);
+}
+
+static void error_out(td_netlink_out_t *out, td_netlink_reason_t reason)
+{
+    const uint8_t byte = (uint8_t)reason;
+    const td_netlink_part_t fields[] = { { &byte, 1 } };
+    put_item(out, TD_NETLINK_ERROR, fields, 1);
+}
+
+static td_netlink_waiter_t *waiter(td_netlink_deck_t *deck, int slot)
+{
+    return slot >= 0 && slot < TD_NETLINK_WAITERS && deck->waiters[slot].used ? &deck->waiters[slot] : NULL;
+}
+
+static void waiter_free(td_netlink_deck_t *deck, int slot, td_netlink_end_t end)
+{
+    td_netlink_waiter_t *w = waiter(deck, slot);
+    if (w) {
+        backoff_end(deck, w->peer, w->peer_len, end);
+        memset(w, 0, sizeof *w);
+    }
+}
+
+td_netlink_admit_t td_netlink_admit(td_netlink_deck_t *deck, const td_netlink_conn_t *owner, const uint8_t *peer,
+                                    size_t peer_len, int *slot, int *evicted)
+{
+    *slot = -1;
+    *evicted = -1;
+    if (!owner) {
+        return TD_NETLINK_ADMIT_OWNER;
+    }
+    if (owner_holds(owner, deck)) {
+        return TD_NETLINK_ADMIT_BUSY;
+    }
+    /* Pushed out first: the oldest waiter that hasn't sent a byte, then the oldest from a peer in backoff, whose first
+     * item could only take over if it named a stored companion_id. */
+    int free_slot = -1, oldest = -1, oldest_backed_off = -1;
+    for (int i = 0; i < TD_NETLINK_WAITERS; i++) {
+        const td_netlink_waiter_t *w = &deck->waiters[i];
+        if (!w->used) {
+            if (free_slot < 0) {
+                free_slot = i;
+            }
+        } else if (!w->started) {
+            if (oldest < 0 || (int32_t)(w->since_ms - deck->waiters[oldest].since_ms) < 0) {
+                oldest = i;
+            }
+        } else if (td_netlink_backoff_left(deck, w->peer, w->peer_len) > 0
+                   && (oldest_backed_off < 0
+                       || (int32_t)(w->since_ms - deck->waiters[oldest_backed_off].since_ms) < 0)) {
+            oldest_backed_off = i;
+        }
+    }
+    if (oldest < 0) {
+        oldest = oldest_backed_off;
+    }
+    if (free_slot < 0) {
+        if (oldest < 0) {
+            return TD_NETLINK_ADMIT_BUSY;
+        }
+        /* Pushed out for a newer connection: the Device's decision, like a busy refusal, so it doesn't count. */
+        *evicted = oldest;
+        free_slot = oldest;
+    }
+    td_netlink_waiter_t *w = &deck->waiters[free_slot];
+    memset(w, 0, sizeof *w);
+    w->used = true;
+    w->peer_len = (uint8_t)(peer_len > TD_NETLINK_PEER_LEN ? TD_NETLINK_PEER_LEN : peer_len);
+    memcpy(w->peer, peer, w->peer_len);
+    w->since_ms = now_ms(deck);
+    *slot = free_slot;
+    return TD_NETLINK_ADMIT_WAIT;
+}
+
+void td_netlink_waiter_started(td_netlink_deck_t *deck, int slot)
+{
+    td_netlink_waiter_t *w = waiter(deck, slot);
+    if (w) {
+        w->started = true;
+    }
+}
+
+td_netlink_action_t td_netlink_waiter_item(td_netlink_deck_t *deck, const td_netlink_conn_t *owner, int slot,
+                                           const uint8_t *body, size_t len, td_netlink_out_t *out)
+{
+    if (!waiter(deck, slot)) {
+        return TD_NETLINK_CLOSE;
+    }
+    if (!owner || (!owner_holds(owner, deck) && td_netlink_names_stored(deck, body, len))) {
+        /* The connection's own first-item checks, backoff among them, run when the caller feeds it the item. */
+        memset(&deck->waiters[slot], 0, sizeof deck->waiters[slot]);
+        return TD_NETLINK_NOTHING;
+    }
+    if (!owner_holds(owner, deck) && len >= 2 && body[0] == TD_NETLINK_SESSION_OPEN
+        && td_netlink_backoff_left(deck, deck->waiters[slot].peer, deck->waiters[slot].peer_len) == 0) {
+        /* A session.open with an unknown companion_id gets `auth` and takes nothing over. */
+        error_out(out, TD_NETLINK_AUTH);
+        waiter_free(deck, slot, TD_NETLINK_END_AUTH);
+        return TD_NETLINK_SEND_CLOSE;
+    }
+    error_out(out, TD_NETLINK_BUSY);
+    waiter_free(deck, slot, TD_NETLINK_END_BUSY);
+    return TD_NETLINK_SEND_CLOSE;
+}
+
+td_netlink_action_t td_netlink_waiter_tick(td_netlink_deck_t *deck, const td_netlink_conn_t *owner, int slot,
+                                           td_netlink_out_t *out)
+{
+    const td_netlink_waiter_t *w = waiter(deck, slot);
+    if (!w) {
+        return TD_NETLINK_NOTHING;
+    }
+    if (since(deck, w->since_ms) >= TD_NETLINK_FIRST_ITEM_MS) {
+        error_out(out, TD_NETLINK_EXPIRED);
+        waiter_free(deck, slot, TD_NETLINK_END_DEADLINE);
+        return TD_NETLINK_SEND_CLOSE;
+    }
+    if (owner && owner_holds(owner, deck)) {
+        error_out(out, TD_NETLINK_BUSY);
+        waiter_free(deck, slot, TD_NETLINK_END_BUSY);
+        return TD_NETLINK_SEND_CLOSE;
+    }
+    return TD_NETLINK_NOTHING;
+}
+
+void td_netlink_waiter_gone(td_netlink_deck_t *deck, int slot)
+{
+    waiter_free(deck, slot, TD_NETLINK_END_PEER_CLOSED);
+}
+
+void td_netlink_waiter_drop(td_netlink_deck_t *deck, int slot)
+{
+    waiter_free(deck, slot, TD_NETLINK_END_LOCAL);
 }
 
 /* Marks the end and stops taking items; the carrier's close does the accounting. */

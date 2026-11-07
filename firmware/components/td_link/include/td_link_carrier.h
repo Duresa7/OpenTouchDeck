@@ -53,6 +53,14 @@ void td_link_carrier_receive(const uint8_t *body, size_t len, void *carrier);
 /* The carrier's connection ended, so it goes offline now rather than after the idle time. Any task. */
 void td_link_carrier_offline(const td_link_carrier_t *carrier);
 
+/* Counts the connections the carrier reported gone with td_link_carrier_offline. Any task. */
+uint32_t td_link_carrier_generation(const td_link_carrier_t *carrier);
+
+/* Inside a carrier's send: the generation of the connection the frame belongs to. A carrier that queues frames
+ * stores it with each one and drops those whose generation is no longer td_link_carrier_generation, so a reply to an
+ * ended session never goes out on the next one. */
+uint32_t td_link_send_generation(void);
+
 /* True while the carrier is online: a hello on it, and a frame within the last 5 seconds. Any task. */
 bool td_link_carrier_online(const td_link_carrier_t *carrier);
 

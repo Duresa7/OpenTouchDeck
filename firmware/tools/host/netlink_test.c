@@ -471,8 +471,10 @@ static void test_dropped_window(void)
     bind_window(&g_conn, PEER_A);
     start_attempt(&g_conn);
     feed_vec(&g_conn, "negative.wrong_code.proof");
+    CHECK(g_deck.pair_failures == 1 && g_deck.window.open);
+    /* Dropping the window after that failed proof, back at code entry, is a failure of its own. */
     td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_PEER);
-    CHECK(g_deck.pair_failures == 1);
+    CHECK(g_deck.pair_failures == 2 && !g_deck.window.open);
 
     fresh_deck(false, 0, 0);
     bind_window(&g_conn, PEER_A);
@@ -950,6 +952,152 @@ static void test_backoff(void)
     CHECK(td_netlink_backoff_left(&g_deck, first, 4) == 0 && td_netlink_backoff_left(&g_deck, second, 4) > 0);
 }
 
+/* What the TCP service does with a waiter's whole first item: feed the item to the core, and on a takeover end the
+ * owner and start the waiter's own connection with that item. */
+static td_netlink_action_t waiter_first_item(int slot, const uint8_t *peer, const char *path)
+{
+    VEC(wire, path);
+    td_netlink_waiter_started(&g_deck, slot);
+    const td_netlink_action_t action = td_netlink_waiter_item(&g_deck, &g_conn, slot, wire + 2, wire_len - 2, &g_out);
+    if (action == TD_NETLINK_NOTHING) {
+        td_netlink_conn_end(&g_conn, &g_deck, TD_NETLINK_END_TAKEOVER);
+        td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
+        connect_from(&g_conn, peer);
+        td_netlink_conn_item_started(&g_conn, &g_deck);
+        return td_netlink_conn_item(&g_conn, &g_deck, wire + 2, wire_len - 2, &g_out);
+    }
+    return action;
+}
+
+/* Idle sockets can't keep a paired Companion out. While the owner is unproven, new connections wait for their first
+ * item, and when every waiting slot is taken the newest connection pushes out the oldest that hasn't sent a byte.
+ * The Companion's session.open takes over and reaches session.ready; the idle peers that miss the first-item
+ * deadline or hang up collect backoff, and the ones pushed out or taken over don't. */
+static void test_idle_sockets_and_the_companion(void)
+{
+    static const uint8_t PEER_K[4] = { 192, 0, 2, 20 };
+    const uint8_t idle[5][4] = { { 192, 0, 2, 30 }, { 192, 0, 2, 31 }, { 192, 0, 2, 32 }, { 192, 0, 2, 33 },
+                                 { 192, 0, 2, 34 } };
+    int slot, evicted, slots[5];
+    fresh_deck(true, 0, 0);
+
+    /* An idle owner and three idle waiters fill the Device. */
+    CHECK(td_netlink_admit(&g_deck, NULL, PEER_A, 4, &slot, &evicted) == TD_NETLINK_ADMIT_OWNER);
+    connect_from(&g_conn, PEER_A);
+    for (int i = 0; i < TD_NETLINK_WAITERS; i++) {
+        CHECK(td_netlink_admit(&g_deck, &g_conn, idle[i], 4, &slots[i], &evicted) == TD_NETLINK_ADMIT_WAIT);
+        CHECK(evicted == -1);
+        g_now += 10;
+    }
+
+    /* The Companion connects: the oldest idle waiter makes room, with busy, which doesn't count. */
+    const uint32_t companion_at = g_now;
+    int companion;
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_K, 4, &companion, &evicted) == TD_NETLINK_ADMIT_WAIT);
+    CHECK(evicted == slots[0] && companion == slots[0]);
+    td_netlink_waiter_started(&g_deck, companion);
+
+    /* Another idle socket pushes out the next oldest idle waiter, never the Companion, which has started its item. */
+    g_now += 10;
+    CHECK(td_netlink_admit(&g_deck, &g_conn, idle[3], 4, &slots[3], &evicted) == TD_NETLINK_ADMIT_WAIT);
+    CHECK(evicted == slots[1] && evicted != companion);
+
+    /* Its session.open names the stored companion_id: it takes over the idle owner and reaches session.ready. */
+    rng_push_vec("inputs.deviceEphemeral");
+    CHECK(waiter_first_item(companion, PEER_K, "session.wire.open") == TD_NETLINK_SEND);
+    CHECK(out_is("session.wire.challenge"));
+    CHECK(g_now - companion_at < TD_NETLINK_FIRST_ITEM_MS);
+
+    /* The idle waiters miss their first-item deadline while the handshake runs: expired, counted. */
+    g_now = companion_at - 10 + TD_NETLINK_FIRST_ITEM_MS;
+    CHECK(td_netlink_waiter_tick(&g_deck, &g_conn, slots[2], &g_out) == TD_NETLINK_SEND_CLOSE);
+    CHECK(out_is_error(TD_NETLINK_EXPIRED));
+    CHECK(td_netlink_waiter_tick(&g_deck, &g_conn, slots[3], &g_out) == TD_NETLINK_NOTHING);
+    g_now += 20;
+    CHECK(td_netlink_waiter_tick(&g_deck, &g_conn, slots[3], &g_out) == TD_NETLINK_SEND_CLOSE);
+    CHECK(out_is_error(TD_NETLINK_EXPIRED));
+
+    /* One more hangs up before its first item: counted too. */
+    CHECK(td_netlink_admit(&g_deck, &g_conn, idle[4], 4, &slots[4], &evicted) == TD_NETLINK_ADMIT_WAIT);
+    td_netlink_waiter_gone(&g_deck, slots[4]);
+
+    CHECK(feed_vec(&g_conn, "session.wire.proof") == TD_NETLINK_SEND);
+    CHECK(out_is("session.wire.ready") && g_conn.state == TD_NETLINK_CONN_READY);
+    CHECK(td_netlink_backoff_left(&g_deck, PEER_K, 4) == 0);
+    CHECK(td_netlink_backoff_left(&g_deck, PEER_A, 4) == 0);
+    CHECK(td_netlink_backoff_left(&g_deck, idle[0], 4) == 0 && td_netlink_backoff_left(&g_deck, idle[1], 4) == 0);
+    CHECK(td_netlink_backoff_left(&g_deck, idle[2], 4) > 0 && td_netlink_backoff_left(&g_deck, idle[3], 4) > 0);
+    CHECK(td_netlink_backoff_left(&g_deck, idle[4], 4) == 1000);
+    for (int i = 0; i < TD_NETLINK_WAITERS; i++) {
+        CHECK(!g_deck.waiters[i].used);
+    }
+
+    /* A proven owner holds the Device: busy at once. */
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_BUSY);
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_PEER);
+}
+
+/* A waiter's first item: an unknown companion_id gets auth and counts; anything else gets busy and doesn't; a
+ * waiter turns busy once the owner proves itself or binds a window. Started waiters from peers in backoff make room
+ * before the Device refuses a new connection. */
+static void test_waiter_items(void)
+{
+    int slot, evicted;
+    fresh_deck(true, 0, 0);
+    connect_from(&g_conn, PEER_A);
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
+    CHECK(waiter_first_item(slot, PEER_B, "negative.unknown_companion_id.open") == TD_NETLINK_SEND_CLOSE);
+    CHECK(out_is_error(TD_NETLINK_AUTH) && td_netlink_backoff_left(&g_deck, PEER_B, 4) == 1000);
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
+    CHECK(waiter_first_item(slot, PEER_B, "pairing.wire.request") == TD_NETLINK_SEND_CLOSE);
+    CHECK(out_is("errors.busy") && td_netlink_backoff_left(&g_deck, PEER_B, 4) == 1000);
+
+    /* A peer in backoff still takes over with a stored companion_id. */
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
+    rng_push_vec("inputs.deviceEphemeral");
+    CHECK(waiter_first_item(slot, PEER_B, "session.wire.open") == TD_NETLINK_SEND && out_is("session.wire.challenge"));
+    td_netlink_conn_end(&g_conn, &g_deck, TD_NETLINK_END_LOCAL);
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
+
+    /* Bound to a window, the owner holds: waiters turn busy without counting, and new connections get busy. */
+    fresh_deck(false, 0, 0);
+    connect_from(&g_conn, PEER_A);
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
+    bind_window(&g_conn, PEER_A);
+    CHECK(td_netlink_waiter_tick(&g_deck, &g_conn, slot, &g_out) == TD_NETLINK_SEND_CLOSE && out_is("errors.busy"));
+    CHECK(td_netlink_backoff_left(&g_deck, PEER_B, 4) == 0);
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_BUSY);
+    td_netlink_window_cancel(&g_deck);
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
+
+    /* With no owner left, a waiter's first item makes it the owner. */
+    fresh_deck(true, 0, 0);
+    connect_from(&g_conn, PEER_A);
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_PEER);
+    VEC(request, "pairing.wire.request");
+    CHECK(td_netlink_waiter_item(&g_deck, NULL, slot, request + 2, request_len - 2, &g_out) == TD_NETLINK_NOTHING);
+
+    /* Every slot holds a waiter that has started: busy, until one is from a peer in backoff. */
+    fresh_deck(true, 0, 0);
+    connect_from(&g_conn, PEER_A);
+    const uint8_t peers[3][4] = { { 198, 51, 100, 1 }, { 198, 51, 100, 2 }, { 198, 51, 100, 3 } };
+    int slots[3];
+    for (int i = 0; i < TD_NETLINK_WAITERS; i++) {
+        CHECK(td_netlink_admit(&g_deck, &g_conn, peers[i], 4, &slots[i], &evicted) == TD_NETLINK_ADMIT_WAIT);
+        td_netlink_waiter_started(&g_deck, slots[i]);
+    }
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_BUSY);
+    td_netlink_conn_t other;
+    connect_from(&other, peers[1]);
+    td_netlink_conn_close(&other, &g_deck, TD_NETLINK_GONE_PEER);
+    CHECK(td_netlink_backoff_left(&g_deck, peers[1], 4) == 1000);
+    CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
+    CHECK(evicted == slots[1] && slot == slots[1]);
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
+}
+
 /* USB wins: session.open gets busy while USB is online, and a session closes when USB comes online. Pairing works. */
 static void test_usb_wins(void)
 {
@@ -1054,6 +1202,8 @@ int main(int argc, char **argv)
         { test_ble_credit, "ble credit" },
         { test_busy_items, "busy items" },
         { test_backoff, "per-peer backoff" },
+        { test_idle_sockets_and_the_companion, "idle sockets and the companion" },
+        { test_waiter_items, "waiter items" },
         { test_usb_wins, "usb wins" },
         { test_session_liveness, "session liveness" },
         { test_forget, "forget" },

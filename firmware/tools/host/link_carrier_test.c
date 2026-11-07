@@ -212,8 +212,11 @@ const char *ui_dashboard_update(const char *page, const ui_dash_row_t *rows, siz
 size_t key_sink_link_next(char *buf, size_t cap) { (void)buf; (void)cap; return 0; }
 void key_sink_link_discard(void) {}
 
-void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len) { (void)seq; (void)payload; (void)len; }
-void td_link_files_ack(const uint8_t *payload, size_t len) { (void)payload; (void)len; }
+/* The chunk and ack frames the link let through to the transfer. */
+static int g_chunks;
+static int g_acks;
+void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len) { (void)seq; (void)payload; (void)len; g_chunks++; }
+void td_link_files_ack(const uint8_t *payload, size_t len) { (void)payload; (void)len; g_acks++; }
 void td_link_files_service(uint32_t now_ms) { (void)now_ms; }
 void td_link_files_select(void) {}
 
@@ -276,6 +279,8 @@ typedef struct {
     td_link_carrier_t carrier;
     bool refuse;
     int frames;
+    /* td_link_send_generation for the last frame. */
+    uint32_t generation;
     td_frame_t last;
     char payload[TD_FRAME_PAYLOAD_MAX + 1];
 } fake_carrier_t;
@@ -287,6 +292,7 @@ static bool fake_send(const td_link_carrier_t *carrier, const td_frame_t *frame)
         return false;
     }
     fake->frames++;
+    fake->generation = td_link_send_generation();
     fake->last = *frame;
     memcpy(fake->payload, frame->payload, frame->len);
     fake->payload[frame->len] = '\0';
@@ -323,6 +329,11 @@ static void reset(void)
     memset(s_carriers, 0, sizeof s_carriers);
     s_carrier_count = 0;
     s_current = 0;
+    s_current_generation = 0;
+    s_send_generation = 0;
+    s_transfer = 0;
+    g_chunks = 0;
+    g_acks = 0;
     g_usb_len = 0;
     g_usb_handler = NULL;
     g_usb_context = NULL;
@@ -371,6 +382,27 @@ static void deliver(void *carrier, const char *json, uint8_t seq)
     }
     handle_frame(0);
     send_events();
+}
+
+/* Delivers one chunk (or ack) frame of transfer 1 on a carrier and plays one link task turn. */
+static void deliver_transfer_frame(void *carrier, uint8_t type, uint8_t flags)
+{
+    static const uint8_t payload[TD_FRAME_CHUNK_HEADER + 1] = { 1, 0, 0, 0x42 };
+    uint8_t wire[TD_FRAME_WIRE_MAX];
+    uint8_t body[TD_FRAME_BODY_MAX];
+    td_frame_t frame = { .type = type, .seq = 9, .flags = flags,
+                         .len = type == TD_FRAME_ACK ? 3 : (uint16_t)sizeof payload, .payload = payload };
+    const size_t len = td_frame_encode(&frame, wire, sizeof wire);
+    td_frame_t decoded = { 0 };
+    td_frame_result_t result = td_frame_decode_slip(wire, len, body, sizeof body, &decoded);
+    assert(len && result == TD_FRAME_OK);
+    (void)result;
+    if (carrier == g_usb_context) {
+        g_usb_handler(body, 8 + (size_t)decoded.len, g_usb_context);
+    } else {
+        td_link_carrier_receive(body, 8 + (size_t)decoded.len, carrier);
+    }
+    handle_frame(0);
 }
 
 static void over_usb(const char *json, uint8_t seq)
@@ -566,6 +598,86 @@ static void test_carrier_offline(void)
     CHECK(!td_link_state().online);
     over_fake("{\"m\":\"ping\"}", 2);
     CHECK(!td_link_state().online && g_fake.last.seq == 2);
+}
+
+/* A request that waited in the link's queue while its network session ended is not handled, so nothing it would
+ * answer reaches the next session. A reply whose session ends while the request is handled is dropped. Each frame
+ * a carrier sends carries its connection's generation. */
+static void end_fake_session(const cJSON *request, cJSON *reply)
+{
+    (void)request;
+    td_link_carrier_offline(&g_fake.carrier);
+    cJSON_AddBoolToObject(reply, "ended", true);
+}
+
+static void test_ended_session_gets_nothing(void)
+{
+    static const td_link_message_t end[] = { { "t.end", end_fake_session, false } };
+    start(true);
+    CHECK(td_link_messages_add(end, 1) == ESP_OK);
+    over_fake("{\"m\":\"ping\"}", 1);
+    CHECK(g_fake.frames == 1 && g_fake.generation == 0);
+    CHECK(td_link_carrier_generation(&g_fake.carrier) == 0);
+
+    /* Queued, then the session ends before the link task gets to it. */
+    uint8_t body[TD_FRAME_BODY_MAX];
+    const size_t len = request_body("{\"m\":\"ping\"}", 2, body);
+    td_link_carrier_receive(body, len, &g_fake.carrier);
+    td_link_carrier_offline(&g_fake.carrier);
+    CHECK(td_link_carrier_generation(&g_fake.carrier) == 1);
+    const uint32_t dropped = td_link_state().dropped;
+    handle_frame(0);
+    CHECK(g_fake.frames == 1 && td_link_state().dropped == dropped + 1);
+
+    /* The next session's requests are answered, under its generation. */
+    over_fake("{\"m\":\"ping\"}", 3);
+    CHECK(g_fake.frames == 2 && g_fake.last.seq == 3 && g_fake.generation == 1);
+
+    /* The session ends while its request is handled: the reply stays home. */
+    over_fake("{\"m\":\"t.end\"}", 4);
+    CHECK(g_fake.frames == 2 && td_link_state().dropped == dropped + 2);
+    CHECK(g_usb_len == 0);
+}
+
+static void open_transfer(const cJSON *request, cJSON *reply)
+{
+    (void)request;
+    td_link_transfer_claim();
+    cJSON_AddNumberToObject(reply, "xfer", 1);
+}
+
+/* A transfer moves only on the carrier connection that opened it: chunks and acks from another carrier, or from a
+ * later session on the same carrier, never reach it, and it stops being live when its session ends. */
+static void test_transfer_belongs_to_its_session(void)
+{
+    static const td_link_message_t open[] = { { "t.open", open_transfer, false } };
+    start(true);
+    CHECK(td_link_messages_add(open, 1) == ESP_OK);
+    deliver_transfer_frame(g_usb_context, TD_FRAME_CHUNK, 0);
+    CHECK(g_chunks == 0 && !td_link_transfer_live());
+
+    /* Opened over USB: the network session's chunks and acks are dropped, USB's go through. */
+    over_usb("{\"m\":\"t.open\"}", 1);
+    CHECK(td_link_transfer_live());
+    const uint32_t dropped = td_link_state().dropped;
+    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_CHUNK, 0);
+    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_ACK, TD_FRAME_RESPONSE);
+    CHECK(g_chunks == 0 && g_acks == 0 && td_link_state().dropped == dropped + 2);
+    deliver_transfer_frame(g_usb_context, TD_FRAME_CHUNK, 0);
+    CHECK(g_chunks == 1);
+
+    /* Opened over the network: USB's chunks are dropped, and once the session ends the transfer is no longer live
+     * and the next session's chunks are dropped too. */
+    over_fake("{\"m\":\"t.open\"}", 2);
+    deliver_transfer_frame(g_usb_context, TD_FRAME_CHUNK, 0);
+    CHECK(g_chunks == 1);
+    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_CHUNK, 0);
+    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_ACK, TD_FRAME_RESPONSE);
+    CHECK(g_chunks == 2 && g_acks == 1 && td_link_transfer_live());
+    td_link_carrier_offline(&g_fake.carrier);
+    CHECK(!td_link_transfer_live());
+    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_CHUNK, 0);
+    CHECK(g_chunks == 2);
 }
 
 static void net_state(const cJSON *request, cJSON *reply)
@@ -809,6 +921,8 @@ int main(int argc, char **argv)
     test_online_is_per_carrier();
     test_unknown_carrier_dropped();
     test_carrier_offline();
+    test_ended_session_gets_nothing();
+    test_transfer_belongs_to_its_session();
     test_network_allowlist();
     test_frame_body_encoder();
     test_name_vectors_in_the_validator();
@@ -818,6 +932,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "%d checks failed\n", g_failures);
         return 1;
     }
-    printf("link carrier: 13 tests passed\n");
+    printf("link carrier: 15 tests passed\n");
     return 0;
 }

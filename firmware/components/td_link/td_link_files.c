@@ -121,7 +121,14 @@ static bool open_xfer(kind_t kind, uint32_t bytes)
     s.kind = kind;
     s.last_id = s.last_id % 255 + 1;
     s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    td_link_transfer_claim();
     return true;
+}
+
+/* An end request for a transfer that another carrier connection opened finds no transfer. */
+static bool other_origin(void)
+{
+    return s.kind != KIND_NONE && !td_link_transfer_ours();
 }
 
 static bool put_sink(void *ctx, const uint8_t *data, size_t len)
@@ -390,6 +397,9 @@ void td_link_xfer_end(const cJSON *request, cJSON *reply)
     uint32_t id;
     if (!u32_arg(request, "xfer", &id)) {
         td_link_fail(reply, "xfer.end needs xfer");
+    } else if (other_origin()) {
+        td_link_fail(reply, "no transfer with that xfer");
+        return;
     } else if (s.kind == KIND_ASSET_PUT || s.kind == KIND_PHOTO_PUT) {
         /* A v1 end never finishes or cuts a v2 Asset or picture put. */
         const char *v2_end =
@@ -434,6 +444,7 @@ void td_link_update_begin(const cJSON *request, cJSON *reply)
     s.kind = KIND_UPDATE;
     s.last_id = s.last_id % 255 + 1;
     s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    td_link_transfer_claim();
     td_xfer_init(&s.x, s.last_id, false, bytes, 0, update_sink, NULL);
     cJSON_AddNumberToObject(reply, "xfer", s.x.id);
     cJSON_AddStringToObject(reply, "slot", slot);
@@ -447,7 +458,7 @@ void td_link_update_end(const cJSON *request, cJSON *reply)
         cJSON_AddStringToObject(reply, "reason", "args");
         return;
     }
-    if (s.kind != KIND_UPDATE || id != s.x.id) {
+    if (s.kind != KIND_UPDATE || id != s.x.id || other_origin()) {
         td_link_fail(reply, "no update with that xfer");
         cJSON_AddStringToObject(reply, "reason", "state");
         return;
@@ -529,6 +540,11 @@ void td_link_files_ack(const uint8_t *payload, size_t len)
 void td_link_files_service(uint32_t now_ms)
 {
     if (s.kind == KIND_NONE || photo_cancelled()) {
+        return;
+    }
+    if (!td_link_transfer_live()) {
+        /* The carrier connection that opened it ended: a network session closed. */
+        close_xfer();
         return;
     }
     if (s.kind == KIND_GET) {
@@ -821,6 +837,7 @@ void td_link_asset_put(const cJSON *request, cJSON *reply)
     snprintf(s.asset_id, sizeof s.asset_id, "%s", id);
     s.last_id = s.last_id % 255 + 1;
     s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    td_link_transfer_claim();
     td_xfer_init(&s.x, s.last_id, false, bytes, 0, asset_sink, NULL);
     cJSON_AddBoolToObject(reply, "present", false);
     cJSON_AddNumberToObject(reply, "xfer", s.x.id);
@@ -844,7 +861,7 @@ void td_link_asset_end(const cJSON *request, cJSON *reply)
         td_link_v2_fail(reply, "args", "Invalid request fields");
         return;
     }
-    if (s.kind == KIND_ASSET_PUT && s.x.id == id) {
+    if (s.kind == KIND_ASSET_PUT && s.x.id == id && !other_origin()) {
         const td_asset_result_t result = td_asset_upload_finish();
         if (result == TD_ASSET_INCOMPLETE) {
             td_link_v2_fail(reply, "incomplete", "Bytes are still missing");
@@ -1041,7 +1058,7 @@ void td_link_photo_end(const cJSON *request, cJSON *reply)
         td_link_v2_fail(reply, "args", "Invalid request fields");
         return;
     }
-    if (s.kind == KIND_PHOTO_PUT && s.x.id == id && !photo_cancelled()) {
+    if (s.kind == KIND_PHOTO_PUT && s.x.id == id && !other_origin() && !photo_cancelled()) {
         if (s.x.received != s.x.bytes) {
             td_link_v2_fail(reply, "incomplete", "Bytes are still missing");
             return;

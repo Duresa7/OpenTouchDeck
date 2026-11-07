@@ -35,6 +35,13 @@ void td_link_v2_fail(cJSON *reply, const char *reason, const char *error);
 /* True when the request has `m`, no other field outside `allowed`, and no key twice. */
 bool td_link_v2_fields(const cJSON *request, const char *const *allowed, size_t count);
 
+/* A transfer belongs to the carrier connection whose request opened it. Claim records the frame being handled as its
+ * origin. Ours is true while the frame being handled has that origin: the link drops chunk and ack frames that
+ * don't. Live is false once that connection has ended, and the transfer is then cut. */
+void td_link_transfer_claim(void);
+bool td_link_transfer_ours(void);
+bool td_link_transfer_live(void);
+
 /* Chunk and ack frames, and the periodic work of a transfer: the chunks of a get that are due, and the abort of a
  * transfer that stopped moving. */
 void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len);
