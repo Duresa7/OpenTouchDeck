@@ -300,8 +300,16 @@ async fn a_busy_device_shows_busy_until_the_other_app_lets_go() {
     let paired = other
         .submit(&fake.code().unwrap(), &mut |_| Ok(()))
         .unwrap();
-    let carrier =
-        NetCarrier::connect(&address, &paired.credential, Duration::from_secs(5)).unwrap();
+    // The pairing connection holds the Device until it closes, so the first try may be busy.
+    let end = std::time::Instant::now() + Duration::from_secs(5);
+    let carrier = loop {
+        match NetCarrier::connect(&address, &paired.credential, Duration::from_secs(5)) {
+            Err(net::NetError::Refused(net::Refusal::Busy)) if std::time::Instant::now() < end => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            other => break other.unwrap(),
+        }
+    };
     let (session, _incoming) = td_link::Session::over(
         Box::new(carrier),
         td_link::SessionConfig {
