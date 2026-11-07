@@ -104,7 +104,7 @@ def main():
                  "-global", "driver=timer.esp32s3.timg,property=wdt_disable,value=true",
                  "-nic", f"user,model=open_eth,hostfwd=tcp:127.0.0.1:{PORT}-:{PORT}",
                  "-display", "none", "-monitor", "none", "-serial", f"file:{serial}",
-                 "-d", "guest_errors", "-D", str(build / "qemu_debug.log")]
+                 "-d", "guest_errors,unimp", "-D", str(build / "qemu_debug.log")]
     if config.get("SPIRAM_MODE_OCT"):
         qemu_args += ["-global", "driver=ssi_psram,property=is_octal,value=true"]
     print(" ".join(qemu_args), flush=True)
