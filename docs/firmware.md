@@ -717,10 +717,11 @@ I (...) radio: boot min_free_internal=N floor=16384
 ```
 
 Then `radio state` must reply with `floor_ok` and `boot_floor_ok` true. On 2026-11-07
-the board read a steady `free_internal` of 71,003 and a boot
-`min_free_internal` of 31,976 (#313). Before #313 it read 45,835 and 7,812: the
-station's start emptied the main internal heap, and only RTC memory's 7.8 KB
-and ESP-IDF's reserved pool were left.
+the board read a steady `free_internal` of 69,719 and a boot
+`min_free_internal` of 30,692 (#313). Before #313 it read 52,963 and 13,364,
+and 45,835 and 7,812 before #305 moved the link's frame stream to PSRAM. At
+7,812 the station's start had emptied the main internal heap, and only RTC
+memory's 7.8 KB and ESP-IDF's reserved pool were left.
 
 ## Bluetooth keyboard (radio build)
 
