@@ -7,10 +7,14 @@ import {
   RecordSender, RecordReceiver, fragment, Reassembler, receiveLimit, creditValue, gatt,
   MAX_ITEM, MIN_INITIAL_CREDIT, FORMAT_RANGES, nameAllowed, PeerBackoff, COUNTED, NOT_COUNTED,
   HANGUL_FILLERS, closeOutcome, PairFailures, PairingStore, manage, FULL_ERROR,
+  DeviceSession, CompanionSession, openTag, findPairing, discoveryKey, hint, advertisement, readRecord,
+  matchRecord, ROTATE_MS,
 } from './net-v2.mjs';
 import { buildNameVectors, readNameVectors, serialize, namesPath, CONTROL_RANGES } from './name-vectors.mjs';
 import { readFileSync } from 'node:fs';
-import { inputs, goldenFrames, pairing, session, buildVectors, readVectors, managementVectors } from './vectors-v2.mjs';
+import {
+  inputs, goldenFrames, pairing, session, buildVectors, readVectors, managementVectors, discoveryInputs,
+} from './vectors-v2.mjs';
 
 const fixture = readVectors();
 const pair = pairing();
@@ -91,7 +95,8 @@ test('net-v2: handshake items carry version 2 and refuse net-v1 items', () => {
   const v1 = Buffer.from(bytes(fixture.session.wire.proof));
   v1[3] = 1;
   assert.throws(() => parseHandshake(v1), /version/);
-  assert.throws(() => handshake(0x20, Buffer.alloc(53)), /length/);
+  assert.throws(() => handshake(0x20, Buffer.alloc(47)), /length/);
+  assert.equal(bytes(fixture.session.wire.open).length, 2 + 2 + 16 + 32);
 });
 
 test('net-v2: pair.request names refuse control characters and bidi overrides', () => {
@@ -370,7 +375,7 @@ test('net-v2: a close the peer starts counts toward backoff, a radio loss does n
   assert.equal(ble.refusal('flaky', 30000), 1000);
 });
 
-test('net-v2: a session.open naming a stored companion_id skips per-peer backoff', () => {
+test('net-v2: a session.open whose tag matches a stored Pairing skips per-peer backoff', () => {
   const backoff = new PeerBackoff();
   // An attacker sends from the real Companion's public BLE address with an
   // unknown id, once a minute, keeping that address at the cap.
@@ -465,4 +470,78 @@ test('net-v2: forgetting one Pairing frees exactly one slot and keeps the others
   assert.deepEqual(store.list().map((entry) => entry.app_name), ['App 1', 'App 3', 'App 4', 'App 5']);
   assert.equal(store.forgetAll(), 4);
   assert.equal(store.count, 0);
+});
+
+test('net-v2: session.open carries a tag, not the ids, and finds the right one of four Pairings', () => {
+  const open = bytes(fixture.session.wire.open);
+  assert.equal(open.includes(inputs.deviceId), false);
+  assert.equal(open.includes(inputs.companionId), false);
+  assert.equal(fixture.session.K_open, derive(inputs.ltk, 'session/open').toString('hex'));
+  assert.equal(fixture.session.open_tag, open.subarray(4, 20).toString('hex'));
+  const others = [0x30, 0x40, 0x50].map((start) => [Buffer.alloc(16, start).toString('hex'), Buffer.alloc(32, start)]);
+  const pairings = new Map([...others.slice(0, 2), [inputs.companionId.toString('hex'), inputs.ltk], others[2]]);
+  const found = findPairing(pairings, openTag(inputs.ltk, sess.clientShare), sess.clientShare);
+  assert.deepEqual(found.companionId, inputs.companionId);
+  assert.equal(findPairing(pairings, openTag(Buffer.alloc(32, 0x99), sess.clientShare), sess.clientShare), null);
+  // The Device with four Pairings still reaches the vector session.
+  const d = new DeviceSession({ deviceId: inputs.deviceId, pairings, ephemeral: inputs.deviceEphemeral });
+  const c = new CompanionSession({ deviceId: inputs.deviceId, companionId: inputs.companionId, ltk: inputs.ltk,
+    ephemeral: inputs.clientEphemeral });
+  assert.equal(d.open(c.open()).toString('hex'), fixture.session.wire.challenge);
+  // A fresh share gives a fresh tag, so two sessions don't look alike on the wire.
+  const again = new CompanionSession({ deviceId: inputs.deviceId, companionId: inputs.companionId, ltk: inputs.ltk,
+    ephemeral: Buffer.alloc(32, 0x77) }).open();
+  assert.notDeepEqual(again.subarray(4, 20), open.subarray(4, 20));
+});
+
+test('net-v2: discovery hints match only their Pairing and change with the nonce', () => {
+  const v = fixture.discovery;
+  const key = discoveryKey(inputs.ltk);
+  assert.equal(v.K_disc, key.toString('hex'));
+  assert.equal(v.K_disc, derive(inputs.ltk, 'discovery').toString('hex'));
+  assert.equal(v.hint, hint(key, inputs.discoveryNonce).toString('hex'));
+  assert.equal(v.hint.length, 16);
+  assert.notEqual(hint(key, discoveryInputs.otherNonce).toString('hex'), v.hint);
+  assert.notEqual(hint(discoveryKey(Buffer.alloc(32, 0x99)), inputs.discoveryNonce).toString('hex'), v.hint);
+  assert.equal(ROTATE_MS, 900000);
+});
+
+test('net-v2: the TXT record carries the id, name and count only in pairing mode', () => {
+  const v = fixture.discovery;
+  assert.deepEqual(Object.keys(v.txt).sort(), ['h', 'n', 'proto']);
+  assert.deepEqual(Object.keys(v.pairing_txt).sort(), ['h', 'id', 'n', 'name', 'paired', 'proto']);
+  assert.equal(v.txt.h, v.hint + v.fillers.join(''));
+  assert.equal(v.label, v.nonce.slice(0, 8));
+  assert.equal(v.instance, `TouchDeck ${v.label}`);
+  assert.equal(v.host, `td-${v.label}`);
+  const id = inputs.deviceId.toString('hex');
+  // Nothing outside pairing mode carries the id, the name or the count.
+  const outside = JSON.stringify([v.txt, v.instance, v.host]);
+  assert.equal(outside.includes(id), false);
+  assert.equal(outside.includes(inputs.deviceName), false);
+  assert.equal(v.pairing_txt.id, id);
+  assert.equal(v.pairing_txt.name, inputs.deviceName);
+  assert.equal(v.pairing_txt.paired, '1');
+  assert.throws(() => advertisement({ nonce: inputs.discoveryNonce, ltks: [inputs.ltk], fillers: [] }), /one hint per slot/);
+  assert.throws(() => advertisement({ nonce: inputs.discoveryNonce, ltks: [], fillers: discoveryInputs.otherFillers,
+    pairing: { deviceId: inputs.deviceId, name: 'De\u202esk', paired: 0 } }), /Device name/);
+});
+
+test('net-v2: a Companion matches its Pairing by hint, lists pairing mode and drops the rest', () => {
+  const v = fixture.discovery;
+  const mine = [{ deviceId: 'mine', ltk: inputs.ltk }, { deviceId: 'other', ltk: Buffer.alloc(32, 0x99) }];
+  const record = readRecord(v.txt);
+  assert.equal(record.pairing, null);
+  assert.deepEqual(matchRecord(record, mine), ['mine']);
+  assert.deepEqual(matchRecord(readRecord(v.other_record.txt), mine), []);
+  const pairingMode = readRecord(v.pairing_txt);
+  assert.deepEqual(pairingMode.pairing, { deviceId: inputs.deviceId.toString('hex'), name: inputs.deviceName, paired: 1 });
+  assert.deepEqual(matchRecord(pairingMode, mine), ['mine']);
+  // Malformed records are dropped: no proto 2, a short nonce, three hints, uppercase hex.
+  for (const bad of [{ ...v.txt, proto: '1' }, { ...v.txt, n: v.txt.n.slice(2) }, { ...v.txt, h: v.txt.h.slice(16) },
+    { ...v.txt, n: v.txt.n.toUpperCase() }, { proto: '2', id: v.pairing_txt.id }]) {
+    assert.equal(readRecord(bad), null, JSON.stringify(bad));
+  }
+  // A count above four is no count.
+  assert.equal(readRecord({ ...v.pairing_txt, paired: '5' }).pairing.paired, null);
 });

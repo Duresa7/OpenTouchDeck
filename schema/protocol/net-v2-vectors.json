@@ -14,8 +14,10 @@
     "ltk": "e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
     "clientEphemeral": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
     "deviceEphemeral": "2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+    "discoveryNonce": "5a5b5c5d5e5f60616263646566676869",
     "code": "123456",
-    "companionName": "Vector workstation"
+    "companionName": "Vector workstation",
+    "deviceName": "Vector deck"
   },
   "pake": {
     "identity": "touchdeck:020000000001:101112131415161718191a1b1c1d1e1f",
@@ -50,6 +52,8 @@
     "client_share": "07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c",
     "device_share": "5869aff450549732cbaaed5e5df9b30a6da31cb0e5742bad5ad4a1a768f1a67b",
     "Z": "a84dc7c3c8f058b1b2dc4cd1e9b5dc0a7987f88b6a9564cde3391fc421159e77",
+    "K_open": "7107b378debd241f4bc1469128a2cfde7eaa1c78114c26ae0df512481de5e71e",
+    "open_tag": "8749658a6c7e42f85f9b7620e1d9d804",
     "transcript": "be2ddcfee8937f8ed52370170ada5a5a2a9cf0aa7d7e75ac8b0e79c0fb61cb6d",
     "prk": "169c27b27f7ac6a64a4c6f03bda32d902ba6264b48265137a43e6a62a43869d3",
     "deck": "c5b866abe5cc458f8f7aac2583c45d16d18f538227d8b8018c2500b6376e664e",
@@ -61,10 +65,46 @@
     "clientProof": "5ad09c7f27fee7cb55413a95cdec8485b3ac356ba98bd8e4c43b22ae79b13aca",
     "readyProof": "25a6c03229f0794b8a7572a477137dda18d3084ea736cdab9c66f432c14f23af",
     "wire": {
-      "open": "00382002020000000001101112131415161718191a1b1c1d1e1f07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c",
+      "open": "003220028749658a6c7e42f85f9b7620e1d9d80407a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c",
       "challenge": "004221025869aff450549732cbaaed5e5df9b30a6da31cb0e5742bad5ad4a1a768f1a67ba83ecb8ea34400ed3b1777fb6212c4dcc3004439b84993e307084e1d0f8de74b",
       "proof": "002222025ad09c7f27fee7cb55413a95cdec8485b3ac356ba98bd8e4c43b22ae79b13aca",
       "ready": "0022230225a6c03229f0794b8a7572a477137dda18d3084ea736cdab9c66f432c14f23af"
+    }
+  },
+  "discovery": {
+    "notice": "Public synthetic test values only.",
+    "K_disc": "b6f0b792cea5eb454d50da32383c54d9084784530b339e761d5dd8c2129b32ec",
+    "nonce": "5a5b5c5d5e5f60616263646566676869",
+    "fillers": [
+      "7071727374757677",
+      "78797a7b7c7d7e7f",
+      "8081828384858687"
+    ],
+    "hint": "6f39f40a2d6748ec",
+    "slot": 0,
+    "label": "5a5b5c5d",
+    "instance": "TouchDeck 5a5b5c5d",
+    "host": "td-5a5b5c5d",
+    "txt": {
+      "proto": "2",
+      "n": "5a5b5c5d5e5f60616263646566676869",
+      "h": "6f39f40a2d6748ec707172737475767778797a7b7c7d7e7f8081828384858687"
+    },
+    "pairing_txt": {
+      "proto": "2",
+      "n": "5a5b5c5d5e5f60616263646566676869",
+      "h": "6f39f40a2d6748ec707172737475767778797a7b7c7d7e7f8081828384858687",
+      "id": "020000000001",
+      "name": "Vector deck",
+      "paired": "1"
+    },
+    "other_record": {
+      "note": "another nonce and only fillers: it matches no Pairing",
+      "txt": {
+        "proto": "2",
+        "n": "9a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9",
+        "h": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+      }
     }
   },
   "records": [
@@ -375,8 +415,7 @@
     "inputs": {
       "wrong_code": "654321",
       "other_ephemeral": "4142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60",
-      "other_device_id": "020000000002",
-      "unknown_companion_id": "606162636465666768696a6b6c6d6e6f"
+      "unknown_ltk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f"
     },
     "wrong_code": {
       "receiver": "device",
@@ -401,11 +440,10 @@
     ],
     "swapped_client_share": {
       "receiver": "device",
-      "note": "session.open carries another client_share; the Device answers with challenge, then gets the original session.proof",
-      "open": "00382002020000000001101112131415161718191a1b1c1d1e1f64b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d48466",
-      "challenge": "004221025869aff450549732cbaaed5e5df9b30a6da31cb0e5742bad5ad4a1a768f1a67bb690c74929e5a1523a56cd4321ebbc1050512486fad19ae983be8df11f78ac83",
-      "proof": "002222025ad09c7f27fee7cb55413a95cdec8485b3ac356ba98bd8e4c43b22ae79b13aca",
-      "expected": "close"
+      "note": "session.open carries another client_share under the original open_tag",
+      "open": "003220028749658a6c7e42f85f9b7620e1d9d80464b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d48466",
+      "expected": "auth",
+      "error": "00037f0205"
     },
     "swapped_device_share": {
       "receiver": "companion",
@@ -413,15 +451,17 @@
       "challenge": "0042210264b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d48466a83ecb8ea34400ed3b1777fb6212c4dcc3004439b84993e307084e1d0f8de74b",
       "expected": "close"
     },
-    "wrong_device_id": {
+    "unknown_open_tag": {
       "receiver": "device",
-      "open": "00382002020000000002101112131415161718191a1b1c1d1e1f07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c",
+      "note": "tagged with inputs.unknown_ltk, which the Device does not hold",
+      "open": "003220025cb8fb1643f4b6a07f960b27f02ecdb607a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c",
       "expected": "auth",
       "error": "00037f0205"
     },
-    "unknown_companion_id": {
+    "tampered_open_tag": {
       "receiver": "device",
-      "open": "00382002020000000001606162636465666768696a6b6c6d6e6f07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c",
+      "note": "the fixture session.open with the first tag bit flipped",
+      "open": "003220028649658a6c7e42f85f9b7620e1d9d80407a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c",
       "expected": "auth",
       "error": "00037f0205"
     },
