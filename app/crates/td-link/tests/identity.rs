@@ -169,3 +169,17 @@ fn longest_hello_fits_one_message() {
         assert!(serde_json::to_vec(hello).unwrap().len() <= 1024);
     }
 }
+#[test]
+fn only_the_radio_build_reports_radio_in_its_v2_hello() {
+    let device = MockDeck::v2();
+    assert!(!open(&device).identity(TIMEOUT).unwrap().radio);
+    device.set_radio(true);
+    let session = open(&device);
+    let identity = session.identity(TIMEOUT).unwrap();
+    assert!(identity.radio && identity.protocol == 2);
+    let plain = session.call(&json!({"m":"hello"}), TIMEOUT).unwrap();
+    assert!(!plain.fields.contains_key("radio"));
+    let legacy = MockDeck::new();
+    legacy.set_radio(true);
+    assert!(!open(&legacy).identity(TIMEOUT).unwrap().radio);
+}

@@ -5,7 +5,10 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use td_companion::{api::NoQuery, features::firmware::*, jobs::JobState, testing::TestCompanion};
+use td_companion::{
+    api::NoQuery, devices::FirmwareChannel, features::firmware::*, jobs::JobState,
+    testing::TestCompanion,
+};
 #[derive(Default)]
 struct Prompt {
     answer: Mutex<Option<bool>>,
@@ -49,6 +52,7 @@ impl Prompter for Prompt {
 fn request() -> FirmwareRequest {
     FirmwareRequest {
         bundle: "bundled".into(),
+        channel: None,
     }
 }
 #[tokio::test]
@@ -70,6 +74,7 @@ async fn consent_consumes_selection_and_decline_writes_nothing() {
             NoQuery,
             &FirmwareRequest {
                 bundle: info.id.clone(),
+                channel: None,
             },
         )
         .send()
@@ -82,6 +87,7 @@ async fn consent_consumes_selection_and_decline_writes_nothing() {
             NoQuery,
             FirmwareRequest {
                 bundle: info.id.clone(),
+                channel: None,
             },
         )
         .await
@@ -100,7 +106,10 @@ async fn consent_consumes_selection_and_decline_writes_nothing() {
         .request::<Repair>(
             FirmwareTarget { device: a },
             NoQuery,
-            &FirmwareRequest { bundle: info.id },
+            &FirmwareRequest {
+                bundle: info.id,
+                channel: None,
+            },
         )
         .send()
         .await
@@ -159,7 +168,10 @@ async fn picked_bundle_expires() {
         .request::<Update>(
             FirmwareTarget { device: id },
             NoQuery,
-            &FirmwareRequest { bundle: info.id },
+            &FirmwareRequest {
+                bundle: info.id,
+                channel: None,
+            },
         )
         .send()
         .await
@@ -566,6 +578,7 @@ async fn overlapping_file_pickers_are_rejected() {
                     current: String::new(),
                     version: String::new(),
                     build: String::new(),
+                    channel: Default::default(),
                 },
                 &|| false,
             );
@@ -725,6 +738,7 @@ async fn downgrade_waits_for_exact_consent_and_suppresses_every_device() {
                 NoQuery,
                 FirmwareRequest {
                     bundle: selected.id,
+                    channel: None,
                 },
             )
             .await
@@ -1321,4 +1335,307 @@ async fn diagnostics_follow_the_hello_after_an_update() {
     })
     .await
     .expect("device.updated carried the new running_from");
+}
+
+const NORMAL_BUILD: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+const RADIO_BUILD: &str = "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f";
+const RADIO_BUNDLE: &[u8] =
+    include_bytes!("../../td-link/tests/fixtures/touchdeck-test-radio.tdfw");
+
+fn channel_of(td: &TestCompanion, id: &td_companion::devices::DeviceId) -> Option<FirmwareChannel> {
+    td.device(id).and_then(|d| d.firmware).map(|f| f.channel)
+}
+fn build_of(td: &TestCompanion, id: &td_companion::devices::DeviceId) -> Option<String> {
+    td.device(id).and_then(|d| d.firmware).map(|f| f.build)
+}
+/// Makes the mock Device run the radio build and waits until its hello says so.
+async fn run_radio_build(td: &TestCompanion, serial: &str, id: &td_companion::devices::DeviceId) {
+    td.deck(serial).set_radio(true);
+    td.call::<td_companion::features::devices::Restart>(
+        td_companion::features::devices::DevicePath { device: id.clone() },
+        NoQuery,
+        (),
+    )
+    .await
+    .unwrap();
+    td.until(|td| channel_of(td, id) == Some(FirmwareChannel::Radio))
+        .await;
+}
+fn bundled(channel: Option<FirmwareChannel>) -> FirmwareRequest {
+    FirmwareRequest {
+        bundle: "bundled".into(),
+        channel,
+    }
+}
+async fn update_error(
+    td: &TestCompanion,
+    id: &td_companion::devices::DeviceId,
+    body: &FirmwareRequest,
+) -> (u16, serde_json::Value) {
+    let response = td
+        .request::<Update>(FirmwareTarget { device: id.clone() }, NoQuery, body)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.json::<serde_json::Value>().await.unwrap())
+}
+struct Picker(&'static [u8]);
+impl Prompter for Picker {
+    fn pick(&self) -> Result<Option<Vec<u8>>, String> {
+        Ok(Some(self.0.to_vec()))
+    }
+    fn confirm(&self, _: &Confirmation, _: &(dyn Fn() -> bool + Sync)) -> bool {
+        panic!("a refused bundle asked for consent")
+    }
+}
+
+#[tokio::test]
+async fn bundled_reports_the_normal_and_the_radio_build() {
+    let td = TestCompanion::start().await;
+    let build = td.call::<Bundled>((), NoQuery, ()).await.unwrap();
+    assert_eq!(build.version, "test-only");
+    assert_eq!(build.build, NORMAL_BUILD);
+    let radio = build.radio.expect("the Companion carries a radio build");
+    assert_eq!(radio.version, "test-only-radio");
+    assert_eq!(radio.build, RADIO_BUILD);
+}
+
+#[tokio::test]
+async fn an_update_takes_the_build_the_device_runs() {
+    let td = TestCompanion::start().await;
+    let normal = td.plug_device("mocka").await;
+    let radio = td.plug_device("mockb").await;
+    assert_eq!(channel_of(&td, &normal), Some(FirmwareChannel::Normal));
+    run_radio_build(&td, "mockb", &radio).await;
+    let prompt = Arc::new(Prompt::default());
+    prompt.answer(true);
+    td.firmware_prompter(prompt.clone());
+
+    let job = td
+        .call::<Update>(
+            FirmwareTarget {
+                device: normal.clone(),
+            },
+            NoQuery,
+            bundled(None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    td.until(|td| build_of(td, &normal).as_deref() == Some(NORMAL_BUILD))
+        .await;
+    assert_eq!(channel_of(&td, &normal), Some(FirmwareChannel::Normal));
+
+    prompt.answer(true);
+    let job = td
+        .call::<Update>(
+            FirmwareTarget {
+                device: radio.clone(),
+            },
+            NoQuery,
+            bundled(None),
+        )
+        .await
+        .unwrap();
+    let done = td.wait(&job).await;
+    assert_eq!(done.state, JobState::Succeeded, "{:?}", done.error);
+    let result: FirmwareResult = serde_json::from_value(done.result.unwrap()).unwrap();
+    assert_eq!(result.version, "test-only-radio");
+    td.until(|td| build_of(td, &radio).as_deref() == Some(RADIO_BUILD))
+        .await;
+    assert_eq!(channel_of(&td, &radio), Some(FirmwareChannel::Radio));
+    let seen = prompt.seen.lock().unwrap();
+    let last = seen.last().unwrap();
+    assert_eq!(last.channel, FirmwareChannel::Radio);
+    assert!(!last.question.starts_with("Switch"), "{}", last.question);
+    assert!(
+        last.text()
+            .contains("Bundle: \"test-only-radio\" (radio build)"),
+        "{}",
+        last.text()
+    );
+}
+
+#[tokio::test]
+async fn switching_builds_asks_first_and_works_both_ways() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mocka").await;
+    let prompt = Arc::new(Prompt::default());
+    td.firmware_prompter(prompt.clone());
+
+    // A declined switch writes nothing.
+    let job = td
+        .call::<Update>(
+            FirmwareTarget { device: id.clone() },
+            NoQuery,
+            bundled(Some(FirmwareChannel::Radio)),
+        )
+        .await
+        .unwrap();
+    td.until(|_| !prompt.seen.lock().unwrap().is_empty()).await;
+    prompt.answer(false);
+    let done = td.wait(&job).await;
+    assert_eq!(done.error.unwrap().code, "firmware.declined");
+    assert_eq!(td.deck("mocka").reboots(), 0);
+    assert_eq!(channel_of(&td, &id), Some(FirmwareChannel::Normal));
+
+    prompt.answer(true);
+    let job = td
+        .call::<Update>(
+            FirmwareTarget { device: id.clone() },
+            NoQuery,
+            bundled(Some(FirmwareChannel::Radio)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    td.until(|td| channel_of(td, &id) == Some(FirmwareChannel::Radio))
+        .await;
+    assert_eq!(build_of(&td, &id).as_deref(), Some(RADIO_BUILD));
+
+    prompt.answer(true);
+    let job = td
+        .call::<Update>(
+            FirmwareTarget { device: id.clone() },
+            NoQuery,
+            bundled(Some(FirmwareChannel::Normal)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    td.until(|td| channel_of(td, &id) == Some(FirmwareChannel::Normal))
+        .await;
+    assert_eq!(build_of(&td, &id).as_deref(), Some(NORMAL_BUILD));
+
+    let seen = prompt.seen.lock().unwrap();
+    let asked: Vec<_> = seen
+        .iter()
+        .map(|c| (c.question.as_str(), c.channel))
+        .collect();
+    assert_eq!(asked.len(), 3);
+    assert!(asked[..2].iter().all(|(q, c)| {
+        q.starts_with("Switch this Device to the radio build?") && *c == FirmwareChannel::Radio
+    }));
+    assert!(
+        asked[2]
+            .0
+            .starts_with("Switch this Device back to the normal build?")
+    );
+    assert!(asked[2].0.contains("stays stored but unused"));
+    assert_eq!(asked[2].1, FirmwareChannel::Normal);
+}
+
+#[tokio::test]
+async fn a_bundle_of_the_other_build_is_refused_unless_asked_for() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mocka").await;
+
+    // A radio file is never the normal build's update.
+    td.firmware_prompter(Arc::new(Picker(RADIO_BUNDLE)));
+    let info = td
+        .call::<Pick>((), NoQuery, FirmwareTarget { device: id.clone() })
+        .await
+        .unwrap()
+        .bundle
+        .unwrap();
+    assert_eq!(info.channel, FirmwareChannel::Radio);
+    for channel in [None, Some(FirmwareChannel::Normal)] {
+        let (status, body) = update_error(
+            &td,
+            &id,
+            &FirmwareRequest {
+                bundle: info.id.clone(),
+                channel,
+            },
+        )
+        .await;
+        assert_eq!(status, 409, "{body}");
+        assert_eq!(body["error"]["code"], "firmware.channel_mismatch");
+        assert_eq!(
+            body["error"]["details"],
+            serde_json::json!({"channel":"normal","bundle":"radio"})
+        );
+    }
+    assert_eq!(td.deck("mocka").reboots(), 0);
+
+    // A normal file on a radio Device is refused the same way.
+    run_radio_build(&td, "mocka", &id).await;
+    td.firmware_prompter(Arc::new(Picker(include_bytes!(
+        "../../td-link/tests/fixtures/touchdeck-test.tdfw"
+    ))));
+    let info = td
+        .call::<Pick>((), NoQuery, FirmwareTarget { device: id.clone() })
+        .await
+        .unwrap()
+        .bundle
+        .unwrap();
+    assert_eq!(info.channel, FirmwareChannel::Normal);
+    let (status, body) = update_error(
+        &td,
+        &id,
+        &FirmwareRequest {
+            bundle: info.id.clone(),
+            channel: None,
+        },
+    )
+    .await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(
+        body["error"]["details"],
+        serde_json::json!({"channel":"radio","bundle":"normal"})
+    );
+
+    // Asking to switch with a file of the build asked for is allowed, and asks first.
+    let prompt = Arc::new(Prompt::default());
+    prompt.answer(true);
+    td.firmware_prompter(prompt.clone());
+    let job = td
+        .call::<Update>(
+            FirmwareTarget { device: id.clone() },
+            NoQuery,
+            FirmwareRequest {
+                bundle: info.id,
+                channel: Some(FirmwareChannel::Normal),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    assert!(
+        prompt.seen.lock().unwrap()[0]
+            .question
+            .starts_with("Switch this Device back to the normal build?")
+    );
+    td.until(|td| channel_of(td, &id) == Some(FirmwareChannel::Normal))
+        .await;
+}
+
+#[tokio::test]
+async fn a_new_board_gets_the_normal_build_unless_the_radio_build_is_asked_for() {
+    use td_companion::devices::BoardKind;
+    let td = TestCompanion::start().await;
+    script_consent(&td, serde_json::json!(["accept", "accept"])).await;
+    let plain = td.plug_board("plain", BoardKind::OtherFirmware).await;
+    let job = install(&td, &plain.id).await;
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    td.until(|td| channel_of(td, &plain.id) == Some(FirmwareChannel::Normal))
+        .await;
+    assert!(!td.deck("plain").radio());
+
+    let radio = td.plug_board("radio", BoardKind::OtherFirmware).await;
+    let job = td
+        .call::<Install>(
+            FirmwareTarget {
+                device: radio.id.clone(),
+            },
+            NoQuery,
+            bundled(Some(FirmwareChannel::Radio)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    td.until(|td| channel_of(td, &radio.id) == Some(FirmwareChannel::Radio))
+        .await;
+    assert!(td.deck("radio").radio());
 }

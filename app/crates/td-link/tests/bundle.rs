@@ -108,3 +108,10 @@ fn long_or_unprintable_versions_are_refused() {
         );
     }
 }
+#[test]
+fn only_a_radio_bundle_carries_the_radio_mark() {
+    assert!(!Bundle::parse(FIXTURE).unwrap().manifest.radio);
+    let radio = Bundle::parse(include_bytes!("fixtures/touchdeck-test-radio.tdfw")).unwrap();
+    assert!(radio.manifest.radio);
+    assert_eq!(radio.manifest.version, "test-only-radio");
+}

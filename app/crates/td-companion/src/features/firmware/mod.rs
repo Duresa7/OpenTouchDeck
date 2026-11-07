@@ -1,7 +1,7 @@
 mod dialogs;
 use crate::{
     api::{ApiError, CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req},
-    devices::DeviceId,
+    devices::{DeviceId, FirmwareChannel},
     dialog_text::shown,
     jobs::{Job, JobError, JobKind, JobScope},
 };
@@ -25,6 +25,9 @@ use ts_rs::TS;
 const CONSENT_WAIT: Duration = Duration::from_secs(300);
 #[cfg(any(test, feature = "test-hooks"))]
 const TEST_BUNDLE: &[u8] = include_bytes!("../../../../td-link/tests/fixtures/touchdeck-test.tdfw");
+#[cfg(any(test, feature = "test-hooks"))]
+const TEST_RADIO_BUNDLE: &[u8] =
+    include_bytes!("../../../../td-link/tests/fixtures/touchdeck-test-radio.tdfw");
 #[derive(Clone, Debug)]
 pub struct Confirmation {
     pub question: String,
@@ -34,19 +37,28 @@ pub struct Confirmation {
     pub current: String,
     pub version: String,
     pub build: String,
+    /// The build the bundle is: the normal build or the radio build.
+    pub channel: FirmwareChannel,
 }
 impl Confirmation {
     pub fn text(&self) -> String {
         format!(
-            "{}\nTarget: {} ({})\nPort: {}\nCurrent: {}\nBundle: {}\nBuild: {}",
+            "{}\nTarget: {} ({})\nPort: {}\nCurrent: {}\nBundle: {} ({} build)\nBuild: {}",
             self.question,
             shown(&self.name),
             shown(&self.target),
             shown(&self.port),
             shown(&self.current),
             shown(&self.version),
+            channel_word(self.channel),
             shown(&self.build)
         )
+    }
+}
+fn channel_word(channel: FirmwareChannel) -> &'static str {
+    match channel {
+        FirmwareChannel::Normal => "normal",
+        FirmwareChannel::Radio => "radio",
     }
 }
 pub trait Prompter: Send + Sync {
@@ -115,22 +127,33 @@ pub struct Firmware {
     dialog: Arc<AtomicBool>,
     prompter: Arc<Mutex<Arc<dyn Prompter>>>,
     bundled: Option<Arc<Bundle>>,
+    /// The radio build this Companion carries, if it carries one.
+    radio: Option<Arc<Bundle>>,
     #[cfg(any(test, feature = "test-hooks"))]
     scripted: Arc<Scripted>,
 }
 impl Firmware {
     pub(crate) fn new(mock: bool) -> Self {
         let bytes: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bundled.tdfw"));
+        let radio: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bundled-radio.tdfw"));
         #[cfg(any(test, feature = "test-hooks"))]
-        let bytes = if mock { TEST_BUNDLE } else { bytes };
+        let (bytes, radio) = if mock {
+            (TEST_BUNDLE, TEST_RADIO_BUNDLE)
+        } else {
+            (bytes, radio)
+        };
         let _ = mock;
+        let parse = |bytes: &[u8]| {
+            (!bytes.is_empty()).then(|| {
+                Arc::new(Bundle::parse(bytes).expect("build.rs checked the bundled Firmware"))
+            })
+        };
         Self {
             picked: Default::default(),
             dialog: Default::default(),
             prompter: Arc::new(Mutex::new(Arc::new(Native))),
-            bundled: (!bytes.is_empty()).then(|| {
-                Arc::new(Bundle::parse(bytes).expect("build.rs checked the bundled Firmware"))
-            }),
+            bundled: parse(bytes),
+            radio: parse(radio),
             #[cfg(any(test, feature = "test-hooks"))]
             scripted: Default::default(),
         }
@@ -146,8 +169,16 @@ impl Firmware {
         *self.scripted.0.lock() = answers.into();
         self.set_prompter(self.scripted.clone());
     }
-    fn bundled(&self) -> Result<Arc<Bundle>, FirmwareError> {
-        self.bundled.clone().ok_or(FirmwareError::Invalid)
+    /// The bundle this Companion carries for a channel. build.rs refused a bundle of the other build, and this checks the
+    /// mark again, so a radio image can never be the normal channel's bundle.
+    fn bundled(&self, channel: FirmwareChannel) -> Result<Arc<Bundle>, FirmwareError> {
+        match channel {
+            FirmwareChannel::Normal => &self.bundled,
+            FirmwareChannel::Radio => &self.radio,
+        }
+        .clone()
+        .filter(|bundle| bundle.manifest.radio == channel.is_radio())
+        .ok_or(FirmwareError::Invalid)
     }
 }
 struct Dialog(Arc<AtomicBool>);
@@ -166,6 +197,11 @@ pub enum FirmwareError {
     DialogOpen,
     #[error("Firmware confirmation was declined.")]
     Declined,
+    #[error("The bundle is the {} build, not the {} build.", channel_word(*.bundle), channel_word(*.channel))]
+    ChannelMismatch {
+        channel: FirmwareChannel,
+        bundle: FirmwareChannel,
+    },
     #[error("No New board with that id.")]
     NewBoardNotFound,
     #[error("Firmware failed: {0}")]
@@ -184,6 +220,7 @@ impl ApiError for FirmwareError {
         "new_board.not_found",
         "system.dialog_open",
         "firmware.declined",
+        "firmware.channel_mismatch",
         "firmware.failed",
         "firmware.rolled_back",
         "firmware.confirm_timeout",
@@ -205,6 +242,7 @@ impl ApiError for FirmwareError {
             Self::NewBoardNotFound => "new_board.not_found",
             Self::DialogOpen => "system.dialog_open",
             Self::Declined => "firmware.declined",
+            Self::ChannelMismatch { .. } => "firmware.channel_mismatch",
             Self::Failed(s) if s == "rolled back" => "firmware.rolled_back",
             Self::Failed(s) if s == "confirm timeout" => "firmware.confirm_timeout",
             Self::Failed(_) => "firmware.failed",
@@ -216,14 +254,24 @@ impl ApiError for FirmwareError {
     fn details(&self) -> Option<serde_json::Value> {
         match self {
             Self::Failed(reason) => Some(serde_json::json!({"reason":reason})),
+            Self::ChannelMismatch { channel, bundle } => {
+                Some(serde_json::json!({"channel":channel,"bundle":bundle}))
+            }
             Self::Job(e) => e.details(),
             Self::Device(e) => e.details(),
             _ => None,
         }
     }
 }
+/// The Firmware this Companion carries: the normal build, and the radio build when it carries one.
 #[derive(Serialize, Deserialize, TS)]
 pub struct FirmwareBuild {
+    pub version: String,
+    pub build: String,
+    pub radio: Option<RadioBuild>,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct RadioBuild {
     pub version: String,
     pub build: String,
 }
@@ -233,6 +281,7 @@ pub struct BundleInfo {
     pub version: String,
     pub build: String,
     pub bytes: usize,
+    pub channel: FirmwareChannel,
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct PickResult {
@@ -247,6 +296,12 @@ pub struct FirmwareTarget {
 #[serde(deny_unknown_fields)]
 pub struct FirmwareRequest {
     pub bundle: String,
+    /// The build to install. Left out, it is the build the Device runs, or the normal build on a New board. Naming the
+    /// other build is how the person asks to switch, and a switch always asks for consent. A bundle of any other build
+    /// is refused with `firmware.channel_mismatch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub channel: Option<FirmwareChannel>,
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct FirmwareProgress {
@@ -270,10 +325,18 @@ impl Endpoint for Bundled {
     type Ok = FirmwareBuild;
     type Error = FirmwareError;
     async fn handle(ctx: Ctx, _: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        let b = ctx.firmware.bundled()?;
+        let b = ctx.firmware.bundled(FirmwareChannel::Normal)?;
         Ok(FirmwareBuild {
             version: b.manifest.version.clone(),
             build: b.manifest.elf_sha256.clone(),
+            radio: ctx
+                .firmware
+                .bundled(FirmwareChannel::Radio)
+                .ok()
+                .map(|r| RadioBuild {
+                    version: r.manifest.version.clone(),
+                    build: r.manifest.elf_sha256.clone(),
+                }),
         })
     }
 }
@@ -313,6 +376,7 @@ impl Endpoint for Pick {
                 version: bundle.manifest.version.clone(),
                 build: bundle.manifest.elf_sha256.clone(),
                 bytes: bundle.app().len(),
+                channel: FirmwareChannel::of(bundle.manifest.radio),
             };
             let mut picked = ctx.firmware.picked.lock();
             picked.retain(|_, p| p.until > ctx.clock.now());
@@ -384,7 +448,7 @@ macro_rules! operation {
             type Ok = Job;
             type Error = FirmwareError;
             async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Job, FirmwareError> {
-                start::<Self>(ctx, req.path.device, req.body.bundle)
+                start::<Self>(ctx, req.path.device, req.body)
             }
         }
     };
@@ -403,19 +467,32 @@ operation!(Install, "firmware.install", "/new-boards/{device}/install");
 fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
     ctx: Ctx,
     id: DeviceId,
-    selection: String,
+    request: FirmwareRequest,
 ) -> Result<Job, FirmwareError> {
+    let FirmwareRequest {
+        bundle: selection,
+        channel: requested,
+    } = request;
     let install = K::NAME == "firmware.install";
     let recovery = K::NAME != "firmware.update";
     let (name, port, current) = target(&ctx, &id, install)?;
-    if !install && ctx.devices.get(&id).is_none() {
-        return Err(crate::link::DeviceLinkError::NotFound.into());
-    }
+    let running = if install {
+        None
+    } else {
+        let device = ctx
+            .devices
+            .get(&id)
+            .ok_or(crate::link::DeviceLinkError::NotFound)?;
+        Some(device.firmware.map(|f| f.channel).unwrap_or_default())
+    };
+    // The Device's own build picks the bundle. Only a request that names the other build switches.
+    let channel = requested.or(running).unwrap_or_default();
+    let switching = running.is_some_and(|running| running != channel);
 
     let service = ctx.firmware.clone();
     let mut picked = service.picked.lock();
     let bundle = if selection == "bundled" {
-        service.bundled()?
+        service.bundled(channel)?
     } else {
         picked
             .get(&selection)
@@ -424,15 +501,26 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
             .bundle
             .clone()
     };
-    let consent = recovery || !same_or_newer(&bundle.manifest.version, &current);
-    let question = if install {
-        "Install Firmware on this New board?"
-    } else if recovery {
-        "Repair this Device's Firmware?"
-    } else if older(&bundle.manifest.version, &current) {
-        "Downgrade this Device's Firmware?"
-    } else {
-        "Replace this Device's Firmware with a version that may be older?"
+    let built = FirmwareChannel::of(bundle.manifest.radio);
+    if built != channel {
+        return Err(FirmwareError::ChannelMismatch {
+            channel,
+            bundle: built,
+        });
+    }
+    let consent = recovery || switching || !same_or_newer(&bundle.manifest.version, &current);
+    let question = match (install, switching, channel) {
+        (true, _, FirmwareChannel::Radio) => "Install the radio build on this New board?",
+        (true, _, FirmwareChannel::Normal) => "Install Firmware on this New board?",
+        (false, true, FirmwareChannel::Radio) => {
+            "Switch this Device to the radio build? It adds Wi-Fi and Bluetooth, which stay off until you set them up."
+        }
+        (false, true, FirmwareChannel::Normal) => {
+            "Switch this Device back to the normal build? Its Wi-Fi and Bluetooth setup stays stored but unused."
+        }
+        _ if recovery => "Repair this Device's Firmware?",
+        _ if older(&bundle.manifest.version, &current) => "Downgrade this Device's Firmware?",
+        _ => "Replace this Device's Firmware with a version that may be older?",
     };
     let confirmation = Confirmation {
         question: question.into(),
@@ -442,6 +530,7 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
         current,
         version: bundle.manifest.version.clone(),
         build: bundle.manifest.elf_sha256.clone(),
+        channel,
     };
     let jobs = ctx.jobs.clone();
     let scope = if install {
