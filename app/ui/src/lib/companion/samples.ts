@@ -24,6 +24,28 @@ export const GIF_CAPS: Capabilities = {
   anim: { image: [128, 128], min_delay_ms: 100, page_tiles: 4, page_pixels: 65536 },
 };
 
+/** A radio build: static Tiles only, and a Wi-Fi station. */
+export const RADIO_CAPS: Capabilities = {
+  screen: [1024, 600],
+  grid: [8, 8],
+  pages: 8,
+  tiles: 64,
+  layout_bytes: 32768,
+  layout_schemas: [1, 2],
+  storage_free: 1_000_000,
+  tile_kinds: ['static'],
+  asset_bytes: 262144,
+  formats: ['tdi1'],
+  image: [64, 64],
+  photo_bytes: 0,
+  live_hz: 0,
+  live_total_hz: 0,
+  series: 0,
+  text_bytes: 0,
+  live_images: 0,
+  wifi: true,
+};
+
 export function sampleDevice(id: string, name: string | null, link: LinkState = { state: 'offline' }): DeviceSummary {
   return {
     id,
@@ -49,6 +71,8 @@ export const demoDevices: DeviceSummary[] = [
   sampleDevice('mock0002', 'Studio', connected('COM4')),
   sampleDevice('mock0003', 'Stream deck by the window', connected('COM5')),
 ];
+// Desk runs the radio build, so its Device settings show Wi-Fi.
+demoDevices[0].capabilities = RADIO_CAPS;
 if (demoDevices[1].firmware) demoDevices[1].firmware = { ...demoDevices[1].firmware, version: '1.4.0', update_available: '1.5.0' };
 
 const TILES: Record<string, string[]> = {

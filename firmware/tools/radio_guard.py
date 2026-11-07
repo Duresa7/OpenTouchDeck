@@ -8,7 +8,7 @@ the firmware, so a mistake here cannot ship radios to everyone.
 The radio build is the opt-in build that `idf.py -DTD_RADIO_BUILD=1` makes (see docs/firmware.md). It must have Wi-Fi,
 lwIP and NimBLE, keep Wi-Fi and lwIP buffers in PSRAM and the BLE controller in flash, and keep BLE dormant: until an
 opt-in setting starts it, nothing in the linked image may start the BLE controller or host, advertise, scan or
-connect, and the Wi-Fi station may start but never join a network or scan.
+connect, and the Wi-Fi station may join the one network set over USB (the `wifi.*` link messages) but never scan.
 
     python firmware/tools/radio_guard.py normal <build dir>
     python firmware/tools/radio_guard.py radio <build dir> [--size-json <idf.py size --format json2 output>]
@@ -81,9 +81,10 @@ INTERNAL_FLOOR = 24576
 # board measurement of the floor.
 DIRAM_CEILING = 153600
 
-# Functions that would start BLE, put it on the air, or join or scan a Wi-Fi network. The radio build's image must
-# define none of them: the linker drops every function that nothing calls, so a name missing from the image is a call
-# that cannot happen. A later ticket that adds an opt-in setting, default off, moves the BLE names out of this list.
+# Functions that would start BLE, put it on the air, or scan for a Wi-Fi network. The radio build's image must define
+# none of them: the linker drops every function that nothing calls, so a name missing from the image is a call that
+# cannot happen. A later ticket that adds an opt-in setting, default off, moves the BLE names out of this list.
+# esp_wifi_connect left it with Wi-Fi setup (#269): the station joins the network set over USB.
 DORMANT_SYMBOLS = (
     "esp_bt_controller_init",
     "esp_bt_controller_enable",
@@ -99,15 +100,14 @@ DORMANT_SYMBOLS = (
     "ble_gap_ext_connect",
     "ble_gap_disc",
     "ble_gap_ext_disc",
-    "esp_wifi_connect",
     "esp_wifi_scan_start",
     "esp_wifi_wps_start",
     "esp_wifi_80211_tx",
     "esp_smartconfig_start",
     "esp_now_init",
 )
-# What proves the radio build wires its station at all.
-REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start")
+# What proves the radio build wires its station and joins the stored network.
+REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start", "esp_wifi_connect")
 
 
 class GuardError(ValueError):

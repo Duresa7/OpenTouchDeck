@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" build
 
-      - name: Test Firmware file loaders, key events, link carriers, Assets, Tile geometry and td_ui_core on the host
+      - name: Test Firmware file loaders, key events, link carriers, Wi-Fi, Assets, Tile geometry and td_ui_core on the host
         # After the build: the LittleFS test compiles the pinned managed component it fetched.
         # The IDF virtualenv has pip; the system Python in this image does not.
         shell: bash
@@ -60,6 +60,7 @@ jobs:
           python -B firmware/tools/test_media.py
           python -B firmware/tools/test_key_sink.py
           python -B firmware/tools/test_link_carrier.py
+          python -B firmware/tools/test_wifi.py
           python -B firmware/tools/test_file_loaders.py
           python -B firmware/tools/test_tile_geometry.py
           python -B firmware/tools/test_playback.py

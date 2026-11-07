@@ -1,5 +1,6 @@
 #include "td_link.h"
 #include "td_link_priv.h"
+#include "td_link_wifi.h"
 #include "ui.h"
 #include <math.h>
 #include <stdio.h>
@@ -42,6 +43,29 @@ cJSON *td_link_capabilities(void)
 
 static bool s_v2;
 static uint32_t s_v2_session;
+static td_link_wifi_handler_t s_wifi;
+
+esp_err_t td_link_wifi_register(td_link_wifi_handler_t handler)
+{
+    if (!handler) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_wifi) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_wifi = handler;
+    return ESP_OK;
+}
+
+void td_link_wifi_fail(cJSON *reply, const char *reason, const char *error)
+{
+    td_link_v2_fail(reply, reason, error);
+}
+
+bool td_link_wifi_fields(const cJSON *request, const char *const *allowed, size_t count)
+{
+    return td_link_v2_fields(request, allowed, count);
+}
 bool td_link_v2_selected(void) { return s_v2 && td_link_state().online; }
 uint32_t td_link_v2_session(void) { return __atomic_load_n(&s_v2_session, __ATOMIC_RELAXED); }
 
@@ -140,6 +164,9 @@ static void hello(const cJSON *request, cJSON *reply)
         td_asset_space_t space;
         td_asset_space(&space);
         cJSON_AddNumberToObject(caps, "free_bytes", space.free_bytes);
+        if (s_wifi) {
+            cJSON_AddBoolToObject(caps, "wifi", true);
+        }
         cJSON_AddItemToObject(reply, "caps", caps);
     }
 }
@@ -367,6 +394,18 @@ cJSON *td_link_dispatch(const cJSON *request)
             if (!found) {
                 v2_fail(reply, "unsupported", "Unsupported request");
             }
+        }
+        return reply;
+    }
+    if (!strncmp(message->valuestring, "wifi.", 5)) {
+        /* Wi-Fi credentials move over USB only (net-v2), so the carrier is checked before anything else. */
+        cJSON_AddBoolToObject(reply, "ok", true);
+        if (!td_link_over_usb()) {
+            v2_fail(reply, "usb-only", "Only over USB");
+        } else if (!s_wifi) {
+            v2_fail(reply, "unsupported", "Unsupported request");
+        } else {
+            s_wifi(name, request, reply);
         }
         return reply;
     }

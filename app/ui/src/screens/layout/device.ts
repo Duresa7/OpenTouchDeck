@@ -8,10 +8,12 @@ import { jobsStore } from '../../lib/companion/jobs.ts';
 import { createFirmwareUpdate, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { newerFirmware } from '../../lib/device/needs-firmware.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from '../../lib/device/settings.ts';
+import { createDeviceWifi, type DeviceWifiStore } from '../../lib/device/wifi.ts';
 
 interface DeviceStores {
   settings: DeviceSettingsStore;
   firmware: FirmwareUpdateStore;
+  wifi: DeviceWifiStore;
   observe(summary: DeviceSummary): void;
 }
 
@@ -27,6 +29,7 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
   if (!found) {
     let latest = device;
     const settings = createDeviceSettings({ companion, device });
+    const wifi = createDeviceWifi({ companion, device });
     const firmware = createFirmwareUpdate({
       companion,
       jobs: jobsStore,
@@ -35,9 +38,11 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
     found = {
       settings,
       firmware,
+      wifi,
       observe(summary) {
         latest = summary;
         settings.observe(summary);
+        wifi.observe(summary);
       },
     };
     byDevice.set(device.id, found);

@@ -33,7 +33,8 @@ NORMAL_COMPONENTS = ["main", "td_link", "td_console", "esp_system", "nvs_flash",
 RADIO_SETTINGS = {**NORMAL_SETTINGS, **guard.RADIO_BUILD_OPTIONS, "TD_RADIO_INTERNAL_FLOOR": 24576}
 RADIO_COMPONENTS = NORMAL_COMPONENTS + ["td_radio", "esp_wifi", "esp_netif", "lwip", "bt", "esp_phy", "esp_coex",
                                         "wpa_supplicant"]
-RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "ble_gatts_count_cfg"}
+RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "esp_wifi_connect",
+                 "ble_gatts_count_cfg"}
 # Spelled out here, not read from the guard, so dropping a name from the guard fails a test.
 FORBIDDEN_OPTIONS = ("ESP_WIFI_ENABLED", "ESP_HOST_WIFI_ENABLED", "BT_ENABLED", "BT_CONTROLLER_ENABLED",
                      "BT_NIMBLE_ENABLED", "BT_BLUEDROID_ENABLED", "TD_RADIO_BUILD")
@@ -43,7 +44,7 @@ FORBIDDEN_COMPONENTS = ("bt", "esp_wifi", "esp_phy", "esp_coex", "wpa_supplicant
                         "espressif__mdns")
 DORMANT = ("esp_bt_controller_init", "esp_bt_controller_enable", "nimble_port_init", "nimble_port_freertos_init",
            "ble_hs_start", "ble_gap_adv_start", "ble_gap_ext_adv_start", "ble_gap_disc", "ble_gap_connect",
-           "esp_wifi_connect", "esp_wifi_scan_start", "esp_wifi_wps_start", "esp_wifi_80211_tx",
+           "esp_wifi_scan_start", "esp_wifi_wps_start", "esp_wifi_80211_tx",
            "esp_smartconfig_start", "esp_now_init")
 
 
@@ -146,7 +147,7 @@ class RadioBuildTests(unittest.TestCase):
             with self.subTest(component=component), self.assertRaisesRegex(ValueError, "missing components"):
                 guard.check_radio(build, symbols=RADIO_SYMBOLS)
 
-    def test_any_ble_start_advertise_scan_or_wifi_join_fails(self):
+    def test_any_ble_start_advertise_scan_or_wifi_scan_fails(self):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
         for symbol in DORMANT:
             with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, f"must stay dormant: \\['{symbol}'\\]"):
@@ -154,8 +155,14 @@ class RadioBuildTests(unittest.TestCase):
 
     def test_unwired_station_fails(self):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
-        with self.assertRaisesRegex(ValueError, "does not link: \\['esp_wifi_start'\\]"):
-            guard.check_radio(build, symbols=RADIO_SYMBOLS - {"esp_wifi_start"})
+        for symbol in ("esp_wifi_start", "esp_wifi_connect"):
+            with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, f"does not link: \\['{symbol}'\\]"):
+                guard.check_radio(build, symbols=RADIO_SYMBOLS - {symbol})
+
+    def test_the_station_may_join_but_never_scan(self):
+        """Wi-Fi setup (#269) joins the network set over USB, so esp_wifi_connect is no longer dormant."""
+        self.assertNotIn("esp_wifi_connect", guard.DORMANT_SYMBOLS)
+        self.assertIn("esp_wifi_scan_start", guard.DORMANT_SYMBOLS)
 
     def test_no_firmware_source_calls_a_dormant_function(self):
         """The same rule at the source, so a normal-build CI run catches it before any radio build links it."""

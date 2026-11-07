@@ -10,6 +10,9 @@ uint32_t td_link_v2_session(void);
 
 /* Everything below runs on the td_link task only. */
 
+/* True when the frame the link handles now arrived on the USB carrier. */
+bool td_link_over_usb(void);
+
 /* Sends one frame through the active carrier (td_link_carrier.h). Counts it in frames_tx, or in dropped when the
  * carrier did not take it. */
 bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload, size_t len);

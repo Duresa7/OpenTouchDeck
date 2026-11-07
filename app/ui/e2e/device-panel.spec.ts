@@ -267,8 +267,9 @@ test('every control in the panel is reachable with Tab and shows the focus ring'
   await page.getByTestId('device-name').focus();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('device-panel-brightness-value')).toHaveText('80%');
+  await expect(page.getByTestId('device-panel-wifi-status')).toHaveAttribute('data-state', 'off');
   const reached: string[] = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 8; i++) {
     const focused = await page.evaluate(() => {
       const el = document.activeElement;
       if (!(el instanceof HTMLElement)) return null;
@@ -281,7 +282,16 @@ test('every control in the panel is reachable with Tab and shows the focus ring'
     }
     await page.keyboard.press('Tab');
   }
-  expect(reached).toEqual(['device-panel-name', 'device-panel-landscape', 'device-panel-brightness', 'device-panel-photo-frame', 'device-panel-restart']);
+  expect(reached).toEqual([
+    'device-panel-name',
+    'device-panel-landscape',
+    'device-panel-brightness',
+    'device-panel-photo-frame',
+    'device-panel-wifi-ssid',
+    'device-panel-wifi-password',
+    'device-panel-wifi-join',
+    'device-panel-restart',
+  ]);
 });
 
 const folder = process.env.TD_SHOTS;

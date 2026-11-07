@@ -515,14 +515,28 @@ What the radio build does:
 
 - Wi-Fi and lwIP buffers come from PSRAM where ESP-IDF allows it
   (`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP`), and the internal buffers are sized
-  small. The Wi-Fi driver stores nothing in NVS.
+  small. The Wi-Fi driver stores nothing in NVS; the station keeps its one
+  network itself (below).
 - Internal RAM is tuned to the floor. `malloc` puts blocks of 256 bytes and up
   in PSRAM first, not 16 KB and up. The heartbeat runs on an `esp_timer`, so
   `app_main` returns its stack. The lwIP, event, `esp_timer` and FreeRTOS timer
-  task stacks are sized from the board's high-water marks.
-- After the display and touch start, the Wi-Fi station starts. It joins no
-  network and doesn't scan: no network is set, and nothing calls
-  `esp_wifi_connect` or `esp_wifi_scan_start`.
+  task stacks are sized from the board's high-water marks. The event task gets
+  768 bytes more, because the station logic runs on it.
+- After the display and touch start, the Wi-Fi station starts and joins the
+  network set over USB, if there is one. It joins again after every restart
+  and every drop, after 1, 2, 4 and 8 seconds and then every 30 seconds. It
+  never scans on its own: nothing calls `esp_wifi_scan_start`. The network
+  comes from the app (Device settings, Wi-Fi) or the console, over USB only,
+  with the `wifi.*` link messages in
+  [link-v2](../schema/protocol/link-v2.md#wi-fi-network). It lives in NVS, in
+  namespace `td_wifi`, so a Layout reset or a Firmware update keeps it. NVS
+  isn't encrypted on this board: anyone with the board and a flash reader can
+  read the password, as with any ESP-IDF station. Log lines never name the
+  network or the password; a failed join logs only its reason, such as
+  `wifi: join failed: not-found, retry in 1000 ms`.
+- A small Wi-Fi glyph at the right end of the title band shows the station
+  while a network is stored: grey when joined, dim while joining, amber after
+  a failure. With no network stored it is hidden.
 - NimBLE is compiled in, with the controller in flash and NimBLE's memory in
   PSRAM. It stays dormant. Nothing starts the controller or the host, so the
   Device never advertises, scans or connects. No observer or central role is
@@ -533,12 +547,19 @@ What the radio build does:
   floor, it logs that line as an error with `below floor`. When the station
   did not start, the floor is not measured: the line is an error, and
   `floor_ok` stays false.
-- The console gets one more command, after `update`: `radio state` replies with
+- The console gets two more commands, after `update`: `radio state` replies with
   `build`, `wifi` (`started`, `failed` with `wifi_error`, or `off`), `joined`,
   `ble` (`dormant`), `free_internal`, `largest_internal`, `floor`, `floor_ok`,
   `steady`, and, after the steady-state report, `steady_free_internal` and
   `steady_largest_internal`. `heap` and, in a perf build, `perf mem` work as in
-  the normal build.
+  the normal build. `wifi state`, `wifi set <ssid> <password>` and
+  `wifi forget` do what the `wifi.*` link messages do and reply with the same
+  fields. Quote a name or password that holds spaces, as for any console
+  command: `wifi set "my network" "my pass phrase"`. The console echoes `*` for
+  every byte of the password as it is typed, so a screen, a recording or the
+  serial log never shows it, and the command still gets the real text.
+- In the normal build, every `wifi.*` link message answers `unsupported`, the
+  hello has no `wifi` capability, and there is no `wifi` command.
 
 `firmware/tools/radio_guard.py` checks a build directory for its kind:
 
@@ -560,9 +581,10 @@ python firmware/tools/radio_guard.py radio <build dir>
   board measurement. It also reads the linked
   image with the toolchain's `nm`, and fails when the image contains any
   function that starts the BLE controller or host, advertises, scans or
-  connects, or joins or scans a Wi-Fi network. The linker drops every function
+  connects, or scans for a Wi-Fi network. The linker drops every function
   that nothing calls, so a name missing from the image is a call that cannot
-  happen.
+  happen. It also fails when the image lacks `esp_wifi_connect`, which the
+  station needs to join its network.
 
 `python -B firmware/tools/test_radio_guard.py` tests both checks, and checks
 the Firmware sources for those calls. With `TD_GUARD_NORMAL_BUILD` or
@@ -651,7 +673,17 @@ checks which carrier each reply and event leaves on, the USB wire bytes, and the
 online state per carrier. It needs a C compiler, `cl` from an x64 Visual Studio
 developer terminal on Windows or `cc` elsewhere, and one firmware build first,
 which fetches cJSON into `firmware/managed_components`. It doesn't need
-`IDF_PATH`.
+`IDF_PATH`. It also checks that `wifi.*` messages answer `unsupported` without
+the radio build's handler, `usb-only` on any other carrier, and that the
+longest hello with the `wifi` capability fits one frame.
+
+`python -B firmware/tools/test_wifi.py` runs the radio build's Wi-Fi station
+(`firmware/components/td_radio/td_wifi*.c`) over a fake NVS and a fake Wi-Fi
+driver, from `firmware/tools/host/wifi/`: credential rules, failure reasons,
+retries, the DHCP timeout, a set, a forget and a reboot that rejoins, the
+`wifi.*` replies and the `wifi` command. It checks that no reply, console line
+or log line holds the password, and that the console's echo mask hides it as
+typed. Its compiler and cJSON needs are those of the carrier test.
 
 ## Protocol v2 identity
 

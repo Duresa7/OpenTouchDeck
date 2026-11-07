@@ -72,9 +72,27 @@ void td_console_set_frame_handler(td_rx_frame_fn handler, void *context);
  */
 size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dropped);
 
+/*
+ * A console line that starts with the words of `prefix`, one space apart, is secret from word after_words + 1 on: the
+ * echo shows `*` for each of its bytes, quotes and escapes included, while the line itself keeps the real text.
+ * after_words counts the prefix's own words, so {"wifi set", 3} hides the password of `wifi set <ssid> <password>`.
+ * Words split the way esp_console_split_argv splits them: on spaces, with `"` quoting and `\` escaping.
+ */
+typedef struct {
+    const char *prefix;
+    size_t after_words;
+} td_echo_mask_t;
+
+/* True when `line`, `len` bytes, has started word after_words + 1 of a line that `mask` hides. */
+bool td_echo_mask_hides(const td_echo_mask_t *mask, const char *line, size_t len);
+
 typedef struct {
     size_t len;
     bool too_long;
+    /* The line length at the first secret byte, 0 while nothing is secret. */
+    size_t secret_from;
+    const td_echo_mask_t *masks;
+    size_t mask_count;
 } td_line_t;
 
 typedef enum {
@@ -88,6 +106,7 @@ typedef enum {
 /*
  * c == -1 is an idle read. echo holds at most three bytes, already in wire form.
  * A line that keeps a control byte other than tab ends as TD_LINE_CONTROL.
+ * A byte of a line that one of s->masks hides echoes as `*`. A new line keeps the masks.
  */
 td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,
                               char *line, size_t cap, char echo[3], size_t *echo_len);

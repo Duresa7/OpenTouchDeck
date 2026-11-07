@@ -94,6 +94,15 @@ void td_link_hello(void)
     }
 }
 
+/* USB is always slot 0 (add_carrier). */
+bool td_link_over_usb(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    const bool usb = s_carrier_count && s_current == 0;
+    portEXIT_CRITICAL(&s_lock);
+    return usb;
+}
+
 void td_link_count_drop(void)
 {
     portENTER_CRITICAL(&s_lock);
@@ -242,7 +251,7 @@ static void handle_message(const td_frame_t *frame)
         recovered = cJSON_ParseWithLength(raw_message, message_len);
     }
     const char *message = cJSON_GetStringValue(recovered);
-    bool strict = message && (!strncmp(message, "v2.", 3) || !strcmp(message, "hello"));
+    bool strict = message && (!strncmp(message, "v2.", 3) || !strncmp(message, "wifi.", 5) || !strcmp(message, "hello"));
     cJSON *reply;
     if (strict && !td_v2_json_valid_live(payload, frame->len, !strcmp(message, "v2.live.set"))) {
         reply = cJSON_CreateObject();

@@ -13,6 +13,7 @@
 #include "esp_ota_ops.h"
 #include "td_asset.h"
 #include "td_device.h"
+#include "td_link_wifi.h"
 #include "td_recovery.h"
 
 /* ---- Host stand-ins: clock, FreeRTOS, console ---- */
@@ -242,10 +243,11 @@ HANDLER(td_link_idle_get)
 HANDLER(td_link_idle_set)
 HANDLER(td_link_clock_set)
 
+static esp_app_desc_t g_app = { .version = "host" };
+
 const esp_app_desc_t *esp_app_get_description(void)
 {
-    static const esp_app_desc_t app = { .version = "host" };
-    return &app;
+    return &g_app;
 }
 
 const esp_partition_t *esp_ota_get_running_partition(void)
@@ -267,7 +269,8 @@ td_asset_result_t td_asset_space(td_asset_space_t *out)
 }
 
 bool td_device_name_valid(const char *name) { return name && *name; }
-esp_err_t td_device_name_get(char out[TD_DEVICE_NAME_MAX + 1]) { strcpy(out, "Open TouchDeck"); return ESP_OK; }
+static char g_name[TD_DEVICE_NAME_MAX + 1] = "Open TouchDeck";
+esp_err_t td_device_name_get(char out[TD_DEVICE_NAME_MAX + 1]) { strcpy(out, g_name); return ESP_OK; }
 esp_err_t td_device_name_set(const char *name) { (void)name; return ESP_OK; }
 bool td_recovery_mode(void) { return false; }
 
@@ -574,6 +577,101 @@ static void test_unknown_carrier_dropped(void)
     CHECK(g_fake.frames == 0 && g_usb_len == 0);
 }
 
+/* ---- Wi-Fi: the `wifi.*` messages answer only over USB, and only with a handler ---- */
+
+static int g_wifi_calls;
+static char g_wifi_last[32];
+
+static void wifi_handler(const char *message, const cJSON *request, cJSON *reply)
+{
+    (void)request;
+    g_wifi_calls++;
+    snprintf(g_wifi_last, sizeof g_wifi_last, "%s", message);
+    cJSON_AddStringToObject(reply, "state", "off");
+}
+
+#define WIFI_SET "{\"m\":\"wifi.set\",\"ssid\":\"td-test-nonexistent\",\"password\":\"dummy-pass\"}"
+
+/* The normal build hands the link no handler: every `wifi.*` message answers `unsupported`, and hello has no wifi cap. */
+static void test_wifi_unsupported_without_handler(void)
+{
+    start(true);
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    over_usb("{\"m\":\"hello\",\"proto\":2}", 1);
+    CHECK(usb_take(&frame, payload) && has(payload, "\"caps\":") && !has(payload, "\"wifi\""));
+    const char *const messages[] = { "{\"m\":\"wifi.state\"}", "{\"m\":\"wifi.forget\"}", WIFI_SET };
+    for (size_t i = 0; i < sizeof messages / sizeof messages[0]; i++) {
+        over_usb(messages[i], (uint8_t)(2 + i));
+        CHECK(usb_take(&frame, payload) && has(payload, "\"ok\":false") && has(payload, "\"reason\":\"unsupported\""));
+        CHECK(!has(payload, "dummy-pass"));
+    }
+    /* Off USB the carrier check still comes first. USB goes idle first, so the reply leaves on the fake carrier. */
+    g_now_ms += TD_LINK_IDLE_MS;
+    over_fake("{\"m\":\"wifi.state\"}", 9);
+    CHECK(has(g_fake.payload, "\"reason\":\"usb-only\""));
+}
+
+static void test_wifi_over_usb_only(void)
+{
+    CHECK(td_link_wifi_register(NULL) == ESP_ERR_INVALID_ARG);
+    CHECK(td_link_wifi_register(wifi_handler) == ESP_OK);
+    CHECK(td_link_wifi_register(wifi_handler) == ESP_ERR_INVALID_STATE);
+    start(true);
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+
+    over_usb("{\"m\":\"hello\",\"proto\":2}", 1);
+    CHECK(usb_take(&frame, payload) && has(payload, "\"wifi\":true"));
+    /* A v1 hello carries no caps at all. */
+    over_usb("{\"m\":\"hello\"}", 2);
+    CHECK(usb_take(&frame, payload) && !has(payload, "\"wifi\""));
+
+    over_usb("{\"m\":\"wifi.state\"}", 3);
+    CHECK(usb_take(&frame, payload) && frame.seq == 3 && has(payload, "\"m\":\"wifi.state\""));
+    CHECK(has(payload, "\"ok\":true") && has(payload, "\"state\":\"off\""));
+    CHECK(g_wifi_calls == 1 && !strcmp(g_wifi_last, "wifi.state"));
+
+    /* On any other carrier the handler never runs, so nothing is stored, read or forgotten. USB goes idle first, so
+     * the replies leave on the fake carrier; while USB is online they would leave on USB, still refused. */
+    g_now_ms += TD_LINK_IDLE_MS;
+    const char *const messages[] = { WIFI_SET, "{\"m\":\"wifi.state\"}", "{\"m\":\"wifi.forget\"}",
+                                     "{\"m\":\"wifi.scan\"}" };
+    for (size_t i = 0; i < sizeof messages / sizeof messages[0]; i++) {
+        over_fake(messages[i], (uint8_t)(10 + i));
+        CHECK(g_fake.last.seq == (uint8_t)(10 + i) && has(g_fake.payload, "\"ok\":false"));
+        CHECK(has(g_fake.payload, "\"reason\":\"usb-only\"") && has(g_fake.payload, "\"error\":\"Only over USB\""));
+        CHECK(!has(g_fake.payload, "dummy-pass"));
+    }
+    CHECK(g_wifi_calls == 1 && g_usb_len == 0);
+
+    /* Over USB the strict JSON rules of link-v2 apply: a control character escaped in a string never reaches the
+     * handler. */
+    over_usb("{\"m\":\"wifi.set\",\"ssid\":\"a\\nb\",\"password\":\"dummy-pass\"}", 20);
+    CHECK(usb_take(&frame, payload) && has(payload, "\"ok\":false") && has(payload, "\"reason\":\"args\""));
+    CHECK(g_wifi_calls == 1);
+    CHECK(!has(payload, "dummy-pass"));
+    over_usb("{\"m\":\"wifi.forget\"}", 21);
+    CHECK(usb_take(&frame, payload) && g_wifi_calls == 2 && !strcmp(g_wifi_last, "wifi.forget"));
+}
+
+/* The longest v2 hello, with the wifi cap, a full Device name and a full version, still fits one frame. */
+static void test_wifi_hello_fits(void)
+{
+    start(false);
+    memset(g_name, 'N', TD_DEVICE_NAME_MAX);
+    g_name[TD_DEVICE_NAME_MAX] = '\0';
+    memset(g_app.version, 'v', sizeof g_app.version - 1);
+    g_app.version[sizeof g_app.version - 1] = '\0';
+    td_frame_t frame;
+    char payload[TD_FRAME_PAYLOAD_MAX + 1];
+    over_usb("{\"m\":\"hello\",\"proto\":2}", 1);
+    CHECK(usb_take(&frame, payload) && has(payload, "\"wifi\":true") && has(payload, g_name));
+    CHECK(frame.len < TD_FRAME_PAYLOAD_MAX && td_link_state().dropped == 0);
+    strcpy(g_name, "Open TouchDeck");
+    strcpy(g_app.version, "host");
+}
+
 int main(void)
 {
     test_carrier_add_rules();
@@ -584,11 +682,14 @@ int main(void)
     test_usb_is_preferred();
     test_online_is_per_carrier();
     test_unknown_carrier_dropped();
+    test_wifi_unsupported_without_handler();
+    test_wifi_over_usb_only();
+    test_wifi_hello_fits();
     reset();
     if (g_failures) {
         fprintf(stderr, "%d checks failed\n", g_failures);
         return 1;
     }
-    printf("link carrier: 8 tests passed\n");
+    printf("link carrier: 11 tests passed\n");
     return 0;
 }

@@ -160,6 +160,11 @@ void app_main(void)
     size_t radio_cmd_count;
     const esp_console_cmd_t *radio_cmds = td_radio_console_commands(&radio_cmd_count);
     register_commands("Radio", radio_cmds, radio_cmd_count);
+    /* Before the link and the console start, so the first `wifi.*` message and the first typed password find it. */
+    esp_err_t radio_init_err = td_radio_init();
+    if (radio_init_err != ESP_OK) {
+        ESP_LOGE(TAG, "Radio Wi-Fi setup failed: %s", esp_err_to_name(radio_init_err));
+    }
 #endif
     BOOT_MARK("commands");
 

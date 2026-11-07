@@ -148,6 +148,30 @@ static const esp_console_cmd_t s_builtin_cmds[] = {
 };
 
 static td_cmd_table_t s_table;
+static td_echo_mask_t s_masks[TD_CONSOLE_MASKS_MAX];
+static size_t s_mask_count;
+
+esp_err_t td_console_mask_after(const char *prefix, size_t words)
+{
+    if (s_table.sealed) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    size_t prefix_words = 0;
+    for (const char *p = prefix; p && *p; p++) {
+        prefix_words += p == prefix || p[-1] == ' ';
+        if (*p == ' ' && (p == prefix || p[-1] == ' ' || p[1] == '\0')) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    if (prefix_words == 0 || words < prefix_words || words > TD_CONSOLE_MASK_WORDS_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_mask_count == TD_CONSOLE_MASKS_MAX) {
+        return ESP_ERR_NO_MEM;
+    }
+    s_masks[s_mask_count++] = (td_echo_mask_t){ .prefix = prefix, .after_words = words };
+    return ESP_OK;
+}
 
 /* The table starts with the console's own commands. `help` lists them first, and no other component can reuse
  * their names. */
@@ -301,7 +325,7 @@ static int next_char(rx_t *rx)
 
 static td_line_status_t read_line(rx_t *rx, char *line, size_t cap)
 {
-    td_line_t state = {0};
+    td_line_t state = { .masks = s_masks, .mask_count = s_mask_count };
     for (;;) {
         int c = next_char(rx);
         char echo[3];
