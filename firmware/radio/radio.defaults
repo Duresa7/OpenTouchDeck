@@ -26,6 +26,10 @@ CONFIG_LWIP_IRAM_OPTIMIZATION=n
 # PSRAM first, which the Wi-Fi station's share of internal RAM needs. Code runs from PSRAM (XIP), so PSRAM stays
 # readable while flash is written.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=256
+# Static .bss in PSRAM where ESP-IDF allows it: the Wi-Fi driver's, lwIP's and wpa_supplicant's (ESP-IDF places them
+# there with this option) and the link's frame buffers (EXT_RAM_BSS_ATTR in td_link.c). That frees about 18.6 KB of
+# static internal RAM, more than the 4.3 KB that linking the BLE controller and NimBLE costs.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 
 # Task stacks sized from the board run with the station up. `perf mem` at these sizes, as option -> stack the task
 # got -> minimum free bytes (high-water mark): tcpip 2048 -> 2560 -> 1400; sys_evt 1792 -> 2304 -> 1172; esp_timer
@@ -39,9 +43,10 @@ CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=2560
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=3072
 CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=1536
 
-# NimBLE is compiled in and stays dormant: nothing starts the controller or the host, so the Device never advertises,
-# scans or connects. A later opt-in setting, default off, starts it. The controller runs from flash and NimBLE takes
-# its memory from PSRAM. No observer or central role is compiled in, so the Device cannot scan or start a connection.
+# The Bluetooth keyboard (td_ble). NimBLE starts only when the stored setting is on, which it is not until the person
+# turns it on, so a fresh Device never advertises. The controller runs from flash and NimBLE takes its memory from
+# PSRAM, allocated when it starts and freed when it stops. No observer or central role is compiled in, so the Device
+# cannot scan or start a connection.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_CONTROLLER_ENABLED=y
@@ -49,3 +54,24 @@ CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_STATIC_TO_DYNAMIC=y
+# One host at a time, up to four bonds that survive a reboot. Each bond keeps up to four CCCDs: the keyboard, consumer
+# and boot keyboard inputs and Service Changed.
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_MAX_BONDS=4
+CONFIG_BT_NIMBLE_MAX_CCCDS=16
+# LE Secure Connections only: no legacy pairing, whose keys a sniffer can recover. td_ble adds MITM protection: the
+# host types the passkey the Device shows.
+CONFIG_BT_NIMBLE_SM_LEGACY=n
+CONFIG_BT_NIMBLE_SM_SC=y
+CONFIG_BT_NIMBLE_SM_SC_ONLY=1
+# Privacy: NimBLE gives the controller each bonded host's IRK, and the controller resolves a host's resolvable private
+# address before the accept list, so phones and computers that reconnect from private addresses get in.
+CONFIG_BT_NIMBLE_HS_PVCY=y
+# The Peripheral Preferred Connection Parameters match the one request td_ble sends after encryption: 7.5-50 ms,
+# latency 0, a 4 s supervision timeout.
+CONFIG_BT_NIMBLE_SVC_GAP_PPCP_MIN_CONN_INTERVAL=6
+CONFIG_BT_NIMBLE_SVC_GAP_PPCP_MAX_CONN_INTERVAL=40
+CONFIG_BT_NIMBLE_SVC_GAP_PPCP_SLAVE_LATENCY=0
+CONFIG_BT_NIMBLE_SVC_GAP_PPCP_SUPERVISION_TMO=400

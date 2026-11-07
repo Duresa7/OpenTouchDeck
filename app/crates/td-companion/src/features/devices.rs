@@ -597,7 +597,10 @@ impl From<WifiError> for DeviceError {
         match error {
             WifiError::Link(error) => error.into(),
             WifiError::Invalid(reason) => CommonError::invalid("body", reason).into(),
-            WifiError::Refused { reason, .. } if reason == "unsupported" => {
+            // A Device without the station has no `wifi.*` messages and answers the unknown-message error.
+            WifiError::Refused { reason, error }
+                if reason == "unsupported" || (reason.is_empty() && error == "unknown message") =>
+            {
                 Self::NeedsFirmware { field: "wifi" }
             }
             WifiError::Refused { reason, .. } if reason == "usb-only" => Self::UsbOnly,

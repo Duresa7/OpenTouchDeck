@@ -1567,7 +1567,7 @@ impl MockDeck {
                 }
                 Ok(reply)
             }
-            m if m.starts_with("wifi.") => Ok(self.wifi(m, request)),
+            m if m.starts_with("wifi.") => self.wifi(m, request),
             m if m.starts_with("v2.asset.") && self.v2_selected() => Ok(self.asset(m, request)),
             "v2.live.set" if self.v2_selected() => Ok(self.live_set(request)),
             "v2.photo.put" | "v2.photo.end" | "v2.idle.get" | "v2.idle.set" | "v2.clock.set"
@@ -1806,7 +1806,7 @@ fn asset_space(state: &State) -> (u64, u64, u64, u64) {
 }
 
 impl MockDeck {
-    fn wifi(&self, m: &str, request: &Map<String, Value>) -> Map<String, Value> {
+    fn wifi(&self, m: &str, request: &Map<String, Value>) -> Result<Map<String, Value>, String> {
         let only = |keys: &[&str]| {
             request
                 .keys()
@@ -1817,10 +1817,11 @@ impl MockDeck {
         let off_usb = state.link_network;
         let wifi = &mut state.wifi;
         if wifi.usb_only || off_usb {
-            return refusal("usb-only", "Only over USB");
+            return Ok(refusal("usb-only", "Only over USB"));
         }
+        // Without a station the Device has no `wifi.*` messages at all, as with `ble.*` without `ble_hid`.
         if !wifi.capability {
-            return refusal("unsupported", "Unsupported request");
+            return Err("unknown message".into());
         }
         match m {
             "wifi.state" if only(&[]) => wifi.resolve(),
@@ -1835,21 +1836,21 @@ impl MockDeck {
                 let ssid = request.get("ssid").and_then(Value::as_str);
                 let password = request.get("password").and_then(Value::as_str);
                 let (Some(ssid), Some(password)) = (ssid, password) else {
-                    return refusal("args", "Invalid network name or password");
+                    return Ok(refusal("args", "Invalid network name or password"));
                 };
                 if !valid_ssid(ssid) || !valid_password(&WifiPassword::new(password)) {
-                    return refusal("args", "Invalid network name or password");
+                    return Ok(refusal("args", "Invalid network name or password"));
                 }
                 wifi.stored = Some((ssid.into(), password.into()));
                 wifi.joining = true;
                 wifi.outcome = None;
             }
             "wifi.state" | "wifi.forget" | "wifi.set" => {
-                return refusal("args", "Invalid request fields");
+                return Ok(refusal("args", "Invalid request fields"));
             }
-            _ => return refusal("unsupported", "Unsupported request"),
+            _ => return Ok(refusal("unsupported", "Unsupported request")),
         }
-        wifi.fields()
+        Ok(wifi.fields())
     }
 
     fn v2_selected(&self) -> bool {

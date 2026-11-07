@@ -1,6 +1,5 @@
 #include "td_link.h"
 #include "td_link_priv.h"
-#include "td_link_wifi.h"
 #include "ui.h"
 #include <math.h>
 #include <stdio.h>
@@ -13,6 +12,27 @@
 #include "td_asset.h"
 #include "esp_mac.h"
 
+static const td_link_extension_t *s_extensions[TD_LINK_EXTENSIONS_MAX];
+static size_t s_extension_count;
+
+esp_err_t td_link_extend(const td_link_extension_t *extension)
+{
+    const size_t len = extension && extension->prefix ? strlen(extension->prefix) : 0;
+    if (!extension || !extension->handle || len == 0 || extension->prefix[len - 1] != '.' ||
+        !strncmp(extension->prefix, "v2.", 3)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (size_t i = 0; i < s_extension_count; i++) {
+        if (!strcmp(s_extensions[i]->prefix, extension->prefix)) {
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+    if (s_extension_count == TD_LINK_EXTENSIONS_MAX) {
+        return ESP_ERR_NO_MEM;
+    }
+    s_extensions[s_extension_count++] = extension;
+    return ESP_OK;
+}
 
 cJSON *td_link_capabilities(void)
 {
@@ -38,34 +58,16 @@ cJSON *td_link_capabilities(void)
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_frames"), 60);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_pixels"), 983040);
 #endif
+    for (size_t i = 0; i < s_extension_count; i++) {
+        if (caps && s_extensions[i]->caps) {
+            s_extensions[i]->caps(caps);
+        }
+    }
     return caps;
 }
 
 static bool s_v2;
 static uint32_t s_v2_session;
-static td_link_wifi_handler_t s_wifi;
-
-esp_err_t td_link_wifi_register(td_link_wifi_handler_t handler)
-{
-    if (!handler) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (s_wifi) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    s_wifi = handler;
-    return ESP_OK;
-}
-
-void td_link_wifi_fail(cJSON *reply, const char *reason, const char *error)
-{
-    td_link_v2_fail(reply, reason, error);
-}
-
-bool td_link_wifi_fields(const cJSON *request, const char *const *allowed, size_t count)
-{
-    return td_link_v2_fields(request, allowed, count);
-}
 bool td_link_v2_selected(void) { return s_v2 && td_link_state().online; }
 uint32_t td_link_v2_session(void) { return __atomic_load_n(&s_v2_session, __ATOMIC_RELAXED); }
 
@@ -149,6 +151,7 @@ static void hello(const cJSON *request, cJSON *reply)
         ui_layout_info(&layout);
     }
     cJSON_AddStringToObject(reply, "layout", layout.from_storage ? "storage" : "builtin");
+    cJSON_AddStringToObject(reply, "carrier", td_link_current_carrier());
     if (v2) {
         uint8_t mac[6];
         esp_efuse_mac_get_default(mac);
@@ -164,9 +167,6 @@ static void hello(const cJSON *request, cJSON *reply)
         td_asset_space_t space;
         td_asset_space(&space);
         cJSON_AddNumberToObject(caps, "free_bytes", space.free_bytes);
-        if (s_wifi) {
-            cJSON_AddBoolToObject(caps, "wifi", true);
-        }
         cJSON_AddItemToObject(reply, "caps", caps);
     }
 }
@@ -190,6 +190,7 @@ static void state(const cJSON *request, cJSON *reply)
     cJSON_AddNumberToObject(reply, "crc_errors", value.crc_errors);
     cJSON_AddNumberToObject(reply, "dropped", value.dropped);
     cJSON_AddNumberToObject(reply, "last_rx_ms", (double)value.last_rx_ms);
+    cJSON_AddStringToObject(reply, "carrier", value.carrier);
 }
 
 /* A missing optional field takes its default. A field of the wrong type is refused. */
@@ -338,6 +339,26 @@ static const struct {
     { "v2.clock.set", td_link_clock_set },
 };
 
+/* The messages a network carrier may carry (schema/protocol/net-v2.md). Everything else, Firmware updates, wipes and
+ * network setup among them, is USB-only. */
+static const char *const s_network_messages[] = {
+    "hello", "ping", "link.state", "layout.get", "layout.put", "icon.put", "icon.list", "icon.rm", "settings.get",
+    "settings.put", "store.stat", "xfer.end", "widget.set", "dashboard.set", "v2.name.get", "v2.name.set",
+    "v2.asset.stat", "v2.asset.list", "v2.asset.put", "v2.asset.end", "v2.asset.delete", "v2.live.set",
+    "v2.photo.put", "v2.photo.end", "v2.idle.get", "v2.idle.set", "v2.clock.set",
+};
+
+static bool network_allowed(const char *name)
+{
+    for (size_t i = 0; i < sizeof s_network_messages / sizeof s_network_messages[0]; i++) {
+        if (!strcmp(name, s_network_messages[i])) {
+            return true;
+        }
+    }
+    const td_link_message_t *extra = td_link_extra_message(name);
+    return extra && !extra->usb_only;
+}
+
 #define ECHO_CHARS_MAX 64
 
 static void echo_name(const char *name, char out[4 * ECHO_CHARS_MAX + 1])
@@ -367,6 +388,11 @@ cJSON *td_link_dispatch(const cJSON *request)
     char name[4 * ECHO_CHARS_MAX + 1];
     echo_name(message->valuestring, name);
     cJSON_AddStringToObject(reply, "m", name);
+    if (td_link_current_network() && !network_allowed(message->valuestring)) {
+        cJSON_AddBoolToObject(reply, "ok", true);
+        v2_fail(reply, "usb-only", "Only over USB");
+        return reply;
+    }
     if (!strncmp(message->valuestring, "v2.", 3)) {
         cJSON_AddBoolToObject(reply, "ok", true);
         if (!s_v2 || !td_link_state().online) {
@@ -397,24 +423,29 @@ cJSON *td_link_dispatch(const cJSON *request)
         }
         return reply;
     }
-    if (!strncmp(message->valuestring, "wifi.", 5)) {
-        /* Wi-Fi credentials move over USB only (net-v2), so the carrier is checked before anything else. */
-        cJSON_AddBoolToObject(reply, "ok", true);
-        if (!td_link_over_usb()) {
-            v2_fail(reply, "usb-only", "Only over USB");
-        } else if (!s_wifi) {
-            v2_fail(reply, "unsupported", "Unsupported request");
-        } else {
-            s_wifi(name, request, reply);
-        }
-        return reply;
-    }
     for (size_t i = 0; i < sizeof s_messages / sizeof s_messages[0]; i++) {
         if (strcmp(message->valuestring, s_messages[i].name) == 0) {
             cJSON_AddBoolToObject(reply, "ok", true);
             s_messages[i].handler(request, reply);
             return reply;
         }
+    }
+    for (size_t i = 0; i < s_extension_count; i++) {
+        if (!strncmp(message->valuestring, s_extensions[i]->prefix, strlen(s_extensions[i]->prefix))) {
+            cJSON_AddBoolToObject(reply, "ok", true);
+            if (td_link_request_on_usb()) {
+                s_extensions[i]->handle(request, reply);
+            } else {
+                v2_fail(reply, "usb-only", "Only over USB");
+            }
+            return reply;
+        }
+    }
+    const td_link_message_t *extra = td_link_extra_message(message->valuestring);
+    if (extra) {
+        cJSON_AddBoolToObject(reply, "ok", true);
+        extra->handler(request, reply);
+        return reply;
     }
     cJSON_AddBoolToObject(reply, "ok", false);
     cJSON_AddStringToObject(reply, "error", "unknown message");

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use td_core::{Layout, Orientation};
 use td_link::net::fake::FakeNetDevice;
-use td_link::net::{Address, Credential, NetCarrier, NetError, Paired, Refusal, pair};
+use td_link::net::{Address, Credential, NetCarrier, NetError, Paired, Pairing, Refusal, pair};
 use td_link::update::{Approval, begin};
 use td_link::{Incoming, IncomingReceiver, MockDeck, Session, SessionConfig, xfer};
 
@@ -22,9 +22,23 @@ fn addr(device: &FakeNetDevice) -> Address {
     Address::from(device.addr())
 }
 
+/// Pairs once the fake Device has let go of the previous connection: right after a pairing it can still
+/// answer `busy` for a moment, more often on a loaded CI runner.
+fn pair_when_free(device: &FakeNetDevice, companion: [u8; 16]) -> Result<Pairing, NetError> {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        match pair(&addr(device), &companion, "Test workstation", TIMEOUT) {
+            Err(NetError::Refused(Refusal::Busy)) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            result => return result,
+        }
+    }
+}
+
 fn pair_with(device: &FakeNetDevice, companion: [u8; 16]) -> Paired {
     device.open_window().unwrap();
-    let mut pairing = pair(&addr(device), &companion, "Test workstation", TIMEOUT).unwrap();
+    let mut pairing = pair_when_free(device, companion).unwrap();
     let code = device.code().expect("the Device shows a code");
     pairing.submit(&code, &mut |_| Ok(())).unwrap()
 }
@@ -41,8 +55,29 @@ fn quiet() -> SessionConfig {
     }
 }
 
+/// Connects once the fake Device has let go of the previous connection, which it can still hold for a
+/// moment after a pairing or a closed session.
+fn try_connect_when_free(
+    device: &FakeNetDevice,
+    credential: &Credential,
+) -> Result<NetCarrier, NetError> {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        match NetCarrier::connect(&addr(device), credential, TIMEOUT) {
+            Err(NetError::Refused(Refusal::Busy)) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            result => return result,
+        }
+    }
+}
+
+fn connect_when_free(device: &FakeNetDevice, credential: &Credential) -> NetCarrier {
+    try_connect_when_free(device, credential).unwrap()
+}
+
 fn session(device: &FakeNetDevice, credential: &Credential) -> (Session, IncomingReceiver) {
-    let carrier = NetCarrier::connect(&addr(device), credential, TIMEOUT).unwrap();
+    let carrier = connect_when_free(device, credential);
     Session::over(Box::new(carrier), quiet()).unwrap()
 }
 
@@ -217,7 +252,7 @@ fn an_unpaired_companion_or_another_device_is_refused() {
         ..paired.credential.clone()
     };
     assert!(matches!(
-        NetCarrier::connect(&addr(&device), &stranger, TIMEOUT).err(),
+        try_connect_when_free(&device, &stranger).err(),
         Some(NetError::Refused(Refusal::Auth))
     ));
     let elsewhere = Credential {
@@ -225,7 +260,7 @@ fn an_unpaired_companion_or_another_device_is_refused() {
         ..paired.credential.clone()
     };
     assert!(matches!(
-        NetCarrier::connect(&addr(&device), &elsewhere, TIMEOUT).err(),
+        try_connect_when_free(&device, &elsewhere).err(),
         Some(NetError::Refused(Refusal::Auth))
     ));
     let forged = Credential {
@@ -410,7 +445,7 @@ fn a_full_device_refuses_a_fifth_pairing() {
     }
     device.open_window().unwrap();
     assert!(matches!(
-        pair(&addr(&device), &[9; 16], "Test workstation", TIMEOUT).err(),
+        pair_when_free(&device, [9; 16]).err(),
         Some(NetError::Refused(Refusal::Full))
     ));
 }
@@ -424,7 +459,7 @@ fn a_session_near_the_record_limit_ends_between_requests_and_a_new_one_starts_at
     // Both sides start 1025 records short of the limit.
     let start = COUNTER_LIMIT - RECORD_RESERVE - 1;
     device.skip_next_session(start);
-    let mut carrier = NetCarrier::connect(&addr(&device), &paired.credential, TIMEOUT).unwrap();
+    let mut carrier = connect_when_free(&device, &paired.credential);
     assert_eq!(carrier.counters(), (0, 0));
     carrier.skip_records(start);
     let (session, incoming) = Session::over(Box::new(carrier), quiet()).unwrap();
@@ -443,7 +478,7 @@ fn a_session_near_the_record_limit_ends_between_requests_and_a_new_one_starts_at
     assert_eq!(device.session(), None);
 
     // A reconnect runs the session exchange again: fresh keys with counters at zero.
-    let carrier = NetCarrier::connect(&addr(&device), &paired.credential, TIMEOUT).unwrap();
+    let carrier = connect_when_free(&device, &paired.credential);
     assert_eq!(carrier.counters(), (0, 0));
     let (session, _incoming) = Session::over(Box::new(carrier), quiet()).unwrap();
     session.call(&ping, TIMEOUT).unwrap();

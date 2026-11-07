@@ -313,8 +313,12 @@ mod tests {
     fn a_device_without_wifi_refuses_and_bad_input_stays_here() {
         let deck = MockDeck::v2();
         let s = session(&deck);
+        // Without a station the Device has no `wifi.*` messages: the unknown-message error, with no reason.
         let error = wifi_state(&s).unwrap_err();
-        assert_eq!(error.reason(), Some("unsupported"));
+        assert!(
+            matches!(&error, WifiError::Refused { reason, error } if reason.is_empty() && error == "unknown message"),
+            "{error:?}"
+        );
         let before = deck.received().len();
         assert!(matches!(
             wifi_set(&s, "", &WifiPassword::new("dummy-pass-1234")),

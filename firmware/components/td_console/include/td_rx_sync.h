@@ -55,7 +55,7 @@ void td_rx_split(td_rx_split_t *s, uint32_t now_ms, char *buf, size_t n,
  */
 uint32_t td_rx_split_expire(td_rx_split_t *s, uint32_t now_ms, td_rx_frame_fn frame, void *context);
 
-/* Register before td_console_start. NULL bodies report malformed SLIP. */
+/* Sets the handler and its context together, atomically, from any task. NULL bodies report malformed SLIP. */
 void td_console_set_frame_handler(td_rx_frame_fn handler, void *context);
 
 /*

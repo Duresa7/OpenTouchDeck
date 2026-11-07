@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 #include "td_console.h"
-#include "td_link_wifi.h"
 
 static void wipe(char *s)
 {
@@ -24,22 +23,62 @@ void td_wifi_state_fields(cJSON *reply, const td_wifi_state_t *state)
     cJSON_AddItemToObject(reply, "rssi", up && state->has_rssi ? cJSON_CreateNumber(state->rssi) : cJSON_CreateNull());
 }
 
+/* Turns the reply into a refusal: `ok` false, the stable `reason` and the human `error`. */
+static void fail(cJSON *reply, const char *reason, const char *error)
+{
+    cJSON_ReplaceItemInObjectCaseSensitive(reply, "ok", cJSON_CreateBool(false));
+    cJSON_DeleteItemFromObjectCaseSensitive(reply, "error");
+    cJSON_AddStringToObject(reply, "reason", reason);
+    cJSON_AddStringToObject(reply, "error", error);
+}
+
+/* True when the request has `m`, no field outside `allowed`, and no key twice. */
+static bool fields(const cJSON *request, const char *const *allowed, size_t count)
+{
+    const cJSON *a;
+    cJSON_ArrayForEach(a, request) {
+        bool known = !strcmp(a->string, "m");
+        for (size_t i = 0; i < count && !known; i++) {
+            known = !strcmp(a->string, allowed[i]);
+        }
+        if (!known) {
+            return false;
+        }
+        for (const cJSON *b = a->next; b; b = b->next) {
+            if (!strcmp(a->string, b->string)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 /* Refuses with the stable reason for a td_wifi_set or td_wifi_forget error. */
 static void refuse(cJSON *reply, esp_err_t err)
 {
     if (err == ESP_ERR_INVALID_ARG) {
-        td_link_wifi_fail(reply, "args", "Invalid network name or password");
+        fail(reply, "args", "Invalid network name or password");
     } else {
-        td_link_wifi_fail(reply, "storage", "The network could not be stored");
+        fail(reply, "storage", "The network could not be stored");
     }
 }
 
-void td_wifi_link_message(const char *message, const cJSON *request, cJSON *reply)
+void td_wifi_link_caps(cJSON *caps)
+{
+    cJSON_AddBoolToObject(caps, "wifi", true);
+}
+
+void td_wifi_link_message(const cJSON *request, cJSON *reply)
 {
     static const char *const set_fields[] = { "ssid", "password" };
+    const char *message = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(request, "m"));
+    if (!message) {
+        fail(reply, "args", "Invalid request");
+        return;
+    }
     if (!strcmp(message, "wifi.state") || !strcmp(message, "wifi.forget")) {
-        if (!td_link_wifi_fields(request, NULL, 0)) {
-            td_link_wifi_fail(reply, "args", "Invalid request fields");
+        if (!fields(request, NULL, 0)) {
+            fail(reply, "args", "Invalid request fields");
             return;
         }
         const esp_err_t err = !strcmp(message, "wifi.forget") ? td_wifi_forget() : ESP_OK;
@@ -51,7 +90,7 @@ void td_wifi_link_message(const char *message, const cJSON *request, cJSON *repl
         const cJSON *ssid = cJSON_GetObjectItemCaseSensitive(request, "ssid");
         const cJSON *password = cJSON_GetObjectItemCaseSensitive(request, "password");
         esp_err_t err = ESP_ERR_INVALID_ARG;
-        if (td_link_wifi_fields(request, set_fields, 2) && cJSON_IsString(ssid) && cJSON_IsString(password)) {
+        if (fields(request, set_fields, 2) && cJSON_IsString(ssid) && cJSON_IsString(password)) {
             err = td_wifi_set(ssid->valuestring, password->valuestring);
         }
         /* The request is freed after the reply is built. Its password goes first. */
@@ -63,7 +102,7 @@ void td_wifi_link_message(const char *message, const cJSON *request, cJSON *repl
             return;
         }
     } else {
-        td_link_wifi_fail(reply, "unsupported", "Unsupported request");
+        fail(reply, "unsupported", "Unsupported request");
         return;
     }
     const td_wifi_state_t state = td_wifi_state();
@@ -97,7 +136,7 @@ static int cmd_wifi(int argc, char **argv)
         }
     }
     if (usage) {
-        td_link_wifi_fail(reply, "args", "usage: wifi state | set <ssid> <password> | forget");
+        fail(reply, "args", "usage: wifi state | set <ssid> <password> | forget");
     } else if (err != ESP_OK) {
         refuse(reply, err);
     } else {

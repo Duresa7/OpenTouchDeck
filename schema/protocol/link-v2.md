@@ -71,6 +71,7 @@ Firmware must test its maximum escaped name and longest build version.
 | `live_hz`, `live_total_hz` | Maximum accepted updates per stream and Device per second, at most 2 and 20 |
 | `series`, `text_bytes`, `streams` | Maximum series length, text size, and streams per Tile, at most 32, 128, and 8 |
 | `wifi` | Optional `true` when the Device answers the `wifi.*` messages below (the radio build). Absent means no Wi-Fi station |
+| `ble_hid` | Optional. The radio build's Bluetooth keyboard: the most bonded hosts, 1 to 8 (the Firmware has 4). Absent means the Device has no Bluetooth keyboard and no `ble.*` messages |
 
 Payload, chunk, transfer window, and naming limits are fixed by this document.
 A capability of zero disables the corresponding feature. The Companion checks
@@ -158,10 +159,10 @@ read and forget that network. They are not `v2.` requests: they need no
 selected v2 session, and they work after a plain hello too. Every one of them
 is USB-only on every Carrier ([net-v2](net-v2.md)): a `wifi.*` message that
 arrives on any other Carrier gets `ok:false`, `reason:"usb-only"` and
-`error:"Only over USB"`, and changes nothing. The Device checks the Carrier
-before anything else, so the normal build answers `usb-only` off USB too. Over
-USB, the normal build answers every `wifi.*` message with `unsupported`. A v2
-hello advertises `caps.wifi:true` only on a Device that answers them.
+`error:"Only over USB"`, and changes nothing. A Device without `caps.wifi`,
+such as the normal build, returns the unknown-message error for them, as for
+`ble.*` without `caps.ble_hid`. A v2 hello advertises `caps.wifi:true` only on
+a Device that answers them.
 
 Requests follow the JSON rules of "Requests and errors" above. Unknown `wifi.*`
 names return `unsupported`; there is no scan message.
@@ -531,6 +532,67 @@ remain implementation measurements; arithmetic does not prove UI responsiveness.
 |---|---|---|
 | Older v2 Device with new Companion | Does not advertise media caps/kinds or emit media input | Shows Needs Firmware; retains a compatible Layout |
 | Media-capable Device with old Companion | Emits optional `press.part` and v2-only `v2.input` on a selected v2 session | Ignores the unknown field and event; does not route controls |
+
+## Bluetooth keyboard (radio build)
+
+A Device with `caps.ble_hid` is a Bluetooth LE keyboard with media keys for
+other hosts (docs/firmware.md, Bluetooth keyboard). It is off until the person
+turns it on. These messages control it. They don't start with `v2.`, because
+they don't need a selected v2 session, and they are USB-only on every Carrier:
+over any other Carrier they get `ok:false`, `reason:"usb-only"`,
+`error:"Only over USB"` and change nothing. A Device without `ble_hid` returns
+the unknown-message error for them.
+
+| Request | Fields | Effect |
+|---|---|---|
+| `ble.state` | none | Reports the state |
+| `ble.set` | `enabled`: Boolean | Stores the setting, then starts or stops BLE |
+| `ble.pair` | `open`: optional Boolean, default true | Opens the pairing window for 120000 ms, or closes it. A host pairs inside it by typing the six-digit passkey the Device shows |
+| `ble.forget` | `address`: optional `aa:bb:cc:dd:ee:ff` or null | Forgets that bonded host, or every one when absent or null. The reply adds `forgotten`, the number of bonds deleted |
+
+Every reply except an `args` or `unsupported` failure carries the state, after
+the request took effect:
+
+| Field | Meaning |
+|---|---|
+| `enabled` | The stored setting |
+| `state` | `off`, `starting` (the controller and host are coming up), `on`, or `failed` (they did not start) |
+| `pairing` | Whether the pairing window is open |
+| `pairing_ms` | Milliseconds left in the window, 0 when closed |
+| `passkey` | Whether a pairing passkey is on the Device's screen. The code itself is never sent |
+| `advertising` | `off`, `pairing`, `fast` (bonded hosts, 20-30 ms) or `slow` (bonded hosts, 1-2.5 s) |
+| `bonds` | Bonded hosts, each `{"address":"aa:bb:cc:dd:ee:ff","random":Boolean,"connected":Boolean}`. Listed only while `state` is `on`; empty otherwise |
+| `bonds_max` | The same number as `caps.ble_hid` |
+| `battery` | The Battery Level the Device reports to hosts, 0 to 100. Fixed at 100: the board runs from USB |
+
+Addresses are identity addresses, most significant byte first, in lower case.
+`random` is true for a random static identity address. `connected` means a link
+to that host is up, encrypted with authenticated keys, and bonded.
+
+Pairing is LE Secure Connections with MITM protection only. When a host starts
+pairing in the window, the Device shows a random six-digit passkey on its
+screen and the person types it on the host; `passkey` is true while it shows.
+It goes when pairing completes or fails, the link drops, the window closes,
+BLE turns off, or 60 seconds pass. A host that can't type, or that pairs with
+Just Works or legacy pairing, is dropped and its bond deleted, and the window
+stays open.
+
+Additional reasons:
+
+| Request | Additional reasons |
+|---|---|
+| `ble.state` | none |
+| `ble.set` | `storage` (the setting could not be saved; nothing changed), `radio` (BLE did not start; the setting stays on) |
+| `ble.pair` | `off`, `starting`, `full` (`bonds_max` hosts are bonded; forget one first) |
+| `ble.forget` | `off`, `starting`, `storage` |
+
+`off` means BLE is off, so there is no window to open and no bond to read.
+`starting` means the host stack hasn't synced yet; ask again.
+
+```json
+{"m":"ble.pair"}
+{"m":"ble.pair","ok":true,"enabled":true,"state":"on","pairing":true,"pairing_ms":120000,"passkey":false,"advertising":"pairing","bonds":[],"bonds_max":4,"battery":100}
+```
 
 ## Golden frames and verification
 

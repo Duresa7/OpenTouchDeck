@@ -233,13 +233,17 @@ static StreamBufferHandle_t s_rx_queue;
 static atomic_uint s_rx_dropped;
 static td_rx_sync_t s_rx_sync;
 static td_rx_split_t s_rx_split;
+/* The handler and its context change together: a frame never sees one without the other. */
+static portMUX_TYPE s_frame_lock = portMUX_INITIALIZER_UNLOCKED;
 static td_rx_frame_fn s_frame_handler;
 static void *s_frame_context;
 
 void td_console_set_frame_handler(td_rx_frame_fn handler, void *context)
 {
+    portENTER_CRITICAL(&s_frame_lock);
     s_frame_handler = handler;
     s_frame_context = context;
+    portEXIT_CRITICAL(&s_frame_lock);
 }
 
 static void receive_text(char *text, size_t len, void *context)
@@ -259,8 +263,12 @@ static void receive_text(char *text, size_t len, void *context)
 static void receive_frame(const uint8_t *body, size_t len, void *context)
 {
     (void)context;
-    if (s_frame_handler) {
-        s_frame_handler(body, len, s_frame_context);
+    portENTER_CRITICAL(&s_frame_lock);
+    const td_rx_frame_fn handler = s_frame_handler;
+    void *const handler_context = s_frame_context;
+    portEXIT_CRITICAL(&s_frame_lock);
+    if (handler) {
+        handler(body, len, handler_context);
     }
 }
 

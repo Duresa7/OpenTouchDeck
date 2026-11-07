@@ -140,8 +140,10 @@ void td_wifi_on_dhcp_timeout(void);
 
 /* ---- Messages ---- */
 
-/* The `wifi.*` link messages, for td_link_wifi_register. */
-void td_wifi_link_message(const char *message, const cJSON *request, cJSON *reply);
+/* The `wifi.*` link messages and their `caps.wifi`, for td_link_extend, which hands over only USB requests. The reply
+ * already holds `m` and `ok:true`; a refusal sets `ok:false`, `reason` and `error`. */
+void td_wifi_link_message(const cJSON *request, cJSON *reply);
+void td_wifi_link_caps(cJSON *caps);
 /* Adds the state fields of the link replies: configured, ssid, state, reason, ip and rssi. Never the password. */
 void td_wifi_state_fields(cJSON *reply, const td_wifi_state_t *state);
 /* The `wifi` console command: state, set <ssid> <password>, forget. */

@@ -105,6 +105,12 @@ bool ui_link_online(void);
  * starts the timer that raises it, takes it down and keeps it on top. */
 void ui_idle_start(void);
 
+/* The Bluetooth pairing passkey (radio build): show true puts the six-digit code on the top layer, over the Page and
+ * the idle face, and false takes it down. Any task, without a lock, and it never blocks; a timer that ui_build starts
+ * draws it within 100 ms. The normal build draws nothing. */
+void ui_passkey_set(bool show, uint32_t passkey);
+void ui_passkey_start(void);
+
 typedef enum {
     UI_PICTURE_SHOWN,
     UI_PICTURE_FORMAT, /* not a baseline colour JPEG */
@@ -135,6 +141,12 @@ const char *ui_dashboard_update(const char *page, const ui_dash_row_t *rows, siz
 /* The ui console commands, for td_console_register(). Before the display has started, a well-formed command
  * answers "display not ready". */
 const esp_console_cmd_t *ui_console_commands(size_t *count);
+
+/* Radio build only: the net-v2 pairing screen, full screen over everything with a Cancel button that calls on_cancel
+ * on the LVGL task. With code NULL the window waits for an app; with a code it shows the six digits and the app's
+ * name. Call it again to update the time left; ui_pairing_hide takes it down. Any task but the LVGL task. */
+void ui_pairing_show(const char *code, const char *name, uint32_t left_s, void (*on_cancel)(void));
+void ui_pairing_hide(void);
 
 #ifdef __cplusplus
 }

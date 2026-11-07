@@ -13,7 +13,6 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "td_console.h"
-#include "td_link_wifi.h"
 #include "td_rx_sync.h"
 
 /* ---- Checks ---- */
@@ -238,31 +237,7 @@ static const td_wifi_driver_t g_driver = {
     .rssi = drv_rssi,
 };
 
-/* ---- The link's and the console's side, as td_link_msgs.c and td_console.c do it ---- */
-
-void td_link_wifi_fail(cJSON *reply, const char *reason, const char *error)
-{
-    cJSON_ReplaceItemInObjectCaseSensitive(reply, "ok", cJSON_CreateBool(false));
-    cJSON_DeleteItemFromObjectCaseSensitive(reply, "error");
-    cJSON_AddStringToObject(reply, "error", error);
-    cJSON_AddStringToObject(reply, "reason", reason);
-}
-
-bool td_link_wifi_fields(const cJSON *request, const char *const *allowed, size_t count)
-{
-    const cJSON *a;
-    cJSON_ArrayForEach(a, request) {
-        bool known = !strcmp(a->string, "m");
-        for (size_t i = 0; i < count && !known; i++) {
-            known = !strcmp(a->string, allowed[i]);
-        }
-        if (!known) return false;
-        for (const cJSON *b = a->next; b; b = b->next) {
-            if (!strcmp(a->string, b->string)) return false;
-        }
-    }
-    return true;
-}
+/* ---- The console's side, as td_console.c does it ---- */
 
 static char g_console[4096];
 static size_t g_console_len;
@@ -330,7 +305,7 @@ static cJSON *message(const char *json)
     cJSON *reply = cJSON_CreateObject();
     cJSON_AddStringToObject(reply, "m", name);
     cJSON_AddBoolToObject(reply, "ok", true);
-    td_wifi_link_message(name, request, reply);
+    td_wifi_link_message(request, reply);
     /* The handler wipes the password the request carried before the link frees it. */
     const cJSON *password = cJSON_GetObjectItemCaseSensitive(request, "password");
     if (cJSON_IsString(password)) {
@@ -697,6 +672,12 @@ static void test_link_messages(void)
     CHECK(reply_ok(reply) && !strcmp(reply_str(reply, "state"), "off"));
     cJSON_Delete(reply);
     CHECK(!g_nvs.has);
+
+    /* The caps the link adds to a v2 hello. */
+    cJSON *caps = cJSON_CreateObject();
+    td_wifi_link_caps(caps);
+    CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(caps, "wifi")) && cJSON_GetArraySize(caps) == 1);
+    cJSON_Delete(caps);
 }
 
 static void test_link_refusals(void)

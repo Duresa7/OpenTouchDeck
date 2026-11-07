@@ -11,5 +11,5 @@ endif()
 # Only the radio build (-DTD_RADIO_BUILD=1) has td_radio, whose Kconfig sets CONFIG_TD_RADIO_BUILD. A requirement
 # cannot depend on Kconfig, so main links it here.
 if(CONFIG_TD_RADIO_BUILD)
-    target_link_libraries(${COMPONENT_LIB} PRIVATE idf::td_radio)
+    target_link_libraries(${COMPONENT_LIB} PRIVATE idf::td_radio idf::td_netlink)
 endif()
