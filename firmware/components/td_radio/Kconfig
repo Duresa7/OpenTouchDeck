@@ -18,6 +18,18 @@ menu "TouchDeck radio build"
             reports floor_ok false. It also reports floor_ok false while the station is not started. The radio
             guard fails a build that sets it below 24576.
 
+    config TD_RADIO_BOOT_FLOOR
+        int "Internal RAM the radio build keeps free through boot, in bytes"
+        range 16384 131072
+        default 16384
+        help
+            The lowest free internal RAM since startup, ESP-IDF's minimum free size, which `heap` reports as
+            min_free_internal. Boot is when it dips: the Wi-Fi station's start takes about 19 KB at once. With the
+            station started, the steady-state report logs an error when the minimum is below this, and `radio state`
+            reports boot_floor_ok false. ESP-IDF counts the 32 KB internal pool it reserves after startup
+            (CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL) with a minimum of 0, so the figure leaves that pool out and real
+            headroom is larger. The radio guard fails a build that sets it below 16384.
+
     config TD_QEMU_TEST
         bool "QEMU test image: Ethernet in place of Wi-Fi, and a pairing window opened at boot"
         default n

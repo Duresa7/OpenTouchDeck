@@ -109,6 +109,9 @@ RADIO_BUILD_OPTIONS = {
     "BT_NIMBLE_SVC_GAP_PPCP_SUPERVISION_TMO": 400,
     # The Wi-Fi driver keeps nothing in NVS, so no network it saw can come back on its own.
     "ESP_WIFI_NVS_ENABLED": False,
+    # LVGL's memory goes to PSRAM first (display_lv_mem.c), so the Wi-Fi station's start at boot finds the internal
+    # RAM it needs (#313).
+    "LV_USE_CUSTOM_MALLOC": True,
 }
 RADIO_BUILD_COMPONENTS = ("td_radio", "td_ble", "td_netlink", "td_netlink_core", "esp_wifi", "esp_netif", "lwip", "bt")
 # The QEMU test image's options: it opens a pairing window at boot, logs the code, and talks over QEMU's emulated
@@ -118,6 +121,9 @@ TEST_ONLY_OPTIONS = ("TD_QEMU_TEST", "ETH_USE_OPENETH")
 TEST_ONLY_SYMBOLS = ("td_radio_qemu_eth_start", "esp_eth_mac_new_openeth")
 # The steady-state internal RAM the radio build must keep free with the station up, in bytes.
 INTERNAL_FLOOR = 24576
+# The lowest free internal RAM since startup the radio build must keep, in bytes. The Wi-Fi station's start sets it
+# at boot (#313).
+BOOT_FLOOR = 16384
 # The radio build's static internal RAM (DIRAM in `idf.py size`), in bytes. The board measured 28815 bytes free in
 # steady state at 151083 bytes static, and every static byte comes out of that margin. Raise this only with a new
 # board measurement of the floor. With the Bluetooth keyboard (#276) linked and .bss moved to PSRAM the build uses
@@ -249,6 +255,9 @@ def check_radio(build, symbols=None):
     floor = settings.get("TD_RADIO_INTERNAL_FLOOR")
     if not isinstance(floor, int) or floor < INTERNAL_FLOOR:
         raise GuardError(f"Radio build needs TD_RADIO_INTERNAL_FLOOR >= {INTERNAL_FLOOR}, not {floor!r}")
+    boot_floor = settings.get("TD_RADIO_BOOT_FLOOR")
+    if not isinstance(boot_floor, int) or boot_floor < BOOT_FLOOR:
+        raise GuardError(f"Radio build needs TD_RADIO_BOOT_FLOOR >= {BOOT_FLOOR}, not {boot_floor!r}")
     components = _components(build)
     missing = [name for name in RADIO_BUILD_COMPONENTS if name not in components]
     if missing:

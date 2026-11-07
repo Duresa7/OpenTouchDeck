@@ -539,6 +539,13 @@ What the radio build does:
   in PSRAM first, not 16 KB and up. The heartbeat runs on an `esp_timer`, so
   `app_main` returns its stack. The lwIP, event, `esp_timer` and FreeRTOS timer
   task stacks are sized from the board's high-water marks.
+- LVGL's objects, styles and strings go to PSRAM first
+  (`CONFIG_LV_USE_CUSTOM_MALLOC` with `display_lv_mem.c`), and so do the link's
+  8 KB frame stream and the console's 2 KB receive queue. Under the 256-byte
+  rule nearly every LVGL object stayed internal. The normal build keeps all
+  three where they were. Without them the Wi-Fi station's start, which takes
+  about 19 KB of internal RAM at once, left the main internal heap all but
+  empty at boot (#313).
 - After the display and touch start, the Wi-Fi station starts. It joins no
   network and doesn't scan: no network is set, and nothing calls
   `esp_wifi_connect` or `esp_wifi_scan_start`.
@@ -573,14 +580,21 @@ What the radio build does:
   `radio: steady free_internal=N largest_internal=N floor=24576`. Below the
   floor, it logs that line as an error with `below floor`. When the station
   did not start, the floor is not measured: the line is an error, and
-  `floor_ok` stays false.
+  `floor_ok` stays false. The next line reports the lowest free internal heap
+  since startup, which the station's start sets at boot, against the 16 KB
+  boot floor (`CONFIG_TD_RADIO_BOOT_FLOOR`):
+  `radio: boot min_free_internal=N floor=16384`, an error with `below floor`
+  under it. The figure is ESP-IDF's minimum free size, the same as `heap`'s
+  `min_free_internal`. ESP-IDF gives the 32 KB internal pool it reserves after
+  startup (`CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL`) a minimum of 0, so the
+  figure leaves that pool out, and the real headroom is that much larger.
 - The console gets two more commands, after `update`: `ble` (see
   [Bluetooth keyboard](#bluetooth-keyboard-radio-build)) and `radio state`,
   which replies with
   `build`, `wifi` (`started`, `failed` with `wifi_error`, or `off`), `joined`,
   `ble` (`off`, `starting`, `on` or `failed`), `free_internal`,
-  `largest_internal`, `floor`, `floor_ok`,
-  `steady`, and, after the steady-state report, `steady_free_internal` and
+  `largest_internal`, `floor`, `floor_ok`, `min_free_internal`, `boot_floor`,
+  `boot_floor_ok` (false while the station is not started), `steady`, and, after the steady-state report, `steady_free_internal` and
   `steady_largest_internal`. `heap` and, in a perf build, `perf mem` work as in
   the normal build.
 - `net state` replies with net-v2's `net.state` fields: `listening`, `port`,
@@ -608,7 +622,8 @@ python firmware/tools/radio_guard.py radio <build dir>
   and any netlink or mDNS component. The release recipe's audit runs the same
   check.
 - `radio` requires the radio options and components, and fails when one of
-  those options is missing or the floor is set below 24576. The options include
+  those options is missing, the floor is set below 24576 or the boot floor below
+  16384. The options include LVGL's PSRAM-first allocator and
   the Bluetooth keyboard's: LE Secure Connections only, privacy (the resolving
   list), bonds in NVS, one connection, four bonds, no extended advertising, and the Peripheral Preferred
   Connection Parameters. With
@@ -657,7 +672,28 @@ session, sends `hello`, `link.state` and `net.state` in records, checks that
 USB-only messages are refused, and checks that a second connection gets `busy`.
 It needs `qemu-system-xtensa` (`idf_tools.py install qemu-xtensa`) and Node 22
 or later. The image is never flashed or packed: `radio_guard.py radio` fails any
-build with `TD_QEMU_TEST`, `ETH_USE_OPENETH` or their code.
+build with `TD_QEMU_TEST`, `ETH_USE_OPENETH` or their code. It can't check the
+internal RAM floors: it has no PSRAM, no panel and no Wi-Fi station, so its
+figures say nothing about the board's.
+
+### Radio build board check
+
+A change that can move internal RAM in the radio build (Wi-Fi, lwIP, NimBLE,
+LVGL, task stacks, the link or the console) gets a board run with BLE off and
+no network set. Flash the radio build, reset the board with the serial monitor
+open, and wait at least 35 seconds. The log must show both floors as info
+lines, not as errors with `below floor`:
+
+```
+I (...) radio: steady free_internal=N largest_internal=N floor=24576
+I (...) radio: boot min_free_internal=N floor=16384
+```
+
+Then `radio state` must reply with `floor_ok` and `boot_floor_ok` true. On 2026-11-07
+the board read a steady `free_internal` of 71,003 and a boot
+`min_free_internal` of 31,976 (#313). Before #313 it read 45,835 and 7,812: the
+station's start emptied the main internal heap, and only RTC memory's 7.8 KB
+and ESP-IDF's reserved pool were left.
 
 ## Bluetooth keyboard (radio build)
 

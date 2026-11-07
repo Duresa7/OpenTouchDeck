@@ -31,7 +31,8 @@ package = load("package_windows", ROOT / "app/scripts/package_windows.py")
 
 NORMAL_SETTINGS = {"IDF_TARGET": "esp32s3", "ESP_CONSOLE_USB_SERIAL_JTAG": True}
 NORMAL_COMPONENTS = ["main", "td_link", "td_console", "esp_system", "nvs_flash", "mbedtls", "esp_psram"]
-RADIO_SETTINGS = {**NORMAL_SETTINGS, **guard.RADIO_BUILD_OPTIONS, "TD_RADIO_INTERNAL_FLOOR": 24576}
+RADIO_SETTINGS = {**NORMAL_SETTINGS, **guard.RADIO_BUILD_OPTIONS, "TD_RADIO_INTERNAL_FLOOR": 24576,
+                  "TD_RADIO_BOOT_FLOOR": 16384}
 RADIO_COMPONENTS = NORMAL_COMPONENTS + ["td_radio", "td_ble", "td_netlink", "td_netlink_core", "esp_wifi",
                                         "esp_netif", "lwip", "bt", "esp_phy", "esp_coex", "wpa_supplicant"]
 RADIO_SYMBOLS = {"app_main", "td_radio_start", "esp_wifi_init", "esp_wifi_start", "td_ble_boot", "td_netlink_start",
@@ -182,7 +183,7 @@ class RadioBuildTests(unittest.TestCase):
                 guard.check_radio(build, symbols=RADIO_SYMBOLS)
 
     def test_missing_option_fails(self):
-        for key in list(guard.RADIO_BUILD_OPTIONS) + ["TD_RADIO_INTERNAL_FLOOR"]:
+        for key in list(guard.RADIO_BUILD_OPTIONS) + ["TD_RADIO_INTERNAL_FLOOR", "TD_RADIO_BOOT_FLOOR"]:
             settings = {name: value for name, value in RADIO_SETTINGS.items() if name != key}
             build = self.dirs.make(settings, RADIO_COMPONENTS)
             with self.subTest(option=key), self.assertRaisesRegex(ValueError, f"needs {key}"):
@@ -191,6 +192,11 @@ class RadioBuildTests(unittest.TestCase):
     def test_floor_below_24_kb_fails(self):
         build = self.dirs.make({**RADIO_SETTINGS, "TD_RADIO_INTERNAL_FLOOR": 16384}, RADIO_COMPONENTS)
         with self.assertRaisesRegex(ValueError, "TD_RADIO_INTERNAL_FLOOR >= 24576"):
+            guard.check_radio(build, symbols=RADIO_SYMBOLS)
+
+    def test_boot_floor_below_16_kb_fails(self):
+        build = self.dirs.make({**RADIO_SETTINGS, "TD_RADIO_BOOT_FLOOR": 8192}, RADIO_COMPONENTS)
+        with self.assertRaisesRegex(ValueError, "TD_RADIO_BOOT_FLOOR >= 16384"):
             guard.check_radio(build, symbols=RADIO_SYMBOLS)
 
     def test_missing_radio_component_fails(self):

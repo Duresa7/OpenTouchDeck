@@ -34,17 +34,28 @@ static void steady_report(void *arg)
     (void)arg;
     s_steady_free = heap_caps_get_free_size(INTERNAL);
     s_steady_largest = heap_caps_get_largest_free_block(INTERNAL);
+    /* The lowest point since startup, which the Wi-Fi station's start sets at boot. */
+    const size_t boot_min = heap_caps_get_minimum_free_size(INTERNAL);
     s_steady = true;
-    /* The floor is measured with the station up. Without it the figure proves nothing, so it never passes. */
+    /* The floors are measured with the station up. Without it the figures prove nothing, so they never pass. */
     if (s_station != STATION_STARTED) {
         ESP_LOGE(TAG, "steady free_internal=%u largest_internal=%u, wifi station not started, floor not measured",
                  (unsigned)s_steady_free, (unsigned)s_steady_largest);
-    } else if (s_steady_free >= CONFIG_TD_RADIO_INTERNAL_FLOOR) {
+        ESP_LOGE(TAG, "boot min_free_internal=%u, wifi station not started, floor not measured", (unsigned)boot_min);
+        return;
+    }
+    if (s_steady_free >= CONFIG_TD_RADIO_INTERNAL_FLOOR) {
         ESP_LOGI(TAG, "steady free_internal=%u largest_internal=%u floor=%u", (unsigned)s_steady_free,
                  (unsigned)s_steady_largest, (unsigned)CONFIG_TD_RADIO_INTERNAL_FLOOR);
     } else {
         ESP_LOGE(TAG, "steady free_internal=%u largest_internal=%u below floor=%u", (unsigned)s_steady_free,
                  (unsigned)s_steady_largest, (unsigned)CONFIG_TD_RADIO_INTERNAL_FLOOR);
+    }
+    if (boot_min >= CONFIG_TD_RADIO_BOOT_FLOOR) {
+        ESP_LOGI(TAG, "boot min_free_internal=%u floor=%u", (unsigned)boot_min, (unsigned)CONFIG_TD_RADIO_BOOT_FLOOR);
+    } else {
+        ESP_LOGE(TAG, "boot min_free_internal=%u below floor=%u", (unsigned)boot_min,
+                 (unsigned)CONFIG_TD_RADIO_BOOT_FLOOR);
     }
 }
 
@@ -186,6 +197,11 @@ static int cmd_radio(int argc, char **argv)
     td_reply_int(&r, "largest_internal", (long long)heap_caps_get_largest_free_block(INTERNAL));
     td_reply_int(&r, "floor", CONFIG_TD_RADIO_INTERNAL_FLOOR);
     td_reply_bool(&r, "floor_ok", s_station == STATION_STARTED && free_internal >= CONFIG_TD_RADIO_INTERNAL_FLOOR);
+    const size_t min_free_internal = heap_caps_get_minimum_free_size(INTERNAL);
+    td_reply_int(&r, "min_free_internal", (long long)min_free_internal);
+    td_reply_int(&r, "boot_floor", CONFIG_TD_RADIO_BOOT_FLOOR);
+    td_reply_bool(&r, "boot_floor_ok",
+                  s_station == STATION_STARTED && min_free_internal >= CONFIG_TD_RADIO_BOOT_FLOOR);
     td_reply_bool(&r, "steady", s_steady);
     if (s_steady) {
         td_reply_int(&r, "steady_free_internal", (long long)s_steady_free);

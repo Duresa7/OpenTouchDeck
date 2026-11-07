@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
@@ -26,6 +27,14 @@
 #define TD_RX_TASK_PRIORITY 10
 #define TD_RX_CHUNK 64
 #define TD_RX_QUEUE_BYTES 2048
+/* The radio build keeps the receive queue in PSRAM, for the internal RAM the Wi-Fi station needs at boot (#313). Only
+ * the receive and console tasks touch it, and no task runs while flash is written. The normal build keeps it
+ * internal. */
+#if CONFIG_TD_RADIO_BUILD && CONFIG_SPIRAM
+#define TD_RX_QUEUE_CREATE() xStreamBufferCreateWithCaps(TD_RX_QUEUE_BYTES, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+#else
+#define TD_RX_QUEUE_CREATE() xStreamBufferCreate(TD_RX_QUEUE_BYTES, 1)
+#endif
 #define TD_RX_IDLE_MS 100
 #define TD_TX_DRAIN_MS 250
 
@@ -389,7 +398,7 @@ esp_err_t td_console_start(void)
         ESP_RETURN_ON_ERROR(esp_console_cmd_register(&s_table.cmds[i]), TAG, "register %s", s_table.cmds[i].command);
     }
 
-    s_rx_queue = xStreamBufferCreate(TD_RX_QUEUE_BYTES, 1);
+    s_rx_queue = TD_RX_QUEUE_CREATE();
     ESP_RETURN_ON_FALSE(s_rx_queue, ESP_ERR_NO_MEM, TAG, "rx queue");
     ESP_RETURN_ON_FALSE(xTaskCreate(rx_task, "td_rx", TD_RX_TASK_STACK, NULL, TD_RX_TASK_PRIORITY, NULL) == pdPASS,
                         ESP_FAIL, TAG, "rx task");

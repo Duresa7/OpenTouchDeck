@@ -11,8 +11,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
@@ -24,6 +26,17 @@
 #define TD_LINK_PRESS_QUEUE 16
 #define TD_LINK_EVENTS_PER_TURN 16
 #define TD_LINK_PACKET_HEADER 7
+/* The radio build keeps the 8 KB frame stream in PSRAM, so the Wi-Fi station's start at boot finds that much more
+ * internal RAM (#313). Only the console's receive task and the link task touch it, and no task runs while flash is
+ * written. The normal build keeps it internal. */
+#if CONFIG_TD_RADIO_BUILD && CONFIG_SPIRAM
+#define TD_LINK_STREAM_CREATE() \
+    xStreamBufferCreateWithCaps(TD_LINK_STREAM_BYTES, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+#define TD_LINK_STREAM_DELETE(s) vStreamBufferDeleteWithCaps(s)
+#else
+#define TD_LINK_STREAM_CREATE() xStreamBufferCreate(TD_LINK_STREAM_BYTES, 1)
+#define TD_LINK_STREAM_DELETE(s) vStreamBufferDelete(s)
+#endif
 
 _Static_assert(TD_RX_FRAME_MAX >= TD_FRAME_BODY_MAX, "receive buffer must hold a decoded maximum frame");
 
@@ -627,7 +640,7 @@ esp_err_t td_link_start(void)
     if (s_frames) {
         return ESP_ERR_INVALID_STATE;
     }
-    s_frames = xStreamBufferCreate(TD_LINK_STREAM_BYTES, 1);
+    s_frames = TD_LINK_STREAM_CREATE();
     s_presses = xQueueCreate(TD_LINK_PRESS_QUEUE, sizeof(press_t));
     s_rx_mutex = xSemaphoreCreateMutex();
     if (s_frames && s_presses && s_rx_mutex && add_carrier(&s_usb) == ESP_OK
@@ -639,7 +652,7 @@ esp_err_t td_link_start(void)
     s_carrier_count = 0;
     portEXIT_CRITICAL(&s_lock);
     if (s_frames) {
-        vStreamBufferDelete(s_frames);
+        TD_LINK_STREAM_DELETE(s_frames);
         s_frames = NULL;
     }
     if (s_presses) {
