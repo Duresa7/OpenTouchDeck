@@ -30,9 +30,9 @@ beforeEach(() => {
     devices: [desk, shelf],
     wifi: {
       discovered: [
-        { device: 'mock0001', name: 'Desk', address: '192.0.2.21', paired: 0 },
-        { device: 'mock0002', name: 'Shelf', address: '192.0.2.22:47820', paired: 0 },
-        { device: 'mock0009', name: 'Other', address: '192.0.2.29', paired: 0 },
+        { device: 'mock0001', name: 'Desk', address: '192.0.2.21', paired: 0, pairing: true },
+        { device: 'mock0002', name: 'Shelf', address: '192.0.2.22:47820', paired: 0, pairing: true },
+        { device: 'mock0009', name: 'Other', address: '192.0.2.29', paired: 0, pairing: true },
       ],
     },
   });
@@ -181,7 +181,7 @@ describe('a Device with four Pairings', () => {
   test('shows the advice up front and treats full the same way', async () => {
     fake = createFakeCompanion({
       devices: [desk, shelf],
-      wifi: { discovered: [{ device: 'mock0002', name: 'Shelf', address: '192.0.2.22:47820', paired: 4 }] },
+      wifi: { discovered: [{ device: 'mock0002', name: 'Shelf', address: '192.0.2.22:47820', paired: 4, pairing: true }] },
     });
     vi.stubGlobal('fetch', fake.fetch);
     companion = createClient(BASE, windowSession(fake.bridge));

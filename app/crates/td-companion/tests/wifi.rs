@@ -86,12 +86,24 @@ fn on_wifi(td: &TestCompanion, id: &td_companion::devices::DeviceId) -> bool {
 async fn discovery_finds_the_device_and_a_typed_address_pairs_it() {
     let td = TestCompanion::start().await;
     let fake = td.wifi_device(SERIAL, true);
+    // Outside pairing mode an unpaired Device's record names nothing this Companion knows.
+    assert!(
+        td.call::<Discover>((), NoQuery, ())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    fake.open_window().unwrap();
     let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].device, SERIAL);
     assert_eq!(found[0].address, fake.addr().to_string());
+    assert!(found[0].pairing);
     assert!(!found[0].paired_here);
-    assert_eq!(td.wifi_network().browses(), 1);
+    assert_eq!(found[0].paired, Some(0));
+    assert_eq!(found[0].name, "Mock Device 020000000001");
+    assert_eq!(td.wifi_network().browses(), 2);
+    fake.cancel_window();
 
     // Multicast blocked: discovery finds nothing, and the typed address still works.
     td.wifi_network().withdraw(&fake.device_id());
@@ -127,14 +139,45 @@ async fn discovery_finds_the_device_and_a_typed_address_pairs_it() {
     assert_eq!(fake.paired(), 1);
     assert!(fake.paired_names()[0].starts_with("Open TouchDeck on "));
 
-    td.wifi_network().announce(net::mdns::Discovered {
-        device_id: fake.device_id(),
-        name: "Desk".into(),
-        address: fake.addr().into(),
-        paired: Some(1),
-    });
+    // Paired, out of pairing mode: the record carries only hints, and this Companion
+    // recognises its own.
+    td.wifi_network().announce(&fake);
     let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].device, SERIAL);
     assert!(found[0].paired_here);
+    assert!(!found[0].pairing);
+    assert_eq!(found[0].paired, None);
+    assert_eq!(found[0].name, "Mock Device 020000000001");
+}
+
+#[tokio::test]
+async fn another_companions_device_stays_anonymous() {
+    let td = TestCompanion::start().await;
+    let fake = td.wifi_device(SERIAL, true);
+    // Paired with some other app only: its hint isn't ours, and it isn't pairing.
+    fake.open_window().unwrap();
+    let mut other = net::pair(
+        &net::Address::from(fake.addr()),
+        &[0x70; 16],
+        "Other app",
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    other
+        .submit(&fake.code().unwrap(), &mut |_| Ok(()))
+        .unwrap();
+    assert!(
+        td.call::<Discover>((), NoQuery, ())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // In pairing mode it names itself, and says how many apps it holds.
+    fake.open_window().unwrap();
+    let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    assert_eq!((found.len(), found[0].paired), (1, Some(1)));
+    assert!(found[0].pairing && !found[0].paired_here);
 }
 
 #[tokio::test]
@@ -566,15 +609,11 @@ async fn a_full_device_gets_advice_by_its_advertised_count() {
             .submit(&fake.code().unwrap(), &mut |_| Ok(()))
             .unwrap();
     }
-    td.wifi_network().announce(net::mdns::Discovered {
-        device_id: fake.device_id(),
-        name: "Desk".into(),
-        address: fake.addr().into(),
-        paired: Some(4),
-    });
+    // The fake opens a window even when full, so its record shows the count.
+    fake.open_window().unwrap();
+    td.wifi_network().announce(&fake);
     let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
     assert_eq!(found[0].paired, Some(4));
-    fake.open_window().unwrap();
     // The fourth pairing's connection can still hold the Device, which answers busy until it closes.
     let end = Instant::now() + Duration::from_secs(5);
     let (status, error) = loop {
@@ -612,14 +651,10 @@ async fn a_device_that_still_knows_this_companion_says_so() {
         .await
         .unwrap();
     td.until(|_| fake.session().is_none()).await;
-    td.wifi_network().announce(net::mdns::Discovered {
-        device_id: fake.device_id(),
-        name: "Desk".into(),
-        address: fake.addr().into(),
-        paired: Some(1),
-    });
-    td.call::<Discover>((), NoQuery, ()).await.unwrap();
     fake.open_window().unwrap();
+    td.wifi_network().announce(&fake);
+    let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    assert_eq!(found[0].paired, Some(1));
     let (status, error) = failure(td.request::<PairStartEndpoint>(
         (),
         NoQuery,
@@ -639,35 +674,50 @@ async fn discovery_refreshes_a_moved_devices_address() {
     let td = TestCompanion::start().await;
     let fake = td.wifi_device(SERIAL, false);
     let id = td.pair_wifi(&fake).await;
-    // The Device answers at a new address. A closed loopback port stands in for it.
-    let moved = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    td.wifi_network().announce(net::mdns::Discovered {
-        device_id: fake.device_id(),
-        name: "Desk".into(),
-        address: moved.into(),
-        paired: Some(1),
-    });
-    td.call::<Discover>((), NoQuery, ()).await.unwrap();
-    let pairings = td.call::<PairingsList>((), NoQuery, ()).await.unwrap();
-    assert_eq!(pairings[0].address, moved.to_string());
-
-    // Back at its own address, the next discovery finds it and Wi-Fi links there.
     td.call::<Disconnect>(DevicePath { device: id.clone() }, NoQuery, ())
         .await
         .unwrap();
-    td.wifi_network().announce(net::mdns::Discovered {
-        device_id: fake.device_id(),
-        name: "Desk".into(),
-        address: fake.addr().into(),
-        paired: Some(1),
-    });
-    td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    // DHCP moved the Device: the Companion still has an address where nothing answers. A
+    // closed loopback port stands in for it.
+    let old = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    td.wifi_move(&id, old);
+    // Discovery sees this Pairing's hint at the Device's real address...
+    td.wifi_network().announce(&fake);
+    let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    assert_eq!(found[0].address, fake.addr().to_string());
+    assert!(found[0].paired_here);
+    // ...which replaces the old one once a session there works.
     td.call::<Connect>(DevicePath { device: id.clone() }, NoQuery, ())
         .await
         .unwrap();
+    td.until(|td| on_wifi(td, &id)).await;
+    let pairings = td.call::<PairingsList>((), NoQuery, ()).await.unwrap();
+    assert_eq!(pairings[0].address, fake.addr().to_string());
+}
+
+#[tokio::test]
+async fn a_replayed_record_elsewhere_costs_one_failed_try() {
+    let td = TestCompanion::start().await;
+    let fake = td.wifi_device(SERIAL, false);
+    let id = td.pair_wifi(&fake).await;
+    td.call::<Disconnect>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    // Someone replays the Device's record from an address where it isn't.
+    let elsewhere = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    td.wifi_network().announce_at(&fake, elsewhere);
+    let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    assert_eq!(found[0].address, elsewhere.to_string());
+    td.call::<Connect>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    // The try there fails, and the Companion links at the address that last worked.
     td.until(|td| on_wifi(td, &id)).await;
     let pairings = td.call::<PairingsList>((), NoQuery, ()).await.unwrap();
     assert_eq!(pairings[0].address, fake.addr().to_string());

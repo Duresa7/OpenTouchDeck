@@ -1,8 +1,9 @@
 import type { DeviceSummary, PairingStarted, WifiDevice, WifiPairing } from '../api.ts';
 
 // The `wifi` routes of docs/companion-api.md: discovery, pairing with the code the Device
-// shows, and Pairings. Discovery answers `discovered`; a typed address must match one of
-// them, with or without the port. A right code links the Device over Wi-Fi when it isn't
+// shows, and Pairings. Discovery answers the `discovered` Devices this Companion would
+// recognise: those in pairing mode, and those it holds a Pairing with, whose hints it
+// matches. A typed address must match one of them, with or without the port. A right code links the Device over Wi-Fi when it isn't
 // connected, the way the Wi-Fi thread would.
 
 type Frame = Record<string, unknown> & { type: string };
@@ -113,7 +114,7 @@ export function createFakeWifi(options: FakeWifiOptions) {
       discoveries += 1;
       return json(
         200,
-        discovered.map((d) => ({ ...d, paired_here: pairings.has(d.device) })),
+        discovered.filter((d) => d.pairing || pairings.has(d.device)).map((d) => ({ ...d, paired_here: pairings.has(d.device) })),
       );
     }
     if (path === '/wifi/pairings') {

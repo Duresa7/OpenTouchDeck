@@ -586,9 +586,12 @@ What the radio build does:
   message. The Device then shows the six-digit code, the time left and Cancel.
   The Pairings (up to four), the failed-code count and the lockout live in the
   `td_netlink` NVS namespace. While USB is online, a network session can't
-  open, and an open one closes. mDNS discovery is not built yet.
+  open, and an open one closes. mDNS discovery is not built yet;
+  `td_netlink_core` already builds its private TXT record (nonce and hints,
+  plus the id, name and count only in pairing mode) and finds a session's
+  Pairing by its `open_tag`, as net-v2 says.
 - While the owner is unproven, up to three more connections wait for their
-  first item, since a `session.open` naming a stored app takes over. With every
+  first item, since a `session.open` carrying a stored app's tag takes over. With every
   slot taken, a new connection pushes out the oldest waiter that hasn't sent a
   byte, or else the oldest from a peer in backoff, so idle sockets can't keep a
   paired app out. A waiter that misses the 2-second first-item deadline or hangs
