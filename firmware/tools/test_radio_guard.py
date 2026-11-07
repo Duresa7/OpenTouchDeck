@@ -115,6 +115,39 @@ class NormalBuildTests(unittest.TestCase):
                 guard.check_normal(build)
 
 
+class IrreversibleOptionTests(unittest.TestCase):
+    """Both builds fail on an option that burns an eFuse or encrypts flash, until an ADR 0010 decision lifts it."""
+
+    # Spelled out here, not read from the guard, so dropping a name from the guard fails a test.
+    OPTIONS = ("NVS_ENCRYPTION", "SECURE_FLASH_ENC_ENABLED", "SECURE_BOOT", "SECURE_BOOT_V2_ENABLED",
+               "BOOTLOADER_APP_ANTI_ROLLBACK")
+
+    def setUp(self):
+        self.dirs = BuildDirs()
+        self.addCleanup(self.dirs.tmp.cleanup)
+
+    def test_every_option_fails_both_builds(self):
+        for key in self.OPTIONS:
+            normal = self.dirs.make({**NORMAL_SETTINGS, key: True}, NORMAL_COMPONENTS)
+            radio = self.dirs.make({**RADIO_SETTINGS, key: True}, RADIO_COMPONENTS)
+            with self.subTest(option=key, build="normal"), self.assertRaisesRegex(ValueError, key):
+                guard.check_normal(normal)
+            with self.subTest(option=key, build="radio"), self.assertRaisesRegex(ValueError, key):
+                guard.check_radio(radio, symbols=RADIO_SYMBOLS)
+
+    def test_options_left_off_pass(self):
+        settings = {**RADIO_SETTINGS, **{key: False for key in self.OPTIONS}}
+        build = self.dirs.make(settings, RADIO_COMPONENTS)
+        guard.check_radio(build, symbols=RADIO_SYMBOLS)
+
+    def test_firmware_defaults_leave_every_option_off(self):
+        for name in ("sdkconfig.defaults", "radio/radio.defaults"):
+            text = (ROOT / "firmware" / name).read_text(encoding="utf-8")
+            for key in self.OPTIONS:
+                with self.subTest(file=name, option=key):
+                    self.assertNotRegex(text, rf"(?m)^CONFIG_{key}=y")
+
+
 class RadioBuildTests(unittest.TestCase):
     def setUp(self):
         self.dirs = BuildDirs()

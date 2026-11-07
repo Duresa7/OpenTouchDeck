@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import {
   bytes, concat, minimum, identity, clientPublic, clientSecret, serverSecret, u16, u32, u64, frame,
-  seal, LIMIT,
+  seal,
 } from './protocol.mjs';
 import {
   gatt, handshake, errorItem, pairKeys, wrapKey, commitProof, storedProof,
   share, x25519, sessionKeys, recordParameters, RecordSender, fragment, creditValue,
-  MIN_INITIAL_CREDIT, FORMAT_RANGES, VERSION, MAX_HANDSHAKE_BODY, MAX_RECORD_BODY, MIN_RECORD_BODY,
+  MIN_INITIAL_CREDIT, FORMAT_RANGES, VERSION, RECORD_LIMIT, PairingStore, manage, onHandshakeError, MAX_HANDSHAKE_BODY, MAX_RECORD_BODY, MIN_RECORD_BODY,
 } from './net-v2.mjs';
 
 const ramp = (start, length) => Buffer.from(Array.from({ length }, (_, i) => (start + i) & 255));
@@ -168,12 +168,14 @@ export function negativeVectors(pair = pairing(), sess = session()) {
   const swappedKeys = sessionKeys({ ltk: inputs.ltk, deviceId: inputs.deviceId, companionId: inputs.companionId,
     clientShare: otherShare, deviceShare: sess.deviceShare, Z: swappedZ });
 
+  const v1Error = Buffer.from(errorItem(2));
+  v1Error[3] = 1;
   const highBit = Buffer.from(sess.deviceShare);
   highBit[31] |= 0x80;
 
   const ping = frame({ m: 'ping' });
   const maxBody = frame(Buffer.alloc(1024, 0x5a), { type: 2 });
-  const last = LIMIT - 1n;
+  const last = RECORD_LIMIT - 1n;
   const credit = MIN_INITIAL_CREDIT * 2;
 
   return {
@@ -197,9 +199,9 @@ export function negativeVectors(pair = pairing(), sess = session()) {
       expected: 'auth', error: hex(errorItem(5)) },
     unknown_companion_id: { receiver: 'device', open: hex(handshake(0x20, inputs.deviceId, negativeInputs.unknownCompanionId, sess.clientShare)),
       expected: 'auth', error: hex(errorItem(5)) },
-    counter_limit: { direction: 'c2d', plaintext: hex(ping),
+    counter_limit: { direction: 'c2d', plaintext: hex(ping), limit: Number(RECORD_LIMIT), at_limit: 'end the session',
       last_counter: Number(last), last: hex(sealAt(sess.keys.c2d, 0, last, ping)), last_expected: 'accept',
-      beyond_counter: Number(LIMIT), beyond: hex(sealAt(sess.keys.c2d, 0, LIMIT, ping)), beyond_expected: 'close' },
+      beyond_counter: Number(RECORD_LIMIT), beyond: hex(sealAt(sess.keys.c2d, 0, RECORD_LIMIT, ping)), beyond_expected: 'close' },
     max_record: { direction: 'c2d', counter: 0, plaintext: hex(maxBody),
       wire: hex(new RecordSender(sess.keys.c2d, 0).seal(maxBody)), expected: 'accept' },
     oversize_items: [
@@ -212,6 +214,10 @@ export function negativeVectors(pair = pairing(), sess = session()) {
     credit_overrun: { initial_credit: credit,
       events: [{ enable: 'tx' }, { enable: 'flow' }, { write: 20, repeat: credit / 20 }, { write: 1 }],
       accepted_bytes: credit, expected: 'close' },
+    version_error: { receiver: 'companion', error: hex(errorItem(2)), expected: 'stop',
+      note: 'An unauthenticated hint. The Companion sends no net-v1 item, no plaintext link and no retry of its own.',
+      outcome: onHandshakeError(2),
+      v1_item: { note: 'the same error item with item version 1', wire: hex(v1Error), expected: 'close' } },
     x25519: {
       rule: 'A share with bit 255 set or u >= p closes before X25519. Otherwise a share the X25519 library refuses, or an all-zero Z, closes.',
       secret: hex(inputs.clientEphemeral),
@@ -219,6 +225,33 @@ export function negativeVectors(pair = pairing(), sess = session()) {
       bit_255_set: { note: 'session.device_share with bit 255 set; masking alone would give session.Z',
         share: hex(highBit), expected: 'close' },
     },
+  };
+}
+
+// Four synthetic apps fill the store, then each request runs in order.
+export function managementVectors() {
+  const apps = [0x10, 0x20, 0x30, 0x40].map((start, i) => ({ companionId: ramp(start, 16),
+    name: `Vector app ${i + 1}`, ltk: ramp(0xe0 + i, 32) }));
+  const store = new PairingStore();
+  apps.forEach((app) => store.add(app));
+  const base = { listening: true, port: 47820, ble: false, session: null, pairing: false, pair_failures: 1, locked_ms: 0 };
+  const second = apps[1].companionId.toString('hex');
+  const steps = [
+    ['net.list over USB shows four Pairings', { m: 'net.list' }, 'usb'],
+    ['net.pair over USB with four Pairings is full', { m: 'net.pair' }, 'usb'],
+    ['net.forget with an app_id removes one Pairing', { m: 'net.forget', app_id: second }, 'usb'],
+    ['the same request again removes none and still succeeds', { m: 'net.forget', app_id: second }, 'usb'],
+    ['net.pair over USB opens a window now that a slot is free', { m: 'net.pair' }, 'usb'],
+    ['net.forget over Wi-Fi is USB-only', { m: 'net.forget', app_id: apps[0].companionId.toString('hex') }, 'wifi'],
+    ['net.list over BLE is USB-only', { m: 'net.list' }, 'ble'],
+    ['net.forget with no app_id and no all is refused', { m: 'net.forget' }, 'usb'],
+    ['net.forget with an app_id that is not 32 lowercase hex is refused', { m: 'net.forget', app_id: second.toUpperCase() }, 'usb'],
+    ['net.forget with all:true wipes the rest and clears the lockout', { m: 'net.forget', all: true }, 'usb'],
+  ];
+  return {
+    apps: apps.map((app) => ({ app_id: hex(app.companionId), app_name: app.name })),
+    base,
+    steps: steps.map(([note, request, carrier]) => ({ note, carrier, request, response: manage(store, request, carrier, base) })),
   };
 }
 
@@ -261,7 +294,8 @@ export function buildVectors() {
     non_contributory_share: { device_share: hex(Buffer.alloc(32)), expected: 'close' },
     companion_names: companionNames(),
     negative: negativeVectors(pair, sess),
-    errors: { busy: hex(errorItem(1)), closed: hex(errorItem(9)) },
+    errors: { busy: hex(errorItem(1)), version: hex(errorItem(2)), closed: hex(errorItem(9)) },
+    management: managementVectors(),
     ble: { ...gatt, initial_credit: MIN_INITIAL_CREDIT * 2, initial_credit_value: hex(creditValue(MIN_INITIAL_CREDIT * 2)) },
   };
 }
