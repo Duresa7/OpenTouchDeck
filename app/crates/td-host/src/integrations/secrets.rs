@@ -141,6 +141,31 @@ impl SecretStore for OsSecrets {
     }
 }
 
+/// Credentials that belong to the app, not to an Integration, such as the Brandfetch API key.
+/// Same vault and value shape as [`OsSecrets`], under `app:{owner}:{field}` entries.
+pub struct OsAppSecrets;
+fn app_entry(owner: &str, field: &str) -> Result<keyring::Entry, String> {
+    validate_id(owner)?;
+    validate_id(field)?;
+    keyring::Entry::new("touchdeck", &format!("app:{owner}:{field}"))
+        .map_err(|_| "Credential store unavailable".into())
+}
+impl SecretStore for OsAppSecrets {
+    fn get(&self, owner: &str, field: &str) -> Result<Option<Secret>, String> {
+        read(app_entry(owner, field)?)?
+            .map(|s| serde_json::from_str(&s).map_err(|_| "Invalid stored credential".into()))
+            .transpose()
+    }
+    fn put(&self, owner: &str, field: &str, s: Secret) -> Result<(), String> {
+        app_entry(owner, field)?
+            .set_password(&serde_json::to_string(&s).unwrap())
+            .map_err(|_| "Credential store unavailable".into())
+    }
+    fn delete(&self, owner: &str, field: &str) -> Result<(), String> {
+        delete(app_entry(owner, field)?)
+    }
+}
+
 /// Shared with the legacy Tauri adapter. Pollers ask for their immutable URL, so a
 /// reconfiguration cannot give an old poller a new origin's credential.
 pub struct BoundKeys {

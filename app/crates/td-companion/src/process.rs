@@ -166,6 +166,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let config = Config::mock(None);
             let (ports, _) = config.mock.clone().expect("mock config");
             ctx.devices.start(config);
+            // A mock-mode run may take Brandfetch keys from the environment, into memory.
+            ctx.brandfetch.prefill_from_env();
             for n in 1..=count {
                 ports.plug(&format!("mock{n:04}"), crate::devices::BoardKind::Device);
             }
@@ -183,6 +185,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    // Brandfetch logos: a refresh check at start and every hour after (terms section 5.1).
+    let brandfetch = tokio::spawn(crate::features::brandfetch::refresh_loop(
+        ctx.clone(),
+        crate::features::brandfetch::REFRESH_TICK,
+    ));
     let signal = ctx.shutdown.clone();
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
@@ -195,6 +202,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     crate::serve::serve(listener, crate::api::router(ctx), limits, stop).await;
     devices.stop();
     maintenance.abort();
+    brandfetch.abort();
     runtime.remove();
     Ok(())
 }

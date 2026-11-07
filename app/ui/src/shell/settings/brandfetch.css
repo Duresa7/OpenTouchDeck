@@ -1,0 +1,62 @@
+/* Settings, Brandfetch logos */
+
+.brandfetch-keys {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.brandfetch-problem,
+.brandfetch-notice {
+  margin: 0;
+}
+
+.brandfetch-problem p {
+  margin: 0;
+}
+
+/* The Companion's own words, under the sentence the copy guide gives. */
+.brandfetch-details {
+  margin-top: var(--space-1);
+  color: var(--ink-2);
+}
+
+.brandfetch-details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.brandfetch-details p {
+  margin-top: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.brandfetch-stored {
+  margin: 0 0 var(--space-3);
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-wrap: pretty;
+}
+
+.brandfetch-notes {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-wrap: pretty;
+}
+
+.brandfetch-notes li + li {
+  margin-top: var(--space-1);
+}
+
+.brandfetch-portal {
+  color: var(--ink);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+}

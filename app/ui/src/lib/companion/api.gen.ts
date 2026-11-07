@@ -6,6 +6,7 @@ export type AllowedAction = { hash: string, granted_ms: number, kind: string, pr
 export type AllowedPath = { hash: string, };
 export type AnimationCapabilities = { image: [number, number], min_delay_ms: number, page_tiles: number, page_pixels: number, };
 export type Answer = "once" | "always" | "deny" | "expired";
+export type ApiKeyBody = { value: string, };
 export type ApprovalPath = { id: string, };
 export type ApprovalRequest = { id: string, device: DeviceId, page: string, tile: string, hash: string, created_ms: number, kind: string, program: string, args: Array<string>, cwd: string, shell: boolean, };
 export type ApprovalResolved = { id: string, answer: Answer, };
@@ -16,7 +17,7 @@ export type AssetRef = { id: string,
  * The encoded format: `tdi1` or `gif`.
  */
 kind: string, width: number, height: number, bytes: number, };
-export type AssetSource = { "kind": "gif", upload: string, device: string, target: GifTarget, } | { "kind": "app", path: string, } | { "kind": "catalog", catalog: string, id: string, variant: CatalogVariant, padding: number, background: [number, number, number, number] | null, tint: [number, number, number] | null, } | { "kind": "upload", upload: string, };
+export type AssetSource = { "kind": "gif", upload: string, device: string, target: GifTarget, } | { "kind": "app", path: string, } | { "kind": "catalog", catalog: string, id: string, variant: CatalogVariant, padding: number, background: [number, number, number, number] | null, tint: [number, number, number] | null, } | { "kind": "upload", upload: string, } | { "kind": "brandfetch" } & BrandfetchLogo;
 export type AssetSync = { 
 /**
  * Assets the Layout uses that the Device lacked and the Companion sent.
@@ -28,6 +29,35 @@ sent: Array<string>,
 unavailable: Array<string>, };
 export type AttemptPath = { attempt: string, };
 export type AuthRevoked = Record<string, never>;
+export type BrandfetchLogo = { 
+/**
+ * A domain such as `example.com`, or a Brandfetch brand id.
+ */
+brand: string, logo_type: BrandfetchLogoType, theme: BrandfetchTheme, padding: number, background: [number, number, number, number] | null, tint: [number, number, number] | null, };
+export type BrandfetchLogoType = "icon" | "symbol" | "logo";
+export type BrandfetchStatus = { 
+/**
+ * The client ID the UI searches with; not a secret.
+ */
+client_id: string | null, key_set: boolean, 
+/**
+ * Brandfetch Assets this PC keeps provenance for.
+ */
+logos: number, 
+/**
+ * Of those, the ones at least 25 days old that the daily refresh hasn't renewed yet.
+ */
+need_refresh: number, 
+/**
+ * Assets whose cached original was deleted after 30 days without a successful refresh.
+ */
+expired: Array<string>, 
+/**
+ * Each Asset a refresh replaced with a changed logo, and the Asset that replaced it. The UI
+ * swaps them in its Layout drafts.
+ */
+replaced: { [key in string]?: string }, };
+export type BrandfetchTheme = "light" | "dark" | "auto";
 export type BrowserKind = "browser";
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
 export type BundleInfo = { id: string, version: string, build: string, bytes: number, };
@@ -46,6 +76,7 @@ export type CatalogHit = { source: string, name: string, id: string, aliases: Ar
 export type CatalogQuery = { q: string, catalog: string | null, };
 export type CatalogVariant = "base" | "light" | "dark";
 export type CliProxyDetail = { accounts: Array<AccountUsage>, polled_ms: number, };
+export type ClientIdBody = { client_id: string, };
 export type ClientInfo = { id: string, kind: SessionKind, };
 export type CompanionStopping = { reason: string, };
 export type ConfigField = { name: string, kind: string, secret: boolean, };
@@ -262,6 +293,7 @@ interval_s: number,
  */
 folder: string | null, };
 export type PickResult = { bundle: BundleInfo | null, };
+export type Platform = "windows" | "linux" | "other";
 export type PortProbe = { port: string, usb_serial: string | null, id: DeviceId, probed_ms: number | null, } & ({ "status": "pending" } | { "status": "device", protocol: number, version: string, } | { "status": "silent" } | { "status": "busy", detail: string, } | { "status": "other-firmware", product: string, detail: string, });
 export type PresetTile = { id: string, name: string, action: JsonValue, 
 /**
@@ -312,7 +344,7 @@ export type SetupState = "needs-setup" | "ready";
 export type StartupSetting = { at_sign_in: boolean, };
 export type StreamType = "number" | "series" | "text" | "image";
 export type SuggestRequest = { action: TileAction, };
-export type SystemInfo = { version: string, build: string, api: string, mock: boolean, data_dir_override: boolean, };
+export type SystemInfo = { version: string, build: string, api: string, mock: boolean, data_dir_override: boolean, platform: Platform, };
 export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, render?: TileRender | null, streams?: { [key in string]?: StreamType } | null, 
 /**
  * A `bar` Tile the finger can drag to set its `value` stream. Written only when true.
@@ -369,6 +401,12 @@ export const endpoints = {
   'auth.session_delete': { method: 'DELETE', path: '/auth/sessions/{id}', access: 'session' },
   'auth.sessions': { method: 'GET', path: '/auth/sessions', access: 'session' },
   'auth.sessions_delete': { method: 'DELETE', path: '/auth/sessions', access: 'session' },
+  'brandfetch.client_id_delete': { method: 'DELETE', path: '/brandfetch/client-id', access: 'session' },
+  'brandfetch.client_id_put': { method: 'PUT', path: '/brandfetch/client-id', access: 'session' },
+  'brandfetch.get': { method: 'GET', path: '/brandfetch', access: 'session' },
+  'brandfetch.key_delete': { method: 'DELETE', path: '/brandfetch/key', access: 'session' },
+  'brandfetch.key_put': { method: 'PUT', path: '/brandfetch/key', access: 'session' },
+  'brandfetch.key_test': { method: 'POST', path: '/brandfetch/key/test', access: 'session' },
   'console.send': { method: 'POST', path: '/devices/{device}/console', access: 'session' },
   'devices.connect': { method: 'POST', path: '/devices/{device}/connect', access: 'session' },
   'devices.disconnect': { method: 'POST', path: '/devices/{device}/disconnect', access: 'session' },
@@ -418,7 +456,7 @@ export const endpoints = {
   'wifi.pairings_forget': { method: 'DELETE', path: '/wifi/pairings/{device}', access: 'session' },
   'wifi.pairings_list': { method: 'GET', path: '/wifi/pairings', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.window_closed' | 'wifi.wrong_code';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'brandfetch.key_refused' | 'brandfetch.no_key' | 'brandfetch.no_keychain' | 'brandfetch.no_logo' | 'brandfetch.not_found' | 'brandfetch.quota' | 'brandfetch.store' | 'brandfetch.unavailable' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.window_closed' | 'wifi.wrong_code';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
@@ -513,6 +551,14 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>, 
       session_delete: (path: { id: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('auth.session_delete', path, query, body, bearer, headers, signal),
       sessions: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<SessionInfo>>('auth.sessions', path, query, body, bearer, headers, signal),
       sessions_delete: (path: Record<string, never> = {}, query: { kind: BrowserKind, }, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('auth.sessions_delete', path, query, body, bearer, headers, signal),
+    },
+    brandfetch: {
+      client_id_delete: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<BrandfetchStatus>('brandfetch.client_id_delete', path, query, body, bearer, headers, signal),
+      client_id_put: (path: Record<string, never> = {}, query: null = null, body: { client_id: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<BrandfetchStatus>('brandfetch.client_id_put', path, query, body, bearer, headers, signal),
+      get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<BrandfetchStatus>('brandfetch.get', path, query, body, bearer, headers, signal),
+      key_delete: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<BrandfetchStatus>('brandfetch.key_delete', path, query, body, bearer, headers, signal),
+      key_put: (path: Record<string, never> = {}, query: null = null, body: { value: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<BrandfetchStatus>('brandfetch.key_put', path, query, body, bearer, headers, signal),
+      key_test: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<BrandfetchStatus>('brandfetch.key_test', path, query, body, bearer, headers, signal),
     },
     console: {
       send: (path: { device: DeviceId, }, query: null = null, body: { line: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('console.send', path, query, body, bearer, headers, signal),
