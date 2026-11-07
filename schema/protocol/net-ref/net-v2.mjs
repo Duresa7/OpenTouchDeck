@@ -5,7 +5,7 @@
 import { createPrivateKey, createPublicKey, diffieHellman } from 'node:crypto';
 import {
   ascii, concat, equal, fixed, hash, mac, extract, requireThat, seal, open,
-  u16, u64, validateFrame, LIMIT,
+  u16, u64, validateFrame,
 } from './protocol.mjs';
 
 export const VERSION = 2;
@@ -18,6 +18,10 @@ export const MAX_ITEM = MAX_RECORD_BODY + 2;
 export const ATT_MTU_MIN = 23;
 export const ATT_MTU_MAX = 517;
 export const MIN_INITIAL_CREDIT = MAX_ITEM;
+
+// Records per direction per key. net-v1 allowed 2^32, about 2^38 AES blocks,
+// above TLS 1.3's guidance. net-v2 ends the session at 2^24 and never rekeys.
+export const RECORD_LIMIT = 1n << 24n;
 
 export const gatt = {
   service: '6198f058-afef-4469-b47f-07315672e2dd',
@@ -258,7 +262,7 @@ export class CompanionSession {
 
 export function recordParameters(direction, counter, length) {
   requireThat(direction === 0 || direction === 1, 'invalid direction');
-  requireThat(typeof counter === 'bigint' && counter >= 0n && counter < LIMIT, 'counter exhausted');
+  requireThat(typeof counter === 'bigint' && counter >= 0n && counter < RECORD_LIMIT, 'counter exhausted');
   requireThat(length >= MIN_RECORD_BODY && length <= MAX_RECORD_BODY, 'invalid record length');
   return {
     nonce: concat(Buffer.alloc(4), u64(counter)),
@@ -282,6 +286,11 @@ class Direction {
       this.close();
       throw error;
     }
+  }
+
+  // Records this direction may still carry. At zero the session must end.
+  get remaining() {
+    return RECORD_LIMIT - this.counter;
   }
 
   close() {
@@ -553,4 +562,98 @@ export class PairFailures {
     if (this.count < PAIR_LOCK.after) return 0;
     return Math.min(PAIR_LOCK.first * 2 ** Math.min(this.count - PAIR_LOCK.after, 16), PAIR_LOCK.cap);
   }
+}
+
+// The Companion's reaction to a handshake error. Errors are unauthenticated, so
+// nothing an error says can make the Companion accept less than a net-v2
+// session: it has no weaker version, no plaintext link and no net-v1 item to
+// fall back to. `version` and `closed` are never retried without the person.
+export const SESSION_VERSIONS = Object.freeze([VERSION]);
+
+export function onHandshakeError(reason) {
+  requireThat(Number.isInteger(reason) && reason >= 1 && reason <= 9, 'invalid error');
+  return {
+    reason,
+    fallback: null,
+    versions: SESSION_VERSIONS,
+    retry: reason === 2 || reason === 9 ? 'person' : 'rules',
+  };
+}
+
+// Pairing slots and the USB-only management messages. The store is the
+// Device's list; `manage` answers the link messages that read or change it.
+export const MAX_PAIRINGS = 4;
+export const APP_ID = /^[0-9a-f]{32}$/;
+export const FULL_ERROR = 'Four apps are paired. Forget one first.';
+export const USB_ONLY_ERROR = 'Only over USB';
+
+export class PairingStore {
+  #entries = new Map();
+
+  get count() {
+    return this.#entries.size;
+  }
+
+  get full() {
+    return this.#entries.size >= MAX_PAIRINGS;
+  }
+
+  // Never overwrites and never evicts. A full store or a known id is `full`.
+  add({ companionId, name, ltk }) {
+    const appId = fixed(companionId, 16, 'companion_id').toString('hex');
+    if (this.#entries.has(appId) || this.full) throw refuse('full');
+    this.#entries.set(appId, { app_id: appId, app_name: name, ltk: Buffer.from(fixed(ltk, 32, 'LTK')) });
+  }
+
+  ltk(companionId) {
+    return this.#entries.get(Buffer.from(companionId).toString('hex'))?.ltk;
+  }
+
+  list() {
+    return [...this.#entries.values()].map(({ app_id, app_name }) => ({ app_id, app_name }));
+  }
+
+  // Returns how many Pairings were removed, 0 when the id isn't stored.
+  forget(appId) {
+    const entry = this.#entries.get(appId);
+    if (!entry) return 0;
+    entry.ltk.fill(0);
+    this.#entries.delete(appId);
+    return 1;
+  }
+
+  forgetAll() {
+    const removed = this.#entries.size;
+    for (const appId of [...this.#entries.keys()]) this.forget(appId);
+    return removed;
+  }
+}
+
+const failure = (m, reason, error) => ({ m, ok: false, reason, error });
+
+// `carrier` is 'usb', 'wifi' or 'ble'. `base` holds the state fields that the
+// Device keeps outside the store, such as `listening` and `pair_failures`.
+export function manage(store, request, carrier, base = {}) {
+  const m = request.m;
+  requireThat(['net.pair', 'net.list', 'net.forget'].includes(m), 'not a management message');
+  if (carrier !== 'usb') return failure(m, 'usb-only', USB_ONLY_ERROR);
+  const state = () => ({ ...base, paired: store.count });
+  if (m === 'net.pair') {
+    if (store.full) return failure(m, 'full', FULL_ERROR);
+    return { m, ok: true, ...state(), pairing: true };
+  }
+  if (m === 'net.list') {
+    return { m, ok: true, ...state(), free: MAX_PAIRINGS - store.count, pairings: store.list() };
+  }
+  if (request.app_id !== undefined) {
+    if (typeof request.app_id !== 'string' || !APP_ID.test(request.app_id) || request.all !== undefined) {
+      return failure(m, 'args', 'Invalid app_id');
+    }
+    const removed = store.forget(request.app_id);
+    return { m, ok: true, ...state(), removed };
+  }
+  // Wiping every Pairing is explicit, so a request that lost its app_id can't do it.
+  if (request.all !== true) return failure(m, 'args', 'Name an app_id, or send all:true');
+  const removed = store.forgetAll();
+  return { m, ok: true, ...state(), pair_failures: 0, locked_ms: 0, pairing: false, removed };
 }
