@@ -1,4 +1,4 @@
-import type { AssetSource, ControlLayout, Delivery, DeviceSummary, ErrorBody, FirmwareChannel, Fit } from './api.ts';
+import type { AssetSource, ControlLayout, Delivery, DeviceSummary, ErrorBody, FirmwareChannel, Fit, WifiDevice, WifiPairing } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
 import type { FakeSearch } from './fake/fake-assets.ts';
@@ -20,6 +20,27 @@ const checks = {
 } satisfies Record<string, UpdateCheck>;
 
 const DEMO_FOLDER = 'D:\\Pictures\\Desk frame';
+
+// Documentation addresses (RFC 5737). The third demo Device is linked over Wi-Fi; the first
+// is on the network too, so its Device settings can pair.
+const WIFI_ADDRESSES = ['192.0.2.21:47820', null, '192.0.2.23:47820'] as const;
+
+function demoWifi(devices: DeviceSummary[]): { discovered: Omit<WifiDevice, 'paired_here'>[]; pairings: WifiPairing[] } {
+  const discovered: Omit<WifiDevice, 'paired_here'>[] = [];
+  const pairings: WifiPairing[] = [];
+  devices.slice(0, WIFI_ADDRESSES.length).forEach((device, i) => {
+    const address = WIFI_ADDRESSES[i];
+    if (!address) return;
+    discovered.push({ device: device.id, name: device.name ?? 'TouchDeck', address, paired: i === 2 ? 1 : 0 });
+    if (i !== 2) return;
+    pairings.push({ device: device.id, address, name: device.name, confirmed: true, paired_ms: Date.UTC(2026, 10, 2, 18, 12), problem: null });
+    if (device.link.state === 'connected') {
+      device.link = { ...device.link, port: address };
+      device.carrier = 'wifi';
+    }
+  });
+  return { discovered, pairings };
+}
 
 const isCheckName = (name: string | null): name is keyof typeof checks => name !== null && Object.hasOwn(checks, name);
 
@@ -56,6 +77,8 @@ declare global {
       /** The opt-in topics every open event socket subscribed to, as `topic/device`. */
       topics(): string[];
       setHub(up: boolean): void;
+      /** Whether pairing over Wi-Fi can store its key in the OS keychain. */
+      wifiKeychain(on: boolean): void;
       deliver(entry: Delivery): void;
       /** What the next Choose folder answers: a path, or null for a cancelled dialog. */
       pickFolder(next: string | null): void;
@@ -144,6 +167,7 @@ export function demoEnvironment(target: Window): Environment {
       ...(worst ? { accounts: worstAccounts, hubMessage: worstHubError, extra: { custom: worstCustom } } : {}),
     },
     assets: { ...(params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {}), ...renderMs(params.get('render-ms')) },
+    wifi: worst ? undefined : demoWifi(devices),
     // `?packs=logos,mdi` starts with those Icon packs installed.
     iconPacks: { installed: params.get('packs')?.split(',') ?? [] },
     // `?brandfetch=on` starts with fake keys set. Search still goes to Brandfetch, which e2e
@@ -181,6 +205,7 @@ export function demoEnvironment(target: Window): Environment {
     updates: { script: updates.script, finish: updates.finish, calls: updates.calls },
     topics: () => fake.topics.flat(),
     setHub: (up) => fake.integrations.setHub(up),
+    wifiKeychain: (on) => fake.wifi.setKeychain(on),
     deliver: (entry) => fake.integrations.deliver(entry),
     pickFolder: (next) => {
       picked = next;

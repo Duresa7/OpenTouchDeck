@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LinkCarrierTest(unittest.TestCase):
-    """The link's replies and events leave on the carrier they should: tools/host/link_carrier_test.c."""
+    """The link's replies and events leave on the carrier they should, and Device names follow the shared vectors:
+    tools/host/link_carrier_test.c."""
 
     def build_and_run(self, defines):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TD_TEST_OUT")) as tmp:
@@ -21,7 +22,8 @@ class LinkCarrierTest(unittest.TestCase):
             includes += [components / c / "include" for c in
                          ["td_link", "td_link_core", "td_console", "td_layout", "td_ui_core", "keys", "ui",
                           "td_store", "td_idle"]]
-            sources = [host / "link_carrier_test.c", components / "td_link/td_link_msgs.c", cjson / "cJSON.c"]
+            sources = [host / "link_carrier_test.c", components / "td_link/td_link_msgs.c", cjson / "cJSON.c",
+                       components / "td_store/td_device_name.c"]
             sources += [components / "td_link_core" / f for f in ["td_frame.c", "td_crc16.c", "td_v2_json.c", "td_input.c"]]
             exe = out / ("test.exe" if os.name == "nt" else "test")
             if os.name == "nt":
@@ -37,7 +39,8 @@ class LinkCarrierTest(unittest.TestCase):
                 command += ["-D" + define for define in defines]
                 command += ["-I" + str(p) for p in includes] + [str(p) for p in sources] + ["-lm", "-o", str(exe)]
             subprocess.run(command, cwd=out, check=True)
-            subprocess.run([str(exe)], cwd=out, check=True)
+            names = ROOT.parent / "schema/protocol/name-vectors-v2.json"
+            subprocess.run([str(exe), str(names)], cwd=out, check=True)
 
     def test_link_messages_through_carriers(self):
         self.build_and_run([])

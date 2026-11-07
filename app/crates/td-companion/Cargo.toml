@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-test-hooks = ["dep:reqwest", "dep:tokio-tungstenite", "dep:tempfile"]
+test-hooks = ["dep:reqwest", "dep:tokio-tungstenite", "dep:tempfile", "td-link/fake"]
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
@@ -20,6 +20,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 ts-rs = { version = "11", features = ["serde-json-impl"] }
 inventory = "0.3"
 getrandom = "0.3"
+keyring = "4"
+zeroize = "1"
 semver = "1"
 base64 = "0.22"
 hmac = "0.12"

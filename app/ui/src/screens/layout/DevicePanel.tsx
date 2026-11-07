@@ -17,6 +17,7 @@ import type { DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { button } from '../../shell/button.ts';
 import { useBundledBuild, useDeviceStores, useOfferedFirmware } from './device.ts';
 import { Select } from './fields.tsx';
+import { WifiField } from './WifiField.tsx';
 
 const ORIENTATIONS: { value: Orientation; label: string }[] = [
   { value: 'landscape', label: 'Landscape' },
@@ -278,6 +279,7 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
   const restart = useStore(settings, (s) => s.restart);
   const version = device.firmware?.version ?? null;
   const live = device.link.state === 'connected';
+  const wifi = live && device.carrier === 'wifi';
   const busy = inProgress(view);
   const updating = busy || device.link.state === 'updating';
   const status =
@@ -298,8 +300,8 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
             <button
               type="button"
               className={button({ kind: 'primary' })}
-              aria-disabled={!live}
-              onClick={() => live && void firmware.start('bundled')}
+              aria-disabled={!live || wifi}
+              onClick={() => live && !wifi && void firmware.start('bundled')}
               data-testid="device-panel-update"
             >
               Update
@@ -308,8 +310,8 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
           <button
             type="button"
             className={button()}
-            aria-disabled={!live || updating || restart === 'restarting'}
-            onClick={() => live && !updating && restart !== 'restarting' && void settings.restart()}
+            aria-disabled={!live || wifi || updating || restart === 'restarting'}
+            onClick={() => live && !wifi && !updating && restart !== 'restarting' && void settings.restart()}
             data-testid="device-panel-restart"
           >
             Restart
@@ -320,6 +322,11 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
         <div className="firmware-progress" role="progressbar" aria-label={`Updating ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.pct ?? undefined}>
           <span className="firmware-progress-fill" style={progress} />
         </div>
+      )}
+      {wifi && !busy && (
+        <p className="field-hint" data-testid="device-panel-usb-only">
+          Plug in {name} with a USB cable to update or restart it.
+        </p>
       )}
       {view.step === 'running' && <p className="field-hint">Keep {name} plugged in. Takes about a minute. {name} restarts once.</p>}
       {view.step === 'failed' && (
@@ -455,7 +462,7 @@ function Notice({ settings }: { settings: DeviceSettingsStore }) {
 }
 
 function PanelBody({ device }: { device: DeviceSummary }) {
-  const { settings, firmware } = useDeviceStores(device);
+  const { settings, firmware, wifi } = useDeviceStores(device);
   const name = device.name ?? 'Unnamed Device';
   const live = device.link.state === 'connected';
   const loaded = useStore(settings, (s) => s.load === 'ready');
@@ -477,6 +484,7 @@ function PanelBody({ device }: { device: DeviceSummary }) {
       <OrientationField {...props} />
       <BrightnessField {...props} />
       <PhotoFrameField {...props} />
+      <WifiField device={device} name={name} wifi={wifi} />
       <FirmwareRow {...props} firmware={firmware} />
       <BuildField {...props} firmware={firmware} />
       <Notice settings={settings} />

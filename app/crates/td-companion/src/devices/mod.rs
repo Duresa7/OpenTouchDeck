@@ -7,10 +7,17 @@ pub mod console;
 mod ports;
 mod scan;
 mod store;
+mod wifi;
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub use ports::{BoardKind, MockPorts};
 pub use ports::{PortInfo, PortSource, RealPorts};
+pub use wifi::{
+    Browse, KeychainError, OsKeychain, PairError, PairingKeys, PairingStarted, WifiConfig,
+    WifiDevice, WifiPairing,
+};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use wifi::{MemoryKeys, MockNetwork};
 
 use crate::api::{Event, Events, Topic};
 use parking_lot::{Condvar, Mutex};
@@ -197,6 +204,13 @@ pub enum LinkState {
         job: String,
     },
 }
+/// How the Companion reaches a connected Device. USB wins when both are there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum Carrier {
+    Usb,
+    Wifi,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 pub enum LostReason {
@@ -309,7 +323,10 @@ pub struct DeviceSummary {
     pub rev: u64,
     pub name: Option<String>,
     pub setup: SetupState,
+    /// While connected, `port` is the serial port over USB and `host:port` over Wi-Fi.
     pub link: LinkState,
+    /// The Carrier of the link, `null` unless connected.
+    pub carrier: Option<Carrier>,
     pub firmware: Option<FirmwareInfo>,
     pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,
@@ -465,16 +482,20 @@ pub struct Config {
     pub input: InputFactory,
     /// `devices.json`. `None` keeps known Devices in memory only.
     pub store: Option<PathBuf>,
+    /// Pairings, their keys and discovery.
+    pub wifi: WifiConfig,
     #[cfg(any(test, feature = "test-hooks"))]
     pub mock: Option<(MockPorts, td_host::FakeSink)>,
 }
 impl Config {
-    /// The real ports, the PC's input and `devices.json` under `root`.
+    /// The real ports, the PC's input, the OS keychain, mDNS, and `devices.json` and
+    /// `network.json` under `root`.
     pub fn real(root: &std::path::Path) -> Self {
         Self {
             source: Arc::new(RealPorts::default()),
             input: Arc::new(td_host::input::system_sink),
             store: Some(root.join("devices.json")),
+            wifi: WifiConfig::real(root),
             #[cfg(any(test, feature = "test-hooks"))]
             mock: None,
         }
@@ -485,10 +506,12 @@ impl Config {
         let ports = MockPorts::default();
         let sink = td_host::FakeSink::default();
         let factory = sink.clone();
+        let network = store.as_ref().map(|p| p.with_file_name("network.json"));
         Self {
             source: Arc::new(ports.clone()),
             input: Arc::new(move || Ok(Box::new(factory.clone()) as Box<dyn td_host::InputSink>)),
             store,
+            wifi: WifiConfig::mock(network),
             mock: Some((ports, sink)),
         }
     }
@@ -530,6 +553,8 @@ struct Registry {
     devices: BTreeMap<DeviceId, Entry>,
     boards: BTreeMap<DeviceId, NewBoard>,
     ports: BTreeMap<String, PortRecord>,
+    /// Paired Devices the Wi-Fi thread tries while they have no USB port.
+    wifi: BTreeMap<DeviceId, wifi::WifiRecord>,
     generation: u64,
     updating: std::collections::BTreeSet<DeviceId>,
     installed: std::collections::BTreeSet<DeviceId>,
@@ -563,6 +588,7 @@ struct Inner {
     config: OnceLock<Config>,
     actions: OnceLock<ActionHandler>,
     controls: OnceLock<std::sync::Weak<crate::controls::DeviceControls>>,
+    wifi: wifi::WifiState,
 }
 impl Inner {
     fn config(&self) -> &Config {
@@ -579,6 +605,9 @@ impl Inner {
             next.control_layout = ControlLayout::default();
             entry.shown = None;
             entry.reported_page = None;
+        }
+        if !matches!(next.link, LinkState::Connected { .. }) {
+            next.carrier = None;
         }
         next.layout = entry
             .shown
@@ -658,6 +687,7 @@ impl DeviceManager {
                 config: OnceLock::new(),
                 actions: OnceLock::new(),
                 controls: OnceLock::new(),
+                wifi: wifi::WifiState::default(),
             }),
         }
     }
@@ -675,6 +705,7 @@ impl DeviceManager {
                     name: saved.name,
                     setup: saved.setup,
                     link: LinkState::Offline,
+                    carrier: None,
                     firmware: None,
                     diagnostics: None,
                     capabilities: None,
@@ -700,16 +731,23 @@ impl DeviceManager {
                 );
             }
         }
+        self.inner.load_wifi(&mut self.inner.reg.lock());
         let inner = self.inner.clone();
         std::thread::Builder::new()
             .name("td-device-scan".into())
             .spawn(move || scan::run(inner))
             .expect("the scan thread starts");
+        let inner = self.inner.clone();
+        std::thread::Builder::new()
+            .name("td-device-wifi".into())
+            .spawn(move || wifi::run(inner))
+            .expect("the Wi-Fi thread starts");
     }
-    /// Stops the scan thread, which then closes every link.
+    /// Stops the scan and Wi-Fi threads, which then close every link.
     pub fn stop(&self) {
         self.inner.stop.store(true, Ordering::SeqCst);
         self.inner.wake.kick();
+        self.inner.wifi.wake.kick();
     }
     pub(crate) fn control_layout(&self, device: &str, session: Option<u64>, status: ControlLayout) {
         let Some(id) = DeviceId::parse(device) else {
@@ -796,9 +834,15 @@ impl DeviceManager {
                         port: record.info.port.clone(),
                     }
                 }
-                None => LinkState::Offline,
+                None => match reg.wifi.get(id) {
+                    Some(record) => LinkState::Connecting {
+                        port: record.address.to_string(),
+                    },
+                    None => LinkState::Offline,
+                },
             };
             self.inner.set_link(&mut reg, id, link);
+            self.inner.wifi_due_now(&mut reg, id);
         }
         let summary = reg.devices[id].summary.clone();
         drop(reg);
@@ -834,6 +878,12 @@ impl DeviceManager {
         reg.devices.remove(id);
         self.inner.events.publish(&DeviceRemoved { id: id.clone() });
         self.inner.save(&reg);
+        let paired = reg.wifi.contains_key(id);
+        drop(reg);
+        // A forgotten Device keeps no Pairing either.
+        if paired && let Err(error) = self.wifi_forget(id) {
+            eprintln!("Companion: couldn't forget the Pairing with {id}: {error}");
+        }
         Ok(())
     }
     /// Runs `work` on the Device's actor thread with its session.

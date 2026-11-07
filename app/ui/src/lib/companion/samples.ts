@@ -31,6 +31,7 @@ export function sampleDevice(id: string, name: string | null, link: LinkState = 
     name,
     setup: name === null ? 'needs-setup' : 'ready',
     link,
+    carrier: link.state === 'connected' ? 'usb' : null,
     firmware: { version: '1.5.0', protocol: 2, build: 'fake', recovery: false, update_available: null, channel: 'normal' },
     diagnostics: { product: 'touchdeck', running_from: 'ota_0', sinks: ['log', 'link'], current_layout: 'builtin' },
     capabilities: null,

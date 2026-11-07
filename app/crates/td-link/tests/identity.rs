@@ -183,3 +183,77 @@ fn only_the_radio_build_reports_radio_in_its_v2_hello() {
     legacy.set_radio(true);
     assert!(!open(&legacy).identity(TIMEOUT).unwrap().radio);
 }
+fn name_vectors() -> serde_json::Value {
+    serde_json::from_str(include_str!(
+        "../../../../schema/protocol/name-vectors-v2.json"
+    ))
+    .unwrap()
+}
+fn names(vectors: &serde_json::Value, key: &str) -> Vec<(String, String)> {
+    vectors[key]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            (
+                v["label"].as_str().unwrap().to_owned(),
+                v["name"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+#[test]
+fn shared_name_vectors_decide_valid_name() {
+    let vectors = name_vectors();
+    for (label, name) in names(&vectors, "accepted") {
+        assert!(td_link::identity::valid_name(&name), "{label}");
+    }
+    for (label, name) in names(&vectors, "rejected") {
+        assert!(!td_link::identity::valid_name(&name), "{label}");
+    }
+}
+#[test]
+fn only_the_pinned_table_and_the_fillers_hide_a_name() {
+    let vectors = name_vectors();
+    let mut hidden = std::collections::BTreeSet::new();
+    for range in vectors["format_ranges"].as_array().unwrap() {
+        let range = range.as_str().unwrap();
+        let (first, last) = range.split_once('-').unwrap_or((range, range));
+        let (first, last) = (
+            u32::from_str_radix(first, 16).unwrap(),
+            u32::from_str_radix(last, 16).unwrap(),
+        );
+        hidden.extend(first..=last);
+    }
+    for filler in vectors["hangul_fillers"].as_array().unwrap() {
+        hidden.insert(u32::from_str_radix(filler.as_str().unwrap(), 16).unwrap());
+    }
+    for code in 0x20..=0x10ffffu32 {
+        let Some(c) = char::from_u32(code) else {
+            continue;
+        };
+        if code == 0x7f {
+            continue;
+        }
+        assert_eq!(
+            td_link::identity::valid_name(&format!("a{c}b")),
+            !hidden.contains(&code),
+            "U+{code:04X}"
+        );
+    }
+}
+#[test]
+fn a_hidden_character_name_is_refused_with_args_and_keeps_the_old_name() {
+    let device = MockDeck::v2();
+    let session = open(&device);
+    session.identity(TIMEOUT).unwrap();
+    for name in ["Desk\u{202e}PC", "\u{3164}", "a\u{200d}b", "\u{feff}Desk"] {
+        assert!(session.set_name(name, TIMEOUT).is_err(), "{name:?}");
+        let reply = session
+            .call(&json!({"m":"v2.name.set","name":name}), TIMEOUT)
+            .unwrap();
+        assert!(!reply.ok);
+        assert_eq!(reply.fields["reason"], "args");
+    }
+    assert_eq!(session.name(TIMEOUT).unwrap(), "Open TouchDeck");
+}

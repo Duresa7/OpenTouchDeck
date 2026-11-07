@@ -40,6 +40,7 @@ export function freshDevice({ id, port, firmware }: { id: string; port: string; 
     name: null,
     setup: 'needs-setup',
     link: { state: 'connected', port, since_ms: Date.now(), protocol: firmware.protocol },
+    carrier: 'usb',
     firmware: { channel: 'normal', ...firmware, build: 'fake', recovery: false, update_available: null },
     capabilities: null,
     diagnostics: null,

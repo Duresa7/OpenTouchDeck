@@ -204,6 +204,8 @@ pub enum FirmwareError {
     },
     #[error("No New board with that id.")]
     NewBoardNotFound,
+    #[error("Firmware updates need the Device on USB. Connect it with a cable and try again.")]
+    UsbOnly,
     #[error("Firmware failed: {0}")]
     Failed(String),
     #[error(transparent)]
@@ -218,6 +220,7 @@ impl ApiError for FirmwareError {
         "firmware.bundle_invalid",
         "firmware.bundle_not_found",
         "new_board.not_found",
+        "firmware.usb_only",
         "system.dialog_open",
         "firmware.declined",
         "firmware.channel_mismatch",
@@ -240,6 +243,7 @@ impl ApiError for FirmwareError {
             Self::Invalid => "firmware.bundle_invalid",
             Self::Missing => "firmware.bundle_not_found",
             Self::NewBoardNotFound => "new_board.not_found",
+            Self::UsbOnly => "firmware.usb_only",
             Self::DialogOpen => "system.dialog_open",
             Self::Declined => "firmware.declined",
             Self::ChannelMismatch { .. } => "firmware.channel_mismatch",
@@ -403,6 +407,9 @@ fn target(
     install: bool,
 ) -> Result<(String, String, String), FirmwareError> {
     if !install && let Some(d) = ctx.devices.get(id) {
+        if d.carrier == Some(crate::devices::Carrier::Wifi) {
+            return Err(FirmwareError::UsbOnly);
+        }
         let port = ctx
             .devices
             .ports()

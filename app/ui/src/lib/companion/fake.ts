@@ -14,6 +14,7 @@ import { createFakeLive } from './fake/fake-live.ts';
 import { createFakeNewBoards } from './fake/fake-new-boards.ts';
 import { createFakeSessions, type FakeBrowser } from './fake/fake-sessions.ts';
 import { createFakeStartup } from './fake/fake-startup.ts';
+import { createFakeWifi, type FakeWifiOptions } from './fake/fake-wifi.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
 // An in-memory Companion for tests and the demo mode of `pnpm dev:ui`. It answers
@@ -41,6 +42,8 @@ export interface FakeCompanionOptions {
   /** How CLIProxyAPI starts: not set up unless `configured`. */
   integrations?: Omit<FakeIntegrationsOptions, 'publish'>;
   assets?: Omit<FakeAssetsOptions, 'publish' | 'brandfetch'>;
+  /** Devices on the network and Pairings made before the start. */
+  wifi?: Omit<FakeWifiOptions, 'devices' | 'publish'>;
   iconPacks?: Omit<FakeIconPacksOptions, 'publish'>;
   brandfetch?: FakeBrandfetchOptions;
 }
@@ -134,6 +137,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const iconPacks = createFakeIconPacks({ publish, ...options.iconPacks });
   const brandfetch = createFakeBrandfetch(options.brandfetch);
   const assets = createFakeAssets({ publish, packHits: iconPacks.hits, ...options.assets, brandfetch });
+  const wifi = createFakeWifi({ devices, publish, ...options.wifi });
 
   function mint() {
     minted += 1;
@@ -206,6 +210,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       (await layouts.handle(request, path)) ??
       actions.handle(request, path) ??
       (await integrations.handle(request, path)) ??
+      (await wifi.handle(request, path)) ??
       failure(404, 'route.not_found', 'No route with that path.')
     );
   }
@@ -241,6 +246,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     consoles,
     integrations,
     assets,
+    wifi,
     iconPacks,
     brandfetch,
     /** Sessions minted so far through the bridge. */
@@ -318,4 +324,5 @@ export { freshDevice, newBoard } from './fake/fake-new-boards.ts';
 export { createFakeSessions } from './fake/fake-sessions.ts';
 export { fakeThisPc } from './fake/fake-this-pc.ts';
 export { createFakeUpdates, sampleOffer, type FakeUpdatesScript } from './fake/fake-updates.ts';
+export { FAKE_WIFI_CODE } from './fake/fake-wifi.ts';
 export { LONG_WORD, WORST_DEVICE_NAMES, WORST_LABELS, worstDevices, worstLayout, worstLayouts } from './fake/fake-worst.ts';

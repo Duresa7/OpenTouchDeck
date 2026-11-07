@@ -27,6 +27,7 @@ sent: Array<string>,
  * Assets the Layout uses that the Device lacked and the Companion has no file for.
  */
 unavailable: Array<string>, };
+export type AttemptPath = { attempt: string, };
 export type AuthRevoked = Record<string, never>;
 export type BrandfetchLogo = { 
 /**
@@ -70,6 +71,7 @@ live_hz: number, live_total_hz: number, series: number, text_bytes: number,
  * The most Tiles in a Layout that declare an `image` stream. Zero when the Firmware draws no cover art.
  */
 live_images: number, };
+export type Carrier = "usb" | "wifi";
 export type CatalogHit = { source: string, name: string, id: string, aliases: Array<string>, hex: string | null, tags: Array<string>, category: string | null, svg: boolean, light: boolean, dark: boolean, license: string, license_url: string | null, guidelines: string | null, attribution_url: string, attribution: string, };
 export type CatalogQuery = { q: string, catalog: string | null, };
 export type CatalogVariant = "base" | "light" | "dark";
@@ -124,7 +126,15 @@ export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: 
  * A percentage, 0 to 100.
  */
 brightness: number | null, photo_frame: PhotoFramePatch | null, };
-export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, 
+export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, 
+/**
+ * While connected, `port` is the serial port over USB and `host:port` over Wi-Fi.
+ */
+link: LinkState, 
+/**
+ * The Carrier of the link, `null` unless connected.
+ */
+carrier: Carrier | null, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, 
 /**
  * The orientation the Device shows, from the Layout it shows. Null whenever `layout` is.
  */
@@ -253,8 +263,28 @@ export type PackPath = { prefix: string, };
 export type PackStage = "download" | "verify" | "extract" | "done";
 export type PackSvg = Blob;
 export type Page = { "kind": "grid", id: string, title: string, rows: number, cols: number, tiles: Array<Tile>, } | { "kind": "dashboard", id: string, title: string, source: string, };
+export type PairCode = { 
+/**
+ * The six digits the Device shows.
+ */
+code: string, };
 export type PairExpires = { expires_ms: number, };
 export type PairRequest = { code: string, label: string | null, };
+export type PairStart = { 
+/**
+ * An IPv4 or IPv6 address or a host name, with an optional port (47820 by default).
+ */
+address: string, };
+export type PairingPath = { device: DeviceId, };
+export type PairingStarted = { 
+/**
+ * The id to send the code to.
+ */
+attempt: string, device: DeviceId, address: string, 
+/**
+ * Time left in the Device's pairing window.
+ */
+remaining_ms: number, attempts_left: number, };
 export type PhotoFramePatch = { enabled: boolean | null, timeout_s: number | null, interval_s: number | null, 
 /**
  * An absolute path to an existing folder; `""` clears it.
@@ -339,6 +369,28 @@ export type UploadBody = Blob;
 export type Uploaded = { id: string, media_type: string, bytes: number, };
 export type UsageWindow = { pct: number, resets_at_ms: number | null, };
 export type Versions = { api: Array<string>, };
+export type WifiDevice = { device: DeviceId, name: string, address: string, 
+/**
+ * Pairings the Device says it holds, when it said.
+ */
+paired: number | null, 
+/**
+ * Whether this Companion has a Pairing with it.
+ */
+paired_here: boolean, };
+export type WifiPairing = { device: DeviceId, 
+/**
+ * Where the Companion reaches the Device: `host:port`.
+ */
+address: string, name: string | null, 
+/**
+ * False until the Device confirmed it stored the key, or a session with it worked.
+ */
+confirmed: boolean, paired_ms: number, 
+/**
+ * Why the last Wi-Fi connection failed, or `null`.
+ */
+problem: string | null, };
 export const endpoints = {
   'actions.allowed': { method: 'GET', path: '/actions/allowed', access: 'session' },
   'actions.allowed_remove': { method: 'DELETE', path: '/actions/allowed/{hash}', access: 'session' },
@@ -409,8 +461,14 @@ export const endpoints = {
   'system.startup_get': { method: 'GET', path: '/system/startup', access: 'session' },
   'system.startup_put': { method: 'PUT', path: '/system/startup', access: 'session' },
   'system.unlock': { method: 'DELETE', path: '/system/lock/{lock}', access: 'session' },
+  'wifi.discover': { method: 'POST', path: '/wifi/discover', access: 'session' },
+  'wifi.pair_cancel': { method: 'DELETE', path: '/wifi/attempts/{attempt}', access: 'session' },
+  'wifi.pair_code': { method: 'POST', path: '/wifi/attempts/{attempt}/code', access: 'session' },
+  'wifi.pair_start': { method: 'POST', path: '/wifi/pairings', access: 'session' },
+  'wifi.pairings_forget': { method: 'DELETE', path: '/wifi/pairings/{device}', access: 'session' },
+  'wifi.pairings_list': { method: 'GET', path: '/wifi/pairings', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'brandfetch.key_refused' | 'brandfetch.no_key' | 'brandfetch.no_keychain' | 'brandfetch.no_logo' | 'brandfetch.not_found' | 'brandfetch.quota' | 'brandfetch.store' | 'brandfetch.unavailable' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.channel_mismatch' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'brandfetch.key_refused' | 'brandfetch.no_key' | 'brandfetch.no_keychain' | 'brandfetch.no_logo' | 'brandfetch.not_found' | 'brandfetch.quota' | 'brandfetch.store' | 'brandfetch.unavailable' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'device.unknown_outcome' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.channel_mismatch' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.version' | 'wifi.window_closed' | 'wifi.wrong_code';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
@@ -602,6 +660,22 @@ icon: string, }, query: null = null, body: null = null, bearer?: string, headers
       startup_get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<StartupSetting>('system.startup_get', path, query, body, bearer, headers, signal),
       startup_put: (path: Record<string, never> = {}, query: null = null, body: { at_sign_in: boolean, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<StartupSetting>('system.startup_put', path, query, body, bearer, headers, signal),
       unlock: (path: { lock: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('system.unlock', path, query, body, bearer, headers, signal),
+    },
+    wifi: {
+      discover: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<WifiDevice>>('wifi.discover', path, query, body, bearer, headers, signal),
+      pair_cancel: (path: { attempt: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('wifi.pair_cancel', path, query, body, bearer, headers, signal),
+      pair_code: (path: { attempt: string, }, query: null = null, body: { 
+/**
+ * The six digits the Device shows.
+ */
+code: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<WifiPairing>('wifi.pair_code', path, query, body, bearer, headers, signal),
+      pair_start: (path: Record<string, never> = {}, query: null = null, body: { 
+/**
+ * An IPv4 or IPv6 address or a host name, with an optional port (47820 by default).
+ */
+address: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<PairingStarted>('wifi.pair_start', path, query, body, bearer, headers, signal),
+      pairings_forget: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('wifi.pairings_forget', path, query, body, bearer, headers, signal),
+      pairings_list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<WifiPairing>>('wifi.pairings_list', path, query, body, bearer, headers, signal),
     },
   };
 }

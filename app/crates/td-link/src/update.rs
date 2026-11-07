@@ -90,16 +90,75 @@ fn checked(session: &Session, message: Value, timeout: Duration) -> Result<Value
     }
     Ok(reply.to_value())
 }
+/// How `update.begin` waits for the person at the Device on a network session (net-v2).
+#[derive(Clone, Copy, Debug)]
+pub struct Approval {
+    /// The gap between repeats; net-v2 allows one every 2000 ms at most.
+    pub repeat: Duration,
+    /// How long to keep asking: the Device's prompt lasts 60000 ms.
+    pub limit: Duration,
+}
+
+impl Default for Approval {
+    fn default() -> Self {
+        Self {
+            repeat: Duration::from_secs(2),
+            limit: Duration::from_secs(62),
+        }
+    }
+}
+
+/// Sends `update.begin` and returns its reply once a transfer opens. Over USB that's the
+/// first reply. On a network session the Device answers `confirm` while it shows its Install
+/// prompt: `prompted` runs once so the person can be told to look at the Device, and the
+/// same request repeats until the Device opens the transfer or answers `declined`.
+pub fn begin(
+    session: &Session,
+    bytes: usize,
+    sha256: &str,
+    approval: Approval,
+    prompted: &mut dyn FnMut(),
+) -> Result<Value, String> {
+    let message = json!({"m":"update.begin","bytes":bytes,"sha256":sha256});
+    let start = Instant::now();
+    let mut asked_prompt = false;
+    loop {
+        let asked = Instant::now();
+        let reply = session
+            .call(&message, Duration::from_secs(15))
+            .map_err(|e| e.to_string())?;
+        if reply.ok {
+            return Ok(reply.to_value());
+        }
+        match reply.fields.get("reason").and_then(Value::as_str) {
+            Some("confirm") => {
+                if !asked_prompt {
+                    asked_prompt = true;
+                    prompted();
+                }
+                if start.elapsed() >= approval.limit {
+                    return Err("the update wasn't approved on the Device in time".into());
+                }
+                std::thread::sleep(approval.repeat.saturating_sub(asked.elapsed()));
+            }
+            Some("declined") => return Err("the update was declined on the Device".into()),
+            _ => return Err(reply.to_value().to_string()),
+        }
+    }
+}
+
 fn send(
     session: &Session,
     bundle: &Bundle,
     emit: &mut dyn FnMut(UpdateState),
 ) -> Result<String, String> {
     let transfer = session.transfer().map_err(|e| e.to_string())?;
-    let opened = checked(
+    let opened = begin(
         session,
-        json!({"m":"update.begin","bytes":bundle.app().len(),"sha256":sha256(bundle.app())}),
-        Duration::from_secs(15),
+        bundle.app().len(),
+        &sha256(bundle.app()),
+        Approval::default(),
+        &mut || {},
     )?;
     let id = opened["xfer"]
         .as_u64()

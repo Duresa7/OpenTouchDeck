@@ -1,0 +1,341 @@
+{
+  "protocol": "touchdeck/names-v2",
+  "notice": "Shared by link-v2 Device names and net-v2 companion names. A name that holds a format character or a Hangul filler is refused; the rest of each rule (length, controls, blank names) is in its own spec.",
+  "format_ranges": [
+    "00ad",
+    "0600-0605",
+    "061c",
+    "06dd",
+    "070f",
+    "0890-0891",
+    "08e2",
+    "180e",
+    "200b-200f",
+    "202a-202e",
+    "2060-2064",
+    "2066-206f",
+    "feff",
+    "fff9-fffb",
+    "110bd",
+    "110cd",
+    "13430-1343f",
+    "1bca0-1bca3",
+    "1d173-1d17a",
+    "e0001",
+    "e0020-e007f"
+  ],
+  "hangul_fillers": [
+    "115f",
+    "1160",
+    "3164",
+    "ffa0"
+  ],
+  "accepted": [
+    {
+      "label": "ascii",
+      "name": "Desk PC"
+    },
+    {
+      "label": "accented",
+      "name": "Bureau d\u2019\u00e9t\u00e9"
+    },
+    {
+      "label": "right-to-left letters",
+      "name": "\u05de\u05d7\u05e9\u05d1"
+    },
+    {
+      "label": "emoji with variation selector",
+      "name": "Desk \ud83d\udda5\ufe0f"
+    },
+    {
+      "label": "Hangul letters",
+      "name": "\ud55c\uae00"
+    },
+    {
+      "label": "unassigned neighbour U+2065",
+      "name": "Desk\u2065PC"
+    },
+    {
+      "label": "U+00AC beside a range",
+      "name": "Desk\u00acPC"
+    },
+    {
+      "label": "U+00AE beside a range",
+      "name": "Desk\u00aePC"
+    },
+    {
+      "label": "U+0606 beside a range",
+      "name": "Desk\u0606PC"
+    },
+    {
+      "label": "U+061B beside a range",
+      "name": "Desk\u061bPC"
+    },
+    {
+      "label": "U+061D beside a range",
+      "name": "Desk\u061dPC"
+    },
+    {
+      "label": "U+06DC beside a range",
+      "name": "Desk\u06dcPC"
+    },
+    {
+      "label": "U+06DE beside a range",
+      "name": "Desk\u06dePC"
+    },
+    {
+      "label": "U+0710 beside a range",
+      "name": "Desk\u0710PC"
+    },
+    {
+      "label": "U+088F beside a range",
+      "name": "Desk\u088fPC"
+    },
+    {
+      "label": "U+08E1 beside a range",
+      "name": "Desk\u08e1PC"
+    },
+    {
+      "label": "U+08E3 beside a range",
+      "name": "Desk\u08e3PC"
+    },
+    {
+      "label": "U+115E beside a range",
+      "name": "Desk\u115ePC"
+    },
+    {
+      "label": "U+1161 beside a range",
+      "name": "Desk\u1161PC"
+    },
+    {
+      "label": "U+180D beside a range",
+      "name": "Desk\u180dPC"
+    },
+    {
+      "label": "U+180F beside a range",
+      "name": "Desk\u180fPC"
+    },
+    {
+      "label": "U+2010 beside a range",
+      "name": "Desk\u2010PC"
+    },
+    {
+      "label": "U+2070 beside a range",
+      "name": "Desk\u2070PC"
+    },
+    {
+      "label": "U+3163 beside a range",
+      "name": "Desk\u3163PC"
+    },
+    {
+      "label": "U+3165 beside a range",
+      "name": "Desk\u3165PC"
+    },
+    {
+      "label": "U+FF9F beside a range",
+      "name": "Desk\uff9fPC"
+    },
+    {
+      "label": "U+FFA1 beside a range",
+      "name": "Desk\uffa1PC"
+    },
+    {
+      "label": "U+FFFC beside a range",
+      "name": "Desk\ufffcPC"
+    },
+    {
+      "label": "U+110BC beside a range",
+      "name": "Desk\ud804\udcbcPC"
+    },
+    {
+      "label": "U+110BE beside a range",
+      "name": "Desk\ud804\udcbePC"
+    },
+    {
+      "label": "U+1342F beside a range",
+      "name": "Desk\ud80d\udc2fPC"
+    },
+    {
+      "label": "U+13440 beside a range",
+      "name": "Desk\ud80d\udc40PC"
+    },
+    {
+      "label": "U+1BC9F beside a range",
+      "name": "Desk\ud82f\udc9fPC"
+    },
+    {
+      "label": "U+1D172 beside a range",
+      "name": "Desk\ud834\udd72PC"
+    },
+    {
+      "label": "U+1D17B beside a range",
+      "name": "Desk\ud834\udd7bPC"
+    }
+  ],
+  "rejected": [
+    {
+      "label": "U+00AD",
+      "name": "Desk\u00adPC"
+    },
+    {
+      "label": "U+061C",
+      "name": "Desk\u061cPC"
+    },
+    {
+      "label": "U+0600",
+      "name": "Desk\u0600PC"
+    },
+    {
+      "label": "U+06DD",
+      "name": "Desk\u06ddPC"
+    },
+    {
+      "label": "U+115F",
+      "name": "Desk\u115fPC"
+    },
+    {
+      "label": "U+1160",
+      "name": "Desk\u1160PC"
+    },
+    {
+      "label": "U+180E",
+      "name": "Desk\u180ePC"
+    },
+    {
+      "label": "U+200B",
+      "name": "Desk\u200bPC"
+    },
+    {
+      "label": "U+200C",
+      "name": "Desk\u200cPC"
+    },
+    {
+      "label": "U+200D",
+      "name": "Desk\u200dPC"
+    },
+    {
+      "label": "U+200E",
+      "name": "Desk\u200ePC"
+    },
+    {
+      "label": "U+200F",
+      "name": "Desk\u200fPC"
+    },
+    {
+      "label": "U+202A",
+      "name": "Desk\u202aPC"
+    },
+    {
+      "label": "U+202B",
+      "name": "Desk\u202bPC"
+    },
+    {
+      "label": "U+202C",
+      "name": "Desk\u202cPC"
+    },
+    {
+      "label": "U+202D",
+      "name": "Desk\u202dPC"
+    },
+    {
+      "label": "U+202E",
+      "name": "Desk\u202ePC"
+    },
+    {
+      "label": "U+2060",
+      "name": "Desk\u2060PC"
+    },
+    {
+      "label": "U+2063",
+      "name": "Desk\u2063PC"
+    },
+    {
+      "label": "U+2066",
+      "name": "Desk\u2066PC"
+    },
+    {
+      "label": "U+2067",
+      "name": "Desk\u2067PC"
+    },
+    {
+      "label": "U+2068",
+      "name": "Desk\u2068PC"
+    },
+    {
+      "label": "U+2069",
+      "name": "Desk\u2069PC"
+    },
+    {
+      "label": "U+206F",
+      "name": "Desk\u206fPC"
+    },
+    {
+      "label": "U+3164",
+      "name": "Desk\u3164PC"
+    },
+    {
+      "label": "U+FEFF",
+      "name": "Desk\ufeffPC"
+    },
+    {
+      "label": "U+FFA0",
+      "name": "Desk\uffa0PC"
+    },
+    {
+      "label": "U+FFF9",
+      "name": "Desk\ufff9PC"
+    },
+    {
+      "label": "U+FFFB",
+      "name": "Desk\ufffbPC"
+    },
+    {
+      "label": "U+110BD",
+      "name": "Desk\ud804\udcbdPC"
+    },
+    {
+      "label": "U+13430",
+      "name": "Desk\ud80d\udc30PC"
+    },
+    {
+      "label": "U+1D173",
+      "name": "Desk\ud834\udd73PC"
+    },
+    {
+      "label": "U+E0001",
+      "name": "Desk\udb40\udc01PC"
+    },
+    {
+      "label": "U+E0041",
+      "name": "Desk\udb40\udc41PC"
+    },
+    {
+      "label": "U+E007F",
+      "name": "Desk\udb40\udc7fPC"
+    },
+    {
+      "label": "leading U+FEFF",
+      "name": "\ufeffDesk"
+    },
+    {
+      "label": "trailing U+200E",
+      "name": "Desk\u200e"
+    },
+    {
+      "label": "only U+3164",
+      "name": "\u3164"
+    },
+    {
+      "label": "only U+FFA0",
+      "name": "\uffa0"
+    },
+    {
+      "label": "U+115F then U+1160",
+      "name": "\u115f\u1160"
+    },
+    {
+      "label": "letters around U+200D",
+      "name": "a\u200db"
+    }
+  ]
+}
