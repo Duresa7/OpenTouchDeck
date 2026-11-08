@@ -215,6 +215,7 @@ ip: string | null,
  * The signal in dBm while connected.
  */
 rssi: number | null, };
+export type EnabledInput = { enabled: boolean, };
 export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
 export type FirmwareBuild = { version: string, build: string, radio: RadioBuild | null, };
 export type FirmwareChannel = "normal" | "radio";
@@ -526,6 +527,7 @@ export const endpoints = {
   'icon_packs.remove': { method: 'DELETE', path: '/icon-packs/{prefix}', access: 'session' },
   'icon_packs.thumbnail': { method: 'GET', path: '/assets/packs/{prefix}/{icon}', access: 'session' },
   'integrations.config_put': { method: 'PUT', path: '/integrations/{integration}/config', access: 'session' },
+  'integrations.enabled_put': { method: 'PUT', path: '/integrations/{integration}/enabled', access: 'session' },
   'integrations.get': { method: 'GET', path: '/integrations/{integration}', access: 'session' },
   'integrations.list': { method: 'GET', path: '/integrations', access: 'session' },
   'integrations.refresh': { method: 'POST', path: '/integrations/{integration}/refresh', access: 'session' },
@@ -723,6 +725,7 @@ icon: string, }, query: null = null, body: null = null, bearer?: string, headers
     },
     integrations: {
       config_put: (path: { integration: string, }, query: null = null, body: number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<IntegrationView>('integrations.config_put', path, query, body, bearer, headers, signal),
+      enabled_put: (path: { integration: string, }, query: null = null, body: { enabled: boolean, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<IntegrationView>('integrations.enabled_put', path, query, body, bearer, headers, signal),
       get: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<IntegrationView>('integrations.get', path, query, body, bearer, headers, signal),
       list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<IntegrationSummary>>('integrations.list', path, query, body, bearer, headers, signal),
       refresh: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('integrations.refresh', path, query, body, bearer, headers, signal),

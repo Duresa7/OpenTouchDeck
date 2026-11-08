@@ -152,6 +152,7 @@ async fn invalid_config_unknown_fields_and_unauthenticated_calls_are_rejected() 
         ("GET", "", Value::Null),
         ("GET", "/cliproxyapi", Value::Null),
         ("PUT", "/cliproxyapi/config", config("https://hub.example")),
+        ("PUT", "/cliproxyapi/enabled", json!({"enabled":false})),
         (
             "PUT",
             "/cliproxyapi/secrets/management_key",
@@ -414,4 +415,244 @@ async fn custom_list_and_get_publish_schema_and_number_presets() {
     let view = td.call::<ConfigPut>(path(), NoQuery, json!({"enabled":false,"sources":[{"id":"temperature","name":"Temperature","kind":"number","interval_s":1,"input":{"type":"http","url":"https://example.invalid/metrics","value_path":"$.value"}}]})).await.unwrap();
     assert_eq!(view.summary.presets.len(), 2);
     assert_eq!(view.summary.streams[0].id, "temperature");
+}
+
+fn integration(id: &str) -> IntegrationPath {
+    IntegrationPath {
+        integration: id.into(),
+    }
+}
+/// Reads events until `integration.status` reports the Integration `enabled` as asked.
+async fn status_event<S>(events: &mut S, id: &str, enabled: bool)
+where
+    S: futures_util::Stream<
+            Item = Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let message = events.next().await.unwrap().unwrap();
+            let event: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+            if event["type"] == "integration.status"
+                && event["data"]["id"] == id
+                && event["data"]["enabled"] == enabled
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no integration.status with {id} enabled {enabled}"));
+}
+
+#[tokio::test]
+async fn enabled_put_switches_cliproxyapi_and_keeps_url_interval_and_management_key() {
+    let td = TestCompanion::start().await;
+    td.call::<ConfigPut>(path(), NoQuery, config("https://hub.example"))
+        .await
+        .unwrap();
+    td.call::<SecretPut>(
+        secret(),
+        NoQuery,
+        SecretInput {
+            value: "fixture-private-value".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let mut events = td.events().await;
+    for enabled in [false, true] {
+        let view = td
+            .call::<EnabledPut>(path(), NoQuery, EnabledInput { enabled })
+            .await
+            .unwrap();
+        status_event(&mut events, "cliproxyapi", enabled).await;
+        for view in [view, td.call::<Get>(path(), NoQuery, ()).await.unwrap()] {
+            assert_eq!(view.summary.enabled, enabled);
+            assert_eq!(
+                view.config,
+                json!({"enabled":enabled,"url":"https://hub.example","interval_s":120})
+            );
+            assert!(view.secrets["management_key"].set);
+            assert!(
+                !serde_json::to_string(&view)
+                    .unwrap()
+                    .contains("fixture-private-value")
+            );
+        }
+    }
+    let list = td.call::<List>((), NoQuery, ()).await.unwrap();
+    assert!(list.iter().any(|s| s.id == "cliproxyapi" && s.enabled));
+}
+
+#[tokio::test]
+async fn enabled_put_changes_only_enabled_on_the_other_integrations() {
+    let td = TestCompanion::start().await;
+    td.call::<ConfigPut>(
+        integration("custom"),
+        NoQuery,
+        json!({"enabled":true,"sources":[{"id":"temperature","name":"Temperature","kind":"number","interval_s":60,"input":{"type":"http","url":"https://example.invalid/metrics","value_path":"$.value","headers":{"Authorization":"auth"}}}]}),
+    )
+    .await
+    .unwrap();
+    td.call::<SecretPut>(
+        SecretPath {
+            integration: "custom".into(),
+            field: "auth".into(),
+        },
+        NoQuery,
+        SecretInput {
+            value: "fixture-private-value".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let mut events = td.events().await;
+    for id in ["this_pc", "volume", "media", "custom"] {
+        let before = td.call::<Get>(integration(id), NoQuery, ()).await.unwrap();
+        assert!(before.summary.enabled, "{id}");
+        for enabled in [false, true] {
+            let view = td
+                .call::<EnabledPut>(integration(id), NoQuery, EnabledInput { enabled })
+                .await
+                .unwrap();
+            status_event(&mut events, id, enabled).await;
+            let mut expected = before.config.clone();
+            expected["enabled"] = enabled.into();
+            assert_eq!(view.summary.enabled, enabled, "{id}");
+            assert_eq!(view.config, expected, "{id}");
+            assert_eq!(
+                serde_json::to_value(&view.secrets).unwrap(),
+                serde_json::to_value(&before.secrets).unwrap(),
+                "{id}"
+            );
+        }
+    }
+    let custom = td
+        .call::<Get>(integration("custom"), NoQuery, ())
+        .await
+        .unwrap();
+    assert!(custom.secrets["auth"].set);
+}
+
+#[tokio::test]
+async fn config_put_without_enabled_keeps_the_stored_value() {
+    let td = TestCompanion::start().await;
+    for enabled in [true, false] {
+        td.call::<ConfigPut>(
+            path(),
+            NoQuery,
+            json!({"enabled":enabled,"url":"https://hub.example","interval_s":120}),
+        )
+        .await
+        .unwrap();
+        let view = td
+            .call::<ConfigPut>(
+                path(),
+                NoQuery,
+                json!({"url":"https://hub.example/next","interval_s":300}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            view.config,
+            json!({"enabled":enabled,"url":"https://hub.example/next","interval_s":300})
+        );
+        assert_eq!(view.summary.enabled, enabled);
+    }
+    for enabled in [false, true] {
+        td.call::<EnabledPut>(integration("this_pc"), NoQuery, EnabledInput { enabled })
+            .await
+            .unwrap();
+        let view = td
+            .call::<ConfigPut>(integration("this_pc"), NoQuery, json!({}))
+            .await
+            .unwrap();
+        assert_eq!(view.config, json!({"enabled":enabled}));
+    }
+    let view = td
+        .call::<ConfigPut>(integration("this_pc"), NoQuery, json!({"enabled":false}))
+        .await
+        .unwrap();
+    assert_eq!(view.config, json!({"enabled":false}));
+    let custom = td
+        .call::<ConfigPut>(integration("custom"), NoQuery, json!({"sources":[]}))
+        .await
+        .unwrap();
+    assert_eq!(custom.config, json!({"enabled":false,"sources":[]}));
+}
+
+#[tokio::test]
+async fn a_form_save_after_another_clients_switch_keeps_cliproxyapi_off() {
+    let td = TestCompanion::start().await;
+    td.call::<ConfigPut>(path(), NoQuery, config("https://hub.example"))
+        .await
+        .unwrap();
+    td.call::<SecretPut>(
+        secret(),
+        NoQuery,
+        SecretInput {
+            value: "fixture-private-value".into(),
+        },
+    )
+    .await
+    .unwrap();
+    // Client A turns it off.
+    td.call::<EnabledPut>(path(), NoQuery, EnabledInput { enabled: false })
+        .await
+        .unwrap();
+    // Client B still shows the form it loaded while it was on, and saves the URL and interval.
+    let response = reqwest::Client::new()
+        .put(format!("{}/api/v1/integrations/cliproxyapi/config", td.url))
+        .bearer_auth(&td.token)
+        .json(&json!({"url":"https://hub.example","interval_s":300}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let saved: Value = response.json().await.unwrap();
+    assert_eq!(saved["summary"]["enabled"], false);
+    let view = td.call::<Get>(path(), NoQuery, ()).await.unwrap();
+    assert!(!view.summary.enabled);
+    assert_eq!(
+        view.config,
+        json!({"enabled":false,"url":"https://hub.example","interval_s":300})
+    );
+    assert!(view.secrets["management_key"].set);
+}
+
+#[tokio::test]
+async fn enabled_put_rejects_a_missing_integration_and_any_other_body() {
+    let td = TestCompanion::start().await;
+    let client = reqwest::Client::new();
+    let put = |suffix: &str, body: Value| {
+        client
+            .put(format!("{}/api/v1/integrations{suffix}", td.url))
+            .bearer_auth(&td.token)
+            .json(&body)
+            .send()
+    };
+    let response = put("/missing/enabled", json!({"enabled":true}))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    let error: Value = response.json().await.unwrap();
+    assert_eq!(error["error"]["code"], "integration.not_found");
+    for body in [
+        json!({"enabled":true,"url":"https://other.example"}),
+        json!({"enabled":"true"}),
+        json!({}),
+        json!(true),
+    ] {
+        let response = put("/cliproxyapi/enabled", body).await.unwrap();
+        assert_eq!(response.status(), 400);
+        let error: Value = response.json().await.unwrap();
+        assert_eq!(error["error"]["code"], "request.invalid");
+    }
+    let view = td.call::<Get>(path(), NoQuery, ()).await.unwrap();
+    assert!(!view.summary.enabled);
+    assert_eq!(view.config["url"], "http://localhost:8317");
 }

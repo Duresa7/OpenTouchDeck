@@ -270,6 +270,21 @@ impl Integration for CliProxyIntegration {
         self.reset();
         self.view()
     }
+    /// Saves only `enabled`. `configure` would normalize the stored URL and rebind the management key,
+    /// which a switch must not touch.
+    fn set_enabled(&mut self, enabled: bool) -> Result<IntegrationView, Error> {
+        if enabled != self.settings.enabled {
+            let mut config = self.legacy.clone();
+            config.cliproxy = enabled;
+            if let Some(file) = &self.file {
+                config.save(file).map_err(|_| Error::Storage)?;
+            }
+            self.settings.enabled = enabled;
+            self.legacy = config;
+            self.reset();
+        }
+        self.view()
+    }
     fn secret_put(&mut self, field: &str, value: &str) -> Result<(), Error> {
         Self::field(field)?;
         if value.trim().is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {

@@ -104,6 +104,16 @@ pub trait Integration: Send {
     fn summary(&self) -> IntegrationSummary;
     fn view(&self) -> Result<IntegrationView, Error>;
     fn configure(&mut self, config: Value) -> Result<IntegrationView, Error>;
+    /// Turns the Integration on or off and leaves its other settings and its secrets as stored.
+    /// The default writes the stored config back with only `enabled` changed.
+    fn set_enabled(&mut self, enabled: bool) -> Result<IntegrationView, Error> {
+        let mut config = self.view()?.config;
+        config
+            .as_object_mut()
+            .ok_or(Error::ConfigInvalid)?
+            .insert("enabled".into(), Value::Bool(enabled));
+        self.configure(config)
+    }
     fn secret_put(&mut self, field: &str, value: &str) -> Result<(), Error>;
     fn secret_delete(&mut self, field: &str) -> Result<(), Error>;
     fn refresh(&mut self);

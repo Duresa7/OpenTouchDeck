@@ -26,6 +26,18 @@ const failure = (status: number, code: string, message: string, details: unknown
 
 const invalid = () => failure(422, 'integration.config_invalid', 'Invalid Integration config.', { issues: [{ message: 'Check the Integration fields.' }] });
 
+/** The Companion reads `integrations.enabled_put` as a typed body, so any other body fails before the Integration sees it. */
+const notEnabledBody = () => failure(400, 'request.invalid', 'The request body is invalid.', { part: 'body', reason: 'the body is {"enabled": boolean}' });
+
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** The `enabled` of a body that is exactly `{enabled: boolean}`, or null. */
+function enabledBody(body: unknown): boolean | null {
+  if (!isObject(body)) return null;
+  const keys = Object.keys(body);
+  return keys.length === 1 && keys[0] === 'enabled' && typeof body.enabled === 'boolean' ? body.enabled : null;
+}
+
 const ID = 'cliproxyapi';
 const SECRET = 'management_key';
 const DEFAULT_URL = 'http://127.0.0.1:8317';
@@ -75,11 +87,13 @@ interface Settings {
   interval_s: number;
 }
 
-function parseSettings(body: unknown): Settings | null {
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) return null;
+/** A config without `enabled` keeps the stored one, as the Companion does. */
+function parseSettings(body: unknown, stored: boolean): Settings | null {
+  if (!isObject(body)) return null;
   const fields = new Map<string, unknown>(Object.entries(body));
-  if ([...fields.keys()].sort().join(',') !== 'enabled,interval_s,url') return null;
-  const [enabled, url, interval_s] = [fields.get('enabled'), fields.get('url'), fields.get('interval_s')];
+  const keys = [...fields.keys()].sort().join(',');
+  if (keys !== 'enabled,interval_s,url' && keys !== 'interval_s,url') return null;
+  const [enabled, url, interval_s] = [fields.has('enabled') ? fields.get('enabled') : stored, fields.get('url'), fields.get('interval_s')];
   if (typeof enabled !== 'boolean' || typeof url !== 'string' || typeof interval_s !== 'number' || !Number.isInteger(interval_s) || interval_s < 0) return null;
   return { enabled, url, interval_s };
 }
@@ -104,6 +118,8 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
   let lastRefresh: number | null = null;
   let refreshes = 0;
   let configPuts = 0;
+  /** Accepted CLIProxyAPI `integrations.enabled_put` calls, whether or not they changed it. */
+  let enabledPuts = 0;
   const delivery = new Map((options.delivery ?? []).map((d) => [d.device, d]));
 
   const keySet = () => keyOrigin !== null && keyOrigin === bound;
@@ -154,7 +170,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
     async handle(request: Request, path: string): Promise<Response | null> {
       const method = request.method;
       if (path === '/integrations') return method === 'GET' ? json(200, [summary(), ...simpleViews()]) : failure(405, 'route.method_not_allowed', 'Use GET.');
-      const match = /^\/integrations\/([^/]+)(?:\/(config|refresh|secrets\/([^/]+)))?$/.exec(path);
+      const match = /^\/integrations\/([^/]+)(?:\/(config|enabled|refresh|secrets\/([^/]+)))?$/.exec(path);
       if (!match) return null;
       const onOff = simple.get(decodeURIComponent(match[1]));
       if (onOff) {
@@ -163,9 +179,22 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
         if (part === 'config') {
           if (method !== 'PUT') return failure(405, 'route.method_not_allowed', 'Use PUT.');
           const input = await body(request);
-          if (typeof input !== 'object' || input === null || Object.keys(input).length !== 1 || !('enabled' in input) || typeof input.enabled !== 'boolean') return invalid();
-          onOff.enabled = input.enabled;
+          if (!isObject(input) || Object.keys(input).length > 1) return invalid();
+          if ('enabled' in input) {
+            if (typeof input.enabled !== 'boolean') return invalid();
+            onOff.enabled = input.enabled;
+          }
           publish({ type: 'integration.status', data: onOff.view(onOff.enabled).summary });
+          return json(200, onOff.view(onOff.enabled));
+        }
+        if (part === 'enabled') {
+          if (method !== 'PUT') return failure(405, 'route.method_not_allowed', 'Use PUT.');
+          const enabled = enabledBody(await body(request));
+          if (enabled === null) return notEnabledBody();
+          if (enabled !== onOff.enabled) {
+            onOff.enabled = enabled;
+            publish({ type: 'integration.status', data: onOff.view(onOff.enabled).summary });
+          }
           return json(200, onOff.view(onOff.enabled));
         }
         if (part === 'refresh') return method === 'POST' ? json(204, null) : failure(405, 'route.method_not_allowed', 'Use POST.');
@@ -176,7 +205,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
       if (!part) return method === 'GET' ? json(200, view()) : failure(405, 'route.method_not_allowed', 'Use GET.');
       if (part === 'config') {
         if (method !== 'PUT') return failure(405, 'route.method_not_allowed', 'Use PUT.');
-        const next = parseSettings(await body(request));
+        const next = parseSettings(await body(request), settings.enabled);
         if (!next) return invalid();
         const url = next.url.trim().replace(/\/+$/, '');
         const origin = originOf(url);
@@ -189,6 +218,18 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
         configPuts += 1;
         detail = null;
         changed();
+        return json(200, view());
+      }
+      if (part === 'enabled') {
+        if (method !== 'PUT') return failure(405, 'route.method_not_allowed', 'Use PUT.');
+        const enabled = enabledBody(await body(request));
+        if (enabled === null) return notEnabledBody();
+        enabledPuts += 1;
+        if (enabled !== settings.enabled) {
+          settings = { ...settings, enabled };
+          detail = null;
+          changed();
+        }
         return json(200, view());
       }
       if (part === 'refresh') {
@@ -221,7 +262,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
     },
 
     test(request: Request, path: string): Response {
-      if (path === '/test/integrations/record' && request.method === 'GET') return json(200, { settings, keySet: keySet(), refreshes, configPuts });
+      if (path === '/test/integrations/record' && request.method === 'GET') return json(200, { settings, keySet: keySet(), refreshes, configPuts, enabledPuts });
       return failure(404, 'route.not_found', 'No test route with that path.');
     },
 
