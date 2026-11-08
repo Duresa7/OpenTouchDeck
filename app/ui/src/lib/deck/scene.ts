@@ -399,6 +399,16 @@ const FIELD_SAMPLES: Record<string, Omit<WidgetSample, 'caption'>> = {
   success: { value: '128', bar: -1 },
   failed: { value: '3', bar: -1 },
   recent_10m: { value: '12', bar: 0.6 },
+  cpu_pct: { value: '23%', bar: 0.23 },
+  ram_pct: { value: '58%', bar: 0.58 },
+  ram_used_bytes: { value: '9.3 GB', bar: -1 },
+  ram_total_bytes: { value: '16 GB', bar: -1 },
+  gpu_pct: { value: '12%', bar: 0.12 },
+  disk_active_pct: { value: '4%', bar: 0.04 },
+  disk_read_bytes_s: { value: '1.2 MB/s', bar: -1 },
+  disk_write_bytes_s: { value: '640 KB/s', bar: -1 },
+  network_receive_bytes_s: { value: '2.4 MB/s', bar: -1 },
+  network_send_bytes_s: { value: '310 KB/s', bar: -1 },
 };
 
 export function sampleWidget(tile: Tile): WidgetSample | null {

@@ -584,35 +584,6 @@ export function createEditorStore(deps: EditorDeps) {
       else say('error', friendlyRefusal('action.type'), { detail: JSON.stringify(preset.action), event: 'refused' });
     },
 
-    async addPreset(preset: PresetTile, look: LiveLook | null = null): Promise<Status | null> {
-      if (!state().device) return null;
-      if (state().busy) {
-        say('error', `${name()} is busy. Wait a moment, then retry.`, { event: 'refused' });
-        return state().status;
-      }
-      if (!current()) await api.load();
-      const draft = current();
-      if (!draft) return state().status;
-      const action = parseAction(preset.action);
-      if (!action) {
-        say('error', friendlyRefusal('action.type'), { detail: JSON.stringify(preset.action), event: 'refused' });
-        return state().status;
-      }
-      const shown = gridOf(draft.layout, state().page);
-      const grid = shown ?? draft.layout.pages.find((p): p is GridPage => p.kind === 'grid') ?? null;
-      const cell = grid ? freeCell(draft.layout, grid.id) : null;
-      if (!grid || !cell) {
-        say('error', friendlyRefusal('no free cell on this page', draft.layout, name()), { detail: 'no free cell on this page', event: 'refused' });
-        return state().status;
-      }
-      const tile = presetTile(preset, look, { id: freshId(draft.layout, 'tile'), row: cell[0], col: cell[1] })!;
-      const id = tile.id;
-      if (apply((l) => addTile(tile.render ? { ...l, schema: 2 } : l, grid.id, tile), { page: grid.id, selected: id, adding: null }) === null) {
-        say('ok', `Added to ${name()}'s Layout`, { event: 'preset-added' });
-      }
-      return state().status;
-    },
-
     editLabel,
     editAction,
 

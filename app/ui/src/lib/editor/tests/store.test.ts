@@ -10,7 +10,7 @@ import { windowSession } from '../../companion/session.ts';
 import { draftKey, type DraftStorage } from '../store.ts';
 import { createEditorStore, effectiveTileEdit, firstProblem, presetTile, refusedActionField, saveState, tileProblems, type EditorDeps, type EditorStore } from '../store.ts';
 import { switchKind } from '../../layout/actions.ts';
-import { canonical, newLayout, starterLayout, type GridPage, type Layout, type Page } from '../../layout/model.ts';
+import { canonical, starterLayout, type GridPage, type Layout, type Page } from '../../layout/model.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const DESK = { id: 'mock0001', name: 'Desk' };
@@ -200,47 +200,13 @@ describe('Preset tiles', () => {
   const cpu = { id: 'cpu_pct', name: 'CPU usage', action: { type: 'widget', source: 'this_pc', field: 'cpu_pct', account: '' }, render: 'graph' as const };
   const graph = { render: 'graph', streams: { value: 'number' } } as const;
 
-  test('Add to Layout puts a Preset tile in the first free cell of the current Page and selects it', async () => {
-    const store = editor();
-    store.open(DESK);
-    store.startStarter();
-    store.setGrid(3, 3);
-    const status = await store.addPreset(preset);
-    expect(status).toMatchObject({ kind: 'ok', text: "Added to Desk's Layout", event: 'preset-added' });
-    expect(tile(store, state(store).selected!)).toMatchObject({ row: 2, col: 0, rowSpan: 1, colSpan: 1, label: 'Five hour pct', action: preset.action });
-  });
-
-  test('Add to Layout on a full Page says so with the rule message and changes nothing', async () => {
-    const store = editor();
-    store.open(DESK);
-    store.startStarter();
-    const before = canonical(draft(store));
-    expect(await store.addPreset(preset)).toMatchObject({ kind: 'error', text: 'This Page is full. Make its grid bigger or add a Page.', event: 'refused' });
-    expect(canonical(draft(store))).toBe(before);
-  });
-
-  test('Add to Layout with no draft starts from the Layout the Device has', async () => {
-    fake.layouts.store('mock0001', newLayout('landscape'));
-    const store = editor();
-    store.open(DESK);
-    expect(await store.addPreset(preset)).toMatchObject({ kind: 'ok', text: "Added to Desk's Layout" });
-    expect(draft(store).name).toBe(newLayout('landscape').name);
-    expect(page(store).tiles).toEqual([expect.objectContaining({ row: 0, col: 0, action: preset.action })]);
-  });
-
-  test('Add to Layout for a Device with no Layout says so and starts nothing', async () => {
-    const store = editor();
-    store.open({ id: 'mock0002', name: 'Studio' });
-    expect(await store.addPreset(preset)).toMatchObject({ kind: 'error', text: 'Studio has no landscape Layout yet.' });
-    expect(state(store).drafts.landscape).toBeNull();
-  });
-
-  test('a Preset whose action breaks the Layout rules is refused', async () => {
+  test('a Preset whose action breaks the Layout rules is refused', () => {
     const store = editor();
     store.open(DESK);
     store.startBlank();
-    const status = await store.addPreset({ ...preset, action: { type: 'widget', source: '', field: 'plan', account: '' } });
-    expect(status).toMatchObject({ kind: 'error', text: 'That change breaks a Layout rule. See Details.' });
+    store.openAdd({ row: 0, col: 0 });
+    store.placePreset({ ...preset, action: { type: 'widget', source: '', field: 'plan', account: '' } });
+    expect(state(store).status).toMatchObject({ kind: 'error', text: 'That change breaks a Layout rule. See Details.' });
     expect(page(store).tiles).toEqual([]);
   });
 
@@ -289,15 +255,6 @@ describe('Preset tiles', () => {
     expect(tile(store, state(store).selected!)).toMatchObject({ label: 'CPU usage', icon: null, render: 'graph', streams: { value: 'number' }, action: cpu.action });
   });
 
-  test('Add to Layout adds a graph Tile when given the stream it draws', async () => {
-    const store = editor();
-    store.open(DESK);
-    store.startStarter();
-    store.setGrid(3, 3);
-    expect(await store.addPreset(cpu, graph)).toMatchObject({ kind: 'ok', text: "Added to Desk's Layout" });
-    expect(draft(store).schema).toBe(2);
-    expect(tile(store, state(store).selected!)).toMatchObject({ render: 'graph', streams: { value: 'number' }, action: cpu.action });
-  });
 });
 
 describe('Volume and Media Preset tiles', () => {
@@ -321,13 +278,14 @@ describe('Volume and Media Preset tiles', () => {
     expect(tile(store, id)).toEqual(expect.objectContaining({ label: 'Volume bar', icon: null, render: 'bar', streams: bar.streams, input: true, action: volumeBar.action }));
   });
 
-  test('Add to Layout puts a Now playing Tile in the first free cell', async () => {
+  test('a Now playing Preset placed from Add Tile is a now-playing Tile that takes no drag', () => {
     const store = editor();
     store.open(DESK);
     store.startStarter();
     store.setGrid(3, 3);
     const preset = { id: 'now_playing', name: 'Now playing', action: { type: 'widget', source: 'media', field: 'title', account: '' }, render: 'now-playing' as const, streams: nowPlaying.streams };
-    expect(await store.addPreset(preset, nowPlaying)).toMatchObject({ kind: 'ok', text: "Added to Desk's Layout" });
+    store.openAdd({ row: 2, col: 0 });
+    store.placePreset(preset, nowPlaying);
     expect(tile(store, state(store).selected!)).toMatchObject({ row: 2, col: 0, render: 'now-playing', streams: nowPlaying.streams, action: preset.action });
     expect(tile(store, state(store).selected!)).not.toHaveProperty('input');
   });
