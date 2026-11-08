@@ -54,7 +54,7 @@ An icon, image or animation prepared for a Device and stored on it.
 _Avoid_: resource, media file
 
 **Icon pack**:
-An installable, licensed set of icons that the icon picker searches offline. A person downloads a curated one in Settings or imports an Iconify JSON file; nothing is installed by default.
+An installable, licensed set of icons that the icon picker searches offline. A person downloads a curated one, or imports an Iconify JSON file, on the Icon packs page in Integrations, and turns all of them on or off with its switch; nothing is installed by default.
 _Avoid_: icon set, icon library, icon theme
 
 **Pushed copy**:
