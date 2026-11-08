@@ -45,22 +45,25 @@ describe('the switch', () => {
   test('from the normal build offers the radio build and says what it turns on', () => {
     const choice = buildChoice(running('normal'), BOTH, 'Desk');
     expect(choice).toMatchObject({ current: 'normal', target: 'radio', title: 'Normal build', action: 'Install the radio build', missing: null, warn: false });
-    expect(choice.note).toBe('The radio build adds Wi-Fi and Bluetooth, both off until you set them up. You can switch back any time.');
-    expect(choice.confirmTitle).toBe('Install the radio build on Desk?');
-    expect(choice.confirmNote).toBe('It adds Wi-Fi and Bluetooth, both off until you set them up. Desk restarts once.');
+    expect(choice?.note).toBe('The radio build adds Wi-Fi and Bluetooth, both off until you set them up. You can switch back any time.');
+    expect(choice?.confirmTitle).toBe('Install the radio build on Desk?');
+    expect(choice?.confirmNote).toBe('It adds Wi-Fi and Bluetooth, both off until you set them up. Desk restarts once.');
   });
 
   test('from the radio build switches back and warns the setup stays stored but unused', () => {
     const choice = buildChoice(running('radio'), BOTH, 'Desk');
     expect(choice).toMatchObject({ current: 'radio', target: 'normal', title: 'Radio build', action: 'Switch to the normal build', warn: true });
-    expect(choice.confirmTitle).toBe('Switch Desk back to the normal build?');
-    expect(choice.confirmNote).toBe('The Wi-Fi and Bluetooth setup stays stored on Desk but unused. Desk restarts once.');
+    expect(choice?.confirmTitle).toBe('Switch Desk back to the normal build?');
+    expect(choice?.confirmNote).toBe('The Wi-Fi and Bluetooth setup stays stored on Desk but unused. Desk restarts once.');
   });
 
-  test('is not offered when this Companion carries no copy of the other build', () => {
-    const choice = buildChoice(running('normal'), NORMAL_ONLY, 'Desk');
-    expect(choice.action).toBeNull();
-    expect(choice.missing).toBe("This copy of Open TouchDeck doesn't include the radio build.");
-    expect(buildChoice(running('normal'), null, 'Desk').action).toBeNull();
+  test('is hidden from a normal Device when this Companion carries no radio build', () => {
+    expect(buildChoice(running('normal'), NORMAL_ONLY, 'Desk')).toBeNull();
+    expect(buildChoice(running('normal'), null, 'Desk')).toBeNull();
+  });
+
+  test('still shows a radio Device its build when this Companion carries no normal build', () => {
+    const choice = buildChoice(running('radio'), null, 'Desk');
+    expect(choice).toMatchObject({ current: 'radio', action: null, missing: "This copy of Open TouchDeck doesn't include the normal build." });
   });
 });

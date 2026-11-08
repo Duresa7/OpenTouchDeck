@@ -25,6 +25,18 @@ class ProductionCompanionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Windows executable"):
             package.verify_production_companion(b"ELF")
 
+    def test_release_options_say_whether_the_radio_build_ships(self):
+        with tempfile.TemporaryDirectory() as temp:
+            options = Path(temp) / "release-options.json"
+            for text, expected in (('{"radio_build": true}', True), ('{"radio_build": false}', False)):
+                options.write_text(text, encoding="utf-8")
+                self.assertIs(package.ships_radio_build(options), expected)
+            for text in ('{}', '{"radio_build": "yes"}', '{"radio_build": 1}'):
+                options.write_text(text, encoding="utf-8")
+                with self.subTest(text=text), self.assertRaisesRegex(ValueError, "radio_build must be true or false"):
+                    package.ships_radio_build(options)
+        self.assertIsInstance(package.ships_radio_build(), bool)
+
     def test_lifecycle_update_is_the_next_patch(self):
         self.assertEqual(package.next_patch("0.2.9"), "0.2.10")
 

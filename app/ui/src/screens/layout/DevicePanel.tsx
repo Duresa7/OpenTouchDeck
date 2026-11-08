@@ -364,14 +364,14 @@ function BuildField({ device, name, firmware }: PanelProps & { firmware: Firmwar
   const toggle = useRef<HTMLButtonElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const back = useRef(false);
-  useEffect(() => setConfirming(false), [choice.current, live]);
+  useEffect(() => setConfirming(false), [choice?.current, live]);
   // The switch gives way to its confirm, so focus moves to Cancel and, after Cancel, back to the switch.
   useEffect(() => {
     if (confirming) cancel.current?.focus();
     else if (back.current) toggle.current?.focus();
     back.current = false;
   }, [confirming]);
-  if (!device.firmware) return null;
+  if (!device.firmware || !choice) return null;
   const ready = live && !busy;
   return (
     <div className="field" data-testid="device-panel-build" data-channel={choice.current}>

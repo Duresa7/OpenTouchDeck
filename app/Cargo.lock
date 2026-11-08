@@ -3260,7 +3260,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "td-companion"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -3303,7 +3303,7 @@ dependencies = [
 
 [[package]]
 name = "td-core"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "dirs 6.0.0",
  "serde",
@@ -3314,7 +3314,7 @@ dependencies = [
 
 [[package]]
 name = "td-host"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -3348,7 +3348,7 @@ dependencies = [
 
 [[package]]
 name = "td-link"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "espflash",

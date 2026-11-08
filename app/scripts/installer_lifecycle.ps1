@@ -166,12 +166,14 @@ function Assert-Installed([string]$Version) {
     $firmwareHash = (Get-FileHash -LiteralPath (Join-Path $installDir 'resources\firmware\touchdeck.tdfw') -Algorithm SHA256).Hash
     Assert-That ($manifest.firmware.sha256 -eq $firmwareHash) 'The installed Firmware bundle matches the install manifest.'
     Assert-That ((Get-Field $manifest.firmware.manifest 'radio') -ne $true) 'The installed Firmware bundle is the normal build.'
-    # The radio build ships embedded in td-companion.exe, never as a file next to the normal build.
+    # A radio build, when the release ships one (app/release-options.json), is embedded in td-companion.exe, never a
+    # file next to the normal build.
     $radio = Get-Field $manifest 'radio_firmware'
-    Assert-That ($null -ne $radio) 'The install manifest records the radio build.'
-    Assert-That ((Get-Field (Get-Field $radio 'manifest') 'radio') -eq $true) 'The recorded radio build carries the radio mark.'
-    Assert-That ("$(Get-Field $radio 'sha256')" -match '^[0-9a-f]{64}$') 'The recorded radio build has a SHA-256.'
-    Assert-That ((Get-Field $radio 'embedded_in') -eq 'td-companion.exe') 'The radio build is recorded as embedded in the Companion.'
+    if ($null -ne $radio) {
+        Assert-That ((Get-Field (Get-Field $radio 'manifest') 'radio') -eq $true) 'The recorded radio build carries the radio mark.'
+        Assert-That ("$(Get-Field $radio 'sha256')" -match '^[0-9a-f]{64}$') 'The recorded radio build has a SHA-256.'
+        Assert-That ((Get-Field $radio 'embedded_in') -eq 'td-companion.exe') 'The radio build is recorded as embedded in the Companion.'
+    }
     $loose = @(Get-ChildItem -LiteralPath (Join-Path $installDir 'resources\firmware') -File | Where-Object Name -ne 'touchdeck.tdfw')
     Assert-That ($loose.Count -eq 0) 'The install holds no Firmware file besides the normal build.'
     $entries = @(Get-UninstallEntries)
