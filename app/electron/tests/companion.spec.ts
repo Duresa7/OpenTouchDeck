@@ -85,7 +85,7 @@ test('in development the window shows Home from the UI dev server with the mock 
         await page.waitForURL(ui);
         const cards = page.getByRole('list', { name: 'Devices' }).getByRole('listitem');
         await expect(cards).toHaveCount(1, { timeout: 15_000 });
-        await expect(cards.first()).toContainText('Connected');
+        await expect(cards.first().getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
         // The dev page signs in through the dev server; Electron gives the window session only to the Companion origin.
         expect(await page.evaluate(() => window.openTouchDeck?.session())).toBe(null);
         await mkdir(evidence, { recursive: true });
