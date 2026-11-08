@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { connect, devUiOrigin, restartMessage, revoke, runtimePath, type WindowSession } from './companion';
@@ -6,6 +6,7 @@ import { connect, devUiOrigin, restartMessage, revoke, runtimePath, type WindowS
 import { Updater, feedSettings } from './updates';
 import { UPDATER_PUBLIC_KEY } from './updates/key.gen';
 import { trustedSender } from './trusted-sender';
+import { menuTemplate } from './menu';
 
 app.setName('Open TouchDeck');
 if (process.platform === 'win32') {
@@ -125,8 +126,9 @@ async function openWindow() {
     }),
     quit: () => { closing = true; app.quit(); },
   });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(process.platform, app.isPackaged)));
   window = new BrowserWindow({
-    title: 'Open TouchDeck', useContentSize: true, width: 1100, height: 760, minWidth: 800, minHeight: 600,
+    title: 'Open TouchDeck', useContentSize: true, width: 1100, height: 760, minWidth: 800, minHeight: 600, autoHideMenuBar: true,
     webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true,
       nodeIntegration: false, webviewTag: false, partition: 'touchdeck-window' },
   });

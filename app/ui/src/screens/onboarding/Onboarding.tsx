@@ -150,7 +150,7 @@ function NameStep({ setup, device, headingId }: { setup: SetupStore; device: Dev
           data-autofocus
           data-testid="onboarding-name"
         />
-        <p id={`${id}-hint`} className={clsx('field-hint', (problem || needs) && 'is-warning')} data-testid="onboarding-name-hint">
+        <p id={`${id}-hint`} className={clsx('field-hint', !needs && problem && 'is-warning')} data-testid="onboarding-name-hint">
           {hint}
         </p>
       </form>
