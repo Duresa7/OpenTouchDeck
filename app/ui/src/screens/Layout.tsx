@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
 import { Tooltip } from '@base-ui/react/tooltip';
@@ -15,6 +15,7 @@ import { editorFor, useEditorState } from './layout/editor.ts';
 import { EditorHeader } from './layout/EditorHeader.tsx';
 import { exportLayout, importLayout } from './layout/files.ts';
 import { Inspector } from './layout/Inspector.tsx';
+import { InspectorResizer, useInspectorWidth } from './layout/InspectorResizer.tsx';
 import { PageTabs } from './layout/PageTabs.tsx';
 import { ReplaceDialog } from './layout/ReplaceDialog.tsx';
 import { StartLayout } from './layout/StartLayout.tsx';
@@ -24,6 +25,8 @@ import '../styles/layout.css';
 
 const LONG_MIN = 420;
 const LONG_MAX = 680;
+/** Below 800px the details panel can't give way, so the Device may shrink past LONG_MIN rather than overflow. */
+const LONG_NARROW = 240;
 
 const editable = 'input, textarea, select, [contenteditable], [role="dialog"], [role="alertdialog"], [role="menu"]';
 
@@ -62,7 +65,7 @@ interface Around {
   foot: RefObject<HTMLDivElement | null>;
 }
 
-function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }: Around, portrait: boolean, drawn: boolean) {
+function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }: Around, portrait: boolean, drawn: boolean, floor = LONG_MIN) {
   const [long, setLong] = useState(LONG_MAX);
   useLayoutEffect(() => {
     const el = canvas.current;
@@ -76,7 +79,7 @@ function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }:
       const w = el.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
       const h = el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom) - taken(head.current) - taken(foot.current);
       const fitted = portrait ? Math.min(h, w / aspect) : Math.min(w, h / aspect);
-      setLong(Math.round(Math.min(LONG_MAX, Math.max(LONG_MIN, fitted))));
+      setLong(Math.round(Math.min(LONG_MAX, Math.max(floor, fitted))));
     };
     fit();
     const observer = new ResizeObserver(fit);
@@ -84,7 +87,7 @@ function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }:
     if (head.current) observer.observe(head.current);
     if (foot.current) observer.observe(foot.current);
     return () => observer.disconnect();
-  }, [canvas, head, foot, portrait, drawn]);
+  }, [canvas, head, foot, portrait, drawn, floor]);
   return long;
 }
 
@@ -101,7 +104,9 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   const head = useRef<HTMLDivElement>(null);
   const foot = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const long = useDeviceLong(canvas, { head, foot }, layout?.orientation === 'portrait', layout !== null);
+  const editor = useRef<HTMLElement>(null);
+  const inspector = useInspectorWidth(editor);
+  const long = useDeviceLong(canvas, { head, foot }, layout?.orientation === 'portrait', layout !== null, inspector.limits.fixed ? LONG_NARROW : LONG_MIN);
   const offered = useOfferedFirmware(device);
   useEditorKeys(store);
 
@@ -110,7 +115,14 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   const openPicker = () => picker.current?.click();
 
   return (
-    <main className={clsx('editor', !layout && 'is-empty')} data-testid="editor" data-device-id={device.id}>
+    <main
+      ref={editor}
+      className={clsx('editor', !layout && 'is-empty')}
+      style={{ '--inspector-w': `${inspector.width}px` } as CSSProperties}
+      data-testid="editor"
+      data-device-id={device.id}
+      data-inspector-fixed={inspector.limits.fixed}
+    >
       <h1 className="visually-hidden">Layout</h1>
       <EditorHeader store={store} device={device} onImport={openPicker} onExport={() => void exportLayout(store)} />
       <div ref={canvas} className={clsx('canvas', actualSize && preview && 'is-actual')}>
@@ -162,6 +174,7 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
         )}
       </div>
       {layout && <Inspector store={store} layout={layout} device={name} />}
+      {layout && !inspector.limits.fixed && <InspectorResizer editor={editor} width={inspector.width} limits={inspector.limits} onWidth={inspector.choose} />}
       <ReplaceDialog store={store} device={name} />
       <input
         ref={picker}

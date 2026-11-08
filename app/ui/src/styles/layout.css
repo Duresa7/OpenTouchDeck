@@ -14,9 +14,57 @@
 
 .editor {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) var(--inspector-w, 400px);
   grid-template-rows: 64px minmax(0, 1fr);
   height: 100vh;
+}
+
+/* The details panel's left edge: drag, or focus and use the arrow keys, to resize it */
+.inspector-resizer {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: start;
+  position: relative;
+  z-index: 2;
+  width: 9px;
+  margin-left: -5px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.inspector-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--duration-hover) var(--ease-color);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .inspector-resizer:hover::after {
+    opacity: 1;
+    transition-delay: var(--delay-resizer);
+  }
+}
+
+.inspector-resizer:focus-visible {
+  outline: none;
+}
+
+.inspector-resizer:focus-visible::after,
+.inspector-resizer[data-dragging]::after {
+  opacity: 1;
+  transition-delay: 0ms;
+}
+
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .editor.is-empty {
@@ -558,7 +606,6 @@
   line-height: var(--leading-14);
   font-weight: var(--weight-semibold);
 }
-
 
 .controls-notice.is-checking .controls-notice-title,
 .controls-notice.is-unchecked .controls-notice-title {
@@ -1276,9 +1323,11 @@
 .inspector {
   grid-column: 2;
   grid-row: 1 / span 2;
+  container: inspector / inline-size;
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+  min-width: 0;
   min-height: 0;
   padding: var(--space-5);
   border-left: 1px solid var(--line);
@@ -1295,6 +1344,7 @@
 }
 
 .inspector-head-text {
+  flex: 1;
   min-width: 0;
 }
 
@@ -1762,7 +1812,7 @@
 
 .cell-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4) var(--space-3);
 }
 
@@ -1985,7 +2035,7 @@
 
 .add-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
 }
 
@@ -2044,6 +2094,34 @@
   font-size: var(--text-12);
   line-height: var(--leading-12);
   letter-spacing: var(--track-12);
+}
+
+/* A narrow panel lists the actions one per row, each on one line */
+@container inspector (max-width: 359px) {
+  .add-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .add-action {
+    min-height: 44px;
+  }
+
+  .add-action-text {
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
+
+  .add-action-name {
+    flex: none;
+  }
+
+  .add-action-line {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* ---------- Add Tile: Actions | Integrations ---------- */
