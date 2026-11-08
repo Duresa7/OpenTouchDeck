@@ -411,10 +411,16 @@ const FIELD_SAMPLES: Record<string, Omit<WidgetSample, 'caption'>> = {
   network_send_bytes_s: { value: '310 KB/s', bar: -1 },
 };
 
+/** Fields whose bar compares one account with the busiest, so the reading for all accounts has none. */
+const ACCOUNT_BARS: ReadonlySet<string> = new Set(['recent_10m']);
+
+/** A widget Tile's example reading, with a bar only where the real reading has one. */
 export function sampleWidget(tile: Tile): WidgetSample | null {
   if (tile.action.type !== 'widget') return null;
-  const sample = FIELD_SAMPLES[tile.action.field];
-  return sample ? { ...sample, caption: tile.label } : { value: '--', caption: tile.label, bar: -1 };
+  const { field, account } = tile.action;
+  const sample = FIELD_SAMPLES[field];
+  if (!sample) return { value: '--', caption: tile.label, bar: -1 };
+  return { ...sample, bar: account === '' && ACCOUNT_BARS.has(field) ? -1 : sample.bar, caption: tile.label };
 }
 
 /** Samples a preview graph draws until the Device shows real ones: a gentle wave between 10 and 90. */

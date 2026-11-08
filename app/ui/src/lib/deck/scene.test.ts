@@ -99,6 +99,14 @@ test('a widget tile shows its value, its caption below, and a bar as wide as the
   assert.equal(bare.bar, null);
 });
 
+test('a sample reading draws a bar only where the real one does: none on the requests total for all accounts', () => {
+  const widget = (field: string, account: string) =>
+    sampleWidget({ id: 't', label: 'Requests 10 min', row: 0, col: 0, rowSpan: 1, colSpan: 1, icon: null, action: { type: 'widget', source: 'cliproxyapi', field, account } });
+  assert.deepEqual(widget('recent_10m', ''), { value: '12', bar: -1, caption: 'Requests 10 min' });
+  assert.equal(widget('recent_10m', 'codex:Work')?.bar, 0.6);
+  assert.equal(widget('five_hour_pct', '')?.bar, 0.42);
+});
+
 test('a graph tile plots its samples under its label, in the area the Firmware leaves for it', () => {
   const samples = sampleSeries(20);
   const fresh: GraphSample = { samples, cap: 32, stale: false };
