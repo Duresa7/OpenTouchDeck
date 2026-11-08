@@ -165,7 +165,7 @@ export function createDetailStore(id: string, deps: DetailDeps) {
         set({ errors: { ...state().errors, [field]: `Enter the ${label(field)}.` } });
         return false;
       }
-      set({ busy: 'secret', notice: { kind: 'info', text: 'Saving…', event: 'saving' } });
+      set({ busy: 'secret', notice: { kind: 'info', text: 'Saving…', event: 'secret-saving' } });
       try {
         const { hint } = await write(() => call.secret_put({ integration: id, field }, null, { value }));
         const errors = { ...state().errors };

@@ -8,6 +8,7 @@ import { createIntegrationsStore, type IntegrationsStore } from '../companion/in
 import { windowSession } from '../companion/session.ts';
 import { SecretField } from '../../screens/integrations/SecretField.tsx';
 import { createDetailStore, REFRESH_FLOOR_MS, type DetailDeps, type DetailStore } from './detail.ts';
+import { outcomeAt } from './model.ts';
 import { createWrites } from './switch.ts';
 
 const BASE = 'http://127.0.0.1:51234';
@@ -199,6 +200,15 @@ describe('secrets', () => {
     expect(markup).toMatch(/<input[^>]*type="password"[^>]*>/);
     expect(markup).not.toMatch(/<input[^>]*type="password"[^>]*value=/);
     expect(markup).toContain('placeholder="Not set"');
+  });
+
+  it('say Saving… under the key while it saves, not under the settings', async () => {
+    const store = await detail();
+    const saving = store.putSecret({ field: 'management_key', value: SECRET });
+    expect(store.getState().notice).toMatchObject({ text: 'Saving…', event: 'secret-saving' });
+    expect(outcomeAt(store.getState().notice!.event)).toBe('secret');
+    expect(await saving).toBe(true);
+    expect(store.getState().notice).toMatchObject({ event: 'secret-saved' });
   });
 
   it('ask for a value before saving', async () => {

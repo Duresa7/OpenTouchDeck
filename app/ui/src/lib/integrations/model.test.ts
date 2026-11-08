@@ -98,7 +98,7 @@ describe('the form a schema builds', () => {
     expect(settingsTitle('custom')).toBe('Sources');
     expect(settingsTitle('elsewhere')).toBe('Settings');
     expect(['saved', 'save-failed', 'secret-forgotten', 'saving'].map(outcomeAt)).toEqual(['settings', 'settings', 'settings', 'settings']);
-    expect(['secret-saved', 'secret-failed', 'forget-failed'].map(outcomeAt)).toEqual(['secret', 'secret', 'secret']);
+    expect(['secret-saving', 'secret-saved', 'secret-failed', 'forget-failed'].map(outcomeAt)).toEqual(['secret', 'secret', 'secret', 'secret']);
     expect(['refreshed', 'refresh-floor', 'refresh-failed'].map(outcomeAt)).toEqual(['status', 'status', 'status']);
     expect(outcomeAt('load-failed')).toBe('page');
   });
