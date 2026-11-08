@@ -6,6 +6,7 @@ import { useCompanion } from '../lib/companion/connection.ts';
 import { useDevices } from '../lib/companion/devices.ts';
 import { useControlNotice } from '../lib/device/controls.ts';
 import { button } from '../shell/button.ts';
+import { StatusBox } from '../shell/StatusBox.tsx';
 import { useUi } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
 import { useDeviceLayout } from './home-layouts.ts';
@@ -22,14 +23,14 @@ function ControlsNotice({ device, name }: { device: DeviceSummary; name: string 
   if (notice.kind === 'checking') {
     return (
       <span className="device-controls" role="status" data-testid="controls-notice" data-state="checking">
-        <span className="status"><i className="led" aria-hidden />{CHECKING_CONTROLS}</span>
+        <StatusBox tone="wait" label={CHECKING_CONTROLS} showWords />
       </span>
     );
   }
   if (notice.kind === 'unchecked') {
     return (
       <span className="device-controls" role="status" data-testid="controls-notice" data-state="unchecked" data-reason={notice.reason}>
-        <span className="status is-waiting"><i className="led" aria-hidden />{uncheckedText(notice.reason, name)}</span>
+        <StatusBox tone="wait" label={uncheckedText(notice.reason, name)} showWords className="is-waiting" />
       </span>
     );
   }
@@ -41,7 +42,7 @@ function ControlsNotice({ device, name }: { device: DeviceSummary; name: string 
   };
   return (
     <span className="device-controls" data-testid="controls-notice" data-state={notice.reason}>
-      <span className="status is-waiting"><i className="led" aria-hidden />{NEEDS_SEND}</span>
+      <StatusBox tone="wait" label={NEEDS_SEND} showWords className="is-waiting" />
       <button type="button" className={button({ size: 'small' })} aria-label={`Review Layout for ${name}`} onClick={() => void review()} data-testid="controls-review">
         Review Layout
       </button>
@@ -60,9 +61,14 @@ function DeviceCard({ device, width }: { device: DeviceSummary; width: number })
       <DevicePreview preview={previewOf(layout, device.layout)} live={status.live} orientation={shownOrientation(device)} empty={status.live && layout === null} />
     </button>
     <div className="device-caption">
-      <span className="device-name" title={name}>{name}</span>
+      <span className="device-name-row">
+        <span className="device-name" title={name}>{name}</span>
+        <span className="device-status-box" title={`${name}: ${status.words}`}>
+          <StatusBox tone={status.tone} label={`${name}: ${status.words}`} testId="device-status" />
+        </span>
+      </span>
       <span className="device-meta">
-        <span className={clsx('status', status.live && 'is-live')}><i className="led" aria-hidden />{status.words}</span>
+        {!status.live && <span className="status" data-testid="device-status-words">{status.words}</span>}
         {seen && <span className="device-seen">{seen}</span>}
         {firmwareUpdate(device) && <span className="badge-signal"><ArrowUpCircle size={14} aria-hidden />Firmware update</span>}
       </span>

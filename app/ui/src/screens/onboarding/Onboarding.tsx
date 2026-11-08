@@ -13,6 +13,7 @@ import { newLayout, starterLayout, type Layout, type Orientation } from '../../l
 import { button } from '../../shell/button.ts';
 import { DevicePreview } from '../DevicePreview.tsx';
 import { statusOf } from '../home-model.ts';
+import { StatusBox } from '../../shell/StatusBox.tsx';
 import { deviceStoresFor, useOfferedFirmware } from '../layout/device.ts';
 import './onboarding.css';
 
@@ -347,10 +348,7 @@ function Stage({ setup, device }: { setup: SetupStore; device: DeviceSummary }) 
         <span className={clsx('device-name', !typed && !device.name && 'is-unnamed')} title={name}>
           {name}
         </span>
-        <span className={clsx('status', status.live && 'is-live')}>
-          <i className="led" />
-          {status.words}
-        </span>
+        <StatusBox tone={status.tone} label={status.words} showWords />
       </div>
     </div>
   );

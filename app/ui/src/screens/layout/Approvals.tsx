@@ -53,7 +53,7 @@ function Pending({ request, layout, device }: { request: ApprovalRequest; layout
   return (
     <section className="approval" data-testid="approval-pending" data-id={request.id} data-tile={request.tile}>
       <p className="approval-title">
-        <i className="led is-signal" aria-hidden />
+        <i className="status-box" data-tone="wait" aria-hidden />
         Waiting for approval on this PC
       </p>
       <p className="approval-where">{where(request, layout, device)}</p>

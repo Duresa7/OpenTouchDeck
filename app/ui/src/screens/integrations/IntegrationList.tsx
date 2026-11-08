@@ -1,4 +1,3 @@
-import clsx from 'clsx';
 import type { IntegrationSummary, PresetTile } from '../../lib/companion/api.ts';
 import { plural } from '../../lib/layout/messages.ts';
 import { lineOf, statusOf } from '../../lib/integrations/model.ts';
@@ -50,8 +49,8 @@ function Row({ integration, onOpen, onAdd }: { integration: IntegrationSummary; 
             Set up
           </button>
         ) : (
-          <span className={clsx('status', status.live && 'is-live')} data-testid="integration-status" data-live={status.live}>
-            <i className="led" aria-hidden />
+          <span className="status" data-testid="integration-status" data-live={status.live}>
+            {status.tone && <i className="status-box" data-tone={status.tone} aria-hidden />}
             {status.words}
           </span>
         )}

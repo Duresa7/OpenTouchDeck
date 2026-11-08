@@ -152,17 +152,25 @@ button {
   white-space: nowrap;
 }
 
-.led {
+/* Green works, red doesn't (with a cut, so it never relies on colour alone), amber is on its way */
+.status-box {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--led-off);
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background-color: var(--signal-led);
+  box-shadow: inset 0 0 0 1px var(--status-box-edge);
+  transition: background-color var(--duration-status) var(--ease-color);
 }
 
-.status.is-live .led {
-  background: var(--live-led);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live-led) 18%, transparent);
+.status-box[data-tone='ok'] {
+  background-color: var(--live-led);
+}
+
+.status-box[data-tone='bad'] {
+  background-color: var(--danger-led);
+  background-image: linear-gradient(135deg, transparent calc(50% - 0.8px), var(--status-box-cut) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px));
 }
 
 /* ---------- Buttons ---------- */

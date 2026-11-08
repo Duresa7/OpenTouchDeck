@@ -32,8 +32,8 @@ function StatusBlock({ store, summary }: { store: DetailStore; summary: Integrat
   const failed = summary.status.delivery.filter((d) => d.error !== null);
   return (
     <div className="detail-status">
-      <span className={clsx('status', status.live && 'is-live')} data-testid="detail-status" data-state={summary.status.state} data-live={status.live}>
-        <i className="led" aria-hidden />
+      <span className="status" data-testid="detail-status" data-state={summary.status.state} data-live={status.live}>
+        {status.tone && <i className="status-box" data-tone={status.tone} aria-hidden />}
         {words}
       </span>
       {status.detail && (

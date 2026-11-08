@@ -165,11 +165,16 @@ export function transportWarning(address: string): string | null {
   }
 }
 
+/** A status box's colour: green works, red doesn't, amber is on its way or waits for you. */
+export type StatusTone = 'ok' | 'bad' | 'wait';
+
 export interface Status {
   words: string;
-  /** Green only while connected. */
+  /** The status box to show, or null when there's nothing to say beyond the switch: the Integration is off. */
+  tone: StatusTone | null;
+  /** Connected, so its values are live. */
   live: boolean;
-  /** No credentials yet, so the row offers Set up instead of a light. */
+  /** No credentials yet. */
   needsSetup: boolean;
   /** The Companion's raw reason, for Details. */
   detail: string | null;
@@ -177,11 +182,11 @@ export interface Status {
 
 export function statusOf(summary: Pick<IntegrationSummary, 'enabled' | 'status'>): Status {
   const { state, message } = summary.status;
-  if (state === 'not_configured') return { words: 'Not set up', live: false, needsSetup: true, detail: null };
-  if (!summary.enabled) return { words: 'Off', live: false, needsSetup: false, detail: null };
-  if (state === 'ok') return { words: 'Connected', live: true, needsSetup: false, detail: null };
-  if (state === 'error') return { words: "Can't connect", live: false, needsSetup: false, detail: message };
-  return { words: 'Checking…', live: false, needsSetup: false, detail: message };
+  if (state === 'not_configured') return summary.enabled ? { words: 'Finish setup', tone: 'wait', live: false, needsSetup: true, detail: null } : { words: 'Not set up', tone: null, live: false, needsSetup: true, detail: null };
+  if (!summary.enabled) return { words: 'Off', tone: null, live: false, needsSetup: false, detail: null };
+  if (state === 'ok') return { words: 'Connected', tone: 'ok', live: true, needsSetup: false, detail: null };
+  if (state === 'error') return { words: "Can't connect", tone: 'bad', live: false, needsSetup: false, detail: message };
+  return { words: 'Checking…', tone: 'wait', live: false, needsSetup: false, detail: message };
 }
 
 /** Whether an Integration is set up and on, so the Add Tile panel offers its Preset tiles. */

@@ -1,21 +1,33 @@
 import type { DeviceSummary, Layout, LayoutSummary, Orientation } from '../lib/companion/api.ts';
 import type { Unchecked } from '../lib/device/controls.ts';
+import type { Tone } from '../shell/StatusBox.tsx';
 
-export function statusOf(state: string) {
+export interface LinkStatus {
+  words: string;
+  /** Connected, so the Device takes Layouts and taps. */
+  live: boolean;
+  /** Its status box: green connected, amber on its way, red not connected. */
+  tone: Tone;
+}
+
+export function statusOf(state: string): LinkStatus {
   switch (state) {
-    case 'connected': return { words: 'Connected', live: true };
-    case 'connecting': return { words: 'Connecting…', live: false };
-    case 'busy': return { words: 'In use by another program', live: false };
-    case 'updating': return { words: 'Updating…', live: false };
-    case 'restarting': return { words: 'Restarting…', live: false };
-    default: return { words: 'Not connected', live: false };
+    case 'connected': return { words: 'Connected', live: true, tone: 'ok' };
+    case 'connecting': return { words: 'Connecting…', live: false, tone: 'wait' };
+    case 'busy': return { words: 'In use by another program', live: false, tone: 'bad' };
+    case 'updating': return { words: 'Updating…', live: false, tone: 'wait' };
+    case 'restarting': return { words: 'Restarting…', live: false, tone: 'wait' };
+    default: return { words: 'Not connected', live: false, tone: 'bad' };
   }
 }
 
-/** The link in words, naming Wi-Fi when that's the Carrier. */
-export function deviceStatus(device: Pick<DeviceSummary, 'link' | 'carrier'>) {
+const CARRIERS: Partial<Record<string, string>> = { usb: 'USB', wifi: 'Wi-Fi', ble: 'Bluetooth' };
+
+/** The link in words, naming the Carrier while connected. */
+export function deviceStatus(device: Pick<DeviceSummary, 'link' | 'carrier'>): LinkStatus {
   const status = statusOf(device.link.state);
-  return status.live && device.carrier === 'wifi' ? { ...status, words: 'Connected over Wi-Fi' } : status;
+  const carrier = CARRIERS[device.carrier ?? ''];
+  return status.live && carrier ? { ...status, words: `Connected over ${carrier}` } : status;
 }
 
 export const NEEDS_SEND = 'Controls need Send to Device';

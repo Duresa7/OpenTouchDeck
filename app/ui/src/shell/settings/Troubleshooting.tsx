@@ -6,6 +6,7 @@ import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { useDevices } from '../../lib/companion/devices.ts';
 import { statusOf } from '../../screens/home-model.ts';
 import { button } from '../button.ts';
+import { StatusBox } from '../StatusBox.tsx';
 import { FirmwareConsole } from './FirmwareConsole.tsx';
 import { FirmwareFile } from './FirmwareFile.tsx';
 import { useSystemInfo } from './system.ts';
@@ -27,10 +28,7 @@ function DeviceDetails({ device, demo }: { device: DeviceSummary; demo: boolean 
             </details>
           )}
         </span>
-        <span className={clsx('status', status.live && 'is-live')}>
-          <i className="led" aria-hidden />
-          {status.words}
-        </span>
+        <StatusBox tone={status.tone} label={status.words} showWords />
       </div>
       {device.link.state === 'connected' && (
         <dl className="facts">

@@ -113,14 +113,15 @@ describe('how a key travels to an address', () => {
 
 describe('status', () => {
   it.each([
-    ['not_configured', true, 'Not set up', false, true],
-    ['not_configured', false, 'Not set up', false, true],
-    ['ok', false, 'Off', false, false],
-    ['ok', true, 'Connected', true, false],
-    ['error', true, "Can't connect", false, false],
-    ['warming', true, 'Checking…', false, false],
-  ] as const)('%s while %s reads %s', (state, enabled, words, live, needsSetup) => {
-    expect(statusOf(summary(state, enabled))).toMatchObject({ words, live, needsSetup });
+    ['not_configured', true, 'Finish setup', 'wait', false, true],
+    ['not_configured', false, 'Not set up', null, false, true],
+    ['ok', false, 'Off', null, false, false],
+    ['error', false, 'Off', null, false, false],
+    ['ok', true, 'Connected', 'ok', true, false],
+    ['error', true, "Can't connect", 'bad', false, false],
+    ['warming', true, 'Checking…', 'wait', false, false],
+  ] as const)('%s while %s reads %s with a %s box', (state, enabled, words, tone, live, needsSetup) => {
+    expect(statusOf(summary(state, enabled))).toEqual(expect.objectContaining({ words, tone, live, needsSetup }));
   });
 
   it('keeps the raw reason for Details', () => {

@@ -7,6 +7,7 @@ import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { saveState, type EditorStore } from '../../lib/editor/store.ts';
 import type { Orientation } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
+import { StatusBox } from '../../shell/StatusBox.tsx';
 import { deviceStatus } from '../home-model.ts';
 import { DevicePanel } from './DevicePanel.tsx';
 import { useEditorState } from './editor.ts';
@@ -97,10 +98,11 @@ export function EditorHeader({ store, device, onImport, onExport }: EditorHeader
   return (
     <header className="editor-head">
       <DevicePanel device={device} />
-      <span className={clsx('status', status.live && 'is-live')} title={status.words} data-testid="connection">
-        <i className="led" aria-hidden />
-        <span className="status-words">{status.words}</span>
-      </span>
+      <Tip label={`${name}: ${status.words}`}>
+        <span className="connection" data-testid="connection" data-tone={status.tone}>
+          <StatusBox tone={status.tone} label={`${name}: ${status.words}`} />
+        </span>
+      </Tip>
       <SaveState store={store} />
       <ToggleGroup
         value={[orientation]}

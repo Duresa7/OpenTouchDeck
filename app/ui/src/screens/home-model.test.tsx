@@ -8,15 +8,21 @@ import { windowSession } from '../lib/companion/session.ts';
 import { createUiStore } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
 import { lastSeenLayout, readDeviceLayout, seenLayout } from './home-layouts.ts';
-import { deviceWidth, firmwareUpdate, lastSeen, previewOf, statusOf } from './home-model.ts';
+import { deviceStatus, deviceWidth, firmwareUpdate, lastSeen, previewOf, statusOf } from './home-model.ts';
 
 describe('Home', () => {
   it.each([
-    ['connected', 'Connected'], ['connecting', 'Connecting…'], ['busy', 'In use by another program'],
-    ['updating', 'Updating…'], ['restarting', 'Restarting…'], ['offline', 'Not connected'],
-    ['lost', 'Not connected'], ['disconnected', 'Not connected'], ['unresponsive', 'Not connected'], ['future', 'Not connected'],
-  ])('describes %s with words and a light', (state, words) => {
-    expect(statusOf(state)).toEqual({ words, live: state === 'connected' });
+    ['connected', 'Connected', 'ok'], ['connecting', 'Connecting…', 'wait'], ['busy', 'In use by another program', 'bad'],
+    ['updating', 'Updating…', 'wait'], ['restarting', 'Restarting…', 'wait'], ['offline', 'Not connected', 'bad'],
+    ['lost', 'Not connected', 'bad'], ['disconnected', 'Not connected', 'bad'], ['unresponsive', 'Not connected', 'bad'], ['future', 'Not connected', 'bad'],
+  ])('describes %s with words and a status box tone', (state, words, tone) => {
+    expect(statusOf(state)).toEqual({ words, live: state === 'connected', tone });
+  });
+  it.each([
+    ['usb', 'connected', 'Connected over USB'], ['wifi', 'connected', 'Connected over Wi-Fi'], [null, 'connected', 'Connected'], ['wifi', 'lost', 'Not connected'],
+  ] as const)('names the %s Carrier only while connected', (carrier, state, words) => {
+    const device = sampleDevice('one', 'Desk');
+    expect(deviceStatus({ carrier, link: { ...device.link, state } as typeof device.link }).words).toBe(words);
   });
   it.each([0, 1, 2, 3, 4, 5])('sizes %i Devices', (count) => {
     expect(deviceWidth(count)).toBe(count === 1 ? 560 : 312);
