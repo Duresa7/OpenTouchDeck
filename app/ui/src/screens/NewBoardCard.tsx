@@ -56,7 +56,7 @@ export function NewBoardCard({ board, width }: { board: NewBoard; width: number 
         )}
         {view.step === 'waiting' && (
           <span className="status is-waiting" role="status" data-testid="board-status">
-            <i className="led" aria-hidden />
+            <i className="status-box" data-tone="wait" aria-hidden />
             {view.text}
           </span>
         )}

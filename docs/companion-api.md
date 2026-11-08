@@ -707,7 +707,8 @@ Requests carrying a credential never follow a redirect to another origin. They s
 |---|---|---|
 | `integrations.list` | `GET /integrations` | → `IntegrationSummary[] {id, name, icon, enabled, status, config_schema, presets}`. `status` reports delivery per Device as `{device, sent, error}` |
 | `integrations.get` | `GET /integrations/{integration}` | → `{summary, config, secrets: {[field]: {set}}, detail}` |
-| `integrations.config_put` | `PUT /integrations/{integration}/config` | Config, checked against the Integration's schema → the same view as `integrations.get` |
+| `integrations.config_put` | `PUT /integrations/{integration}/config` | Config, checked against the Integration's schema → the same view as `integrations.get`. A config object without `enabled` keeps the stored value |
+| `integrations.enabled_put` | `PUT /integrations/{integration}/enabled` | `{enabled}` → the same view as `integrations.get`. Turns the Integration on or off and leaves its other config and its secrets as stored. Any other body gives 400 `request.invalid` |
 | `integrations.secret_put` | `PUT /integrations/{integration}/secrets/{field}` | `{value}` → `{hint}`. Write-only. The value never comes back and is never in `config` |
 | `integrations.secret_delete` | `DELETE /integrations/{integration}/secrets/{field}` | → `()` |
 | `integrations.refresh` | `POST /integrations/{integration}/refresh` | → `()` |

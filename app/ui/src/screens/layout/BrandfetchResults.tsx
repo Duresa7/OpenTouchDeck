@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
+import { sourceOn, useIconSources } from '../../state/icon-sources.ts';
 import { clientIdOf, brandfetchStore } from '../../lib/brandfetch/settings.ts';
 import { createBrandSearch, SEARCH_MESSAGES, type BrandHit, type BrandSearch, type BrandSearchState } from '../../lib/brandfetch/search.ts';
 import type { Companion } from '../../lib/companion/client.ts';
@@ -19,7 +20,9 @@ export interface BrandSearchHook {
 /** Live Brandfetch search for the icon picker. Hits stay in this component's state only. */
 export function useBrandSearch(companion: Pick<Companion, 'brandfetch' | 'system'>): BrandSearchHook {
   const store = brandfetchStore(companion);
-  const clientId = useStore(store, (s) => clientIdOf(s.view));
+  const saved = useStore(store, (s) => clientIdOf(s.view));
+  const on = useIconSources((s) => sourceOn(s.brandfetch, saved !== null));
+  const clientId = on ? saved : null;
   const [state, setState] = useState<BrandSearchState>({ kind: 'idle' });
   const search = useRef<BrandSearch | null>(null);
   const query = useRef('');

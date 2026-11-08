@@ -15,8 +15,9 @@ test('the window is titled Open TouchDeck and opens on Home with the Devices and
   const cards = page.getByRole('listitem');
   await expect(cards).toHaveCount(3);
   await expect(cards.nth(0)).toContainText('Desk');
-  await expect(cards.nth(0)).toContainText('Connected');
-  await expect(cards.nth(2)).toContainText('Connected');
+  await expect(cards.nth(0).getByTestId('device-status')).toHaveAccessibleName('Desk: Connected over USB');
+  await expect(cards.nth(0).getByTestId('device-status')).toHaveAttribute('data-tone', 'ok');
+  await expect(cards.nth(2).getByTestId('device-status')).toHaveAccessibleName(/: Connected over Wi-Fi$/);
 });
 
 test('the shell runs without console errors or warnings', async ({ page }) => {

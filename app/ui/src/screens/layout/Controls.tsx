@@ -44,7 +44,7 @@ export function ControlNoticeBar({ store, device }: { store: EditorStore; device
     return (
       <section className="controls-notice is-checking" role="status" data-testid="controls-notice" data-state="checking">
         <p className="controls-notice-title">
-          <i className="led" aria-hidden />
+          <i className="status-box" data-tone="wait" aria-hidden />
           {CHECKING_CONTROLS}
         </p>
       </section>
@@ -54,7 +54,7 @@ export function ControlNoticeBar({ store, device }: { store: EditorStore; device
     return (
       <section className="controls-notice is-unchecked" role="status" data-testid="controls-notice" data-state="unchecked" data-reason={notice.reason}>
         <p className="controls-notice-title">
-          <i className="led" aria-hidden />
+          <i className="status-box" data-tone="wait" aria-hidden />
           {uncheckedText(notice.reason, device)}
         </p>
       </section>
@@ -80,7 +80,7 @@ export function ControlNoticeBar({ store, device }: { store: EditorStore; device
     <section className="controls-notice" aria-labelledby={titleId} data-testid="controls-notice" data-state={other ? 'other-orientation' : notice.reason}>
       <div className="controls-notice-head">
         <h2 className="controls-notice-title" id={titleId}>
-          <i className="led" aria-hidden />
+          <i className="status-box" data-tone="wait" aria-hidden />
           {NEEDS_SEND}
         </h2>
         {action}

@@ -44,7 +44,7 @@ async function reconnect(page: Page) {
   await page.evaluate((id) => window.touchdeckDemo?.offline(id), ID);
   await expect(shelf(page)).toContainText('Not connected');
   await page.evaluate((id) => window.touchdeckDemo?.device(id, { link: { state: 'connected', port: 'COM9', since_ms: Date.now(), protocol: 2 } }), ID);
-  await expect(shelf(page)).toContainText('Connected');
+  await expect(shelf(page).getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
 }
 
 async function named(page: Page, name = 'Shelf') {

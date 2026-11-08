@@ -67,8 +67,16 @@ async function companionReferrerPolicy(page: Page) {
 
 const calls = (page: Page) => page.evaluate(() => window.brandfetchCalls ?? 0);
 const brandSection = (page: Page) => picker(page).getByTestId('icon-section-brandfetch');
-const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings' });
-const brandfetchView = (page: Page) => page.getByRole('dialog', { name: 'Brandfetch logos' });
+const brandfetchRow = (page: Page) => page.locator('[data-testid="integration"][data-id="brandfetch"]');
+const brandfetchView = (page: Page) => page.locator('[data-testid="integration-detail"][data-id="brandfetch"]');
+
+async function openBrandfetch(page: Page, query = '') {
+  await page.goto(`/${query}`);
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+  await brandfetchRow(page).getByTestId('integration-settings').click();
+  await expect(brandfetchView(page)).toBeVisible();
+}
 
 /** Everything the page keeps in localStorage, sessionStorage and IndexedDB, as text. */
 async function pageStorage(page: Page): Promise<string> {
@@ -109,14 +117,16 @@ async function forget(page: Page, field: 'brandfetch-client-id' | 'brandfetch-ke
   await expect(view.getByTestId(`${field}-field`)).toHaveAttribute('data-set', 'false');
 }
 
-test('the settings flow saves a client ID and a write-only key, and forgets both', async ({ page }) => {
+test('the settings flow saves a client ID and a write-only key, turns it on, and forgets both', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
-  await page.getByRole('button', { name: 'Settings' }).click();
-  await expect(settings(page).getByTestId('brandfetch-entry')).toContainText('Off.');
-  await settings(page).getByTestId('brandfetch-entry').click();
+  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+  await expect(brandfetchRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
+  await brandfetchRow(page).getByTestId('integration-settings').click();
   const view = brandfetchView(page);
-  await expect(view.getByRole('heading', { name: 'Keys', exact: true })).toBeVisible();
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
+  // Keys heads its own card, as Connection does on CLIProxyAPI's page.
+  await expect(view.locator('.detail-sheet').getByTestId('brandfetch-keys').getByRole('heading', { name: 'Keys', exact: true })).toBeVisible();
   await expect(view.getByTestId('brandfetch-notes')).toContainText('own Brandfetch account');
   await expect(view.getByTestId('brandfetch-stored')).toContainText('The API key is stored in Windows Credential Manager, never in a file.');
   await expect(view.getByRole('link', { name: /Get a client ID/ })).toHaveAttribute('href', 'https://developers.brandfetch.com/register');
@@ -130,6 +140,8 @@ test('the settings flow saves a client ID and a write-only key, and forgets both
   await view.getByTestId('brandfetch-client-id-input').fill('test-client-id');
   await view.getByTestId('brandfetch-client-id-save').click();
   await expect(view.getByTestId('brandfetch-client-id-state')).toHaveText('test-client-id');
+  // A client ID turns logo search on.
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'true');
 
   const keyInput = view.getByTestId('brandfetch-key-input');
   await expect(keyInput).toHaveAttribute('type', 'password');
@@ -151,15 +163,77 @@ test('the settings flow saves a client ID and a write-only key, and forgets both
   await forget(page, 'brandfetch-key', 'Forget the API key?');
   await expect(page.getByTestId('forget-dialog')).toBeHidden();
 
-  await view.getByRole('button', { name: 'Back' }).click();
-  await expect(settings(page).getByTestId('brandfetch-entry')).toContainText('On.');
-  await expect(settings(page).getByTestId('brandfetch-entry')).toBeFocused();
+  await view.getByTestId('detail-back').click();
+  await expect(brandfetchRow(page).getByTestId('integration-settings')).toBeFocused();
+  await expect(brandfetchRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'true');
+  await expect(brandfetchRow(page).getByTestId('integration-status')).toHaveCount(0);
 
-  await settings(page).getByTestId('brandfetch-entry').click();
+  await brandfetchRow(page).getByTestId('integration-settings').click();
   await forget(page, 'brandfetch-client-id', 'Forget the client ID?');
-  await view.getByRole('button', { name: 'Back' }).click();
-  await expect(settings(page).getByTestId('brandfetch-entry')).toContainText('Off.');
+  await view.getByTestId('detail-back').click();
+  // Still switched on, with nothing to search with yet.
+  await expect(brandfetchRow(page).getByTestId('integration-status')).toHaveText('Finish setup');
+  await brandfetchRow(page).getByTestId('integration-switch').click();
+  await expect(brandfetchRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
+  await expect(brandfetchRow(page).getByTestId('integration-status')).toHaveCount(0);
   await noBrandfetchInStorage(page);
+});
+
+test('turning Brandfetch on before it has a client ID opens its page, and the client ID turns it on', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+  await brandfetchRow(page).getByTestId('integration-switch').click();
+  const view = brandfetchView(page);
+  await expect(view).toBeVisible();
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-busy', 'true');
+  await view.getByTestId('brandfetch-client-id-input').fill('test-client-id');
+  await view.getByTestId('brandfetch-client-id-save').click();
+  await expect(view.getByTestId('brandfetch-client-id-state')).toHaveText('test-client-id');
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'true');
+  await expect(view.getByTestId('detail-switch')).not.toHaveAttribute('aria-busy', 'true');
+  // On now, so one flip turns it off.
+  await view.getByTestId('detail-switch').click();
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
+});
+
+test('flipping Brandfetch off again while it waits for a client ID undoes the enable', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+  await brandfetchRow(page).getByTestId('integration-switch').click();
+  const view = brandfetchView(page);
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-busy', 'true');
+  await view.getByTestId('detail-switch').click();
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
+  await expect(view.getByTestId('detail-switch')).not.toHaveAttribute('aria-busy', 'true');
+  // Finishing setup afterwards keeps the explicit off.
+  await view.getByTestId('brandfetch-client-id-input').fill('test-client-id');
+  await view.getByTestId('brandfetch-client-id-save').click();
+  await expect(view.getByTestId('brandfetch-client-id-state')).toHaveText('test-client-id');
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
+  await view.getByTestId('detail-back').click();
+  await expect(brandfetchRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
+  await page.reload();
+  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+  await expect(brandfetchRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
+});
+
+test('turned off, Brandfetch keeps its keys and the picker stops searching it', async ({ page }) => {
+  const brandfetch = await mockBrandfetch(page);
+  await openBrandfetch(page, '?brandfetch=on');
+  await expect(brandfetchView(page).getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'true');
+  await brandfetchView(page).getByTestId('detail-switch').click();
+  await expect(brandfetchView(page).getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
+  await expect(brandfetchView(page).getByTestId('brandfetch-key-state')).toHaveText('Set');
+  await openCopyTile(page, '/?brandfetch=on');
+  await openPicker(page);
+  await page.getByTestId('icon-search').fill('music');
+  await expect(picker(page).getByTestId('icon-grid')).toBeVisible();
+  await page.waitForTimeout(800);
+  await expect(brandSection(page)).toHaveCount(0);
+  expect(await calls(page)).toBe(0);
+  expect(brandfetch.searches).toEqual([]);
 });
 
 test('without a client ID the picker has no Brandfetch section and never calls it', async ({ page }) => {
@@ -260,10 +334,7 @@ test('a pick Brandfetch has no details for explains itself', async ({ page }) =>
 });
 
 test('on Linux the key goes to the system keychain, and a missing one says how to start it', async ({ page }) => {
-  await page.goto('/?platform=linux&keychain=off');
-  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
-  await page.getByRole('button', { name: 'Settings' }).click();
-  await settings(page).getByTestId('brandfetch-entry').click();
+  await openBrandfetch(page, '?platform=linux&keychain=off');
   const view = brandfetchView(page);
   await expect(view.getByTestId('brandfetch-stored')).toContainText('The API key is stored in your system keychain (GNOME Keyring or KWallet), never in a file.');
   await view.getByTestId('brandfetch-key-input').fill('test-api-key');
@@ -285,6 +356,6 @@ test('Integration secrets name the same keychain', async ({ page }) => {
   await page.goto('/?platform=linux');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
-  await page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-open').click();
+  await page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-settings').click();
   await expect(page.getByTestId('integration-detail')).toContainText('Stored in your system keychain (GNOME Keyring or KWallet), never in a file.');
 });

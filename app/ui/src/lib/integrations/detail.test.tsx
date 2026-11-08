@@ -7,7 +7,9 @@ import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
 import { createIntegrationsStore, type IntegrationsStore } from '../companion/integrations.ts';
 import { windowSession } from '../companion/session.ts';
 import { SecretField } from '../../screens/integrations/SecretField.tsx';
-import { createDetailStore, REFRESH_FLOOR_MS, type DetailStore } from './detail.ts';
+import { createDetailStore, REFRESH_FLOOR_MS, type DetailDeps, type DetailStore } from './detail.ts';
+import { outcomeAt } from './model.ts';
+import { createWrites } from './switch.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const SECRET = 'spec-secret-7f3a91';
@@ -23,17 +25,17 @@ async function settle() {
   for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function detail(): Promise<DetailStore> {
-  const store = createDetailStore('cliproxyapi', { companion, now: () => clock });
+async function detail(deps: Partial<DetailDeps> = {}): Promise<DetailStore> {
+  const store = createDetailStore('cliproxyapi', { companion, now: () => clock, ...deps });
   await store.load();
   return store;
 }
 
 async function setUp(store: DetailStore, url = 'https://hub.example.com') {
-  store.setValue('enabled', true);
   store.setValue('url', url);
   await store.save();
   expect(await store.putSecret({ field: 'management_key', value: SECRET })).toBe(true);
+  await companion.integrations.enabled_put({ integration: 'cliproxyapi' }, null, { enabled: true });
 }
 
 beforeEach(() => {
@@ -67,7 +69,7 @@ describe('the Integration view', () => {
 
   it('fills the form from the config and knows when it has changes', async () => {
     const store = await detail();
-    expect(store.getState().values).toEqual({ enabled: false, url: 'http://127.0.0.1:8317', interval_s: '300' });
+    expect(store.getState().values).toEqual({ url: 'http://127.0.0.1:8317', interval_s: '300' });
     expect(store.getState().secrets).toEqual({ management_key: { set: false, hint: null } });
     expect(store.dirty()).toBe(false);
     store.setValue('interval_s', '120');
@@ -105,6 +107,69 @@ describe('the Integration view', () => {
   });
 });
 
+describe('Save and the switch', () => {
+  it('never sends enabled, so the Companion keeps the switch where it is', async () => {
+    const store = await detail();
+    store.setValue('url', 'https://hub.example.com');
+    await store.save();
+    const put = requests.filter((r) => r.method === 'PUT' && r.url.endsWith('/integrations/cliproxyapi/config'));
+    expect(put.map((r) => JSON.parse(r.body))).toEqual([{ url: 'https://hub.example.com', interval_s: 300 }]);
+  });
+
+  it("keeps another client's off when this window saves with a stale view", async () => {
+    const store = await detail();
+    await setUp(store);
+    await store.load();
+    expect((await companion.integrations.get({ integration: 'cliproxyapi' })).summary.enabled).toBe(true);
+    await companion.integrations.enabled_put({ integration: 'cliproxyapi' }, null, { enabled: false });
+    store.setValue('interval_s', '600');
+    await store.save();
+    expect(store.getState().notice?.event).toBe('saved');
+    const view = await companion.integrations.get({ integration: 'cliproxyapi' });
+    expect(view.summary.enabled).toBe(false);
+    expect(view.config).toMatchObject({ enabled: false, interval_s: 600 });
+  });
+
+  it('keeps unsaved edits while the switch changes', async () => {
+    const store = await detail();
+    store.setValue('interval_s', '900');
+    await companion.integrations.enabled_put({ integration: 'cliproxyapi' }, null, { enabled: true });
+    await store.load();
+    expect(store.getState().values.interval_s).toBe('900');
+    expect(store.dirty()).toBe(true);
+  });
+
+  it('reports the summary after a settings save and after a secret, so a pending enable can finish', async () => {
+    const heard: [string, boolean][] = [];
+    const store = await detail({ onSummary: (summary) => heard.push([summary.status.state, summary.enabled]) });
+    store.setValue('url', 'https://hub.example.com');
+    await store.save();
+    expect(heard).toEqual([['not_configured', false]]);
+    expect(await store.putSecret({ field: 'management_key', value: SECRET })).toBe(true);
+    expect(heard).toEqual([['not_configured', false], ['ok', false]]);
+  });
+
+  it('queues its writes behind the switch on the same queue', async () => {
+    const writes = createWrites(companion, integrations);
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const store = await detail({ writes });
+    const held = writes.run('cliproxyapi', async () => {
+      await gate;
+      order.push('switch');
+    });
+    store.setValue('url', 'https://hub.example.com');
+    const saving = store.save().then(() => void order.push('save'));
+    await settle();
+    expect(order).toEqual([]);
+    expect(writes.getState().writes).toEqual({ cliproxyapi: 2 });
+    release();
+    await Promise.all([held, saving]);
+    expect(order).toEqual(['switch', 'save']);
+  });
+});
+
 describe('secrets', () => {
   it('never keep the value: not in the state, the Integrations store, the event stream or a URL', async () => {
     const frames: string[] = [];
@@ -135,6 +200,15 @@ describe('secrets', () => {
     expect(markup).toMatch(/<input[^>]*type="password"[^>]*>/);
     expect(markup).not.toMatch(/<input[^>]*type="password"[^>]*value=/);
     expect(markup).toContain('placeholder="Not set"');
+  });
+
+  it('say Saving… under the key while it saves, not under the settings', async () => {
+    const store = await detail();
+    const saving = store.putSecret({ field: 'management_key', value: SECRET });
+    expect(store.getState().notice).toMatchObject({ text: 'Saving…', event: 'secret-saving' });
+    expect(outcomeAt(store.getState().notice!.event)).toBe('secret');
+    expect(await saving).toBe(true);
+    expect(store.getState().notice).toMatchObject({ event: 'secret-saved' });
   });
 
   it('ask for a value before saving', async () => {

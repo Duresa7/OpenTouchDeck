@@ -14,9 +14,57 @@
 
 .editor {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) var(--inspector-w, 400px);
   grid-template-rows: 64px minmax(0, 1fr);
   height: 100vh;
+}
+
+/* The details panel's left edge: drag, or focus and use the arrow keys, to resize it */
+.inspector-resizer {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: start;
+  position: relative;
+  z-index: 2;
+  width: 9px;
+  margin-left: -5px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.inspector-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--duration-hover) var(--ease-color);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .inspector-resizer:hover::after {
+    opacity: 1;
+    transition-delay: var(--delay-resizer);
+  }
+}
+
+.inspector-resizer:focus-visible {
+  outline: none;
+}
+
+.inspector-resizer:focus-visible::after,
+.inspector-resizer[data-dragging]::after {
+  opacity: 1;
+  transition-delay: 0ms;
+}
+
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .editor.is-empty {
@@ -25,17 +73,23 @@
 
 /* ---------- Header ---------- */
 
+/* The header is the container its row queries: an element can't query its own size */
 .editor-head {
   grid-column: 1;
   container: editor-head / inline-size;
+  min-width: 0;
+}
+
+.editor-head-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  height: 100%;
   min-width: 0;
   padding: 0 var(--space-4) 0 var(--space-3);
 }
 
-.editor-head > * {
+.editor-head-row > * {
   flex: none;
 }
 
@@ -85,10 +139,12 @@
   rotate: 180deg;
 }
 
-.editor-head .status {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin-left: var(--space-2);
+.connection {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: calc(-1 * var(--space-1));
 }
 
 .status-words {
@@ -121,6 +177,11 @@
   background: var(--accent);
 }
 
+/* Before the narrow header's rules, so a collapsed Add Tile centres its icon */
+.add-tile-button {
+  padding-left: 10px;
+}
+
 /* A narrow header keeps the save state's mark and drops its words, then Add Tile keeps only its icon */
 @container editor-head (max-width: 800px) {
   .save-words {
@@ -147,21 +208,9 @@
 }
 
 @container editor-head (max-width: 520px) {
-  .editor-head {
+  .editor-head-row {
     gap: var(--space-1);
-  }
-
-  .editor-head .status {
-    flex: none;
-    margin-left: 0;
-  }
-
-  .editor-head .status-words {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
+    padding-right: var(--space-3);
   }
 }
 
@@ -174,10 +223,6 @@
 .button-icon[data-pressed] {
   background: var(--fill-active);
   color: var(--ink);
-}
-
-.add-tile-button {
-  padding-left: 10px;
 }
 
 /* ---------- Layout menu ---------- */
@@ -495,13 +540,10 @@
   overflow: auto;
 }
 
+/* In the canvas's normal flow, so the Device is sized around it and never drawn under it */
 .editor-banner {
-  position: absolute;
-  top: var(--space-2);
-  left: 50%;
-  translate: -50% 0;
-  width: max-content;
-  max-width: calc(100% - var(--space-8));
+  width: fit-content;
+  max-width: 100%;
   margin: 0;
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-group);
@@ -522,7 +564,9 @@
 .canvas-head {
   flex: none;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
   width: 100%;
   max-width: 680px;
 }
@@ -570,12 +614,6 @@
   font-weight: var(--weight-semibold);
 }
 
-.controls-notice-title .led {
-  flex: none;
-  background: var(--signal-led);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal-led) 18%, transparent);
-}
-
 .controls-notice.is-checking .controls-notice-title,
 .controls-notice.is-unchecked .controls-notice-title {
   color: var(--ink-2);
@@ -586,11 +624,6 @@
 .controls-notice.is-unchecked .controls-notice-title {
   align-items: first baseline;
   color: var(--ink);
-}
-
-.controls-notice.is-checking .controls-notice-title .led {
-  background: var(--led-off);
-  box-shadow: none;
 }
 
 .controls-notice-text {
@@ -1297,9 +1330,11 @@
 .inspector {
   grid-column: 2;
   grid-row: 1 / span 2;
+  container: inspector / inline-size;
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+  min-width: 0;
   min-height: 0;
   padding: var(--space-5);
   border-left: 1px solid var(--line);
@@ -1316,6 +1351,7 @@
 }
 
 .inspector-head-text {
+  flex: 1;
   min-width: 0;
 }
 
@@ -1783,7 +1819,7 @@
 
 .cell-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4) var(--space-3);
 }
 
@@ -1815,11 +1851,6 @@
   color: var(--signal-ink);
   font-size: var(--text-14);
   font-weight: var(--weight-semibold);
-}
-
-.led.is-signal {
-  background: var(--signal-led);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal-led) 18%, transparent);
 }
 
 .approval-where {
@@ -2011,7 +2042,7 @@
 
 .add-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
 }
 
@@ -2070,6 +2101,257 @@
   font-size: var(--text-12);
   line-height: var(--leading-12);
   letter-spacing: var(--track-12);
+}
+
+/* A narrow panel lists the actions one per row, each on one line */
+@container inspector (max-width: 359px) {
+  .add-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .add-action {
+    min-height: 44px;
+  }
+
+  .add-action-text {
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
+
+  .add-action-name {
+    flex: none;
+  }
+
+  .add-action-line {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* ---------- Add Tile: Actions | Integrations ---------- */
+
+.add-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.add-tab-list {
+  display: flex;
+  width: 100%;
+}
+
+.add-tab-list .segment {
+  flex: 1;
+  height: 30px;
+  font-size: var(--text-14);
+}
+
+.add-tab-list .segment[data-active] {
+  background: var(--surface-raised);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.add-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.add-panel:focus-visible {
+  outline-offset: var(--space-1);
+}
+
+.add-integrations {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.add-caption,
+.add-closing,
+.add-empty-text {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-wrap: pretty;
+}
+
+.add-caption {
+  margin-bottom: calc(-1 * var(--space-3));
+}
+
+.add-closing {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.add-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border-radius: var(--radius-group);
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.add-empty-text {
+  color: var(--ink);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+}
+
+.preset-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.preset-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.preset-group-head .integration-glyph {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.preset-group-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preset-group-settings {
+  flex: none;
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+
+/* A Preset tile as the Device draws it, on a patch of the Device's screen, with its name under it */
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 0 var(--space-1);
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+  transition: transform var(--duration-press) var(--ease-out);
+}
+
+.preset-card:active {
+  transform: scale(var(--press-scale));
+}
+
+.preset-stage {
+  position: relative;
+  display: block;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--screen-bg);
+  box-shadow: 0 0 0 1px var(--line);
+  transition: box-shadow var(--duration-hover) var(--ease-color);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .preset-card:hover .preset-stage {
+    box-shadow: 0 0 0 1px var(--line-strong), 0 0 0 3px color-mix(in srgb, var(--line-strong) 40%, transparent);
+  }
+}
+
+.preset-frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 7px;
+}
+
+.preset-screen {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  color: var(--screen-ink);
+  font-family: var(--screen-font);
+  font-stretch: 100%;
+  pointer-events: none;
+}
+
+.preset-tile {
+  inset: 0;
+  cursor: inherit;
+  transition: none;
+}
+
+/* The Device's Firmware can't draw it yet: shown faded, with what it needs */
+.preset-card.needs-firmware .preset-frame {
+  opacity: 0.5;
+}
+
+.preset-needs {
+  position: absolute;
+  inset: auto 12px 12px;
+  width: fit-content;
+  margin: 0 auto;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: var(--weight-medium);
+  text-align: center;
+  text-wrap: balance;
+}
+
+.preset-name {
+  display: -webkit-box;
+  overflow: hidden;
+  padding: 0 2px;
+  color: var(--ink);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  font-weight: var(--weight-medium);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.inspector-close {
+  flex: none;
+  margin-left: auto;
+  align-self: flex-start;
 }
 
 /* ---------- Start a Layout ---------- */

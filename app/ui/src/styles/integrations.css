@@ -4,9 +4,6 @@
 }
 
 .integration-list {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 168px;
-  column-gap: var(--space-4);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -15,65 +12,30 @@
   box-shadow: 0 0 0 1px var(--line);
 }
 
+/* glyph | name and line | gear | switch. The row itself is not a button. */
 .integration {
-  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: subgrid;
+  grid-template-columns: 40px minmax(0, 1fr) 32px auto;
   align-items: center;
-  min-height: 84px;
-  padding: var(--space-3) var(--space-5);
-}
-
-@media (max-width: 900px) {
-  .integrations {
-    padding-inline: var(--space-6);
-  }
-
-  .integration-list {
-    grid-template-columns: minmax(0, 1fr) auto 132px;
-  }
+  column-gap: var(--space-4);
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-4);
 }
 
 .integration + .integration {
   border-top: 1px solid var(--line);
 }
 
-.integration-open {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-4);
-  min-width: 0;
-  margin: calc(-1 * var(--space-2));
-  padding: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-group);
-  background: transparent;
-  text-align: start;
-  cursor: pointer;
-  transition: background-color var(--duration-hover) var(--ease-color);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .integration-open:hover {
-    background: var(--fill-hover);
+@media (max-width: 900px) {
+  .integrations {
+    padding-inline: var(--space-6);
   }
-}
-
-.integration-glyph {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: var(--surface-raised);
-  box-shadow: 0 0 0 1px var(--line);
-  color: var(--ink);
 }
 
 .integration-text {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -84,192 +46,90 @@
   font-weight: var(--weight-semibold);
 }
 
-.integration-about {
+.integration-line {
+  min-width: 0;
   color: var(--ink-2);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
   text-wrap: pretty;
 }
 
-.integration-presets {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.integration-clamp {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.integration-more {
-  width: 40px;
-  height: 56px;
-  padding: 0;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
+.integration-problem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+.integration-gear {
+  display: grid;
+  place-items: center;
+}
+
+.integration-group {
+  margin-top: var(--space-8);
+}
+
+.integration-group-title {
+  margin: 0 0 var(--space-3) 2px;
   color: var(--ink-2);
-  font-size: var(--text-12);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
   font-weight: var(--weight-semibold);
-  font-variant-numeric: tabular-nums;
+}
+
+/* An Integration's switch: 40x24 to see, 44px tall to hit. It saves the moment it moves. */
+.integration-switch {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  width: 40px;
+  height: 24px;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: var(--line-control);
   cursor: pointer;
   transition:
     background-color var(--duration-hover) var(--ease-color),
-    color var(--duration-hover) var(--ease-color);
+    opacity var(--duration-hover) var(--ease-color);
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .integration-more:hover {
-    background: var(--fill-hover);
-    color: var(--ink);
-  }
+.integration-switch::before {
+  content: '';
+  position: absolute;
+  inset: -10px 0;
 }
 
-.integration-state {
-  display: flex;
-  justify-content: flex-end;
+.integration-switch[data-checked] {
+  background: var(--live-ink);
 }
 
-.preset {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  width: 84px;
-  height: 56px;
-  padding: 8px 9px 7px;
-  border-radius: 9px;
-  background: var(--screen-tile);
-  box-shadow: 0 0 0 var(--preset-rim) var(--screen-bg);
-  color: var(--screen-ink);
-  text-align: start;
-  transition: background-color var(--duration-hover) var(--ease-color);
+/* Saving, or on and waiting for setup to finish */
+.integration-switch[data-busy] {
+  opacity: 0.72;
+  cursor: progress;
 }
 
-.preset-art {
-  display: flex;
-  align-items: center;
+.integration-switch-thumb {
+  width: 20px;
   height: 20px;
-  color: var(--screen-ink-2);
+  border-radius: 50%;
+  background: var(--screen-ink);
+  box-shadow: var(--shadow-float);
+  transition: translate var(--duration-switch) var(--ease-out);
 }
 
-.preset-line {
-  fill: none;
-  stroke: var(--screen-accent);
-  stroke-width: 2;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-}
-
-.preset-bar {
-  width: 100%;
-  height: 5px;
-  overflow: hidden;
-  border-radius: var(--radius-chip);
-  background: var(--screen-track);
-}
-
-.preset-bar span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--screen-accent);
-  transform: scaleX(0.6);
-  transform-origin: left;
-}
-
-.preset-label {
-  overflow: hidden;
-  color: var(--screen-ink-2);
-  font-size: 10.5px;
-  line-height: 12px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.preset[data-needs] {
-  background: var(--screen-bg);
-  box-shadow:
-    0 0 0 var(--preset-rim) var(--screen-bg),
-    inset 0 0 0 2px var(--screen-outline);
-}
-
-.preset-needs {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--screen-signal);
-  font-size: 10.5px;
-  font-weight: var(--screen-weight-medium);
-  line-height: 12px;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.preset-level {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  color: var(--screen-ink);
-}
-
-.preset-level .preset-bar {
-  flex: 1;
-  height: 7px;
-  border-radius: 3px;
-}
-
-.preset-np {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--screen-ink);
-}
-
-.preset-np-art {
-  width: 18px;
-  height: 18px;
-  margin-right: 3px;
-  border-radius: 4px;
-  background:
-    radial-gradient(circle at 70% 30%, var(--screen-signal) 0 14%, transparent 15%),
-    linear-gradient(160deg, var(--tile-accent-coral) 0%, var(--tile-color-red) 48%, var(--tile-color-violet) 100%);
-}
-
-.preset-button {
-  --preset-rim: 2px;
-  padding: 0;
-  border: 0;
-  border-radius: 9px;
-  background: none;
-  cursor: pointer;
-  transition: transform var(--duration-press) var(--ease-out);
-}
-
-.preset-button:active {
-  transform: scale(var(--press-scale));
-}
-
-.preset-button:focus-visible {
-  outline-offset: calc(var(--focus-ring-offset) + var(--preset-rim));
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .preset-button:hover .preset {
-    background: var(--screen-tile-raised);
-  }
-}
-
-.preset-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-.add-presets-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.add-presets-name {
-  font-size: var(--text-12);
-  line-height: var(--leading-12);
-  letter-spacing: var(--track-12);
-  font-weight: var(--weight-medium);
+.integration-switch-thumb[data-checked] {
+  translate: 16px 0;
 }
 
 .integration-detail {
@@ -309,29 +169,66 @@
 
 .detail-head-text {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
+}
+
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 48px;
+  margin-top: -12px;
+  margin-bottom: -6px;
+}
+
+.detail-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .detail-title:focus-visible {
   outline: none;
 }
 
+.detail-head .page-lede {
+  margin: 0;
+  text-wrap: pretty;
+}
+
 .detail-status {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  margin-top: var(--space-1);
 }
 
+.detail-status .status {
+  white-space: normal;
+}
+
+/* Connection, keys and checks: one sheet, a block each, each with its own button */
 .detail-sheet {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-5);
+  padding: 0 var(--space-5);
   border-radius: var(--radius-sheet);
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--line);
+}
+
+.detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5) 0;
+}
+
+.detail-block + .detail-block {
+  border-top: 1px solid var(--line);
 }
 
 .detail-section {
@@ -345,6 +242,25 @@
   font-size: var(--text-14);
   line-height: var(--leading-14);
   font-weight: var(--weight-semibold);
+}
+
+/* A secret's own label heads its block, as Connection and Status head theirs */
+.detail-secrets > .field > .field-label {
+  color: var(--ink);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  letter-spacing: var(--track-14);
+  font-weight: var(--weight-semibold);
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.detail-body .settings-section:first-child {
+  margin-top: 0;
 }
 
 .form-row {
@@ -384,6 +300,20 @@
   gap: var(--space-3);
 }
 
+.form-actions.is-end {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.form-outcome {
+  flex: 1;
+  min-width: 0;
+}
+
+.form-actions .button {
+  flex: none;
+}
+
 .form-state {
   color: var(--ink-2);
   font-size: var(--text-12);
@@ -398,6 +328,21 @@
 
 .outcome.is-error {
   color: var(--danger-ink);
+}
+
+/* An empty outcome keeps its live region but takes no room */
+.outcome:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.form-outcome .outcome {
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
 }
 
 .outcome-details summary,

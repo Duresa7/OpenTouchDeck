@@ -10,9 +10,9 @@ async function openIconPacks(page: Page, query: string) {
   await page.goto(`/${query}`);
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings' }).click();
-  await page.getByTestId('settings-icon-packs').click();
-  const view = page.getByRole('dialog', { name: 'Icon packs' });
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Integrations' }).click();
+  await page.locator('[data-testid="integration"][data-id="icon-packs"]').getByTestId('integration-settings').click();
+  const view = page.locator('[data-testid="integration-detail"][data-id="icon-packs"]');
   await expect(view.getByTestId('icon-packs')).toHaveAttribute('data-state', 'ready');
   return view;
 }
@@ -26,13 +26,14 @@ for (const theme of ['light', 'dark'] as const) {
     test.skip(!folder, 'set TD_SHOTS to a folder to take screenshots');
     test.use({ colorScheme: theme, viewport: { width: 1180, height: 900 } });
 
-    test('settings, icon packs entry', async ({ page }) => {
-      await page.goto('/');
+    test('integrations, icon packs row', async ({ page }) => {
+      await page.goto('/?packs=fa6-brands,mdi');
       await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
-      await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings' }).click();
-      await expect(page.getByTestId('settings-icon-packs')).toBeVisible();
+      await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Integrations' }).click();
+      await expect(page.locator('[data-testid="integration"][data-id="icon-packs"]')).toContainText('2 installed');
+      await page.mouse.move(0, 0);
       await page.waitForTimeout(400);
-      await page.screenshot({ path: join(folder, `settings-entry-${theme}.png`) });
+      await page.screenshot({ path: join(folder, `integrations-icon-packs-${theme}.png`) });
     });
 
     test('icon packs, two installed, one downloading, one imported', async ({ page }) => {

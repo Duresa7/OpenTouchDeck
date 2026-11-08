@@ -79,7 +79,7 @@ function NameField({ device, name, settings, live, editable }: PanelProps) {
         onKeyDown={editable ? keys : undefined}
         data-testid="device-panel-name"
       />
-      <p id={`${id}-hint`} className={clsx('field-hint', (problem ?? needs) && 'is-warning')} data-testid="device-panel-name-hint">
+      <p id={`${id}-hint`} className={clsx('field-hint', problem && 'is-warning')} data-testid="device-panel-name-hint">
         {hint}
       </p>
     </div>
@@ -133,10 +133,15 @@ function OrientationField({ name, settings, editable }: PanelProps) {
   );
 }
 
+/**
+ * Brightness, while the Device's Firmware can set it. When no Firmware can yet, the row is left out: there's nothing
+ * to do about it. When an update would add it, the slider shows disabled with the version it needs.
+ */
 function BrightnessField({ name, settings, editable }: PanelProps) {
   const id = useId();
   const value = useStore(settings, (s) => s.shown?.brightness ?? null);
   const lacks = useStore(settings, (s) => s.needs.brightness);
+  if (lacks && lacks.since === null) return null;
   const needs = lacks && needsFirmwareField({ device: name, since: lacks.since });
   return (
     <div className="field">
@@ -148,29 +153,28 @@ function BrightnessField({ name, settings, editable }: PanelProps) {
           </span>
         )}
       </span>
-      {needs ? (
-        <p className="field-hint is-warning" data-testid="device-panel-brightness-hint">
+      <Slider.Root
+        className="slider"
+        value={needs ? 0 : (value ?? 0)}
+        min={0}
+        max={100}
+        disabled={Boolean(needs) || !editable || value === null}
+        onValueChange={(next) => settings.slideBrightness(next)}
+        onValueCommitted={(next) => settings.commitBrightness(next)}
+        aria-labelledby={id}
+        data-testid="device-panel-brightness"
+      >
+        <Slider.Control className="slider-control">
+          <Slider.Track className="slider-track">
+            <Slider.Indicator className="slider-indicator" />
+            <Slider.Thumb className="slider-thumb" aria-labelledby={id} aria-valuetext={value === null || needs ? undefined : `${value}%`} />
+          </Slider.Track>
+        </Slider.Control>
+      </Slider.Root>
+      {needs && (
+        <p className="field-hint" data-testid="device-panel-brightness-hint">
           {needs}
         </p>
-      ) : (
-        <Slider.Root
-          className="slider"
-          value={value ?? 0}
-          min={0}
-          max={100}
-          disabled={!editable || value === null}
-          onValueChange={(next) => settings.slideBrightness(next)}
-          onValueCommitted={(next) => settings.commitBrightness(next)}
-          aria-labelledby={id}
-          data-testid="device-panel-brightness"
-        >
-          <Slider.Control className="slider-control">
-            <Slider.Track className="slider-track">
-              <Slider.Indicator className="slider-indicator" />
-              <Slider.Thumb className="slider-thumb" aria-labelledby={id} aria-valuetext={value === null ? undefined : `${value}%`} />
-            </Slider.Track>
-          </Slider.Control>
-        </Slider.Root>
       )}
     </div>
   );
@@ -191,7 +195,7 @@ function PhotoFrameField({ name, settings, editable }: PanelProps) {
     return (
       <div className="field">
         <span className="field-label">Photo frame</span>
-        <p className="field-hint is-warning" data-testid="device-panel-photo-frame-hint">
+        <p className="field-hint" data-testid="device-panel-photo-frame-hint">
           {needs}
         </p>
       </div>

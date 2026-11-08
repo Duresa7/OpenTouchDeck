@@ -15,13 +15,13 @@ interface IntegrationCopy {
 }
 
 const COPY: Partial<Record<string, IntegrationCopy>> = {
-  volume: { line: "Shows and sets this PC's volume.", fields: { enabled: { label: 'Turn on Volume' } } },
-  media: { line: "Shows what's playing on this PC, with play, pause and skip.", fields: { enabled: { label: 'Turn on Media' } } },
-  custom: { line: 'Read values from HTTP or a command approved on this PC.', fields: { enabled: { label: 'Turn on Custom' }, sources: { label: 'Custom sources (JSON)', placeholder: '[]' } } },
+  volume: { line: "Shows and sets this PC's volume.", fields: {} },
+  media: { line: "Shows what's playing on this PC, with play, pause and skip.", fields: {} },
+  this_pc: { line: "Shows this PC's CPU, memory, GPU, disk and network use.", fields: {} },
+  custom: { line: 'Read values from HTTP or a command approved on this PC.', fields: { sources: { label: 'Custom sources (JSON)', placeholder: '[]' } } },
   cliproxyapi: {
     line: "Shows how much of each AI account's limit is used, read from your CLIProxyAPI hub.",
     fields: {
-      enabled: { label: 'Turn on CLIProxyAPI' },
       url: { label: 'Hub address', placeholder: 'https://hub.example.com' },
       interval_s: { label: 'Check every', unit: 's' },
       management_key: { label: 'Management key' },
@@ -49,13 +49,30 @@ export interface FormField {
 const KINDS: readonly string[] = ['boolean', 'integer', 'number', 'string', 'json'];
 const isFieldKind = (kind: string): kind is FieldKind => KINDS.includes(kind);
 
-/** The form an Integration's schema builds: its settings, then its write-only secret fields. */
+/** The switch's field. It never joins the form: the switch writes it, and Save leaves it as the Companion has it. */
+export const ENABLED = 'enabled';
+
+/** The form an Integration's schema builds: its settings, then its write-only secret fields. Never `enabled`. */
 export function formOf(integration: string, schema: readonly ConfigField[]): { fields: FormField[]; secrets: FormField[] } {
   const field = (f: ConfigField): FormField => {
     const copy = COPY[integration]?.fields[f.name];
     return { name: f.name, kind: isFieldKind(f.kind) ? f.kind : 'string', label: copy?.label ?? humanize(f.name), placeholder: copy?.placeholder, unit: copy?.unit };
   };
-  return { fields: schema.filter((f) => !f.secret).map(field), secrets: schema.filter((f) => f.secret).map(field) };
+  const settings = schema.filter((f) => f.name !== ENABLED);
+  return { fields: settings.filter((f) => !f.secret).map(field), secrets: settings.filter((f) => f.secret).map(field) };
+}
+
+const SECTIONS: Partial<Record<string, string>> = { cliproxyapi: 'Connection', custom: 'Sources' };
+
+/** The heading over an Integration's settings form. */
+export const settingsTitle = (integration: string) => SECTIONS[integration] ?? 'Settings';
+
+/** Which part of the settings page an outcome belongs under: the settings form, a secret, the checks or the page. */
+export function outcomeAt(event: string): 'settings' | 'secret' | 'status' | 'page' {
+  if (event === 'saving' || event === 'saved' || event === 'save-failed' || event === 'secret-forgotten') return 'settings';
+  if (event.startsWith('secret') || event === 'forget-failed') return 'secret';
+  if (event.startsWith('refresh')) return 'status';
+  return 'page';
 }
 
 /** What the form's controls hold: a switch holds a boolean, every other field the text typed in it. */
@@ -165,23 +182,30 @@ export function transportWarning(address: string): string | null {
   }
 }
 
+/** A status box's colour: green works, red doesn't, amber is on its way or waits for you. */
+export type StatusTone = 'ok' | 'bad' | 'wait';
+
 export interface Status {
   words: string;
-  /** Green only while connected. */
+  /** The status box to show, or null when there's nothing to say beyond the switch: the Integration is off. */
+  tone: StatusTone | null;
+  /** Connected, so its values are live. */
   live: boolean;
-  /** No credentials yet, so the row offers Set up instead of a light. */
+  /** No credentials yet. */
   needsSetup: boolean;
   /** The Companion's raw reason, for Details. */
   detail: string | null;
 }
 
-export function statusOf(summary: Pick<IntegrationSummary, 'enabled' | 'status'>): Status {
+/** The status to show. `pending` is a switch turned on before setup: it reads as on and waiting for setup. */
+export function statusOf(summary: Pick<IntegrationSummary, 'enabled' | 'status'>, pending = false): Status {
   const { state, message } = summary.status;
-  if (state === 'not_configured') return { words: 'Not set up', live: false, needsSetup: true, detail: null };
-  if (!summary.enabled) return { words: 'Off', live: false, needsSetup: false, detail: null };
-  if (state === 'ok') return { words: 'Connected', live: true, needsSetup: false, detail: null };
-  if (state === 'error') return { words: "Can't connect", live: false, needsSetup: false, detail: message };
-  return { words: 'Checking…', live: false, needsSetup: false, detail: message };
+  if (pending && !summary.enabled) return { words: 'Finish setup', tone: 'wait', live: false, needsSetup: state === 'not_configured', detail: null };
+  if (state === 'not_configured') return summary.enabled ? { words: 'Finish setup', tone: 'wait', live: false, needsSetup: true, detail: null } : { words: 'Not set up', tone: null, live: false, needsSetup: true, detail: null };
+  if (!summary.enabled) return { words: 'Off', tone: null, live: false, needsSetup: false, detail: null };
+  if (state === 'ok') return { words: 'Connected', tone: 'ok', live: true, needsSetup: false, detail: null };
+  if (state === 'error') return { words: "Can't connect", tone: 'bad', live: false, needsSetup: false, detail: message };
+  return { words: 'Checking…', tone: 'wait', live: false, needsSetup: false, detail: message };
 }
 
 /** Whether an Integration is set up and on, so the Add Tile panel offers its Preset tiles. */
@@ -249,7 +273,13 @@ export function usageLine(usage: Usage, now: number): string {
   if (usage.polled_ms === null && usage.fails === 0) return 'Checking…';
   if (usage.stale) return `Can't connect. The hub missed ${plural(usage.fails, 'check')}, so its Tiles are greyed out.`;
   if (usage.fails > 0) return `The hub missed the last ${plural(usage.fails, 'check')}. Retrying.`;
-  return `Connected. ${plural(usage.accounts.length, 'account')}, checked ${ago(usage.polled_ms, now).toLowerCase()}.`;
+  return `${plural(usage.accounts.length, 'account')} · checked ${ago(usage.polled_ms, now).toLowerCase()}`;
+}
+
+/** The words beside the status box at the top of a settings page. The box already says connected. */
+export function headerLine(status: Status, usage: Usage | null, now: number): string {
+  if (status.tone === 'ok') return usage ? usageLine(usage, now) : 'Running';
+  return status.words;
 }
 
 const BADGES: Partial<Record<string, string>> = { active: 'Active', disabled: 'Disabled', unavailable: 'Unavailable', error: 'Error' };

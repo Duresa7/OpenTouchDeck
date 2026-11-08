@@ -2,7 +2,8 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { created, openCopyTile, openPicker, option, picker } from './icon-picker-helpers.ts';
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
-const view = (page: Page) => page.getByRole('dialog', { name: 'Icon packs' });
+const view = (page: Page) => page.locator('[data-testid="integration-detail"][data-id="icon-packs"]');
+const packsRow = (page: Page) => page.locator('[data-testid="integration"][data-id="icon-packs"]');
 const row = (page: Page, prefix: string) => view(page).locator(`[data-testid="icon-pack"][data-prefix="${prefix}"]`);
 const installed = (page: Page) => page.evaluate(() => window.touchdeckDemo?.iconPacks.installed() ?? []);
 
@@ -14,11 +15,16 @@ const ICONS = JSON.stringify({
   height: 24,
 });
 
-async function openIconPacks(page: Page, query = '') {
+async function openIntegrations(page: Page, query = '') {
   await page.goto(`/${query}`);
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
-  await nav(page).getByRole('button', { name: 'Settings' }).click();
-  await page.getByTestId('settings-icon-packs').click();
+  await nav(page).getByRole('button', { name: 'Integrations' }).click();
+  await expect(packsRow(page)).toBeVisible();
+}
+
+async function openIconPacks(page: Page, query = '') {
+  await openIntegrations(page, query);
+  await packsRow(page).getByTestId('integration-settings').click();
   await expect(view(page).getByTestId('icon-packs')).toHaveAttribute('data-state', 'ready');
 }
 
@@ -29,7 +35,32 @@ async function drawn(scope: Locator, count: number) {
   await expect.poll(() => thumbs.evaluateAll((imgs) => imgs.filter((img) => (img as HTMLImageElement).naturalWidth > 0).length)).toBe(count);
 }
 
-test.describe('Settings, Icon packs', () => {
+test.describe('Integrations, Icon packs', () => {
+  test('is an Integration with a switch, off until a pack is installed', async ({ page }) => {
+    await openIntegrations(page);
+    await expect(packsRow(page)).toContainText('None installed. Icons for the picker, searchable offline.');
+    await expect(packsRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
+    await openIntegrations(page, '?packs=fa6-brands,mdi');
+    await expect(packsRow(page)).toContainText('2 installed: ');
+    await expect(packsRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('turning it on with nothing installed opens pack management, and the first download turns it on', async ({ page }) => {
+    await openIntegrations(page);
+    await packsRow(page).getByTestId('integration-switch').click();
+    await expect(view(page).getByTestId('icon-packs')).toHaveAttribute('data-state', 'ready');
+    const header = view(page).getByTestId('detail-switch');
+    await expect(header).toHaveAttribute('aria-checked', 'true');
+    await expect(header).toHaveAttribute('aria-busy', 'true');
+    await row(page, 'lucide').getByTestId('pack-install').click();
+    await expect(row(page, 'lucide')).toHaveAttribute('data-installed', 'true');
+    await expect(header).not.toHaveAttribute('aria-busy', 'true');
+    await view(page).getByTestId('detail-back').click();
+    await expect(packsRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'true');
+    await expect(packsRow(page)).toContainText('1 installed: Lucide');
+  });
+
+
   test('lists the curated packs with nothing installed, then downloads and removes one', async ({ page }) => {
     await openIconPacks(page);
     await expect(view(page).getByTestId('icon-pack')).toHaveCount(7);
@@ -86,10 +117,17 @@ test.describe('Settings, Icon packs', () => {
     await expect(view(page).locator('[data-testid="icon-pack"][data-installed="true"]')).toHaveCount(1);
   });
 
-  test('Back returns to Settings with focus on the Icon packs entry', async ({ page }) => {
+  test('Back returns to Integrations with focus on the Icon packs settings button', async ({ page }) => {
     await openIconPacks(page);
-    await view(page).getByRole('button', { name: 'Back' }).click();
-    await expect(page.getByTestId('settings-icon-packs')).toBeFocused();
+    await view(page).getByTestId('detail-back').click();
+    await expect(packsRow(page).getByTestId('integration-settings')).toBeFocused();
+  });
+
+  test('Settings no longer lists Icon packs', async ({ page }) => {
+    await page.goto('/');
+    await nav(page).getByRole('button', { name: 'Settings' }).click();
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Settings' })).not.toContainText('Icon packs');
   });
 });
 
@@ -116,7 +154,19 @@ test.describe('Icon picker with Icon packs', () => {
     await expect(page.getByTestId('tile-icon').locator('canvas[data-ready="true"]')).toBeVisible();
   });
 
-  test('Get more icons opens Settings at Icon packs, and a new pack shows up in the next search', async ({ page }) => {
+  test('with Icon packs off, the picker hides installed packs and their credit and keeps the bundled icons', async ({ page }) => {
+    await openIntegrations(page, '?packs=fa6-brands,mdi');
+    await packsRow(page).getByTestId('integration-switch').click();
+    await expect(packsRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
+    await openCopyTile(page, '/?packs=fa6-brands,mdi');
+    await openPicker(page);
+    await page.getByTestId('icon-search').fill('spotify');
+    await expect(option(page, 'hit:simple-icons:spotify')).toBeVisible();
+    await expect(option(page, 'hit:iconify:fa6-brands:spotify')).toHaveCount(0);
+    await expect(picker(page).getByTestId('icon-credit')).toHaveCount(0);
+  });
+
+  test('Get more icons opens Icon packs in Integrations, and a new pack shows up in the next search', async ({ page }) => {
     await openCopyTile(page);
     await openPicker(page);
     await page.getByTestId('icon-search').fill('spotify');
@@ -127,7 +177,7 @@ test.describe('Icon picker with Icon packs', () => {
     await expect(view(page)).toBeVisible();
     await row(page, 'tabler').getByTestId('pack-install').click();
     await expect(row(page, 'tabler')).toHaveAttribute('data-installed', 'true');
-    await page.keyboard.press('Escape');
+    await nav(page).getByRole('button', { name: 'Layout' }).click();
     await expect(view(page)).toBeHidden();
 
     await openPicker(page);

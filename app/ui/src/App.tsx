@@ -1,8 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect } from 'react';
 import { CircleAlert, CircleCheck, Info, TriangleAlert } from 'lucide-react';
 import { MotionConfig } from 'motion/react';
-import { Toaster, toast, type ToasterProps } from 'sonner';
-import { useCompanion } from './lib/companion/connection.ts';
+import { Toaster, type ToasterProps } from 'sonner';
 import { useDevices } from './lib/companion/devices.ts';
 import { Home } from './screens/Home.tsx';
 import { SetupHost } from './screens/onboarding/SetupHost.tsx';
@@ -44,7 +43,6 @@ const TOAST_OPTIONS: ToasterProps['toastOptions'] = {
  * handles them.
  */
 export function App() {
-  const companion = useCompanion();
   const status = useDevices(s => s.status);
   useEffect(() => {
     if (status === 'unpaired' && !window.openTouchDeck) location.replace('/pair');
@@ -69,10 +67,7 @@ export function App() {
       )}
       <NavCluster />
       <SetupHost />
-      {window.openTouchDeck && <button className="open-browser" type="button" onClick={() => {
-        void companion.auth.pair_code().catch(() => toast.error("Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry."));
-      }}>Open in browser</button>}
-      <Toaster theme={appearance} position="bottom-right" icons={TOAST_ICONS} toastOptions={TOAST_OPTIONS} />
+      <Toaster theme={appearance} position="bottom-center" icons={TOAST_ICONS} toastOptions={TOAST_OPTIONS} />
     </MotionConfig>
   );
 }

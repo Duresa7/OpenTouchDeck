@@ -175,8 +175,8 @@ test('without the Firmware, Volume and Now playing Presets are placed anyway and
   for (const [integration, preset, name] of [['volume', 'volume_bar', 'Volume bar'], ['media', 'now_playing', 'Now playing']]) {
     const button = presets.locator(`[data-id="${integration}"] [data-preset="${preset}"]`);
     await expect(button.locator('.preset-needs')).toHaveText(needs);
-    await expect(button.locator('.preset-label')).toHaveText(name);
-    await expect(button).toHaveAttribute('aria-label', new RegExp(`^Add ${name} to Layout\\. ${needs.source.slice(1)}`));
+    await expect(button.locator('.preset-name')).toHaveText(name);
+    await expect(button).toHaveAttribute('aria-label', new RegExp(`^Add ${name}\\. ${needs.source.slice(1)}`));
   }
   await presets.locator('[data-id="volume"] [data-preset="volume_bar"]').click();
 
@@ -192,16 +192,22 @@ test('without the Firmware, Volume and Now playing Presets are placed anyway and
   await expect(placed.getByTestId('tile-level')).toHaveAttribute('data-value', '64');
 });
 
-test('the Integrations page lists Volume and Media with their Preset tiles', async ({ page }) => {
+test('the Integrations page lists Volume and Media, and Add Tile previews their Tiles as the Device draws them', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
   const volume = page.locator('[data-testid="integration"][data-id="volume"]');
   const media = page.locator('[data-testid="integration"][data-id="media"]');
-  await expect(volume.getByTestId('integration-open')).toContainText("Shows and sets this PC's volume.");
-  await expect(media.getByTestId('integration-open')).toContainText("Shows what's playing on this PC, with play, pause and skip.");
-  await expect(volume.locator('[data-preset="volume_bar"] .preset')).toHaveAttribute('data-look', 'level');
-  await expect(media.locator('[data-preset="now_playing"] .preset')).toHaveAttribute('data-look', 'now-playing');
+  await expect(volume).toContainText("Shows and sets this PC's volume.");
+  await expect(media).toContainText("Shows what's playing on this PC, with play, pause and skip.");
+  await onShortcuts(page);
+  await drawsLiveTiles(page);
+  await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
+  const presets = page.getByTestId('add-presets');
+  await expect(presets.locator('[data-id="volume"] [data-preset="volume_bar"]')).toHaveAttribute('data-look', 'level');
+  await expect(presets.locator('[data-id="volume"] [data-preset="volume_bar"]').getByTestId('tile-level')).toHaveAttribute('data-value', '64');
+  await expect(presets.locator('[data-id="media"] [data-preset="now_playing"]')).toHaveAttribute('data-look', 'now-playing');
+  await expect(presets.locator('[data-id="media"] [data-preset="now_playing"]').getByTestId('tile-now-playing')).toBeVisible();
 });
 
 for (const theme of ['light', 'dark'] as const) {
@@ -239,8 +245,11 @@ for (const theme of ['light', 'dark'] as const) {
       await page.evaluate(() => document.fonts.ready);
       await page.mouse.move(0, 0);
       await page.screenshot({ path: join(folder!, `media-integrations-${theme}.png`) });
+      await onShortcuts(page);
       await drawsLiveTiles(page);
-      await expect(page.locator('[data-testid="integration"][data-id="volume"] [data-preset="volume_bar"] .preset')).not.toHaveAttribute('data-needs');
+      await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
+      await expect(page.locator('[data-testid="add-presets"] [data-preset="volume_bar"]')).not.toHaveAttribute('data-needs');
+      await page.mouse.move(0, 0);
       await page.screenshot({ path: join(folder!, `media-integrations-live-${theme}.png`) });
     });
   });

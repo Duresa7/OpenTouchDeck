@@ -85,7 +85,7 @@ test('in development the window shows Home from the UI dev server with the mock 
         await page.waitForURL(ui);
         const cards = page.getByRole('list', { name: 'Devices' }).getByRole('listitem');
         await expect(cards).toHaveCount(1, { timeout: 15_000 });
-        await expect(cards.first()).toContainText('Connected');
+        await expect(cards.first().getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
         // The dev page signs in through the dev server; Electron gives the window session only to the Companion origin.
         expect(await page.evaluate(() => window.openTouchDeck?.session())).toBe(null);
         await mkdir(evidence, { recursive: true });
@@ -149,10 +149,10 @@ test('a saved Brandfetch client ID opens the window to Brandfetch after a reload
       // Whether the page's content policy lets it call the Brand API search.
       const reaches = () => page.evaluate(() => fetch('https://api.brandfetch.io/v2/search/probe?c=test-client-id',
         { credentials: 'omit' }).then(() => true, () => false));
-      const view = page.getByRole('dialog', { name: 'Brandfetch logos' });
+      const view = page.locator('[data-testid="integration-detail"][data-id="brandfetch"]');
       const openBrandfetch = async () => {
-        await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings' }).click();
-        await page.getByTestId('brandfetch-entry').click();
+        await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Integrations' }).click();
+        await page.locator('[data-testid="integration"][data-id="brandfetch"]').getByTestId('integration-settings').click();
         await expect(view).toBeVisible();
       };
       const openPicker = async () => {
@@ -174,9 +174,8 @@ test('a saved Brandfetch client ID opens the window to Brandfetch after a reload
       let reloaded = page.waitForEvent('load');
       await view.getByTestId('brandfetch-client-id-save').click();
       await reloaded;
-      // The reload comes back to the same Settings section.
+      // The reload comes back to the same Integrations page.
       await expect(view.getByTestId('brandfetch-client-id-state')).toHaveText('test-client-id');
-      await view.getByRole('button', { name: 'Close' }).click();
       await openPicker();
       await page.getByTestId('icon-search').fill('example');
       const hit = page.getByTestId('icon-picker').locator('[data-testid="icon-option"][data-key="brand:id_fixture_music"]');
@@ -196,7 +195,6 @@ test('a saved Brandfetch client ID opens the window to Brandfetch after a reload
       await reloaded;
       await expect(view.getByTestId('brandfetch-client-id-field')).toHaveAttribute('data-set', 'false');
       expect(await reaches()).toBe(false);
-      await view.getByRole('button', { name: 'Close' }).click();
       await openPicker();
       await page.getByTestId('icon-search').fill('example');
       await expect(page.getByTestId('icon-picker').locator('.icon-credits')).not.toContainText('Brandfetch');

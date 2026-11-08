@@ -1,8 +1,7 @@
-import { useId } from 'react';
-import { Switch } from '@base-ui/react/switch';
+import { useId, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import type { DetailStore } from '../../lib/integrations/detail.ts';
-import { sameValues, transportWarning, type FormField } from '../../lib/integrations/model.ts';
+import { outcomeAt, sameValues, transportWarning, type FormField } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
 
 function Field({ store, field, warnKey }: { store: DetailStore; field: FormField; warnKey: boolean }) {
@@ -57,21 +56,6 @@ function Field({ store, field, warnKey }: { store: DetailStore; field: FormField
   );
 }
 
-function SwitchField({ store, field }: { store: DetailStore; field: FormField }) {
-  const id = useId();
-  const on = useStore(store, (s) => s.values[field.name] === true);
-  return (
-    <div className="switch-row">
-      <span className="field-label" id={id}>
-        {field.label}
-      </span>
-      <Switch.Root className="switch" checked={on} onCheckedChange={(next) => store.setValue(field.name, next)} aria-labelledby={id} data-testid="config-switch" data-field={field.name}>
-        <Switch.Thumb className="switch-thumb" />
-      </Switch.Root>
-    </div>
-  );
-}
-
 function rows(fields: readonly FormField[]): FormField[][] {
   const out: FormField[][] = [];
   for (let i = 0; i < fields.length; i++) {
@@ -86,28 +70,28 @@ function rows(fields: readonly FormField[]): FormField[][] {
   return out;
 }
 
-/** The settings form the Integration's schema builds, with Save. Secret fields have their own controls. */
-export function ConfigForm({ store }: { store: DetailStore }) {
+/**
+ * The settings form the Integration's schema builds, with its own Save at the bottom right. Secret fields have their
+ * own controls, and the switch writes `enabled`, so Save never sends either. Save waits while the switch is writing.
+ */
+export function ConfigForm({ store, switching = false, outcome }: { store: DetailStore; switching?: boolean; outcome?: ReactNode }) {
   const fields = useStore(store, (s) => s.fields);
   const hasSecrets = useStore(store, (s) => s.secretFields.length > 0);
   const dirty = useStore(store, (s) => !sameValues(s.fields, s.values, s.saved));
   const busy = useStore(store, (s) => s.busy);
-  const switches = fields.filter((f) => f.kind === 'boolean');
-  const inputs = fields.filter((f) => f.kind !== 'boolean');
+  const said = useStore(store, (s) => s.notice !== null && outcomeAt(s.notice.event) === 'settings');
+  const blocked = !dirty || busy !== null || switching;
   return (
     <form
-      className="detail-section"
+      className="config-form"
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
-        if (dirty) void store.save();
+        if (!blocked) void store.save();
       }}
       data-testid="config-form"
     >
-      {switches.map((field) => (
-        <SwitchField key={field.name} store={store} field={field} />
-      ))}
-      {rows(inputs).map((row) =>
+      {rows(fields).map((row) =>
         row.length === 2 ? (
           <div className="form-row" key={row[0].name}>
             <Field store={store} field={row[0]} warnKey={hasSecrets} />
@@ -117,15 +101,19 @@ export function ConfigForm({ store }: { store: DetailStore }) {
           <Field key={row[0].name} store={store} field={row[0]} warnKey={hasSecrets} />
         ),
       )}
-      <div className="form-actions">
-        <button type="submit" className={button({ kind: 'primary' })} aria-disabled={!dirty || busy !== null} disabled={busy === 'save'} data-testid="config-save">
+      <div className="form-actions is-end">
+        <span className="form-outcome">
+          {said || !dirty ? (
+            outcome
+          ) : (
+            <span className="form-state" data-testid="config-dirty">
+              Unsaved changes
+            </span>
+          )}
+        </span>
+        <button type="submit" className={button({ kind: 'primary' })} aria-disabled={blocked} disabled={busy === 'save'} data-testid="config-save">
           {busy === 'save' ? 'Saving…' : 'Save'}
         </button>
-        {dirty && (
-          <span className="form-state" data-testid="config-dirty">
-            Unsaved changes
-          </span>
-        )}
       </div>
     </form>
   );

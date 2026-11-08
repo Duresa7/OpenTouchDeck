@@ -100,6 +100,8 @@
   --delay-label: 60ms;
   --duration-tile-settle: 160ms;
   --duration-progress: 120ms;
+  --duration-status: 150ms; /* a status box changes colour */
+  --delay-resizer: 120ms; /* the details panel's edge lights up after the pointer rests on it */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
@@ -194,11 +196,13 @@
   --focus-ring: #2f7bd9; /* clears 3:1 on the light mat and on the dark screen alike */
   --live-led: #2fbf71;
   --live-ink: #17804a;
-  --led-off: #8a919b;
   --signal-led: #f5a000;
   --signal-ink: #8a5600;
   --signal-tint: #fdedc8;
   --danger-ink: #b42a32;
+  --danger-led: #e0414a;
+  --status-box-edge: rgba(16, 20, 26, 0.22); /* keeps a status box crisp on a light surface */
+  --status-box-cut: rgba(255, 255, 255, 0.9); /* the slash across a red status box */
   --button-primary-bg: #1a1d22;
   --button-primary-ink: #ffffff;
   --scrim: rgba(20, 24, 30, 0.28);
@@ -242,11 +246,13 @@
     --focus-ring: var(--palette-backlight);
     --live-led: var(--palette-live);
     --live-ink: var(--palette-live);
-    --led-off: #6e7884;
     --signal-led: var(--palette-signal);
     --signal-ink: #ffc65a;
     --signal-tint: rgba(255, 176, 32, 0.14);
     --danger-ink: #ff7b80;
+    --danger-led: #ff5a62;
+    --status-box-edge: rgba(0, 0, 0, 0.28);
+    --status-box-cut: rgba(255, 255, 255, 0.9);
     --button-primary-bg: #eef1f5;
     --button-primary-ink: #15191e;
     --scrim: rgba(8, 10, 14, 0.55);
@@ -285,11 +291,13 @@
   --focus-ring: var(--palette-backlight);
   --live-led: var(--palette-live);
   --live-ink: var(--palette-live);
-  --led-off: #6e7884;
   --signal-led: var(--palette-signal);
   --signal-ink: #ffc65a;
   --signal-tint: rgba(255, 176, 32, 0.14);
   --danger-ink: #ff7b80;
+  --danger-led: #ff5a62;
+  --status-box-edge: rgba(0, 0, 0, 0.28);
+  --status-box-cut: rgba(255, 255, 255, 0.9);
   --button-primary-bg: #eef1f5;
   --button-primary-ink: #15191e;
   --scrim: rgba(8, 10, 14, 0.55);

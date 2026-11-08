@@ -289,6 +289,7 @@ test('Add Tile places a Tile with its kind and selects it; Cancel and Escape clo
   await expect(page.getByTestId('add-where')).toHaveCount(0);
 
   await page.getByTestId('add-tile').click();
+  await page.getByTestId('add-tab-actions').click();
   await page.locator('[data-testid="add-kind"][data-kind="consumer"]').click();
   await expect(page.locator('[data-testid="tile"][data-row="2"][data-col="2"]')).toHaveAttribute('data-action', 'consumer');
   await expect(page.getByTestId('tile-title')).toHaveText('Tile');
@@ -302,6 +303,16 @@ test('Add Tile places a Tile with its kind and selects it; Cancel and Escape clo
   await page.locator('[data-testid="add-kind"][data-kind="key"]').click();
   await expect(page.getByTestId('page-tab')).toHaveText(['Media', 'Shortcuts', 'Page 3']);
   await expect(page.getByTestId('tile-head')).toContainText('Keyboard shortcut on the Page 3 Page');
+});
+
+test('a narrow header keeps only the Add Tile icon, centred in its button', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.getByTestId('start-starter').click();
+  const button = page.getByTestId('add-tile');
+  await expect(button.locator('.add-tile-words')).toHaveCSS('position', 'absolute');
+  const box = (await button.boundingBox())!;
+  const icon = (await button.locator('svg').boundingBox())!;
+  expect(Math.abs(icon.x + icon.width / 2 - (box.x + box.width / 2))).toBeLessThanOrEqual(1);
 });
 
 test('the keyboard moves, resizes, clears and deselects a Tile', async ({ page }) => {

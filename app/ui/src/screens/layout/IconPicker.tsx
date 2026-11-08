@@ -17,6 +17,7 @@ import { pickProblem as brandProblem, RECENT_NAME as BRAND_RECENT, renderBrandfe
 import type { BrandHit } from '../../lib/brandfetch/search.ts';
 import { useIconPacks } from '../../lib/icon-packs/hooks.ts';
 import { credits, packPrefixOf, sourceName } from '../../lib/icon-packs/model.ts';
+import { sourceOn, useIconSources } from '../../state/icon-sources.ts';
 import { useUi } from '../../state/ui.ts';
 import { button } from '../../shell/button.ts';
 import { AssetImage } from './AssetImage.tsx';
@@ -137,6 +138,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
   const brand = useBrandSearch(companion);
   const platform = usePlatform();
   const packList = useIconPacks(companion, (s) => s.packs);
+  const packsOn = useIconSources((s) => sourceOn(s.iconPacks, packList?.some((p) => p.installed) === true));
   const openIconPacks = useUi((s) => s.openIconPacks);
   const deps = useMemo<PickDeps>(() => ({ companion, wait: (job, signal) => waitForJob<'assets.render'>(jobsStore, companion, job, { signal }) }), [companion]);
 
@@ -169,7 +171,9 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
 
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const list = Array.isArray(builtins) ? builtins : [];
-  const hits = search.kind === 'done' || search.kind === 'loading' ? search.hits : [];
+  const found = search.kind === 'done' || search.kind === 'loading' ? search.hits : [];
+  // Icon packs off hides installed packs' icons; the bundled catalogs stay searchable.
+  const hits = packsOn ? found : found.filter((hit) => packPrefixOf(hit.source) === null);
   const offered: Section[] = words.length
       ? [
           { id: 'logos', title: 'Logos', items: hits.map((hit): Item => ({ kind: 'hit', key: `hit:${hit.source}:${hit.id}`, hit, name: hit.name })) },
@@ -466,7 +470,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
           selfh.st/icons
         </a>{' '}
         (CC BY 4.0, modified)
-        {credits(packList ?? [], brand.clientId !== null).map((credit) => (
+        {credits(packsOn ? (packList ?? []) : [], brand.clientId !== null).map((credit) => (
           <span key={credit.key} data-testid="icon-credit" data-prefix={credit.key}>
             {' '}
             ·{' '}

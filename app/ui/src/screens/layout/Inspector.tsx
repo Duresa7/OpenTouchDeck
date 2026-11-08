@@ -1,7 +1,10 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
-import { Film, Plus } from 'lucide-react';
+import { Tabs } from '@base-ui/react/tabs';
+import { Film, Plus, X } from 'lucide-react';
+import type { IntegrationSummary } from '../../lib/companion/api.ts';
+import { useDevices } from '../../lib/companion/devices.ts';
 import { useIntegrations } from '../../lib/companion/integrations.ts';
 import { missingGlyphs } from '../../lib/deck/scene.ts';
 import { placedLook } from '../../lib/editor/graph.ts';
@@ -9,10 +12,13 @@ import { ADD_KINDS, type EditorStore, type Target } from '../../lib/editor/store
 import { plural } from '../../lib/layout/messages.ts';
 import { PAGES_MAX, type GridPage, type Layout, type Page } from '../../lib/layout/model.ts';
 import { offersPresets } from '../../lib/integrations/model.ts';
+import { hasSettings } from '../../lib/integrations/switch.ts';
 import { button } from '../../shell/button.ts';
 import { useUi } from '../../state/ui.ts';
-import { usePresetNeeds } from '../integrations/addToLayout.ts';
-import { PresetButton } from '../integrations/PresetPreview.tsx';
+import { IntegrationGlyph } from '../integrations/IntegrationGlyph.tsx';
+import { addTab, closingLine, missingPresets, previewGrid, type AddTab } from './add-tile.ts';
+import { PresetCard } from './PresetCard.tsx';
+import { usePresetNeeds } from './presets.ts';
 import { PendingApprovals } from './Approvals.tsx';
 import { ControlReview } from './Controls.tsx';
 import { useDeviceOffersGif, useDeviceShows, useEditorState, useEffectiveTileEdit, useGifTiles } from './editor.ts';
@@ -212,6 +218,11 @@ function TileInspector({ store, page, tileId }: { store: EditorStore; page: Grid
             {tile.render === 'gif' && kind === 'none' ? 'GIF' : KINDS[kind].noun} on the {page.title} Page
           </p>
         </div>
+        <Tip label="Close (Esc)">
+          <button type="button" className={clsx(button({ kind: 'icon' }), 'inspector-close')} aria-label="Close Tile details" onClick={() => store.select(null)} data-testid="tile-close">
+            <X size={18} strokeWidth={1.9} aria-hidden />
+          </button>
+        </Tip>
       </div>
       <TileFields store={store} page={page} tile={tile} />
       <div className="inspector-foot">
@@ -232,37 +243,84 @@ function where(target: Target, page: Page, pages: number) {
   return `Row ${target.row + 1}, column ${target.col + 1} on the ${page.title} Page`;
 }
 
-function PresetTiles({ store }: { store: EditorStore }) {
-  const integrations = useIntegrations((s) => s.integrations);
-  const go = useUi((s) => s.go);
+function PresetGroup({ store, integration, rows, cols }: { store: EditorStore; integration: IntegrationSummary; rows: number; cols: number }) {
+  const openIntegration = useUi((s) => s.openIntegration);
   const graphs = useDeviceShows(store, 'graph');
   const needs = usePresetNeeds();
-  const offered = integrations.filter(offersPresets);
+  const orientation = useEditorState(store, (s) => s.orientation);
+  const fullScreen = useEditorState(store, (s) => s.drafts[s.orientation]?.layout.fullScreen === true);
+  const deviceId = useEditorState(store, (s) => s.device?.id);
+  const series = useDevices((s) => s.devices.find((d) => d.id === deviceId)?.capabilities?.series || 32);
+  const options = { rows, cols, orientation, fullScreen, graphs, series };
+  const titleId = useId();
   return (
-    <section className="inspector-section" aria-label="Preset tiles" data-testid="add-presets">
-      <h3 className="add-heading">Preset tiles</h3>
+    <section className="preset-group" aria-labelledby={titleId} data-testid="preset-group" data-id={integration.id}>
+      <div className="preset-group-head">
+        <IntegrationGlyph icon={integration.icon} size={16} />
+        <h3 className="preset-group-name" id={titleId}>
+          {integration.name}
+        </h3>
+        {hasSettings(integration) && (
+          <button type="button" className="link-button preset-group-settings" onClick={() => openIntegration(integration.id)} aria-label={`${integration.name} settings`} data-testid="preset-group-settings">
+            Settings
+          </button>
+        )}
+      </div>
+      <div className="preset-grid">
+        {integration.presets.map((preset) => (
+          <PresetCard key={preset.id} preset={preset} integration={integration} options={options} needs={needs(preset)} onAdd={(chosen) => store.placePreset(chosen, placedLook(chosen, integration, graphs))} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Preset tiles from every Integration that is on and set up, drawn as they will look, then what's off or needs setup. */
+function IntegrationTiles({ store, page, target }: { store: EditorStore; page: Page; target: Target }) {
+  const integrations = useIntegrations((s) => s.integrations);
+  const go = useUi((s) => s.go);
+  const openIntegration = useUi((s) => s.openIntegration);
+  const offered = integrations.filter(offersPresets);
+  const missing = missingPresets(integrations);
+  const closing = closingLine(missing);
+  const { rows, cols } = previewGrid(page, target === 'new-page');
+  const onlySetUp = missing.off.length === 0 && missing.setUp.length === 1 && hasSettings(missing.setUp[0]) ? missing.setUp[0] : null;
+  return (
+    <div className="add-integrations" data-testid="add-presets">
       {offered.length ? (
-        offered.map((integration) => (
-          <div className="add-presets-group" key={integration.id} data-id={integration.id}>
-            <span className="add-presets-name">{integration.name}</span>
-            <div className="preset-grid">
-              {integration.presets.map((preset) => (
-                <PresetButton key={preset.id} preset={preset} streams={integration.streams} onAdd={(chosen) => store.placePreset(chosen, placedLook(chosen, integration, graphs))} needs={needs(preset)} />
-              ))}
-            </div>
-          </div>
-        ))
+        <>
+          <p className="add-caption">Previews show example data.</p>
+          {offered.map((integration) => (
+            <PresetGroup key={integration.id} store={store} integration={integration} rows={rows} cols={cols} />
+          ))}
+        </>
       ) : (
-        <div className="add-presets-group">
-          <p className="field-hint">Set up an Integration to add its Preset tiles.</p>
+        <div className="add-empty" data-testid="add-presets-empty">
+          <p className="add-empty-text">Turn on an Integration to add its Tiles.</p>
           <div>
             <button type="button" className={button({ size: 'small' })} onClick={() => go('integrations')} data-testid="add-presets-setup">
-              Integrations
+              Open Integrations
             </button>
           </div>
         </div>
       )}
-    </section>
+      {closing && (
+        <p className="add-closing" data-testid="add-presets-closing">
+          {closing}{' '}
+          {onlySetUp ? (
+            <button type="button" className="link-button" onClick={() => openIntegration(onlySetUp.id, { setUp: true })} data-testid="add-presets-open">
+              Open settings
+            </button>
+          ) : (
+            offered.length > 0 && (
+              <button type="button" className="link-button" onClick={() => go('integrations')} data-testid="add-presets-open">
+                Open Integrations
+              </button>
+            )
+          )}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -290,29 +348,16 @@ function AddGif({ store }: { store: EditorStore }) {
   );
 }
 
-function AddTile({ store, page, pages, target }: { store: EditorStore; page: Page; pages: number; target: Target }) {
-  const first = useRef<HTMLButtonElement>(null);
-  useEffect(() => first.current?.focus({ preventScroll: true }), []);
+function AddActions({ store }: { store: EditorStore }) {
   return (
     <>
-      <div className="inspector-head">
-        <span className="tile-thumb tile-thumb-add" aria-hidden>
-          <Plus size={22} strokeWidth={2} />
-        </span>
-        <div className="inspector-head-text">
-          <h2 className="inspector-title">Add Tile</h2>
-          <p className="inspector-sub" data-testid="add-where">
-            {where(target, page, pages)}
-          </p>
-        </div>
-      </div>
       <section className="inspector-section" aria-label="Action">
         <h3 className="add-heading">Action</h3>
         <div className="add-actions">
-          {ADD_KINDS.map((kind, i) => {
+          {ADD_KINDS.map((kind) => {
             const Icon = KINDS[kind].icon;
             return (
-              <button key={kind} ref={i === 0 ? first : undefined} type="button" className="add-action" onClick={() => store.place(kind)} data-testid="add-kind" data-kind={kind}>
+              <button key={kind} type="button" className="add-action" onClick={() => store.place(kind)} data-testid="add-kind" data-kind={kind}>
                 <span className="add-action-glyph" aria-hidden>
                   <Icon size={16} strokeWidth={1.9} />
                 </span>
@@ -326,7 +371,52 @@ function AddTile({ store, page, pages, target }: { store: EditorStore; page: Pag
         </div>
       </section>
       <AddGif store={store} />
-      <PresetTiles store={store} />
+    </>
+  );
+}
+
+function AddTile({ store, page, pages, target }: { store: EditorStore; page: Page; pages: number; target: Target }) {
+  const integrations = useIntegrations((s) => s.integrations);
+  const chosen = useUi((s) => s.addTileTab);
+  const choose = useUi((s) => s.setAddTileTab);
+  const tab = addTab(integrations, chosen);
+  const tabs = useRef<HTMLDivElement>(null);
+  // Focus the open tab once the tabs have registered, so the arrow keys move from it.
+  useEffect(() => {
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => tabs.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true }));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return (
+    <>
+      <div className="inspector-head">
+        <span className="tile-thumb tile-thumb-add" aria-hidden>
+          <Plus size={22} strokeWidth={2} />
+        </span>
+        <div className="inspector-head-text">
+          <h2 className="inspector-title">Add Tile</h2>
+          <p className="inspector-sub" data-testid="add-where">
+            {where(target, page, pages)}
+          </p>
+        </div>
+      </div>
+      <Tabs.Root className="add-tabs" value={tab} onValueChange={(next: AddTab) => choose(next)}>
+        <Tabs.List ref={tabs} className="segmented segmented-fill add-tab-list" aria-label="Add from" activateOnFocus>
+          <Tabs.Tab className="segment" value="actions" data-testid="add-tab-actions">
+            Actions
+          </Tabs.Tab>
+          <Tabs.Tab className="segment" value="integrations" data-testid="add-tab-integrations">
+            Integrations
+          </Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel className="add-panel" value="actions" data-testid="add-panel-actions">
+          <AddActions store={store} />
+        </Tabs.Panel>
+        <Tabs.Panel className="add-panel" value="integrations" data-testid="add-panel-integrations">
+          <IntegrationTiles store={store} page={page} target={target} />
+        </Tabs.Panel>
+      </Tabs.Root>
       <div className="inspector-foot">
         <button type="button" className={button()} onClick={() => store.closeAdd()} data-testid="add-cancel">
           Cancel

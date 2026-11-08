@@ -413,6 +413,11 @@ pub struct SecretInput {
     pub value: String,
 }
 #[derive(Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct EnabledInput {
+    pub enabled: bool,
+}
+#[derive(Serialize, Deserialize, TS)]
 pub struct SecretHint {
     pub hint: String,
 }
@@ -455,9 +460,35 @@ impl Endpoint for ConfigPut {
     type Body = Value;
     type Ok = IntegrationView;
     type Error = IntegrationError;
+    /// A config object without `enabled` keeps the stored value, so a form that doesn't send it never undoes
+    /// an `integrations.enabled_put` from another client.
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
         work(ctx, move |r| {
-            r.get(&req.path.integration)?.configure(req.body)
+            let integration = r.get(&req.path.integration)?;
+            let mut config = req.body;
+            if let Some(fields) = config.as_object_mut()
+                && !fields.contains_key("enabled")
+            {
+                fields.insert("enabled".into(), Value::Bool(integration.summary().enabled));
+            }
+            integration.configure(config)
+        })
+        .await
+    }
+}
+pub struct EnabledPut;
+impl Endpoint for EnabledPut {
+    const NAME: &'static str = "integrations.enabled_put";
+    const METHOD: Method = Method::PUT;
+    const PATH: &'static str = "/integrations/{integration}/enabled";
+    type Path = IntegrationPath;
+    type Query = NoQuery;
+    type Body = EnabledInput;
+    type Ok = IntegrationView;
+    type Error = IntegrationError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        work(ctx, move |r| {
+            r.get(&req.path.integration)?.set_enabled(req.body.enabled)
         })
         .await
     }
@@ -523,6 +554,7 @@ fn feature() -> Feature {
         .endpoint::<List>()
         .endpoint::<Get>()
         .endpoint::<ConfigPut>()
+        .endpoint::<EnabledPut>()
         .endpoint::<SecretPut>()
         .endpoint::<SecretDelete>()
         .endpoint::<Refresh>()

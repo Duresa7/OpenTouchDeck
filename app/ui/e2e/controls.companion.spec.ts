@@ -97,7 +97,7 @@ const notice = (page: Page) => page.getByTestId('controls-notice');
 async function home(page: Page) {
   await page.goto('/');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
-  await expect(card(page).locator('.device-meta .status')).toHaveText('Connected');
+  await expect(card(page).getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
 }
 
 async function shot(page: Page, name: string) {
@@ -222,7 +222,7 @@ test('a matching Layout, a Device without live values, a Layout without controls
 
   await showWithoutPushedCopy(api, NO_CONTROLS);
   await expect.poll(() => assessment(api)).toEqual({ ...NO_COPY, has_controls: false });
-  await expect(card(page).locator('.device-meta .status')).toHaveText('Connected');
+  await expect(card(page).getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
   await expect(card(page).getByTestId('controls-notice')).toHaveCount(0);
 
   await showWithoutPushedCopy(api, RECOVERED);

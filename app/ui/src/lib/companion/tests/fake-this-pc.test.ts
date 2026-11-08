@@ -27,12 +27,15 @@ test('This PC fake validates configuration and preserves its enabled state', asy
   const token = await fake.bridge.session();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const configure = (body: unknown) => fake.fetch('http://127.0.0.1/api/v1/integrations/this_pc/config', { method: 'PUT', headers, body: JSON.stringify(body) });
-  for (const body of [{}, { enabled: 'yes' }, { enabled: false, extra: true }]) {
+  for (const body of [{ enabled: 'yes' }, { enabled: false, extra: true }, [], true]) {
     expect((await configure(body)).status).toBe(422);
   }
   const disabled = await configure({ enabled: false });
   expect(disabled.status).toBe(200);
   expect(await disabled.json()).toEqual(fakeThisPc(false));
+  const kept = await configure({});
+  expect(kept.status).toBe(200);
+  expect(await kept.json()).toEqual(fakeThisPc(false));
   const detail = await fake.fetch('http://127.0.0.1/api/v1/integrations/this_pc', { headers });
   expect(await detail.json()).toEqual(fakeThisPc(false));
 });

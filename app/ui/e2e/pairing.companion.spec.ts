@@ -165,10 +165,11 @@ test('paired browser uses every available screen without leaking credentials', a
   await expect(page.getByTestId('device-name')).toHaveText('Browser Device');
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
-  await page.locator('[data-testid="integration"][data-id="this_pc"]').getByTestId('integration-open').click();
-  await expect(page.getByTestId('integration-detail')).toBeVisible();
-  await page.getByTestId('refresh').click();
-  await expect(page.getByTestId('outcome')).toHaveAttribute('data-event', 'refreshed');
+  const thisPc = page.locator('[data-testid="integration"][data-id="this_pc"]').getByTestId('integration-switch');
+  await thisPc.click();
+  await expect(thisPc).toHaveAttribute('aria-checked', 'false');
+  await thisPc.click();
+  await expect(thisPc).toHaveAttribute('aria-checked', 'true');
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'Dark', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Dark', exact: true })).toHaveAttribute('aria-pressed', 'true');

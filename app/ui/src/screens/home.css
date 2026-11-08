@@ -48,8 +48,10 @@
 .board-details summary { color: var(--ink-2); font-size: var(--text-12); line-height: var(--leading-12); cursor: pointer; }
 .board-details p { margin: var(--space-1) 0 0; color: var(--ink-2); font-size: var(--text-12); line-height: var(--leading-12); white-space: pre-line; overflow-wrap: anywhere; }
 .status.is-waiting { color: var(--ink); }
-.status.is-waiting .led { background: var(--signal-led); box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal-led) 18%, transparent); }
+.device-name-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.device-status-box { display: inline-flex; flex: none; }
 .ignored-boards { display: flex; justify-content: center; margin: var(--space-10) 0 0; gap: var(--space-2); padding: 0; list-style: none; }
 .ignored-board { color: var(--ink-2); }
 .device-controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); min-width: 0; }
 .device-controls .status { align-items: first baseline; white-space: normal; }
+.device-controls .status-box { align-self: center; }

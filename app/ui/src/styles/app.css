@@ -152,17 +152,55 @@ button {
   white-space: nowrap;
 }
 
-.led {
+/* Green works, red doesn't (with a cut, so it never relies on colour alone), amber is on its way */
+.status-box {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--led-off);
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background-color: var(--signal-led);
+  box-shadow: inset 0 0 0 1px var(--status-box-edge);
+  transition: background-color var(--duration-status) var(--ease-color);
 }
 
-.status.is-live .led {
-  background: var(--live-led);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live-led) 18%, transparent);
+.status-box[data-tone='ok'] {
+  background-color: var(--live-led);
+}
+
+.status-box[data-tone='bad'] {
+  background-color: var(--danger-led);
+  background-image: linear-gradient(135deg, transparent calc(50% - 0.8px), var(--status-box-cut) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px));
+}
+
+/* ---------- Integration glyphs and inline links, shared by Integrations and Layout ---------- */
+
+.integration-glyph {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line);
+  color: var(--ink);
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .link-button:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
 }
 
 /* ---------- Buttons ---------- */

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import clsx from 'clsx';
 import { badgeOf, countsLine, formatCount, resetLine, type Usage, type UsageWindow } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
+import { StatusBox } from '../../shell/StatusBox.tsx';
 
 function Limit({ window, testId }: { window: UsageWindow | null; testId: string }) {
   if (!window) {
@@ -64,10 +65,7 @@ export function UsageTable({ usage }: { usage: Usage }) {
                 <Limit window={account.five_hour} testId="usage-five-hour" />
                 <Limit window={account.seven_day} testId="usage-seven-day" />
                 <td data-testid="usage-status">
-                  <span className={clsx('status', account.status.toLowerCase() === 'active' && 'is-live')}>
-                    <i className="led" aria-hidden />
-                    {badgeOf(account.status)}
-                  </span>
+                  <StatusBox tone={account.status.toLowerCase() === 'active' ? 'ok' : 'bad'} label={badgeOf(account.status)} showWords />
                   {account.usage_error && <span className="usage-sub is-error">{account.usage_error}</span>}
                   <span className="usage-sub tabular">{countsLine(account)}</span>
                 </td>

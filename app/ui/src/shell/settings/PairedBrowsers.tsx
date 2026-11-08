@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type MouseEvent } from 'react';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
+import { toast } from 'sonner';
 import { useStore } from 'zustand';
 import type { SessionInfo } from '../../lib/companion/api.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
@@ -45,6 +46,28 @@ function confirm(store: BrowsersStore, ask: Ask) {
 
 const day = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 const dayTime = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+/** Only the desktop window can open a browser on this PC: the Companion shows the browser a pairing code. */
+function OpenInBrowser() {
+  const companion = useCompanion();
+  if (!window.openTouchDeck) return null;
+  return (
+    <div className="row" data-testid="open-browser-row">
+      <span className="row-text">
+        <span className="row-title">Open in a browser</span>
+        <span className="row-sub">Pairs a browser on this PC.</span>
+      </span>
+      <button
+        type="button"
+        className={button()}
+        onClick={() => void companion.auth.pair_code().catch(() => toast.error("Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry."))}
+        data-testid="open-browser"
+      >
+        Open
+      </button>
+    </div>
+  );
+}
 
 function BrowserRow({ browser, onForget }: { browser: SessionInfo; onForget(event: MouseEvent<HTMLButtonElement>): void }) {
   return (
@@ -100,9 +123,10 @@ export function PairedBrowsers() {
       <div className="group" aria-busy={view.kind === 'loading' || undefined}>
         {view.kind === 'ready' && browsers.length === 0 && (
           <div className="row">
-            <span className="row-note">No browsers paired. Choose Open in browser in the tray to pair one.</span>
+            <span className="row-note">No browsers paired yet.</span>
           </div>
         )}
+        <OpenInBrowser />
         {browsers.map((browser) => (
           <BrowserRow key={browser.id} browser={browser} onForget={open({ kind: 'forget', browser })} />
         ))}

@@ -482,3 +482,123 @@ fn detail_starts_empty_and_polling_changes_the_revision() {
         Value::Null
     );
 }
+
+fn registry_with(store: Arc<MemorySecrets>, file: std::path::PathBuf) -> Registry {
+    Registry::new(Environment {
+        media_provider: Some(std::sync::Arc::new(
+            td_host::integrations::media::fake::FakeMedia::default(),
+        )),
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
+        secrets: store,
+        config_file: Some(file),
+        fetch: Arc::new(|| Box::new(Recorder::default())),
+    })
+    .unwrap()
+}
+
+#[test]
+fn set_enabled_changes_only_enabled_keeps_every_secret_and_is_saved() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("sources.json");
+    let store = Arc::new(MemorySecrets::default());
+    let mut r = registry_with(store.clone(), file.clone());
+    let proxy = r.get("cliproxyapi").unwrap();
+    proxy.configure(config("https://hub.example")).unwrap();
+    proxy.secret_put("management_key", "fixture-key").unwrap();
+    let custom = r.get("custom").unwrap();
+    custom
+        .configure(json!({"enabled":true,"sources":[{"id":"temperature","name":"Temperature","interval_s":60,"kind":"number","input":{"type":"http","url":"https://hub.example/metrics","value_path":"$.value","headers":{"Authorization":"auth"}}}]}))
+        .unwrap();
+    custom.secret_put("auth", "fixture-header").unwrap();
+    let ids: Vec<String> = r.list().into_iter().map(|s| s.id).collect();
+    for id in ["cliproxyapi", "custom", "media", "this_pc", "volume"] {
+        assert!(ids.iter().any(|i| i == id), "{id}");
+    }
+    for id in &ids {
+        let i = r.get(id).unwrap();
+        let before = i.view().unwrap();
+        assert!(before.summary.enabled, "{id}");
+        for enabled in [false, false, true] {
+            let after = i.set_enabled(enabled).unwrap();
+            let mut expected = before.config.clone();
+            expected["enabled"] = enabled.into();
+            assert_eq!(after.summary.enabled, enabled, "{id}");
+            assert_eq!(after.config, expected, "{id}");
+            assert_eq!(
+                serde_json::to_value(&after.secrets).unwrap(),
+                serde_json::to_value(&before.secrets).unwrap(),
+                "{id}"
+            );
+        }
+        i.set_enabled(false).unwrap();
+    }
+    assert_eq!(
+        store
+            .get("cliproxyapi", "management_key")
+            .unwrap()
+            .unwrap()
+            .value,
+        "fixture-key"
+    );
+    assert_eq!(
+        store.get("custom", "auth").unwrap().unwrap().value,
+        "fixture-header"
+    );
+    let mut reloaded = registry_with(store, file);
+    for id in &ids {
+        let view = reloaded.get(id).unwrap().view().unwrap();
+        assert!(!view.summary.enabled, "{id}");
+    }
+    let proxy = reloaded.get("cliproxyapi").unwrap().view().unwrap();
+    assert_eq!(
+        proxy.config,
+        json!({"enabled":false,"url":"https://hub.example","interval_s":60})
+    );
+    assert!(proxy.secrets["management_key"].set);
+    assert!(reloaded.get("custom").unwrap().view().unwrap().secrets["auth"].set);
+}
+
+#[test]
+fn cliproxy_set_enabled_keeps_the_saved_url_as_written_and_its_key() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("sources.json");
+    std::fs::write(
+        &file,
+        json!({"cliproxy":false,"cliproxy_url":"https://hub.example/","cliproxy_interval_s":300})
+            .to_string(),
+    )
+    .unwrap();
+    let store = Arc::new(MemorySecrets::default());
+    store
+        .put(
+            "cliproxyapi",
+            "management_key",
+            Secret {
+                origin: "https://hub.example".into(),
+                value: "fixture-key".into(),
+            },
+        )
+        .unwrap();
+    let mut r = registry_with(store.clone(), file.clone());
+    let i = r.get("cliproxyapi").unwrap();
+    for enabled in [true, false] {
+        let view = i.set_enabled(enabled).unwrap();
+        assert_eq!(
+            view.config,
+            json!({"enabled":enabled,"url":"https://hub.example/","interval_s":300})
+        );
+        assert!(view.secrets["management_key"].set);
+        let saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(saved["cliproxy"], enabled);
+        assert_eq!(saved["cliproxy_url"], "https://hub.example/");
+        assert_eq!(saved["cliproxy_interval_s"], 300);
+    }
+    assert_eq!(
+        store
+            .get("cliproxyapi", "management_key")
+            .unwrap()
+            .unwrap()
+            .value,
+        "fixture-key"
+    );
+}

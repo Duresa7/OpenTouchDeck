@@ -399,17 +399,55 @@ const FIELD_SAMPLES: Record<string, Omit<WidgetSample, 'caption'>> = {
   success: { value: '128', bar: -1 },
   failed: { value: '3', bar: -1 },
   recent_10m: { value: '12', bar: 0.6 },
+  cpu_pct: { value: '23%', bar: 0.23 },
+  ram_pct: { value: '58%', bar: 0.58 },
+  ram_used_bytes: { value: '9.3 GB', bar: -1 },
+  ram_total_bytes: { value: '16 GB', bar: -1 },
+  gpu_pct: { value: '12%', bar: 0.12 },
+  disk_active_pct: { value: '4%', bar: 0.04 },
+  disk_read_bytes_s: { value: '1.2 MB/s', bar: -1 },
+  disk_write_bytes_s: { value: '640 KB/s', bar: -1 },
+  network_receive_bytes_s: { value: '2.4 MB/s', bar: -1 },
+  network_send_bytes_s: { value: '310 KB/s', bar: -1 },
 };
 
+/** Fields whose bar compares one account with the busiest, so the reading for all accounts has none. */
+const ACCOUNT_BARS: ReadonlySet<string> = new Set(['recent_10m']);
+
+/** A widget Tile's example reading, with a bar only where the real reading has one. */
 export function sampleWidget(tile: Tile): WidgetSample | null {
   if (tile.action.type !== 'widget') return null;
-  const sample = FIELD_SAMPLES[tile.action.field];
-  return sample ? { ...sample, caption: tile.label } : { value: '--', caption: tile.label, bar: -1 };
+  const { field, account } = tile.action;
+  const sample = FIELD_SAMPLES[field];
+  if (!sample) return { value: '--', caption: tile.label, bar: -1 };
+  return { ...sample, bar: account === '' && ACCOUNT_BARS.has(field) ? -1 : sample.bar, caption: tile.label };
 }
 
 /** Samples a preview graph draws until the Device shows real ones: a gentle wave between 10 and 90. */
 export function sampleSeries(count: number): number[] {
   return Array.from({ length: count }, (_, i) => Math.round((50 + 40 * Math.sin(i / 3)) * 10) / 10);
+}
+
+/** The level a preview bar Tile shows until the Device shows real ones. */
+export const SAMPLE_LEVEL = { value: 0.64, muted: false } as const;
+
+/** The track a preview now-playing Tile shows until the Device shows real ones. */
+export const SAMPLE_TRACK = { title: 'Night Drive', artist: 'Tidal Lines', state: 2 } as const;
+
+/**
+ * What a preview draws on every Live tile: example values, a graph of `series` samples, the sample level and track,
+ * all greyed out when `stale`. The Layout canvas and the Preset previews both draw from these.
+ */
+export function sampleScene(series: number, stale: boolean): SceneOptions {
+  const samples = sampleSeries(series);
+  return {
+    widget: sampleWidget,
+    rows: sampleRows,
+    hasImage: () => true,
+    graph: () => ({ samples, cap: series, stale }),
+    level: () => ({ ...SAMPLE_LEVEL, stale }),
+    nowPlaying: () => ({ ...SAMPLE_TRACK, stale }),
+  };
 }
 
 export function sampleRows(): RowSample[] {

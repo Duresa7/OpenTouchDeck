@@ -41,7 +41,7 @@ export function WifiSetupField({ device, name, setup, live }: WifiSetupFieldProp
     return (
       <div className="panel-wifi" data-testid="device-panel-wifi-setup">
         <span className="row-title">Network</span>
-        <p className="field-hint is-warning" data-testid="device-panel-wifi-setup-status">
+        <p className="field-hint" data-testid="device-panel-wifi-setup-status">
           {needsFirmwareField({ device: name, since: null })}
         </p>
       </div>

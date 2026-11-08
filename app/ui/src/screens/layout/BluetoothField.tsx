@@ -44,7 +44,7 @@ export function BluetoothField({ device, name, bluetooth, live }: BluetoothField
     return (
       <div className="field" data-testid="device-panel-bluetooth">
         <span className="field-label">Bluetooth keyboard</span>
-        <p className="field-hint is-warning" data-testid="device-panel-bluetooth-status">
+        <p className="field-hint" data-testid="device-panel-bluetooth-status">
           {needsFirmwareField({ device: name, since: null })}
         </p>
       </div>

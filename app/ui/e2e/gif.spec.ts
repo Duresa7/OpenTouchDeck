@@ -25,6 +25,7 @@ async function record(page: Page): Promise<Layout | null> {
 
 async function addGifTile(page: Page, name = 'cat.gif'): Promise<string> {
   await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
+  await page.getByTestId('add-tab-actions').click();
   await page.getByTestId('add-gif-file').setInputFiles(gifFile(name, 1));
   const id = await page.getByTestId('tile-fields').getAttribute('data-id');
   if (id === null) throw new Error('Add Tile placed no GIF Tile');
@@ -36,6 +37,7 @@ const gifStatus = (page: Page) => page.getByTestId('gif-status');
 test('Add Tile offers GIF only to a Device that plays GIFs', async ({ page }) => {
   await openStarter(page);
   await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
+  await page.getByTestId('add-tab-actions').click();
   await expect(page.getByTestId('add-kind').first()).toBeVisible();
   await expect(page.getByTestId('add-gif')).toHaveCount(0);
   await tile(page, 'copy').click();

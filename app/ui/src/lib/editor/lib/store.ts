@@ -59,6 +59,25 @@ export interface Status {
 
 export type Target = { row: number; col: number } | 'new-page';
 
+/** Where a new Tile goes: its id and top-left cell. */
+export interface TileAt {
+  id: string;
+  row: number;
+  col: number;
+}
+
+/**
+ * The Tile a Preset places: a 1×1 Tile with the Preset's action and its name as the label, drawn as `look` when
+ * given. Null when the Layout rules refuse the Preset's action. Placement and the Add Tile previews both build it here,
+ * so a preview is exactly the Tile that will be placed.
+ */
+export function presetTile(preset: PresetTile, look: LiveLook | null, at: TileAt = { id: 'preset', row: 0, col: 0 }): Tile | null {
+  const action = parseAction(preset.action);
+  if (!action) return null;
+  const plain: Tile = { id: at.id, label: presetLabel(preset.name), row: at.row, col: at.col, rowSpan: 1, colSpan: 1, icon: null, action };
+  return look && action.type === 'widget' ? liveTile(plain, action, look) : plain;
+}
+
 export interface Conflict {
   reason: 'load' | 'changed';
   orientation: Orientation;
@@ -414,6 +433,13 @@ export function createEditorStore(deps: EditorDeps) {
   }
 
   function placeAtTarget(action: Action, label: string, look: LiveLook | null = null): { id: string; page: string; pages: string[] } | null {
+    return placeTile(({ id, row, col }) => {
+      const plain: Tile = { id, label, row, col, rowSpan: 1, colSpan: 1, icon: null, action };
+      return look && action.type === 'widget' ? liveTile(plain, action, look) : plain;
+    });
+  }
+
+  function placeTile(build: (at: TileAt) => Tile): { id: string; page: string; pages: string[] } | null {
     const draft = current();
     const where = state().adding;
     if (!draft || !where) return null;
@@ -434,8 +460,7 @@ export function createEditorStore(deps: EditorDeps) {
     const target = page;
     if (!target) return null;
     const id = freshId(layout, 'tile');
-    const plain: Tile = { id, label, row: cell.row, col: cell.col, rowSpan: 1, colSpan: 1, icon: null, action };
-    const tile = look && action.type === 'widget' ? liveTile(plain, action, look) : plain;
+    const tile = build({ id, row: cell.row, col: cell.col });
     const base: Layout = tile.render ? { ...layout, schema: 2 } : layout;
     if (apply(() => addTile(base, target, tile), { page: target, selected: id, adding: null }) !== null) return null;
     return { id, page: target, pages: base.pages.map((p) => p.id) };
@@ -555,39 +580,8 @@ export function createEditorStore(deps: EditorDeps) {
 
     /** Places a Preset tile where Add Tile points, drawn as `look` when given. */
     placePreset(preset: PresetTile, look: LiveLook | null = null) {
-      const action = parseAction(preset.action);
-      if (action) placeAtTarget(action, presetLabel(preset.name), look);
+      if (parseAction(preset.action)) placeTile((at) => presetTile(preset, look, at)!);
       else say('error', friendlyRefusal('action.type'), { detail: JSON.stringify(preset.action), event: 'refused' });
-    },
-
-    async addPreset(preset: PresetTile, look: LiveLook | null = null): Promise<Status | null> {
-      if (!state().device) return null;
-      if (state().busy) {
-        say('error', `${name()} is busy. Wait a moment, then retry.`, { event: 'refused' });
-        return state().status;
-      }
-      if (!current()) await api.load();
-      const draft = current();
-      if (!draft) return state().status;
-      const action = parseAction(preset.action);
-      if (!action) {
-        say('error', friendlyRefusal('action.type'), { detail: JSON.stringify(preset.action), event: 'refused' });
-        return state().status;
-      }
-      const shown = gridOf(draft.layout, state().page);
-      const grid = shown ?? draft.layout.pages.find((p): p is GridPage => p.kind === 'grid') ?? null;
-      const cell = grid ? freeCell(draft.layout, grid.id) : null;
-      if (!grid || !cell) {
-        say('error', friendlyRefusal('no free cell on this page', draft.layout, name()), { detail: 'no free cell on this page', event: 'refused' });
-        return state().status;
-      }
-      const id = freshId(draft.layout, 'tile');
-      const plain: Tile = { id, label: presetLabel(preset.name), row: cell[0], col: cell[1], rowSpan: 1, colSpan: 1, icon: null, action };
-      const tile = look && action.type === 'widget' ? liveTile(plain, action, look) : plain;
-      if (apply((l) => addTile(tile.render ? { ...l, schema: 2 } : l, grid.id, tile), { page: grid.id, selected: id, adding: null }) === null) {
-        say('ok', `Added to ${name()}'s Layout`, { event: 'preset-added' });
-      }
-      return state().status;
     },
 
     editLabel,
