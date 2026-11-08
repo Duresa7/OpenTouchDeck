@@ -66,9 +66,11 @@ function Keys({ store }: { store: BrandfetchStore }) {
   );
   return (
     <>
-      <section className="settings-section" aria-labelledby={`${id}-keys`}>
-        <h3 id={`${id}-keys`}>Keys</h3>
-        <div className="group brandfetch-keys">
+      <div className="detail-sheet">
+        <section className="detail-block" aria-labelledby={`${id}-keys`} data-testid="brandfetch-keys">
+          <h3 className="detail-section-title" id={`${id}-keys`}>
+            Keys
+          </h3>
           <StoredField
             label="Client ID"
             hint="Turns on logo search in the icon picker. Searches go from this window straight to Brandfetch. Adding or forgetting it reloads the window."
@@ -92,8 +94,8 @@ function Keys({ store }: { store: BrandfetchStore }) {
             onForget={() => void state.forgetKey()}
           />
           <StepLine step={step} />
-        </div>
-      </section>
+        </section>
+      </div>
       <section className="settings-section" aria-labelledby={`${id}-logos`}>
         <h3 id={`${id}-logos`}>Logos on this PC</h3>
         <div className="group">

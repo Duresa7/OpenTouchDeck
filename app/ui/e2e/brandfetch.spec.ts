@@ -125,7 +125,8 @@ test('the settings flow saves a client ID and a write-only key, turns it on, and
   await brandfetchRow(page).getByTestId('integration-settings').click();
   const view = brandfetchView(page);
   await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
-  await expect(view.getByRole('heading', { name: 'Keys', exact: true })).toBeVisible();
+  // Keys heads its own card, as Connection does on CLIProxyAPI's page.
+  await expect(view.locator('.detail-sheet').getByTestId('brandfetch-keys').getByRole('heading', { name: 'Keys', exact: true })).toBeVisible();
   await expect(view.getByTestId('brandfetch-notes')).toContainText('own Brandfetch account');
   await expect(view.getByTestId('brandfetch-stored')).toContainText('The API key is stored in Windows Credential Manager, never in a file.');
   await expect(view.getByRole('link', { name: /Get a client ID/ })).toHaveAttribute('href', 'https://developers.brandfetch.com/register');
