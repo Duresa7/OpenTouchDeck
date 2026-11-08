@@ -207,7 +207,15 @@ test('flipping Brandfetch off again while it waits for a client ID undoes the en
   await view.getByTestId('detail-switch').click();
   await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
   await expect(view.getByTestId('detail-switch')).not.toHaveAttribute('aria-busy', 'true');
+  // Finishing setup afterwards keeps the explicit off.
+  await view.getByTestId('brandfetch-client-id-input').fill('test-client-id');
+  await view.getByTestId('brandfetch-client-id-save').click();
+  await expect(view.getByTestId('brandfetch-client-id-state')).toHaveText('test-client-id');
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
   await view.getByTestId('detail-back').click();
+  await expect(brandfetchRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
+  await page.reload();
+  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
   await expect(brandfetchRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
 });
 

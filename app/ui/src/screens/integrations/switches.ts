@@ -78,7 +78,7 @@ function useLocalSwitch(id: string, source: 'iconPacks' | 'brandfetch', ready: b
     flip(next) {
       if (pending && !next) {
         setPendingEnable(null);
-        if (on) iconSources.getState().set(source, false);
+        iconSources.getState().set(source, false);
         return;
       }
       if (next && ready === false) {
