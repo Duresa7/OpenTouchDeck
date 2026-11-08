@@ -26,12 +26,15 @@ function useNow(everyMs: number) {
   return now;
 }
 
-/** The status box and its words under the lede. None while the Integration is off and set up: the switch says Off. */
-function StatusBlock({ store, summary }: { store: DetailStore; summary: IntegrationSummary }) {
+/**
+ * The status box and its words under the lede. None while the Integration is off and set up: the switch says Off. A
+ * switch turned on before setup says Finish setup, as the switch shows on.
+ */
+function StatusBlock({ store, summary, pending }: { store: DetailStore; summary: IntegrationSummary; pending: boolean }) {
   const usage = useStore(store, (s) => s.usage);
   const devices = useDevices((s) => s.devices);
   const now = useNow(5000);
-  const status = statusOf(summary);
+  const status = statusOf(summary, pending);
   const failed = summary.status.delivery.filter((d) => d.error !== null);
   if (status.tone === null && failed.length === 0) return null;
   return (
@@ -78,7 +81,7 @@ export function Outcome({ store, at }: { store: DetailStore; at: ReturnType<type
   );
 }
 
-function Refresh({ store, summary }: { store: DetailStore; summary: IntegrationSummary }) {
+function Refresh({ store, summary, pending }: { store: DetailStore; summary: IntegrationSummary; pending: boolean }) {
   const busy = useStore(store, (s) => s.busy);
   const after = useStore(store, (s) => s.refreshAfter);
   const [, wake] = useState(0);
@@ -101,9 +104,15 @@ function Refresh({ store, summary }: { store: DetailStore; summary: IntegrationS
       >
         {busy === 'refresh' ? 'Checking…' : 'Check now'}
       </button>
-      <span className="form-state">{usable ? refreshFloorText(summary.id) : summary.enabled ? 'Finish setup to check.' : `Turn on ${summary.name} to check.`}</span>
+      <span className="form-state">{usable ? refreshFloorText(summary.id) : summary.enabled || pending ? 'Finish setup to check.' : `Turn on ${summary.name} to check.`}</span>
     </div>
   );
+}
+
+/** Setup starts at the first field still empty, such as the key under an address already filled; else the first. */
+function firstToFill(sheet: HTMLElement | null): HTMLElement | null {
+  const fields = [...(sheet?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea') ?? [])].filter((f) => !f.readOnly && !f.disabled);
+  return fields.find((f) => f.value.trim() === '') ?? fields[0] ?? null;
 }
 
 /**
@@ -133,7 +142,7 @@ export function IntegrationDetail({ summary, setUp, onBack }: { summary: Integra
 
   useEffect(() => {
     if (!loaded) return;
-    if (setUp) sheet.current?.querySelector<HTMLElement>('input, textarea')?.focus();
+    if (setUp) firstToFill(sheet.current)?.focus();
     else title.current?.focus({ preventScroll: true });
   }, [loaded, setUp]);
 
@@ -154,7 +163,7 @@ export function IntegrationDetail({ summary, setUp, onBack }: { summary: Integra
       name={summary.name}
       icon={summary.icon}
       lede={lineOf(summary.id)}
-      status={<StatusBlock store={store} summary={summary} />}
+      status={<StatusBlock store={store} summary={summary} pending={pending} />}
       state={state}
       titleRef={title}
       onBack={onBack}
@@ -183,7 +192,7 @@ export function IntegrationDetail({ summary, setUp, onBack }: { summary: Integra
               <h2 className="detail-section-title" id={`${ids}-status`}>
                 Status
               </h2>
-              <Refresh store={store} summary={summary} />
+              <Refresh store={store} summary={summary} pending={pending} />
               <Outcome store={store} at="status" />
             </section>
           )}

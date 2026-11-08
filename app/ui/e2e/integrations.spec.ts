@@ -108,10 +108,15 @@ test('turning on an Integration that is not set up opens its setup and turns it 
   await expect(cli.getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
   await cli.getByTestId('integration-switch').click();
   await expect(page.getByTestId('integration-detail')).toHaveAttribute('data-id', 'cliproxyapi');
-  await expect(field(page, 'url')).toBeFocused();
+  // The address comes filled in, so setup starts at the key it still needs.
+  await expect(field(page, 'url')).not.toHaveValue('');
+  await expect(page.getByTestId('secret-input')).toBeFocused();
   const header = page.getByTestId('detail-switch');
   await expect(header).toHaveAttribute('aria-checked', 'true');
   await expect(header).toHaveAttribute('aria-busy', 'true');
+  await expect(page.getByTestId('detail-status')).toHaveText('Finish setup');
+  await expect(page.getByTestId('detail-status')).toHaveAttribute('data-tone', 'wait');
+  await expect(page.getByTestId('detail-checks')).toContainText('Finish setup to check.');
   expect((await record(page)).settings.enabled).toBe(false);
 
   await page.getByTestId('secret-input').fill(KEY);

@@ -197,8 +197,10 @@ export interface Status {
   detail: string | null;
 }
 
-export function statusOf(summary: Pick<IntegrationSummary, 'enabled' | 'status'>): Status {
+/** The status to show. `pending` is a switch turned on before setup: it reads as on and waiting for setup. */
+export function statusOf(summary: Pick<IntegrationSummary, 'enabled' | 'status'>, pending = false): Status {
   const { state, message } = summary.status;
+  if (pending && !summary.enabled) return { words: 'Finish setup', tone: 'wait', live: false, needsSetup: state === 'not_configured', detail: null };
   if (state === 'not_configured') return summary.enabled ? { words: 'Finish setup', tone: 'wait', live: false, needsSetup: true, detail: null } : { words: 'Not set up', tone: null, live: false, needsSetup: true, detail: null };
   if (!summary.enabled) return { words: 'Off', tone: null, live: false, needsSetup: false, detail: null };
   if (state === 'ok') return { words: 'Connected', tone: 'ok', live: true, needsSetup: false, detail: null };

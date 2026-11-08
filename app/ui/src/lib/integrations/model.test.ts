@@ -143,6 +143,12 @@ describe('status', () => {
     expect(statusOf(summary(state, enabled))).toEqual(expect.objectContaining({ words, tone, live, needsSetup }));
   });
 
+  it('reads Finish setup with an amber box while a switch turned on before setup waits for it', () => {
+    expect(statusOf(summary('not_configured', false), true)).toEqual(expect.objectContaining({ words: 'Finish setup', tone: 'wait', needsSetup: true }));
+    expect(statusOf(summary('ok', false), true)).toEqual(expect.objectContaining({ words: 'Finish setup', tone: 'wait', needsSetup: false }));
+    expect(statusOf(summary('ok', true), true)).toEqual(expect.objectContaining({ words: 'Connected', tone: 'ok' }));
+  });
+
   it('keeps the raw reason for Details', () => {
     expect(statusOf(summary('error', true, 'connection refused')).detail).toBe('connection refused');
   });
