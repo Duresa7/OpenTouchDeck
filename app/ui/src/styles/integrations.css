@@ -244,6 +244,15 @@
   font-weight: var(--weight-semibold);
 }
 
+/* A secret's own label heads its block, as Connection and Status head theirs */
+.detail-secrets > .field > .field-label {
+  color: var(--ink);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  letter-spacing: var(--track-14);
+  font-weight: var(--weight-semibold);
+}
+
 .config-form {
   display: flex;
   flex-direction: column;

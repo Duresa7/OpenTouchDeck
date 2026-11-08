@@ -171,7 +171,7 @@ export function IntegrationDetail({ summary, setUp, onBack }: { summary: Integra
             </section>
           )}
           {secretFields.length > 0 && (
-            <section className="detail-block" aria-label={secretFields.map((f) => f.label).join(', ')} data-testid="detail-secrets">
+            <section className="detail-block detail-secrets" aria-label={secretFields.map((f) => f.label).join(', ')} data-testid="detail-secrets">
               {secretFields.map((field) => (
                 <SecretField key={field.name} store={store} field={field} integration={summary.name} />
               ))}
