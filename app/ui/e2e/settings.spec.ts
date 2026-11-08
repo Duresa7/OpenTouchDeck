@@ -79,7 +79,7 @@ test.describe('Paired browsers', () => {
     await expect(confirmation(page)).toHaveAccessibleName('Forget all browsers?');
     await confirmation(page).getByRole('button', { name: 'Forget all' }).click();
     await expect(browsers(page)).toHaveCount(0);
-    await expect(settings(page)).toContainText('No browsers paired. Choose Open in browser in the tray to pair one.');
+    await expect(settings(page)).toContainText('No browsers paired yet.');
   });
 
   test('Reset pairing confirms first, then signs out every browser while this window carries on', async ({ page }) => {
@@ -96,7 +96,7 @@ test.describe('Paired browsers', () => {
     await settings(page).getByRole('button', { name: 'Reset', exact: true }).click();
     await confirmation(page).getByRole('button', { name: 'Reset', exact: true }).click();
     await expect(browsers(page)).toHaveCount(0);
-    await expect(settings(page)).toContainText('No browsers paired.');
+    await expect(settings(page)).toContainText('No browsers paired yet.');
     await expect(settings(page)).not.toContainText("Couldn't");
 
     await page.keyboard.press('Escape');
@@ -105,10 +105,33 @@ test.describe('Paired browsers', () => {
     await expect(settings(page)).toContainText('Open TouchDeck 0.2.0');
   });
 
+  test('the desktop window offers to open a browser here, and a browser does not', async ({ page }) => {
+    await start(page);
+    await openSettings(page);
+    await expect(settings(page).getByTestId('open-browser-row')).toHaveCount(0);
+    await page.addInitScript(() => {
+      window.openTouchDeck = { version: 1, session: async () => 'demo', onSessionChanged: () => {} };
+    });
+    await start(page);
+    await expect(page.locator('.open-browser')).toHaveCount(0);
+    await openSettings(page);
+    const row = settings(page).getByTestId('open-browser-row');
+    await expect(row).toContainText('Open in a browser');
+    await expect(row).toContainText('Pairs a browser on this PC.');
+    await expect(row.getByRole('button', { name: 'Open' })).toBeVisible();
+  });
+
+  test('Icon packs and Brandfetch logos moved to Integrations', async ({ page }) => {
+    await start(page);
+    await openSettings(page);
+    await expect(settings(page)).not.toContainText('Icon packs');
+    await expect(settings(page)).not.toContainText('Brandfetch');
+  });
+
   test('with none paired it says how to pair one', async ({ page }) => {
     await start(page, '?browsers=0');
     await openSettings(page);
-    await expect(settings(page)).toContainText('No browsers paired. Choose Open in browser in the tray to pair one.');
+    await expect(settings(page)).toContainText('No browsers paired yet.');
     await expect(settings(page).getByRole('button', { name: 'Forget all' })).toHaveCount(0);
   });
 });

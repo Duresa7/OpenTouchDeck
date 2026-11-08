@@ -9,7 +9,8 @@ export interface Spill {
   by: number;
 }
 
-const UNCHECKED = ['svg', 'input', 'textarea', 'select', '[data-demo-toggle]', '.device-scene', '.scene', '[data-testid="deck-screen"]', '.sonner-toast', '[hidden]'].join(', ');
+// A Device screen, on the canvas or in a Preset preview, clips its Tiles' text as the Firmware does.
+const UNCHECKED = ['svg', 'input', 'textarea', 'select', '[data-demo-toggle]', '.device-scene', '.scene', '[data-testid="deck-screen"]', '.preset-screen', '.sonner-toast', '[hidden]'].join(', ');
 
 /**
  * Every element whose content is wider than its box when the box lets it spill, or with a child or a run of text

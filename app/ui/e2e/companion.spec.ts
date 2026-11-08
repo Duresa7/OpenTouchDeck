@@ -36,7 +36,7 @@ test('Home lists the mock Devices from the real Companion and opens one', async 
   await expect(cards).toHaveCount(3);
   for (let i = 0; i < 3; i++) {
     await expect(cards.nth(i)).toContainText(`Mock Device mock000${i + 1}`);
-    await expect(cards.nth(i)).toContainText('Connected');
+    await expect(cards.nth(i).getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
     await expect(cards.nth(i).locator('.device-spill')).toHaveCount(1);
   }
   const widths = await cards.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width));
@@ -50,7 +50,7 @@ test('a Layout pushed to a Device shows on its miniature, and stays when it is u
   const api = await companion(request);
   await page.goto('/');
   const card = page.getByRole('list', { name: 'Devices' }).getByRole('listitem').nth(1);
-  await expect(card).toContainText('Connected');
+  await expect(card.getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
   await expect(card.locator('.device-scene')).not.toHaveAttribute('data-page');
   await page.evaluate(() => { (window as unknown as { notReloaded: boolean }).notReloaded = true; });
 
@@ -153,7 +153,7 @@ test('the Device panel renames a mock Device, switches its orientation with a re
   await expect(page.getByTestId('device-name')).toHaveText('Bench');
   const renamed: { name: string } = await (await api('GET', '/devices/mock0003')).json();
   expect(renamed.name).toBe('Bench');
-  await expect(page.getByTestId('device-panel-brightness-hint')).toHaveText("Bench's Firmware can't change this yet.");
+  await expect(page.getByTestId('device-panel-brightness')).toHaveCount(0);
 
   await page.getByTestId('device-panel-portrait').click();
   await page.getByTestId('device-panel-confirm-restart').click();

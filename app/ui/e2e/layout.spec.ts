@@ -289,6 +289,7 @@ test('Add Tile places a Tile with its kind and selects it; Cancel and Escape clo
   await expect(page.getByTestId('add-where')).toHaveCount(0);
 
   await page.getByTestId('add-tile').click();
+  await page.getByTestId('add-tab-actions').click();
   await page.locator('[data-testid="add-kind"][data-kind="consumer"]').click();
   await expect(page.locator('[data-testid="tile"][data-row="2"][data-col="2"]')).toHaveAttribute('data-action', 'consumer');
   await expect(page.getByTestId('tile-title')).toHaveText('Tile');

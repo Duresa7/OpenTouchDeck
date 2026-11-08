@@ -10,8 +10,15 @@ export async function openStarter(page: Page, path = '/') {
   await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
 }
 
+/** Add Tile opens on Integrations while one offers Preset tiles; actions live in the Actions tab. */
+export async function actionsTab(page: Page) {
+  await page.getByTestId('add-tab-actions').click();
+  await expect(page.getByTestId('add-tab-actions')).toHaveAttribute('aria-selected', 'true');
+}
+
 export async function addTile(page: Page, kind: string, row = 2, col = 2): Promise<string> {
   await page.locator(`[data-testid="empty-cell"][data-row="${row}"][data-col="${col}"]`).click();
+  await actionsTab(page);
   await page.locator(`[data-testid="add-kind"][data-kind="${kind}"]`).click();
   const id = await page.getByTestId('tile-fields').getAttribute('data-id');
   if (id === null) throw new Error(`Add Tile placed no ${kind} Tile`);

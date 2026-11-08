@@ -38,7 +38,7 @@ test('a Device on the radio build switches back after a warning that its Wi-Fi a
   await expect(build(page)).toHaveAttribute('data-channel', 'normal');
   await expect(current(page)).toHaveText('Normal build');
   await expect(toggle(page)).toHaveText('Install the radio build');
-  await expect(page.getByTestId('connection')).toHaveText('Connected');
+  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over USB$/);
 });
 
 test('a Device on the normal build offers the radio build and says Wi-Fi and Bluetooth stay off until set up', async ({ page }) => {
@@ -98,7 +98,7 @@ test('a Device linked over Wi-Fi keeps its build until it is plugged in', async 
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Edit Stream deck by the window' }).click();
   await page.getByTestId('device-name').click();
-  await expect(page.getByTestId('connection')).toHaveText('Connected over Wi-Fi');
+  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over Wi-Fi$/);
   await expect(current(page)).toHaveText('Radio build');
   await expect(toggle(page)).toHaveAttribute('aria-disabled', 'true');
   await toggle(page).dispatchEvent('click');

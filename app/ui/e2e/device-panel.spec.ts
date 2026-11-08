@@ -90,7 +90,7 @@ test('switches orientation after the restart confirm, and the Device restarts', 
   await page.getByTestId('device-panel-confirm-restart').click();
   await expect(status(page)).toHaveAttribute('data-event', 'restarting');
   await expect(status(page)).toHaveText('Restarting…');
-  await expect(page.getByTestId('connection')).toHaveText('Connected');
+  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over USB$/);
   await expect(status(page)).not.toHaveAttribute('data-event', 'restarting', { timeout: 5_000 });
   const after = await record(page);
   expect(after.settings.orientation).toBe('portrait');
@@ -123,8 +123,8 @@ test('Restart restarts the Device and its status comes back', async ({ page }) =
   await openPanel(page);
   await page.getByTestId('device-panel-restart').click();
   await expect(status(page)).toHaveText('Restarting…');
-  await expect(page.getByTestId('connection')).toHaveText('Connecting…');
-  await expect(page.getByTestId('connection')).toHaveText('Connected');
+  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connecting…$/);
+  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over USB$/);
   await expect(status(page)).toHaveText('');
   expect((await record(page)).reboots).toBe(1);
 });
@@ -148,7 +148,7 @@ test('updates the Firmware with progress, then shows the new version', async ({ 
   await expect(progress).toHaveText('Updated to 1.5.0', { timeout: 10_000 });
   await expect(firmware).toContainText('Firmware 1.5.0');
   await expect(page.getByTestId('device-panel-update')).toHaveCount(0);
-  await expect(page.getByTestId('connection')).toHaveText('Connected');
+  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over USB$/);
 });
 
 test('an update that rolls back says so, and keeps the old version', async ({ page }) => {
@@ -204,11 +204,14 @@ test('schema 1 Tiles carry no Needs Firmware badge, even on v1 Firmware', async 
   await expect(page.getByTestId('tile-needs')).toHaveCount(0);
 });
 
-test("brightness on Firmware that can't set it explains why", async ({ page }) => {
+test("brightness is left out on Firmware that can't set it", async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Edit Stream deck by the window' }).click();
   await page.getByTestId('device-name').click();
-  await expect(page.getByTestId('device-panel-brightness-hint')).toHaveText("Stream deck by the window's Firmware can't change this yet.");
+  await expect(page.getByTestId('device-panel')).toBeVisible();
+  // No Firmware can set it yet, so there is nothing to do about it and the row stays out of the way.
+  await expect(page.getByTestId('device-panel')).not.toContainText('Brightness');
+  await expect(page.getByTestId('device-panel-brightness-hint')).toHaveCount(0);
   await expect(page.getByTestId('device-panel-brightness')).toHaveCount(0);
 });
 

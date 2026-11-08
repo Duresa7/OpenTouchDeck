@@ -192,7 +192,7 @@ test.describe('with motion', () => {
       { selector: '.device-spill', reading: 'opacity' },
     ]);
     await demo(page).connect('mock0001');
-    await expect(page.getByText('Connected', { exact: true })).toBeVisible();
+    await expect(page.getByRole('img', { name: /^Desk: Connected/ })).toBeVisible();
     await page.waitForTimeout(400);
     await demo(page).offline('mock0001');
     await page.waitForTimeout(2500);

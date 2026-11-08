@@ -6,7 +6,8 @@ import { consoleErrors, sideScroll, spills } from './break-helpers.ts';
 const survey = process.env.TD_BREAK_SURVEY;
 const shots = process.env.TD_SHOTS;
 
-const CUT_BY_DESIGN = ['.preset-label'];
+// A Preset name is clamped to two lines, with the whole name in a tooltip.
+const CUT_BY_DESIGN = ['.preset-name'];
 
 const SIZES = [
   { size: 'min', viewport: { width: 800, height: 600 } },
@@ -119,7 +120,7 @@ for (const theme of ['light', 'dark'] as const) {
         expect(pushBox.x + pushBox.width, 'Send to Device stays inside the header').toBeLessThanOrEqual(headBox.x + headBox.width);
         expect(await uncovered(push), 'Send to Device can be clicked').toBe(true);
         await expect(page.locator('.device-switch-name')).toHaveAttribute('title', 'Aleksandra Wiśniewska-Kowalczyk’s desk');
-        await expect(page.getByTestId('connection')).toHaveAttribute('title', 'Connected');
+        await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over USB$/);
         await shot(head, { ...at, row: 'row-01-14-editor-header' });
 
         const canvas = page.locator('.canvas');
@@ -156,6 +157,13 @@ for (const theme of ['light', 'dark'] as const) {
         await expect(page.getByTestId('add-where')).toHaveText('The J Page is full. A Layout holds up to 8 Pages.');
         await check(page, { ...at, name: 'editor-add' });
         await shot(page.locator('.inspector-head'), { ...at, row: 'row-05-add-tile-head' });
+        const labels = page.getByTestId('add-presets').locator('[data-testid="preset-group"][data-id="custom"] .preset-name');
+        await expect(labels.filter({ hasText: /^Kitchen tv$/ }).first()).toBeVisible();
+        const cut = await labels.evaluateAll((all) => all.filter((label) => /\u200d$/u.test(label.textContent ?? '')).length);
+        expect(cut, 'no label ends inside an emoji').toBe(0);
+        const arabic = labels.filter({ hasText: 'درجة' }).first();
+        expect(await arabic.evaluate((el) => getComputedStyle(el).direction)).toBe('rtl');
+        await shot(page.locator('[data-testid="preset-group"][data-id="custom"] .preset-grid'), { ...at, row: 'row-11-12-preset-labels' });
         await page.getByTestId('add-tile').click();
         await page.getByTestId('device-name').click();
         await expect(page.getByTestId('device-panel')).toBeVisible();
@@ -189,18 +197,22 @@ for (const theme of ['light', 'dark'] as const) {
         await expect(page.getByTestId('integration-list')).toBeVisible();
         await expect(page.locator('[data-testid="integration"][data-id="this_pc"] .integration-glyph svg')).toHaveClass(/lucide-monitor/);
         await expect(page.locator('[data-testid="integration"][data-id="custom"] .integration-glyph svg')).toHaveClass(/lucide-braces/);
-        const presetStarts = await page.locator('.integration-presets').evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().left)));
-        expect(new Set(presetStarts).size, 'every row starts its Preset tiles in one column').toBe(1);
+        const switches = await page.getByTestId('integration-switch').evaluateAll((all) => all.map((el) => Math.round(el.getBoundingClientRect().right)));
+        expect(new Set(switches).size, 'every switch lines up on the right').toBe(1);
         await check(page, { ...at, name: 'integrations' });
         await shot(page.getByTestId('integration-list'), { ...at, row: 'row-07-08-integration-list' });
-        for (const id of ['cliproxyapi', 'custom', 'volume', 'media', 'this_pc']) {
-          await page.locator(`[data-testid="integration"][data-id="${id}"] [data-testid="integration-open"]`).click();
+        for (const id of ['volume', 'media', 'this_pc']) await expect(page.locator(`[data-testid="integration"][data-id="${id}"] [data-testid="integration-settings"]`)).toHaveCount(0);
+        for (const id of ['cliproxyapi', 'custom', 'icon-packs', 'brandfetch']) {
+          await page.locator(`[data-testid="integration"][data-id="${id}"] [data-testid="integration-settings"]`).click();
           await expect(page.getByTestId('integration-detail')).toHaveAttribute('data-id', id);
           await check(page, { ...at, name: `integration-${id}` });
           if (id === 'cliproxyapi') {
             const glyph = await boxOf(page.locator('.detail-head .integration-glyph'));
             const title = await boxOf(page.locator('.detail-title'));
+            const toggle = await boxOf(page.getByTestId('detail-switch'));
             expect(Math.abs(glyph.y - title.y), 'the glyph sits beside the name').toBeLessThanOrEqual(8);
+            expect(Math.abs(toggle.y + toggle.height / 2 - (title.y + title.height / 2)), 'the switch sits on the name').toBeLessThanOrEqual(4);
+            expect(toggle.x, "the switch doesn't overlap the name").toBeGreaterThanOrEqual(title.x + title.width);
             await shot(page.locator('.detail-head'), { ...at, row: 'row-09-detail-head' });
             const table = page.getByTestId('usage-accounts');
             await table.scrollIntoViewIfNeeded();
@@ -217,18 +229,11 @@ for (const theme of ['light', 'dark'] as const) {
             const sources = page.locator('[data-testid="config-field"][data-field="sources"]');
             expect((await boxOf(sources)).height, 'the sources JSON shows a dozen lines').toBeGreaterThanOrEqual(200);
             await shot(sources, { ...at, row: 'row-15-sources-json' });
-            const labels = page.getByTestId('integration-detail').locator('.preset-label');
-            await expect(labels.filter({ hasText: /^Kitchen tv$/ }).first()).toBeVisible();
-            const cut = await labels.evaluateAll((all) => all.filter((label) => /‍$/u.test(label.textContent ?? '')).length);
-            expect(cut, 'no label ends inside an emoji').toBe(0);
-            const arabic = labels.filter({ hasText: 'درجة' }).first();
-            expect(await arabic.evaluate((el) => getComputedStyle(el).direction)).toBe('rtl');
-            await shot(page.locator('[data-testid="integration-detail"] .preset-grid').first(), { ...at, row: 'row-11-12-preset-labels' });
           }
           await page.getByTestId('detail-back').click();
         }
         await page.evaluate(() => window.touchdeckDemo?.setHub(false));
-        await page.locator('[data-testid="integration"][data-id="cliproxyapi"] [data-testid="integration-open"]').click();
+        await page.locator('[data-testid="integration"][data-id="cliproxyapi"] [data-testid="integration-settings"]').click();
         await check(page, { ...at, name: 'integration-hub-down' });
         expect(errors).toEqual([]);
       });

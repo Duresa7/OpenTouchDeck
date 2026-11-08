@@ -28,11 +28,12 @@ async function startPairing(page: Page, address?: string) {
 test('Home and the Device settings name the Carrier', async ({ page }) => {
   await page.goto('/');
   const devices = page.getByRole('list', { name: 'Devices' });
-  await expect(devices.getByRole('listitem').nth(2).locator('.device-meta .status')).toHaveText('Connected over Wi-Fi');
-  await expect(devices.getByRole('listitem').nth(0).locator('.device-meta .status')).toHaveText('Connected');
+  await expect(devices.getByRole('listitem').nth(2).getByTestId('device-status')).toHaveAccessibleName(/: Connected over Wi-Fi$/);
+  await expect(devices.getByRole('listitem').nth(0).getByTestId('device-status')).toHaveAccessibleName(/: Connected over USB$/);
+  await expect(devices.getByRole('listitem').nth(0).locator('.device-meta .status')).toHaveCount(0);
 
   await openPanel(page, 'Stream deck by the window');
-  await expect(page.getByTestId('connection')).toHaveText('Connected over Wi-Fi');
+  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over Wi-Fi$/);
   await expect(page.getByTestId('device-panel-carrier')).toHaveText('Connected over Wi-Fi at 192.0.2.23:47820');
   await expect(wifiStatus(page)).toHaveText('Paired at 192.0.2.23:47820.');
   await expect(page.getByTestId('device-panel-usb-only')).toHaveText('Plug in Stream deck by the window with a USB cable to update or restart it.');

@@ -77,7 +77,7 @@ async function home(page: Page) {
 async function noSpill(page: Page, name: string) {
   await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity));
   const dock = await underDock(page, '[data-testid=page-tab], [data-testid=page-add], [data-testid=status]');
-  expect({ scroll: await sideScroll(page), spills: await spills(page, ['.preset-label']), dock }, name).toEqual({ scroll: 0, spills: [], dock: [] });
+  expect({ scroll: await sideScroll(page), spills: await spills(page, ['.preset-name']), dock }, name).toEqual({ scroll: 0, spills: [], dock: [] });
 }
 
 async function shot(page: Page, name: string) {
@@ -92,7 +92,7 @@ test('a Device that needs a Send: Home notice, Review Layout, Send, Checking con
   await onDevice(page, RECOVERED, NO_COPY);
 
   const desk = card(page, 'Desk');
-  await expect(desk.locator('.device-meta .status')).toHaveText('Connected');
+  await expect(desk.getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
   await expect(desk.getByTestId('controls-notice')).toHaveAttribute('data-state', 'no-pushed-copy');
   await expect(desk.getByTestId('controls-notice')).toContainText('Controls need Send to Device');
   await expect(card(page, 'Studio').getByTestId('controls-notice')).toHaveCount(0);
@@ -240,7 +240,7 @@ test('an offline Device and a matching or control-free Layout show nothing new',
     { state: 'unavailable', reason: 'read-failed' },
   ] satisfies ControlLayout[]) {
     await page.evaluate((next) => window.touchdeckDemo?.controls.set('mock0001', next), status);
-    await expect(card(page, 'Desk').locator('.device-meta .status')).toHaveText('Connected');
+    await expect(card(page, 'Desk').getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
     await expect(page.getByTestId('controls-notice')).toHaveCount(0);
   }
 });
