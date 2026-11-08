@@ -8,7 +8,7 @@ import { createJobsStore, waitForJob, type JobsStore } from '../../companion/job
 import { sampleDevice } from '../../companion/samples.ts';
 import { windowSession } from '../../companion/session.ts';
 import { draftKey, type DraftStorage } from '../store.ts';
-import { createEditorStore, effectiveTileEdit, firstProblem, refusedActionField, saveState, tileProblems, type EditorDeps, type EditorStore } from '../store.ts';
+import { createEditorStore, effectiveTileEdit, firstProblem, presetTile, refusedActionField, saveState, tileProblems, type EditorDeps, type EditorStore } from '../store.ts';
 import { switchKind } from '../../layout/actions.ts';
 import { canonical, newLayout, starterLayout, type GridPage, type Layout, type Page } from '../../layout/model.ts';
 
@@ -197,6 +197,8 @@ describe('editing a draft', () => {
 
 describe('Preset tiles', () => {
   const preset = { id: 'five_hour_pct', name: 'five hour pct', action: { type: 'widget', source: 'cliproxyapi', field: 'five_hour_pct', account: '' } };
+  const cpu = { id: 'cpu_pct', name: 'CPU usage', action: { type: 'widget', source: 'this_pc', field: 'cpu_pct', account: '' }, render: 'graph' as const };
+  const graph = { render: 'graph', streams: { value: 'number' } } as const;
 
   test('Add to Layout puts a Preset tile in the first free cell of the current Page and selects it', async () => {
     const store = editor();
@@ -242,6 +244,28 @@ describe('Preset tiles', () => {
     expect(page(store).tiles).toEqual([]);
   });
 
+  test('presetTile builds the 1×1 Tile a Preset places, with its name as the label', () => {
+    expect(presetTile(preset, null)).toEqual({ id: 'preset', label: 'Five hour pct', row: 0, col: 0, rowSpan: 1, colSpan: 1, icon: null, action: preset.action });
+    expect(presetTile(preset, null, { id: 't9', row: 2, col: 3 })).toMatchObject({ id: 't9', row: 2, col: 3 });
+  });
+
+  test('presetTile draws the Preset as its look, and refuses an action the Layout rules refuse', () => {
+    expect(presetTile(cpu, graph)).toMatchObject({ label: 'CPU usage', render: 'graph', streams: { value: 'number' }, action: cpu.action });
+    expect(presetTile({ ...preset, action: { type: 'widget', source: '', field: 'plan', account: '' } }, null)).toBeNull();
+    expect(presetTile({ ...preset, action: { type: 'launch-rockets' } }, null)).toBeNull();
+  });
+
+  test('placing a Preset from Add Tile puts down exactly the Tile presetTile builds', () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    store.setGrid(3, 3);
+    store.openAdd({ row: 2, col: 1 });
+    store.placePreset(cpu, graph);
+    const placed = tile(store, state(store).selected!);
+    expect(placed).toEqual(presetTile(cpu, graph, { id: placed.id, row: 2, col: 1 }));
+  });
+
   test('the Add Tile panel places a Preset tile at its target and selects it', () => {
     const store = editor();
     store.open(DESK);
@@ -253,8 +277,6 @@ describe('Preset tiles', () => {
     expect(state(store).adding).toBeNull();
   });
 
-  const cpu = { id: 'cpu_pct', name: 'CPU usage', action: { type: 'widget', source: 'this_pc', field: 'cpu_pct', account: '' }, render: 'graph' as const };
-  const graph = { render: 'graph', streams: { value: 'number' } } as const;
 
   test('a Preset placed as a graph is a schema 2 graph Tile bound to its stream', () => {
     const store = editor();

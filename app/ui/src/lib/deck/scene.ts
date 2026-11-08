@@ -412,6 +412,28 @@ export function sampleSeries(count: number): number[] {
   return Array.from({ length: count }, (_, i) => Math.round((50 + 40 * Math.sin(i / 3)) * 10) / 10);
 }
 
+/** The level a preview bar Tile shows until the Device shows real ones. */
+export const SAMPLE_LEVEL = { value: 0.64, muted: false } as const;
+
+/** The track a preview now-playing Tile shows until the Device shows real ones. */
+export const SAMPLE_TRACK = { title: 'Night Drive', artist: 'Tidal Lines', state: 2 } as const;
+
+/**
+ * What a preview draws on every Live tile: example values, a graph of `series` samples, the sample level and track,
+ * all greyed out when `stale`. The Layout canvas and the Preset previews both draw from these.
+ */
+export function sampleScene(series: number, stale: boolean): SceneOptions {
+  const samples = sampleSeries(series);
+  return {
+    widget: sampleWidget,
+    rows: sampleRows,
+    hasImage: () => true,
+    graph: () => ({ samples, cap: series, stale }),
+    level: () => ({ ...SAMPLE_LEVEL, stale }),
+    nowPlaying: () => ({ ...SAMPLE_TRACK, stale }),
+  };
+}
+
 export function sampleRows(): RowSample[] {
   return [
     { label: 'codex alex', value: '5h 42% 7d 10%', bar: 0.42 },

@@ -1,178 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import clsx from 'clsx';
-import { Film, Lock, Pause, Play, Plus, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { cellAt, geometry, PANEL_H, PANEL_W, screenSize, tileFits, tileRect, type Geometry, type Rect, type Span } from '../../lib/deck/geometry.ts';
 import { easeOut, goTo, move, nearestPage, pager, press, release, restX, type Bounce } from '../../lib/deck/pager.ts';
-import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleSeries, sampleWidget, type ControlGlyph, type GraphView, type LevelView, type NowPlayingView, type PageView, type SceneOptions, type TextView } from '../../lib/deck/scene.ts';
-import type { Line } from '../../lib/deck/text.ts';
+import { buildDots, buildPage, buildTitle, sampleScene, type PageView, type SceneOptions } from '../../lib/deck/scene.ts';
 import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
 import type { GridPage, Layout, Tile } from '../../lib/layout/model.ts';
-import { AssetImage } from './AssetImage.tsx';
-import { GifImage } from './GifImage.tsx';
-import { BuiltinIcon } from './glyphs.tsx';
-
-function runs(line: Line): ReactNode[] {
-  const out: ReactNode[] = [];
-  let text = '';
-  for (const [i, letter] of line.letters.entries()) {
-    if (!letter.placeholder) {
-      text += String.fromCodePoint(letter.letter);
-      continue;
-    }
-    if (text) out.push(text);
-    text = '';
-    out.push(<i key={i} className="scene-box" style={{ width: letter.width }} />);
-  }
-  if (text) out.push(text);
-  return out;
-}
-
-function SceneText({ view }: { view: TextView }) {
-  const box: CSSProperties = { left: view.x, top: view.y, width: view.label.width, height: view.label.height };
-  if (view.icon) {
-    return (
-      <span className="scene-icon" style={box}>
-        <BuiltinIcon icon={view.icon} size={52} />
-      </span>
-    );
-  }
-  const lineHeight = FONTS[view.font].lineHeight;
-  return (
-    <span
-      className={clsx('scene-text', `is-${view.font}`, view.color === THEME.color.text ? 'is-ink' : 'is-ink-2')}
-      style={{ ...box, lineHeight: `${lineHeight}px`, opacity: view.opacity / 255 }}
-      aria-hidden
-    >
-      {view.label.lines.map((line, i) => {
-        const end = line.letters.at(-1);
-        const width = end ? end.x + end.width : 0;
-        const centred = line.x > 0 || width >= view.label.width - 1;
-        const at: CSSProperties = centred ? { top: line.y, left: line.x + width / 2, translate: '-50% 0' } : { top: line.y, left: line.x };
-        return (
-          <span key={i} className="scene-line" style={at}>
-            {runs(line)}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
-const SAMPLES = { widget: sampleWidget, rows: sampleRows, hasImage: () => true };
-const SAMPLE_LEVEL = { value: 0.64, muted: false };
-const SAMPLE_TRACK = { title: 'Night Drive', artist: 'Tidal Lines', state: 2 };
-
-function SceneGraph({ view }: { view: GraphView }) {
-  return (
-    <span
-      className="scene-graph"
-      style={{
-        left: view.x,
-        top: view.y,
-        width: view.w,
-        height: view.h,
-        borderRadius: view.radius,
-        background: `color-mix(in srgb, var(--screen-accent) ${(THEME.graph.areaMix / 255) * 100}%, var(--screen-tile))`,
-        opacity: view.stale ? THEME.staleOpa / 255 : 1,
-      }}
-      data-testid="tile-graph"
-      data-points={view.points.length}
-      data-stale={view.stale}
-      aria-hidden
-    >
-      {view.points.length > 0 && (
-        <svg width={view.w} height={view.h} viewBox={`0 0 ${view.w} ${view.h}`}>
-          <polyline points={view.points.map((p) => `${p.x},${p.y}`).join(' ')} strokeWidth={THEME.graph.lineW} />
-        </svg>
-      )}
-    </span>
-  );
-}
-
-const at = (box: Rect): CSSProperties => ({ left: box.x, top: box.y, width: box.w, height: box.h });
-const staleOpacity = (stale: boolean) => (stale ? THEME.staleOpa / 255 : 1);
-
-function SceneLevel({ view }: { view: LevelView }) {
-  const Speaker = view.glyph.muted ? VolumeX : Volume2;
-  return (
-    <span
-      className={clsx('scene-live', view.muted && 'is-muted')}
-      style={{ opacity: staleOpacity(view.stale) }}
-      data-testid="tile-level"
-      data-value={view.value.text}
-      data-muted={view.muted}
-      data-input={view.input}
-      data-stale={view.stale}
-      aria-hidden
-    >
-      <span className="scene-live-glyph" style={at(view.glyph)}>
-        <Speaker size={view.glyph.w} strokeWidth={2.4} />
-      </span>
-      <span className="scene-level-label" style={at(view.label)}>
-        {view.label.text}
-      </span>
-      <span className="scene-level-value" style={at(view.value)}>
-        {view.value.text}
-      </span>
-      <span className="scene-level-track" style={{ ...at(view.track), borderRadius: view.track.radius }}>
-        {view.fill > 0 && <span className="scene-level-fill" style={{ width: view.fill }} />}
-      </span>
-    </span>
-  );
-}
-
-const CONTROL_SIZE = 32;
-
-function ControlIcon({ glyph }: { glyph: ControlGlyph }) {
-  const solid = { size: CONTROL_SIZE, strokeWidth: 0, fill: 'currentColor' };
-  switch (glyph) {
-    case 'prev':
-      return <SkipBack {...solid} />;
-    case 'play':
-      return <Play {...solid} />;
-    case 'pause':
-      return <Pause {...solid} />;
-    case 'next':
-      return <SkipForward {...solid} />;
-  }
-}
-
-function SceneNowPlaying({ view }: { view: NowPlayingView }) {
-  const named = view.artist !== null;
-  return (
-    <span
-      className="scene-live"
-      style={{ opacity: staleOpacity(view.stale) }}
-      data-testid="tile-now-playing"
-      data-idle={view.idle}
-      data-stale={view.stale}
-      data-controls={view.controls.map((c) => c.glyph).join(' ')}
-      aria-hidden
-    >
-      {view.art && (
-        <span
-          className={clsx('scene-np-art', named && 'is-stand-in')}
-          style={{ left: view.art.x, top: view.art.y, width: view.art.size, height: view.art.size, borderRadius: THEME.nowPlaying.artRadius }}
-          data-testid="tile-cover"
-        />
-      )}
-      <span className={clsx('scene-np-title', view.title.idle && 'is-idle')} style={at(view.title)}>
-        {view.title.text}
-      </span>
-      {view.artist && (
-        <span className="scene-np-artist" style={at(view.artist)}>
-          {view.artist.text}
-        </span>
-      )}
-      {view.controls.map((control) => (
-        <span key={control.part} className="scene-live-glyph" style={at(control)} data-part={control.part}>
-          <ControlIcon glyph={control.glyph} />
-        </span>
-      ))}
-    </span>
-  );
-}
+import { SceneText, TileFace } from './TileScene.tsx';
 
 type ModLook = 'one-shot' | 'locked';
 
@@ -239,15 +74,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
   const current = layout.pages[index];
   const series = live?.series || SERIES;
   const stale = live?.stale ?? false;
-  const options: SceneOptions = useMemo(() => {
-    const samples = sampleSeries(series);
-    return {
-      ...SAMPLES,
-      graph: () => ({ samples, cap: series, stale }),
-      level: () => ({ ...SAMPLE_LEVEL, stale }),
-      nowPlaying: () => ({ ...SAMPLE_TRACK, stale }),
-    };
-  }, [series, stale]);
+  const options: SceneOptions = useMemo(() => sampleScene(series, stale), [series, stale]);
   const views: PageView[] = useMemo(
     () => (editing ? [buildPage(current, g, options)] : layout.pages.map((p) => buildPage(p, g, options))),
     [editing, current, layout.pages, g, options],
@@ -652,32 +479,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
               onClick={() => editing && store.select(tile.id)}
               onKeyDown={(event) => tileKeys(event, tile)}
             >
-              <span className="tile-face">
-                {tv.texts.map((text, n) => (
-                  <SceneText key={n} view={text} />
-                ))}
-                {tv.image && (
-                  <span className="scene-image" style={{ left: tv.image.x, top: tv.image.y, width: tv.image.size, height: tv.image.size }}>
-                    <AssetImage key={tv.image.id} id={tv.image.id} size={tv.image.size} />
-                  </span>
-                )}
-                {tv.gif && (
-                  <span className="scene-gif" style={{ width: tv.gif.w, height: tv.gif.h }} data-testid="tile-gif">
-                    <GifImage key={tv.gif.id} id={tv.gif.id} missing={<Film className="scene-gif-missing" size={52} strokeWidth={1.6} data-testid="gif-missing" aria-hidden />} />
-                  </span>
-                )}
-                {tv.bar && <span className="scene-bar" style={{ left: tv.bar.x, top: tv.bar.y, width: tv.bar.w, height: tv.bar.h, borderRadius: tv.bar.radius }} />}
-                {tv.graph && <SceneGraph view={tv.graph} />}
-                {badge === null && tv.level && <SceneLevel view={tv.level} />}
-                {badge === null && tv.nowPlaying && <SceneNowPlaying view={tv.nowPlaying} />}
-                {badge !== null && (tv.level || tv.nowPlaying) && <span className="tile-needs-label">{tile.label}</span>}
-                {mod === 'locked' && <Lock className="scene-lock" size={30} strokeWidth={3} aria-hidden />}
-                {badge !== null && (
-                  <span className="tile-needs" data-testid="tile-needs">
-                    {badge}
-                  </span>
-                )}
-              </span>
+              <TileFace view={tv} label={tile.label} badge={badge} locked={mod === 'locked'} />
               {isSelected && (
                 <span
                   className="tile-grip"
