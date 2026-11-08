@@ -254,6 +254,21 @@ async fn local_stub_accounts_revision_and_wire_outputs_are_safe() {
             assert_eq!(body["method"], "GET");
             let url = body["url"].as_str().unwrap();
             assert!([td_host::sources::cliproxy::CODEX_USAGE, td_host::sources::cliproxy::CLAUDE_USAGE].contains(&url));
+            let codex = url == td_host::sources::cliproxy::CODEX_USAGE;
+            let auth_index = ["auth_index", "authIndex", "AuthIndex"].into_iter()
+                .filter_map(|field| body[field].as_str()).map(str::trim)
+                .find(|index| !index.is_empty());
+            let expected_index = if codex { "AX17-private-BX29" } else { "EX59-private-FX61" };
+            // Enforce the known-good served management center's usage request profile.
+            // This fixture does not establish which headers live providers require.
+            let expected_header = if codex {
+                json!({"Authorization":"Bearer $TOKEN$","Content-Type":"application/json","User-Agent":"codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal","Chatgpt-Account-Id":"CX31-private-DX43"})
+            } else {
+                json!({"Authorization":"Bearer $TOKEN$","Content-Type":"application/json","anthropic-beta":"oauth-2025-04-20"})
+            };
+            if auth_index != Some(expected_index) || body["header"] != expected_header {
+                return Json(json!({"status_code":401,"body":""}));
+            }
             if url == td_host::sources::cliproxy::CODEX_USAGE {
                 Json(json!({"status_code":200,"body":json!({"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":42,"reset_at":1800000000},"secondary_window":{"used_percent":10,"reset_at":1800500000}}}).to_string()}))
             } else {

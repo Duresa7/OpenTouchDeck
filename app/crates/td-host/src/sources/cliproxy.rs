@@ -139,15 +139,15 @@ impl Entry {
             "claude" => (
                 CLAUDE_USAGE,
                 json!({
-                    "Authorization": "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20",
-                    "User-Agent": "claude-code/2.1.273"
+                    "Authorization": "Bearer $TOKEN$", "Content-Type": "application/json",
+                    "anthropic-beta": "oauth-2025-04-20"
                 }),
             ),
             "codex" => (
                 CODEX_USAGE,
                 json!({
                     "Authorization": "Bearer $TOKEN$", "Content-Type": "application/json",
-                    "OpenAI-Beta": "codex-1", "Originator": "Codex Desktop"
+                    "User-Agent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
                 }),
             ),
             _ => return None,
@@ -161,7 +161,7 @@ impl Entry {
         {
             header["Chatgpt-Account-Id"] = json!(id);
         }
-        Some(json!({"auth_index": self.auth_index, "method": "GET", "url": url, "header": header}))
+        Some(json!({"authIndex": self.auth_index, "method": "GET", "url": url, "header": header}))
     }
 }
 

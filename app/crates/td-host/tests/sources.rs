@@ -159,7 +159,17 @@ impl Fetch for FakeFetch {
             .lock()
             .unwrap()
             .push((url.to_owned(), bearer.to_owned(), body.clone()));
-        self.usage.lock().unwrap().get(body["auth_index"].as_str().unwrap()).cloned()
+        // The Go handler accepts all three spellings, but only singular `header`.
+        let auth_index = ["auth_index", "authIndex", "AuthIndex"]
+            .into_iter()
+            .filter_map(|field| body[field].as_str())
+            .map(str::trim)
+            .find(|index| !index.is_empty())
+            .ok_or("HTTP 400")?;
+        if body["header"]["Authorization"] != "Bearer $TOKEN$" {
+            return Ok(serde_json::json!({"status_code":401,"body":""}).to_string());
+        }
+        self.usage.lock().unwrap().get(auth_index).cloned()
             .unwrap_or_else(|| Ok(serde_json::json!({"status_code":200,"body":"{\"five_hour\":null,\"seven_day\":null,\"rate_limit\":null}"}).to_string()))
     }
 }
@@ -315,26 +325,28 @@ fn usage_windows_keys_resets_and_aggregate_maxima_are_reported() {
     ));
     let codex = &posts
         .iter()
-        .find(|(_, _, b)| b["auth_index"] == "codex-alice")
+        .find(|(_, _, b)| b["url"] == CODEX_USAGE)
         .unwrap()
         .2;
     let claude = &posts
         .iter()
-        .find(|(_, _, b)| b["auth_index"] == "claude-alice")
+        .find(|(_, _, b)| b["url"] == CLAUDE_USAGE)
         .unwrap()
         .2;
+    // Matches the served management center and its upstream header definitions:
+    // router-for-me/Cli-Proxy-API-Management-Center@50c3b9fb, src/utils/quota/constants.ts.
     assert_eq!(
         codex,
         &serde_json::json!({
-            "auth_index":"codex-alice", "method":"GET", "url":CODEX_USAGE,
-            "header":{"Authorization":"Bearer $TOKEN$", "Content-Type":"application/json", "OpenAI-Beta":"codex-1", "Originator":"Codex Desktop", "Chatgpt-Account-Id":"fixture-account-alice"}
+            "authIndex":"codex-alice", "method":"GET", "url":CODEX_USAGE,
+            "header":{"Authorization":"Bearer $TOKEN$", "Content-Type":"application/json", "User-Agent":"codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal", "Chatgpt-Account-Id":"fixture-account-alice"}
         })
     );
     assert_eq!(
         claude,
         &serde_json::json!({
-            "auth_index":"claude-alice", "method":"GET", "url":CLAUDE_USAGE,
-            "header":{"Authorization":"Bearer $TOKEN$", "anthropic-beta":"oauth-2025-04-20", "User-Agent":"claude-code/2.1.273"}
+            "authIndex":"claude-alice", "method":"GET", "url":CLAUDE_USAGE,
+            "header":{"Authorization":"Bearer $TOKEN$", "Content-Type":"application/json", "anthropic-beta":"oauth-2025-04-20"}
         })
     );
     let serialized = serde_json::to_string(&info).unwrap();
@@ -384,7 +396,7 @@ fn codex_windows_follow_durations_or_default_positions_and_clamp() {
         assert_eq!(past.as_ref().unwrap().reset_in.as_deref(), Some("now"));
         assert_eq!(absent.as_ref().unwrap().reset_in, None);
         let posts = fetch.posts.lock().unwrap();
-        assert_eq!(posts[0].2["header"].as_object().unwrap().len(), 4);
+        assert_eq!(posts[0].2["header"].as_object().unwrap().len(), 3);
         assert!(posts[0].2["header"].get("Chatgpt-Account-Id").is_none());
     }
 }
