@@ -21,8 +21,7 @@ export interface BrandSearchHook {
 export function useBrandSearch(companion: Pick<Companion, 'brandfetch' | 'system'>): BrandSearchHook {
   const store = brandfetchStore(companion);
   const saved = useStore(store, (s) => clientIdOf(s.view));
-  const setUp = useStore(store, (s) => s.view.kind === 'ready' && s.view.status.client_id !== null && s.view.status.key_set);
-  const on = useIconSources((s) => sourceOn(s.brandfetch, setUp));
+  const on = useIconSources((s) => sourceOn(s.brandfetch, saved !== null));
   const clientId = on ? saved : null;
   const [state, setState] = useState<BrandSearchState>({ kind: 'idle' });
   const search = useRef<BrandSearch | null>(null);

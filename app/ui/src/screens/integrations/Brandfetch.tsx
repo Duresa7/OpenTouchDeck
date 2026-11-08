@@ -150,4 +150,4 @@ export function BrandfetchBody() {
   );
 }
 
-export const BRANDFETCH_LEDE = 'Search brand logos in the icon picker with your own Brandfetch account. It stays off until you add a client ID and an API key.';
+export const BRANDFETCH_LEDE = 'Search brand logos in the icon picker with your own Brandfetch account. It stays off until you add a client ID.';

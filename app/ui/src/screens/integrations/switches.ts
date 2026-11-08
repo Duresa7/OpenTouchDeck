@@ -51,22 +51,26 @@ export function useInstalledPacks(): readonly PackInfo[] | null {
   return installedOf(packs);
 }
 
-function useLocalSwitch(id: string, source: 'iconPacks' | 'brandfetch', setUp: boolean | null): OnOff {
+/**
+ * A switch this window keeps. `ready` is whether the source works yet, null while that's unknown; `done` is whether
+ * its setup is finished, which completes a pending enable.
+ */
+function useLocalSwitch(id: string, source: 'iconPacks' | 'brandfetch', ready: boolean | null, done: boolean): OnOff {
   const stored = useIconSources((s) => s[source]);
   const pending = useUi((s) => s.pendingEnable === id);
   const openIntegration = useUi((s) => s.openIntegration);
   const setPendingEnable = useUi((s) => s.setPendingEnable);
-  // Once set up, a switch nobody has touched is on; until then it follows setup, so finishing setup turns it on.
+  // Once it works, a switch nobody has touched is on; until then it follows setup, so finishing setup turns it on.
   useEffect(() => {
-    if (setUp) iconSources.getState().settle(source, true);
-  }, [setUp, source]);
+    if (ready) iconSources.getState().settle(source, true);
+  }, [ready, source]);
   useEffect(() => {
-    if (pending && setUp) {
+    if (pending && done) {
       iconSources.getState().set(source, true);
       setPendingEnable(null);
     }
-  }, [pending, setUp, source, setPendingEnable]);
-  const on = sourceOn(stored, setUp === true);
+  }, [pending, done, source, setPendingEnable]);
+  const on = sourceOn(stored, ready === true);
   return {
     checked: on || pending,
     busy: pending && !on,
@@ -75,7 +79,7 @@ function useLocalSwitch(id: string, source: 'iconPacks' | 'brandfetch', setUp: b
         setPendingEnable(null);
         return;
       }
-      if (next && setUp === false) {
+      if (next && ready === false) {
         openIntegration(id, { setUp: true, pendingEnable: true });
         return;
       }
@@ -87,11 +91,15 @@ function useLocalSwitch(id: string, source: 'iconPacks' | 'brandfetch', setUp: b
 /** The Icon packs switch: on searches installed packs in the icon picker. Turning it on with none installed opens pack management. */
 export function useIconPacksSwitch(): OnOff {
   const installed = useInstalledPacks();
-  return useLocalSwitch(ICON_PACKS, 'iconPacks', installed === null ? null : installed.length > 0);
+  const ready = installed === null ? null : installed.length > 0;
+  return useLocalSwitch(ICON_PACKS, 'iconPacks', ready, ready === true);
 }
 
-/** Brandfetch is set up once it has both a client ID and an API key. */
-export const brandfetchSetUp = (view: BrandfetchView): boolean | null => (view.kind === 'ready' ? view.status.client_id !== null && view.status.key_set : view.kind === 'unreadable' ? false : null);
+/** Brandfetch searches once it has a client ID; null while that's unknown. Picking a logo also needs the API key. */
+export const brandfetchReady = (view: BrandfetchView): boolean | null => (view.kind === 'ready' ? view.status.client_id !== null : view.kind === 'unreadable' ? false : null);
+
+/** Brandfetch's setup is finished once it has both a client ID and an API key. */
+export const brandfetchDone = (view: BrandfetchView): boolean => view.kind === 'ready' && view.status.client_id !== null && view.status.key_set;
 
 export function useBrandfetchView(): BrandfetchView {
   const companion = useCompanion();
@@ -105,5 +113,5 @@ export function useBrandfetchView(): BrandfetchView {
 /** The Brandfetch logos switch: on searches Brandfetch in the icon picker. Turning it on before its keys are saved opens its page. */
 export function useBrandfetchSwitch(): OnOff {
   const view = useBrandfetchView();
-  return useLocalSwitch(BRANDFETCH, 'brandfetch', brandfetchSetUp(view));
+  return useLocalSwitch(BRANDFETCH, 'brandfetch', brandfetchReady(view), brandfetchDone(view));
 }

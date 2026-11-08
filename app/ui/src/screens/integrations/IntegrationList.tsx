@@ -7,7 +7,7 @@ import { BRANDFETCH, ICON_PACKS } from '../../state/ui.ts';
 import { sourceOn, useIconSources } from '../../state/icon-sources.ts';
 import { Tip } from '../layout/Tip.tsx';
 import { IntegrationRow } from './IntegrationRow.tsx';
-import { brandfetchSetUp, useBrandfetchSwitch, useBrandfetchView, useIconPacksSwitch, useInstalledPacks, useIntegrationSwitch } from './switches.ts';
+import { brandfetchReady, useBrandfetchSwitch, useBrandfetchView, useIconPacksSwitch, useInstalledPacks, useIntegrationSwitch } from './switches.ts';
 
 /** The line under a Companion Integration's name: what it does, or, while it's on, what's wrong with it. */
 function Line({ summary, onSettings }: { summary: IntegrationSummary; onSettings?: () => void }) {
@@ -74,10 +74,10 @@ function IconPacksRow({ onOpen }: { onOpen(id: string): void }) {
 
 function BrandfetchRow({ onOpen }: { onOpen(id: string): void }) {
   const state = useBrandfetchSwitch();
-  const setUp = brandfetchSetUp(useBrandfetchView());
+  const ready = brandfetchReady(useBrandfetchView());
   const stored = useIconSources((s) => s.brandfetch);
-  const on = sourceOn(stored, setUp === true);
-  const line = on && setUp === false ? <StatusBox tone="wait" label="Finish setup" showWords testId="integration-status" /> : 'Brand logos in the icon picker, with your own Brandfetch keys.';
+  const on = sourceOn(stored, ready === true);
+  const line = on && ready === false ? <StatusBox tone="wait" label="Finish setup" showWords testId="integration-status" /> : 'Brand logos in the icon picker, with your own Brandfetch keys.';
   return <IntegrationRow id={BRANDFETCH} name="Brandfetch logos" icon="logos" line={line} onSettings={() => onOpen(BRANDFETCH)} state={state} />;
 }
 
