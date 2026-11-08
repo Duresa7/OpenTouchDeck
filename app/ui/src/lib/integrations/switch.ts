@@ -16,6 +16,8 @@ export interface SwitchView {
   checked: boolean;
   /** A write is on its way, or an enable waits for setup to finish. */
   busy: boolean;
+  /** A write is on its way or queued, so the switch can't be flipped. An enable waiting for setup can still be undone. */
+  locked: boolean;
 }
 
 /**
@@ -23,9 +25,10 @@ export interface SwitchView {
  * the state being written, or null.
  */
 export function switchView(enabled: boolean, saving: boolean | null, pending: boolean, writes = 0): SwitchView {
-  if (saving !== null) return { checked: saving, busy: true };
-  if (pending && !enabled) return { checked: true, busy: true };
-  return { checked: enabled, busy: writes > 0 };
+  const locked = saving !== null || writes > 0;
+  if (saving !== null) return { checked: saving, busy: true, locked };
+  if (pending && !enabled) return { checked: true, busy: true, locked };
+  return { checked: enabled, busy: locked, locked };
 }
 
 /** A pending enable completes once a save has set the Integration up. */

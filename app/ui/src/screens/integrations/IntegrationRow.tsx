@@ -8,17 +8,20 @@ import { IntegrationGlyph } from './IntegrationGlyph.tsx';
 
 export interface OnOff {
   checked: boolean;
+  /** Shown as waiting: a write is on its way, or an enable waits for setup. */
   busy: boolean;
+  /** Can't be flipped: a write is on its way or queued. */
+  locked: boolean;
   flip(on: boolean): void;
 }
 
-/** An Integration's on/off switch: it saves the moment it's flipped. */
+/** An Integration's on/off switch: it saves the moment it's flipped. While an enable waits for setup, off undoes it. */
 export function IntegrationSwitch({ name, state, testId = 'integration-switch' }: { name: string; state: OnOff; testId?: string }) {
   return (
     <Switch.Root
       className="integration-switch"
       checked={state.checked}
-      readOnly={state.busy}
+      readOnly={state.locked}
       onCheckedChange={(on) => state.flip(on)}
       aria-label={`Turn on ${name}`}
       aria-busy={state.busy || undefined}

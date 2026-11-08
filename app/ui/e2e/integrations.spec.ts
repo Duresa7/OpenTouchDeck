@@ -130,6 +130,23 @@ test('turning on an Integration that is not set up opens its setup and turns it 
   await expect(row(page, 'cliproxyapi').getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'true');
 });
 
+test('flipping the switch off again undoes an enable that waits for setup', async ({ page }) => {
+  await openIntegrations(page, '?integrations=new');
+  await row(page, 'cliproxyapi').getByTestId('integration-switch').click();
+  const header = page.getByTestId('detail-switch');
+  await expect(header).toHaveAttribute('aria-busy', 'true');
+  await header.click();
+  await expect(header).toHaveAttribute('aria-checked', 'false');
+  await expect(header).not.toHaveAttribute('aria-busy', 'true');
+  await expect(page.getByTestId('detail-status')).toHaveCount(0);
+  await expect(page.getByTestId('detail-checks')).toContainText('Turn on CLIProxyAPI to check.');
+  await page.getByTestId('secret-input').fill(KEY);
+  await page.getByTestId('secret-save').click();
+  await expect(page.getByTestId('secret-state')).toHaveText('Set');
+  await expect(header).toHaveAttribute('aria-checked', 'false');
+  expect((await record(page)).settings.enabled).toBe(false);
+});
+
 test('backing out of an unfinished setup leaves the switch off', async ({ page }) => {
   await openIntegrations(page, '?integrations=new');
   await row(page, 'cliproxyapi').getByTestId('integration-switch').click();

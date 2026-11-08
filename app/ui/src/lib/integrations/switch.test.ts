@@ -15,13 +15,17 @@ describe('the Integration switch', () => {
   });
 
   it('shows the saved state, the state it is saving, or on while an enable waits for setup', () => {
-    expect(switchView(true, null, false)).toEqual({ checked: true, busy: false });
-    expect(switchView(false, null, false)).toEqual({ checked: false, busy: false });
-    expect(switchView(true, false, false)).toEqual({ checked: false, busy: true });
-    expect(switchView(false, true, false)).toEqual({ checked: true, busy: true });
-    expect(switchView(false, null, true)).toEqual({ checked: true, busy: true });
-    expect(switchView(true, null, true)).toEqual({ checked: true, busy: false });
-    expect(switchView(true, null, false, 1)).toEqual({ checked: true, busy: true });
+    expect(switchView(true, null, false)).toEqual({ checked: true, busy: false, locked: false });
+    expect(switchView(false, null, false)).toEqual({ checked: false, busy: false, locked: false });
+    expect(switchView(true, false, false)).toEqual({ checked: false, busy: true, locked: true });
+    expect(switchView(false, true, false)).toEqual({ checked: true, busy: true, locked: true });
+    expect(switchView(true, null, true)).toEqual({ checked: true, busy: false, locked: false });
+    expect(switchView(true, null, false, 1)).toEqual({ checked: true, busy: true, locked: true });
+  });
+
+  it('locks only while a write runs or waits, so an enable waiting for setup can be flipped off', () => {
+    expect(switchView(false, null, true)).toEqual({ checked: true, busy: true, locked: false });
+    expect(switchView(false, null, true, 1)).toEqual({ checked: true, busy: true, locked: true });
   });
 
   it('completes a pending enable once a save sets the Integration up', () => {

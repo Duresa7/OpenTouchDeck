@@ -178,7 +178,7 @@ test('the settings flow saves a client ID and a write-only key, turns it on, and
   await noBrandfetchInStorage(page);
 });
 
-test('turning Brandfetch on before it has keys opens its page, and both keys turn it on', async ({ page }) => {
+test('turning Brandfetch on before it has a client ID opens its page, and the client ID turns it on', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
@@ -189,10 +189,25 @@ test('turning Brandfetch on before it has keys opens its page, and both keys tur
   await view.getByTestId('brandfetch-client-id-input').fill('test-client-id');
   await view.getByTestId('brandfetch-client-id-save').click();
   await expect(view.getByTestId('brandfetch-client-id-state')).toHaveText('test-client-id');
-  await view.getByTestId('brandfetch-key-input').fill('test-api-key');
-  await view.getByTestId('brandfetch-key-save').click();
   await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'true');
   await expect(view.getByTestId('detail-switch')).not.toHaveAttribute('aria-busy', 'true');
+  // On now, so one flip turns it off.
+  await view.getByTestId('detail-switch').click();
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
+});
+
+test('flipping Brandfetch off again while it waits for a client ID undoes the enable', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+  await brandfetchRow(page).getByTestId('integration-switch').click();
+  const view = brandfetchView(page);
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-busy', 'true');
+  await view.getByTestId('detail-switch').click();
+  await expect(view.getByTestId('detail-switch')).toHaveAttribute('aria-checked', 'false');
+  await expect(view.getByTestId('detail-switch')).not.toHaveAttribute('aria-busy', 'true');
+  await view.getByTestId('detail-back').click();
+  await expect(brandfetchRow(page).getByTestId('integration-switch')).toHaveAttribute('aria-checked', 'false');
 });
 
 test('turned off, Brandfetch keeps its keys and the picker stops searching it', async ({ page }) => {
