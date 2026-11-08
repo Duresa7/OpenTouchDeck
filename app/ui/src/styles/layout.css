@@ -177,6 +177,11 @@ body.is-resizing {
   background: var(--accent);
 }
 
+/* Before the narrow header's rules, so a collapsed Add Tile centres its icon */
+.add-tile-button {
+  padding-left: 10px;
+}
+
 /* A narrow header keeps the save state's mark and drops its words, then Add Tile keeps only its icon */
 @container editor-head (max-width: 800px) {
   .save-words {
@@ -218,10 +223,6 @@ body.is-resizing {
 .button-icon[data-pressed] {
   background: var(--fill-active);
   color: var(--ink);
-}
-
-.add-tile-button {
-  padding-left: 10px;
 }
 
 /* ---------- Layout menu ---------- */
