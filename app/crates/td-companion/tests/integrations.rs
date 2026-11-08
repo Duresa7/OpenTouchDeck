@@ -316,7 +316,7 @@ async fn local_stub_accounts_revision_and_wire_outputs_are_safe() {
         serde_json::to_value(&detail.accounts).unwrap(),
         json!([
             {"provider":"codex","account":"Work","status":"active","success":128,"failed":2,"recent_10m":6,"plan":"pro","five_hour":{"pct":42.0,"resets_at_ms":1800000000000i64},"seven_day":{"pct":10.0,"resets_at_ms":1800500000000i64},"error":null},
-            {"provider":"claude","account":"Personal","status":"active","success":64,"failed":0,"recent_10m":0,"plan":"Claude","five_hour":null,"seven_day":null,"error":"provider refused (HTTP 403)"}
+            {"provider":"claude","account":"Personal","status":"active","success":64,"failed":0,"recent_10m":0,"plan":"Claude","five_hour":null,"seven_day":null,"error":"The service refused this account's sign-in (HTTP 403). Sign in to it again in CLIProxyAPI."}
         ])
     );
     let event = tokio::time::timeout(std::time::Duration::from_secs(3), events.next())

@@ -75,6 +75,7 @@ struct Entry {
     provider: String,
     r#type: String,
     status: String,
+    status_message: Option<String>,
     disabled: bool,
     unavailable: bool,
     success: u64,
@@ -603,6 +604,22 @@ impl CliProxy {
                     if entry.disabled {
                         continue;
                     }
+                    if entry.status.eq_ignore_ascii_case("error") {
+                        let mut message = "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI".to_owned();
+                        // auth-files supplies a sanitized status message, never credential fields.
+                        if let Some(detail) = entry
+                            .status_message
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                        {
+                            let detail: String = detail.chars().take(120).collect();
+                            message.push_str(&format!(" ({detail})"));
+                        }
+                        message.push('.');
+                        account.usage_error = Some(message);
+                        continue;
+                    }
                     let Some(request) = entry.usage_request(&account.provider) else {
                         continue;
                     };
@@ -617,6 +634,12 @@ impl CliProxy {
                                 .and_then(|body| {
                                     let reply: ApiReply = serde_json::from_str(&body)
                                         .map_err(|_| "malformed api-call reply")?;
+                                    if matches!(reply.status_code, 401 | 403) {
+                                        return Err(format!(
+                                            "The service refused this account's sign-in (HTTP {}). Sign in to it again in CLIProxyAPI.",
+                                            reply.status_code
+                                        ));
+                                    }
                                     if !(200..300).contains(&reply.status_code) {
                                         return Err(format!(
                                             "provider refused (HTTP {})",

@@ -209,7 +209,7 @@ export function worstAccounts(polled: number): AccountUsage[] {
   const window = (pct: number, delay: number | null) => ({ pct, resets_at_ms: delay === null ? null : polled + delay });
   return [
     { account: EMAIL, provider: 'codex', status: 'active', plan: 'enterprise-unlimited-annual-2026', success: 1_284_567_890, failed: 0, recent_10m: 9_999_999, five_hour: window(999_999_999, 7_800_000), seven_day: window(100, 273_600_000), error: null },
-    { account: 'J', provider: 'claude', status: 'quota_exhausted_temporarily', plan: null, success: -3, failed: -1, recent_10m: 0, five_hour: window(-12.5, 0), seven_day: null, error: `provider refused (HTTP 403): ${LONG_WORD}` },
+    { account: 'J', provider: 'claude', status: 'quota_exhausted_temporarily', plan: null, success: -3, failed: -1, recent_10m: 0, five_hour: window(-12.5, 0), seven_day: null, error: `The service refused this account's sign-in (HTTP 403). Sign in to it again in CLIProxyAPI. ${LONG_WORD}` },
     { account: LONG_WORD, provider: LONG_WORD, status: 'disabled', plan: LONG_WORD, success: 1, failed: 1, recent_10m: 1, five_hour: null, seven_day: window(0.004, null), error: null },
     { account: '小林さんの仕事用アカウント', provider: 'gemini-cli', status: 'error', plan: 'free', success: 0, failed: 1_000_000, recent_10m: 1, five_hour: null, seven_day: null, error: null },
     { account: 'حساب العمل الرئيسي', provider: 'claude', status: 'active', plan: 'Claude Max', success: 42, failed: 0, recent_10m: 1, five_hour: window(50, 120_000), seven_day: window(99.6, 600_000_000), error: null },

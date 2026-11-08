@@ -311,8 +311,15 @@ fn usage_windows_keys_resets_and_aggregate_maxima_are_reported() {
     assert!(
         info.accounts[2..]
             .iter()
-            .all(|a| a.five_hour.is_none() && a.seven_day.is_none() && a.usage_error.is_none())
+            .all(|a| a.five_hour.is_none() && a.seven_day.is_none())
     );
+    assert_eq!(
+        info.accounts[2].usage_error.as_deref(),
+        Some(
+            "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI (token refresh failed)."
+        )
+    );
+    assert!(info.accounts[3].usage_error.is_none());
     assert_eq!(fetch.calls.lock().unwrap().len(), 1);
     let posts = fetch.posts.lock().unwrap();
     assert_eq!(
@@ -355,6 +362,72 @@ fn usage_windows_keys_resets_and_aggregate_maxima_are_reported() {
             && !serialized.contains("id_token")
             && !serialized.contains("auth_index")
     );
+}
+
+#[test]
+fn hub_sign_in_errors_skip_usage_and_explain_how_to_recover() {
+    for status in ["error", "ERROR", "Error"] {
+        let fetch = FakeFetch::default();
+        fetch.script(vec![Ok(serde_json::json!({"files": [{
+            "provider": "claude", "auth_index": "expired-account",
+            "status": status, "status_message": "  token expired  "
+        }]})
+        .to_string())]);
+        let (mut proxy, _) = proxy_with(&fetch, Some("fixture-key"));
+        proxy.poll();
+        assert!(
+            fetch.posts.lock().unwrap().is_empty(),
+            "accounts the hub cannot sign in to must not request usage"
+        );
+        let info = proxy_info(&proxy);
+        assert_eq!(
+            info.accounts[0].usage_error.as_deref(),
+            Some(
+                "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI (token expired)."
+            )
+        );
+        assert!(info.accounts[0].five_hour.is_none());
+    }
+}
+
+#[test]
+fn hub_sign_in_details_are_optional_and_bounded_without_exposing_credentials() {
+    for detail in [
+        None,
+        Some("".to_owned()),
+        Some("  ".to_owned()),
+        Some("é".repeat(150)),
+    ] {
+        let fetch = FakeFetch::default();
+        fetch.script(vec![Ok(serde_json::json!([{
+            "provider": "codex", "auth_index": "expired-account", "status": "error",
+            "status_message": detail, "access_token": "fixture-access-secret",
+            "refresh_token": "fixture-refresh-secret"
+        }])
+        .to_string())]);
+        let (mut proxy, _) = proxy_with(&fetch, Some("fixture-key"));
+        proxy.poll();
+        let info = proxy_info(&proxy);
+        let message = info.accounts[0].usage_error.as_deref().unwrap();
+        if detail.as_ref().is_some_and(|s| s.starts_with('é')) {
+            let suffix = message.split_once("CLIProxyAPI (").unwrap().1;
+            assert_eq!(
+                suffix.chars().count(),
+                122,
+                "120 Unicode characters plus closing punctuation"
+            );
+            assert!(suffix.ends_with(")."));
+        } else {
+            assert_eq!(
+                message,
+                "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI."
+            );
+        }
+        assert!(fetch.posts.lock().unwrap().is_empty());
+        let shown = serde_json::to_string(&info).unwrap();
+        assert!(!shown.contains("fixture-access-secret"));
+        assert!(!shown.contains("fixture-refresh-secret"));
+    }
 }
 
 #[test]
@@ -422,7 +495,7 @@ fn claude_null_windows_and_unsupported_providers_do_not_invent_usage() {
     assert_eq!(by_field(&readings)["seven_day_pct"].value, "100%");
     let info = proxy_info(&proxy);
     assert_eq!(info.accounts[0].plan.as_deref(), Some("plus"));
-    assert!(info.accounts.iter().all(|a| a.usage_error.is_none()));
+    assert!(info.accounts[..2].iter().all(|a| a.usage_error.is_none()));
 }
 
 #[test]
@@ -430,7 +503,15 @@ fn every_provider_failure_is_local_and_errors_never_echo_sensitive_input() {
     let cases = [
         (
             Ok(serde_json::json!({"status_code":401,"body":"fixture-provider-token"}).to_string()),
-            "provider refused (HTTP 401)",
+            "The service refused this account's sign-in (HTTP 401). Sign in to it again in CLIProxyAPI.",
+        ),
+        (
+            Ok(serde_json::json!({"status_code":403,"body":"fixture-provider-token"}).to_string()),
+            "The service refused this account's sign-in (HTTP 403). Sign in to it again in CLIProxyAPI.",
+        ),
+        (
+            Ok(serde_json::json!({"status_code":429,"body":"fixture-provider-token"}).to_string()),
+            "provider refused (HTTP 429)",
         ),
         (
             api_reply("{fixture-provider-token"),
