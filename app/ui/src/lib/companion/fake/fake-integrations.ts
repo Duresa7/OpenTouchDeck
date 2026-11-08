@@ -47,7 +47,7 @@ function sampleAccounts(polled: number): AccountUsage[] {
   const window = (pct: number, delay: number) => ({ pct, resets_at_ms: polled + delay });
   return [
     { account: 'Work', provider: 'codex', status: 'active', plan: 'pro', success: 128, failed: 2, recent_10m: 6, five_hour: window(42, 7_800_000), seven_day: window(10, 273_600_000), error: null },
-    { account: 'Personal', provider: 'claude', status: 'active', plan: 'Claude', success: 64, failed: 0, recent_10m: 5, five_hour: null, seven_day: null, error: 'provider refused (HTTP 403)' },
+    { account: 'Personal', provider: 'claude', status: 'active', plan: 'Claude', success: 64, failed: 0, recent_10m: 5, five_hour: null, seven_day: null, error: "The service refused this account's sign-in (HTTP 403). Sign in to it again in CLIProxyAPI." },
   ];
 }
 

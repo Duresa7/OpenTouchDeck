@@ -62,7 +62,7 @@ test('one mock Device and a local hub expose account detail without leaking cred
     }, { timeout: 30_000 }).toBe(true);
     const view: unknown = JSON.parse(text);
     expect(view).toHaveProperty('detail.accounts.0.account', 'Work');
-    expect(view).toHaveProperty('detail.accounts.1.error', 'provider refused (HTTP 403)');
+    expect(view).toHaveProperty('detail.accounts.1.error', "The service refused this account's sign-in (HTTP 403). Sign in to it again in CLIProxyAPI.");
     await expect.poll(async () => (await request.get(`${origin}/api/v1/devices`, { headers })).json()).toEqual([expect.objectContaining({ id: 'mock0001' })]);
     expect(paths).toEqual(['GET /v0/management/auth-files', 'POST /v0/management/api-call', 'POST /v0/management/api-call']);
     for (const secret of ['AX17-private-BX29', 'EX59-private-FX61', 'GX73-private-HX89', 'IX97-private-JX03', token]) {

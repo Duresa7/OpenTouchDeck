@@ -21,7 +21,7 @@ test('detail is null until a poll and carries typed account usage and named Pres
   expect(result).toHaveProperty('detail.polled_ms', 1800000000000);
   expect(result).toHaveProperty('detail.accounts.0.account', 'Work');
   expect(result).toHaveProperty('detail.accounts.0.five_hour.resets_at_ms', 1800007800000);
-  expect(result).toHaveProperty('detail.accounts.1.error', 'provider refused (HTTP 403)');
+  expect(result).toHaveProperty('detail.accounts.1.error', "The service refused this account's sign-in (HTTP 403). Sign in to it again in CLIProxyAPI.");
   expect(fake.list()[0].presets.map(p => p.name)).toEqual(['Account status', 'Requests OK', 'Requests failed', 'Requests 10 min', '5-hour used', '7-day used', '5-hour reset in', '7-day reset in', 'Plan']);
   expect(JSON.stringify([result, frames])).not.toContain('fixture-private-value');
   const revision = fake.list()[0].revision;

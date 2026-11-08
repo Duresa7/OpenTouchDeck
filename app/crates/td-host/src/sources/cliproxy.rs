@@ -139,15 +139,15 @@ impl Entry {
             "claude" => (
                 CLAUDE_USAGE,
                 json!({
-                    "Authorization": "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20",
-                    "User-Agent": "claude-code/2.1.273"
+                    "Authorization": "Bearer $TOKEN$", "Content-Type": "application/json",
+                    "anthropic-beta": "oauth-2025-04-20"
                 }),
             ),
             "codex" => (
                 CODEX_USAGE,
                 json!({
                     "Authorization": "Bearer $TOKEN$", "Content-Type": "application/json",
-                    "OpenAI-Beta": "codex-1", "Originator": "Codex Desktop"
+                    "User-Agent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
                 }),
             ),
             _ => return None,
@@ -161,7 +161,7 @@ impl Entry {
         {
             header["Chatgpt-Account-Id"] = json!(id);
         }
-        Some(json!({"auth_index": self.auth_index, "method": "GET", "url": url, "header": header}))
+        Some(json!({"authIndex": self.auth_index, "method": "GET", "url": url, "header": header}))
     }
 }
 
@@ -603,6 +603,14 @@ impl CliProxy {
                     if entry.disabled {
                         continue;
                     }
+                    if entry.status.eq_ignore_ascii_case("error") {
+                        // The hub's status_message can carry raw provider error text, so it is never shown.
+                        account.usage_error = Some(
+                            "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI."
+                                .to_owned(),
+                        );
+                        continue;
+                    }
                     let Some(request) = entry.usage_request(&account.provider) else {
                         continue;
                     };
@@ -617,6 +625,12 @@ impl CliProxy {
                                 .and_then(|body| {
                                     let reply: ApiReply = serde_json::from_str(&body)
                                         .map_err(|_| "malformed api-call reply")?;
+                                    if matches!(reply.status_code, 401 | 403) {
+                                        return Err(format!(
+                                            "The service refused this account's sign-in (HTTP {}). Sign in to it again in CLIProxyAPI.",
+                                            reply.status_code
+                                        ));
+                                    }
                                     if !(200..300).contains(&reply.status_code) {
                                         return Err(format!(
                                             "provider refused (HTTP {})",

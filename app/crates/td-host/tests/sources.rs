@@ -159,7 +159,17 @@ impl Fetch for FakeFetch {
             .lock()
             .unwrap()
             .push((url.to_owned(), bearer.to_owned(), body.clone()));
-        self.usage.lock().unwrap().get(body["auth_index"].as_str().unwrap()).cloned()
+        // The Go handler accepts all three spellings, but only singular `header`.
+        let auth_index = ["auth_index", "authIndex", "AuthIndex"]
+            .into_iter()
+            .filter_map(|field| body[field].as_str())
+            .map(str::trim)
+            .find(|index| !index.is_empty())
+            .ok_or("HTTP 400")?;
+        if body["header"]["Authorization"] != "Bearer $TOKEN$" {
+            return Ok(serde_json::json!({"status_code":401,"body":""}).to_string());
+        }
+        self.usage.lock().unwrap().get(auth_index).cloned()
             .unwrap_or_else(|| Ok(serde_json::json!({"status_code":200,"body":"{\"five_hour\":null,\"seven_day\":null,\"rate_limit\":null}"}).to_string()))
     }
 }
@@ -301,8 +311,13 @@ fn usage_windows_keys_resets_and_aggregate_maxima_are_reported() {
     assert!(
         info.accounts[2..]
             .iter()
-            .all(|a| a.five_hour.is_none() && a.seven_day.is_none() && a.usage_error.is_none())
+            .all(|a| a.five_hour.is_none() && a.seven_day.is_none())
     );
+    assert_eq!(
+        info.accounts[2].usage_error.as_deref(),
+        Some("The hub can't sign in to this account. Sign in to it again in CLIProxyAPI.")
+    );
+    assert!(info.accounts[3].usage_error.is_none());
     assert_eq!(fetch.calls.lock().unwrap().len(), 1);
     let posts = fetch.posts.lock().unwrap();
     assert_eq!(
@@ -315,26 +330,28 @@ fn usage_windows_keys_resets_and_aggregate_maxima_are_reported() {
     ));
     let codex = &posts
         .iter()
-        .find(|(_, _, b)| b["auth_index"] == "codex-alice")
+        .find(|(_, _, b)| b["url"] == CODEX_USAGE)
         .unwrap()
         .2;
     let claude = &posts
         .iter()
-        .find(|(_, _, b)| b["auth_index"] == "claude-alice")
+        .find(|(_, _, b)| b["url"] == CLAUDE_USAGE)
         .unwrap()
         .2;
+    // Matches the served management center and its upstream header definitions:
+    // router-for-me/Cli-Proxy-API-Management-Center@50c3b9fb, src/utils/quota/constants.ts.
     assert_eq!(
         codex,
         &serde_json::json!({
-            "auth_index":"codex-alice", "method":"GET", "url":CODEX_USAGE,
-            "header":{"Authorization":"Bearer $TOKEN$", "Content-Type":"application/json", "OpenAI-Beta":"codex-1", "Originator":"Codex Desktop", "Chatgpt-Account-Id":"fixture-account-alice"}
+            "authIndex":"codex-alice", "method":"GET", "url":CODEX_USAGE,
+            "header":{"Authorization":"Bearer $TOKEN$", "Content-Type":"application/json", "User-Agent":"codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal", "Chatgpt-Account-Id":"fixture-account-alice"}
         })
     );
     assert_eq!(
         claude,
         &serde_json::json!({
-            "auth_index":"claude-alice", "method":"GET", "url":CLAUDE_USAGE,
-            "header":{"Authorization":"Bearer $TOKEN$", "anthropic-beta":"oauth-2025-04-20", "User-Agent":"claude-code/2.1.273"}
+            "authIndex":"claude-alice", "method":"GET", "url":CLAUDE_USAGE,
+            "header":{"Authorization":"Bearer $TOKEN$", "Content-Type":"application/json", "anthropic-beta":"oauth-2025-04-20"}
         })
     );
     let serialized = serde_json::to_string(&info).unwrap();
@@ -343,6 +360,54 @@ fn usage_windows_keys_resets_and_aggregate_maxima_are_reported() {
             && !serialized.contains("id_token")
             && !serialized.contains("auth_index")
     );
+}
+
+#[test]
+fn hub_sign_in_errors_skip_usage_and_explain_how_to_recover() {
+    for status in ["error", "ERROR", "Error"] {
+        let fetch = FakeFetch::default();
+        fetch.script(vec![Ok(serde_json::json!({"files": [{
+            "provider": "claude", "auth_index": "expired-account",
+            "status": status, "status_message": "  token expired  "
+        }]})
+        .to_string())]);
+        let (mut proxy, _) = proxy_with(&fetch, Some("fixture-key"));
+        proxy.poll();
+        assert!(
+            fetch.posts.lock().unwrap().is_empty(),
+            "accounts the hub cannot sign in to must not request usage"
+        );
+        let info = proxy_info(&proxy);
+        assert_eq!(
+            info.accounts[0].usage_error.as_deref(),
+            Some("The hub can't sign in to this account. Sign in to it again in CLIProxyAPI.")
+        );
+        assert!(info.accounts[0].five_hour.is_none());
+    }
+}
+
+#[test]
+fn hub_sign_in_errors_never_show_the_hub_status_message() {
+    // The hub's status_message can carry raw provider error text.
+    let fetch = FakeFetch::default();
+    fetch.script(vec![Ok(serde_json::json!([{
+        "provider": "codex", "auth_index": "expired-account", "status": "error",
+        "status_message": "refresh failed: Bearer fixture-access-secret for alice@example.com",
+        "access_token": "fixture-access-secret", "refresh_token": "fixture-refresh-secret"
+    }])
+    .to_string())]);
+    let (mut proxy, _) = proxy_with(&fetch, Some("fixture-key"));
+    proxy.poll();
+    let info = proxy_info(&proxy);
+    assert_eq!(
+        info.accounts[0].usage_error.as_deref(),
+        Some("The hub can't sign in to this account. Sign in to it again in CLIProxyAPI.")
+    );
+    assert!(fetch.posts.lock().unwrap().is_empty());
+    let shown = serde_json::to_string(&info).unwrap();
+    assert!(!shown.contains("fixture-access-secret"));
+    assert!(!shown.contains("fixture-refresh-secret"));
+    assert!(!shown.contains("refresh failed"));
 }
 
 #[test]
@@ -384,7 +449,7 @@ fn codex_windows_follow_durations_or_default_positions_and_clamp() {
         assert_eq!(past.as_ref().unwrap().reset_in.as_deref(), Some("now"));
         assert_eq!(absent.as_ref().unwrap().reset_in, None);
         let posts = fetch.posts.lock().unwrap();
-        assert_eq!(posts[0].2["header"].as_object().unwrap().len(), 4);
+        assert_eq!(posts[0].2["header"].as_object().unwrap().len(), 3);
         assert!(posts[0].2["header"].get("Chatgpt-Account-Id").is_none());
     }
 }
@@ -410,7 +475,7 @@ fn claude_null_windows_and_unsupported_providers_do_not_invent_usage() {
     assert_eq!(by_field(&readings)["seven_day_pct"].value, "100%");
     let info = proxy_info(&proxy);
     assert_eq!(info.accounts[0].plan.as_deref(), Some("plus"));
-    assert!(info.accounts.iter().all(|a| a.usage_error.is_none()));
+    assert!(info.accounts[..2].iter().all(|a| a.usage_error.is_none()));
 }
 
 #[test]
@@ -418,7 +483,15 @@ fn every_provider_failure_is_local_and_errors_never_echo_sensitive_input() {
     let cases = [
         (
             Ok(serde_json::json!({"status_code":401,"body":"fixture-provider-token"}).to_string()),
-            "provider refused (HTTP 401)",
+            "The service refused this account's sign-in (HTTP 401). Sign in to it again in CLIProxyAPI.",
+        ),
+        (
+            Ok(serde_json::json!({"status_code":403,"body":"fixture-provider-token"}).to_string()),
+            "The service refused this account's sign-in (HTTP 403). Sign in to it again in CLIProxyAPI.",
+        ),
+        (
+            Ok(serde_json::json!({"status_code":429,"body":"fixture-provider-token"}).to_string()),
+            "provider refused (HTTP 429)",
         ),
         (
             api_reply("{fixture-provider-token"),
