@@ -315,9 +315,7 @@ fn usage_windows_keys_resets_and_aggregate_maxima_are_reported() {
     );
     assert_eq!(
         info.accounts[2].usage_error.as_deref(),
-        Some(
-            "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI (token refresh failed)."
-        )
+        Some("The hub can't sign in to this account. Sign in to it again in CLIProxyAPI.")
     );
     assert!(info.accounts[3].usage_error.is_none());
     assert_eq!(fetch.calls.lock().unwrap().len(), 1);
@@ -382,52 +380,34 @@ fn hub_sign_in_errors_skip_usage_and_explain_how_to_recover() {
         let info = proxy_info(&proxy);
         assert_eq!(
             info.accounts[0].usage_error.as_deref(),
-            Some(
-                "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI (token expired)."
-            )
+            Some("The hub can't sign in to this account. Sign in to it again in CLIProxyAPI.")
         );
         assert!(info.accounts[0].five_hour.is_none());
     }
 }
 
 #[test]
-fn hub_sign_in_details_are_optional_and_bounded_without_exposing_credentials() {
-    for detail in [
-        None,
-        Some("".to_owned()),
-        Some("  ".to_owned()),
-        Some("é".repeat(150)),
-    ] {
-        let fetch = FakeFetch::default();
-        fetch.script(vec![Ok(serde_json::json!([{
-            "provider": "codex", "auth_index": "expired-account", "status": "error",
-            "status_message": detail, "access_token": "fixture-access-secret",
-            "refresh_token": "fixture-refresh-secret"
-        }])
-        .to_string())]);
-        let (mut proxy, _) = proxy_with(&fetch, Some("fixture-key"));
-        proxy.poll();
-        let info = proxy_info(&proxy);
-        let message = info.accounts[0].usage_error.as_deref().unwrap();
-        if detail.as_ref().is_some_and(|s| s.starts_with('é')) {
-            let suffix = message.split_once("CLIProxyAPI (").unwrap().1;
-            assert_eq!(
-                suffix.chars().count(),
-                122,
-                "120 Unicode characters plus closing punctuation"
-            );
-            assert!(suffix.ends_with(")."));
-        } else {
-            assert_eq!(
-                message,
-                "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI."
-            );
-        }
-        assert!(fetch.posts.lock().unwrap().is_empty());
-        let shown = serde_json::to_string(&info).unwrap();
-        assert!(!shown.contains("fixture-access-secret"));
-        assert!(!shown.contains("fixture-refresh-secret"));
-    }
+fn hub_sign_in_errors_never_show_the_hub_status_message() {
+    // The hub's status_message can carry raw provider error text.
+    let fetch = FakeFetch::default();
+    fetch.script(vec![Ok(serde_json::json!([{
+        "provider": "codex", "auth_index": "expired-account", "status": "error",
+        "status_message": "refresh failed: Bearer fixture-access-secret for alice@example.com",
+        "access_token": "fixture-access-secret", "refresh_token": "fixture-refresh-secret"
+    }])
+    .to_string())]);
+    let (mut proxy, _) = proxy_with(&fetch, Some("fixture-key"));
+    proxy.poll();
+    let info = proxy_info(&proxy);
+    assert_eq!(
+        info.accounts[0].usage_error.as_deref(),
+        Some("The hub can't sign in to this account. Sign in to it again in CLIProxyAPI.")
+    );
+    assert!(fetch.posts.lock().unwrap().is_empty());
+    let shown = serde_json::to_string(&info).unwrap();
+    assert!(!shown.contains("fixture-access-secret"));
+    assert!(!shown.contains("fixture-refresh-secret"));
+    assert!(!shown.contains("refresh failed"));
 }
 
 #[test]

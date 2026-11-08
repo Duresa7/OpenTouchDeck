@@ -75,7 +75,6 @@ struct Entry {
     provider: String,
     r#type: String,
     status: String,
-    status_message: Option<String>,
     disabled: bool,
     unavailable: bool,
     success: u64,
@@ -605,19 +604,11 @@ impl CliProxy {
                         continue;
                     }
                     if entry.status.eq_ignore_ascii_case("error") {
-                        let mut message = "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI".to_owned();
-                        // auth-files supplies a sanitized status message, never credential fields.
-                        if let Some(detail) = entry
-                            .status_message
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                        {
-                            let detail: String = detail.chars().take(120).collect();
-                            message.push_str(&format!(" ({detail})"));
-                        }
-                        message.push('.');
-                        account.usage_error = Some(message);
+                        // The hub's status_message can carry raw provider error text, so it is never shown.
+                        account.usage_error = Some(
+                            "The hub can't sign in to this account. Sign in to it again in CLIProxyAPI."
+                                .to_owned(),
+                        );
                         continue;
                     }
                     let Some(request) = entry.usage_request(&account.provider) else {
