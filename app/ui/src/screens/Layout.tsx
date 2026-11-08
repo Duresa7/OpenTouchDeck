@@ -126,12 +126,12 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
       <h1 className="visually-hidden">Layout</h1>
       <EditorHeader store={store} device={device} onImport={openPicker} onExport={() => void exportLayout(store)} />
       <div ref={canvas} className={clsx('canvas', actualSize && preview && 'is-actual')}>
-        {!connected && (
-          <p className="editor-banner" data-testid="disconnected">
-            <strong>{name} isn't connected.</strong> Plug it in with a USB cable. You can still edit its Layout.
-          </p>
-        )}
         <div ref={head} className="canvas-head">
+          {!connected && (
+            <p className="editor-banner" data-testid="disconnected">
+              <strong>{name} isn't connected.</strong> Plug it in with a USB cable. You can still edit its Layout.
+            </p>
+          )}
           <ControlNoticeBar store={store} device={name} />
         </div>
         {layout && current ? (

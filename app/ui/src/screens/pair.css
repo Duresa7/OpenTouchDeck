@@ -6,8 +6,6 @@
 .pair-form button { padding: var(--space-3); background: var(--button-primary-bg); color: var(--button-primary-ink); border-radius: var(--radius-control); }
 .pair-form button:disabled { background: var(--fill-disabled); color: var(--ink-disabled); }
 
-.open-browser { position: fixed; top: var(--space-4); right: var(--space-4); min-height: 34px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface-raised); }
-.open-browser:hover { background: var(--fill-hover); }
 .pair-form input { min-height: 36px; font: inherit; }
 .pair-form button { border: 0; cursor: pointer; }
 .pair-form button:disabled { cursor: not-allowed; }

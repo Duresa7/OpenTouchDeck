@@ -97,67 +97,69 @@ export function EditorHeader({ store, device, onImport, onExport }: EditorHeader
 
   return (
     <header className="editor-head">
-      <DevicePanel device={device} />
-      <Tip label={`${name}: ${status.words}`}>
-        <span className="connection" data-testid="connection" data-tone={status.tone}>
-          <StatusBox tone={status.tone} label={`${name}: ${status.words}`} />
-        </span>
-      </Tip>
-      <SaveState store={store} />
-      <ToggleGroup
-        value={[orientation]}
-        onValueChange={(value) => value[0] && store.setOrientation(value[0])}
-        aria-label="Orientation"
-        className="segmented segmented-icons"
-      >
-        {ORIENTATIONS.map((o) => (
-          <Tip key={o.value} label={o.label}>
-            <Toggle value={o.value} className="segment" aria-label={o.label} data-testid={`orientation-${o.value}`}>
-              <o.icon size={16} strokeWidth={1.9} aria-hidden />
+      <div className="editor-head-row">
+        <DevicePanel device={device} />
+        <Tip label={`${name}: ${status.words}`}>
+          <span className="connection" data-testid="connection" data-tone={status.tone}>
+            <StatusBox tone={status.tone} label={`${name}: ${status.words}`} />
+          </span>
+        </Tip>
+        <SaveState store={store} />
+        <ToggleGroup
+          value={[orientation]}
+          onValueChange={(value) => value[0] && store.setOrientation(value[0])}
+          aria-label="Orientation"
+          className="segmented segmented-icons"
+        >
+          {ORIENTATIONS.map((o) => (
+            <Tip key={o.value} label={o.label}>
+              <Toggle value={o.value} className="segment" aria-label={o.label} data-testid={`orientation-${o.value}`}>
+                <o.icon size={16} strokeWidth={1.9} aria-hidden />
+              </Toggle>
+            </Tip>
+          ))}
+        </ToggleGroup>
+        {hasDraft && (
+          <Tip label="Preview (P)">
+            <Toggle
+              pressed={mode === 'preview'}
+              onPressedChange={(pressed) => store.setMode(pressed ? 'preview' : 'edit')}
+              className={button({ kind: 'icon' })}
+              aria-label="Preview"
+              data-testid="preview"
+            >
+              <Eye size={18} strokeWidth={1.9} aria-hidden />
             </Toggle>
           </Tip>
-        ))}
-      </ToggleGroup>
-      {hasDraft && (
-        <Tip label="Preview (P)">
-          <Toggle
-            pressed={mode === 'preview'}
-            onPressedChange={(pressed) => store.setMode(pressed ? 'preview' : 'edit')}
-            className={button({ kind: 'icon' })}
-            aria-label="Preview"
-            data-testid="preview"
-          >
-            <Eye size={18} strokeWidth={1.9} aria-hidden />
-          </Toggle>
-        </Tip>
-      )}
-      <LayoutMenu store={store} device={name} connected={status.live} onImport={onImport} onExport={onExport} />
-      {hasDraft && (
-        <>
-          <button
-            type="button"
-            className={clsx(button(), 'add-tile-button')}
-            aria-expanded={adding}
-            onClick={() => (adding ? store.closeAdd() : store.openAdd())}
-            data-testid="add-tile"
-          >
-            <Plus size={16} strokeWidth={2} aria-hidden />
-            <span className="add-tile-words">Add Tile</span>
-          </button>
-          <Tip label={status.live ? `Send this Layout to ${name}` : `${name} isn't connected`}>
+        )}
+        <LayoutMenu store={store} device={name} connected={status.live} onImport={onImport} onExport={onExport} />
+        {hasDraft && (
+          <>
             <button
               type="button"
-              className={clsx(button({ kind: 'primary' }), 'push-button')}
-              aria-disabled={!canSend}
-              onClick={() => canSend && void store.push()}
-              data-testid="push"
+              className={clsx(button(), 'add-tile-button')}
+              aria-expanded={adding}
+              onClick={() => (adding ? store.closeAdd() : store.openAdd())}
+              data-testid="add-tile"
             >
-              <Upload size={16} strokeWidth={2} aria-hidden />
-              <span className="push-words">{busy === 'push' ? 'Sending…' : 'Send to Device'}</span>
+              <Plus size={16} strokeWidth={2} aria-hidden />
+              <span className="add-tile-words">Add Tile</span>
             </button>
-          </Tip>
-        </>
-      )}
+            <Tip label={status.live ? `Send this Layout to ${name}` : `${name} isn't connected`}>
+              <button
+                type="button"
+                className={clsx(button({ kind: 'primary' }), 'push-button')}
+                aria-disabled={!canSend}
+                onClick={() => canSend && void store.push()}
+                data-testid="push"
+              >
+                <Upload size={16} strokeWidth={2} aria-hidden />
+                <span className="push-words">{busy === 'push' ? 'Sending…' : 'Send to Device'}</span>
+              </button>
+            </Tip>
+          </>
+        )}
+      </div>
     </header>
   );
 }
