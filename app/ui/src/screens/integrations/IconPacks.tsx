@@ -1,13 +1,12 @@
-import { useEffect, useId, useRef } from 'react';
-import { Dialog } from '@base-ui/react/dialog';
-import { ChevronLeft, FileUp, X } from 'lucide-react';
+import { useId, useRef } from 'react';
+import { FileUp } from 'lucide-react';
 import type { PackInfo } from '../../lib/companion/api.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
 import { iconPacksOf, useIconPacks, useInstallStage } from '../../lib/icon-packs/hooks.ts';
 import { packFacts, stageText } from '../../lib/icon-packs/model.ts';
 import type { PackWork } from '../../lib/icon-packs/store.ts';
-import { PackThumbnail } from '../../screens/layout/PackThumbnail.tsx';
-import { button } from '../button.ts';
+import { button } from '../../shell/button.ts';
+import { PackThumbnail } from '../layout/PackThumbnail.tsx';
 
 const SAMPLES = 4;
 
@@ -79,7 +78,8 @@ function PackRow({ pack, work, onInstall, onRemove }: { pack: PackInfo; work: Pa
   );
 }
 
-export function IconPacksView({ onBack, focusBack }: { onBack(): void; focusBack: boolean }) {
+/** Icon packs' settings: the curated packs to download, the ones you imported, and Import. */
+export function IconPacksBody() {
   const companion = useCompanion();
   const packs = iconPacksOf(companion);
   const list = useIconPacks(companion, (s) => s.packs);
@@ -88,12 +88,8 @@ export function IconPacksView({ onBack, focusBack }: { onBack(): void; focusBack
   const work = useIconPacks(companion, (s) => s.work);
   const importing = useIconPacks(companion, (s) => s.importing);
   const importProblem = useIconPacks(companion, (s) => s.importProblem);
-  const back = useRef<HTMLButtonElement>(null);
   const file = useRef<HTMLInputElement>(null);
   const ids = useId();
-  useEffect(() => {
-    if (focusBack) back.current?.focus();
-  }, [focusBack]);
 
   const curated = list?.filter((p) => p.origin === 'curated') ?? [];
   const mine = list?.filter((p) => p.origin === 'imported') ?? [];
@@ -102,20 +98,7 @@ export function IconPacksView({ onBack, focusBack }: { onBack(): void; focusBack
   );
 
   return (
-    <>
-      <div className="dialog-head">
-        <div className="dialog-head-start">
-          <button ref={back} type="button" className={button({ kind: 'icon' })} aria-label="Back" onClick={onBack}>
-            <ChevronLeft size={18} strokeWidth={1.9} aria-hidden />
-          </button>
-          <Dialog.Title className="dialog-title">Icon packs</Dialog.Title>
-        </div>
-        <Dialog.Close className={button({ kind: 'icon' })} aria-label="Close">
-          <X size={18} strokeWidth={1.9} aria-hidden />
-        </Dialog.Close>
-      </div>
-      <p className="dialog-lede">Download Icon packs to search offline in the icon picker, or import your own. Nothing is installed until you choose.</p>
-
+    <div className="detail-body">
       <section className="settings-section" aria-labelledby={`${ids}-curated`} data-testid="icon-packs" data-state={load}>
         <h3 id={`${ids}-curated`}>Packs</h3>
         <div className="group">
@@ -167,6 +150,8 @@ export function IconPacksView({ onBack, focusBack }: { onBack(): void; focusBack
       </section>
 
       <p className="settings-footnote">Downloads come from the npm registry and must match a pinned checksum. Logos belong to their owners.</p>
-    </>
+    </div>
   );
 }
+
+export const ICON_PACKS_LEDE = 'Download Icon packs to search offline in the icon picker, or import your own. Nothing is installed until you choose.';

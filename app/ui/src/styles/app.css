@@ -173,6 +173,36 @@ button {
   background-image: linear-gradient(135deg, transparent calc(50% - 0.8px), var(--status-box-cut) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px));
 }
 
+/* ---------- Integration glyphs and inline links, shared by Integrations and Layout ---------- */
+
+.integration-glyph {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line);
+  color: var(--ink);
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .link-button:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
 /* ---------- Buttons ---------- */
 
 .button {

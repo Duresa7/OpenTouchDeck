@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import type { IntegrationView } from '../companion/api.ts';
+import type { IntegrationSummary, IntegrationView } from '../companion/api.ts';
 import type { Companion } from '../companion/client.ts';
 import { toApiError } from '../companion/errors.ts';
 import { formOf, parseUsage, sameValues, serialize, validate, valuesOf, type FormField, type FormValues, type Usage } from './model.ts';
@@ -45,6 +45,10 @@ export interface DetailState {
 export interface DetailDeps {
   companion: Pick<Companion, 'integrations'>;
   now?: () => number;
+  /** The Integration's write queue, shared with its switch. Writes run straight away without one. */
+  writes?: { run<T>(id: string, work: () => Promise<T>): Promise<T> };
+  /** Hears the Integration's summary after each save of its settings or a secret, so a pending enable can finish. */
+  onSummary?: (summary: IntegrationSummary) => void;
 }
 
 const RESTART = 'Retry, or restart Open TouchDeck.';
@@ -79,6 +83,7 @@ export function createDetailStore(id: string, deps: DetailDeps) {
   }));
   const { getState: state, setState: set } = store;
   const call = deps.companion.integrations;
+  const write = <T>(work: () => Promise<T>) => (deps.writes ? deps.writes.run(id, work) : work());
 
   const dirty = () => !sameValues(state().fields, state().values, state().saved);
 
@@ -130,7 +135,9 @@ export function createDetailStore(id: string, deps: DetailDeps) {
       const before = state().secrets;
       set({ busy: 'save', notice: { kind: 'info', text: 'Saving…', event: 'saving' } });
       try {
-        take(await call.config_put({ integration: id }, null, serialize(fields, values)), { typed: 'replace' });
+        const view = await write(() => call.config_put({ integration: id }, null, serialize(fields, values)));
+        take(view, { typed: 'replace' });
+        deps.onSummary?.(view.summary);
         const forgotten = Object.keys(before).filter((field) => before[field]?.set && !state().secrets[field]?.set);
         set({
           notice: forgotten.length
@@ -160,10 +167,17 @@ export function createDetailStore(id: string, deps: DetailDeps) {
       }
       set({ busy: 'secret', notice: { kind: 'info', text: 'Saving…', event: 'saving' } });
       try {
-        const { hint } = await call.secret_put({ integration: id, field }, null, { value });
+        const { hint } = await write(() => call.secret_put({ integration: id, field }, null, { value }));
         const errors = { ...state().errors };
         delete errors[field];
         set({ errors, secrets: { ...state().secrets, [field]: { set: true, hint } }, notice: { kind: 'ok', text: 'Saved', event: 'secret-saved' } });
+        try {
+          const view = await call.get({ integration: id });
+          take(view, { typed: 'keep' });
+          deps.onSummary?.(view.summary);
+        } catch {
+          // The next status event brings the summary instead.
+        }
         return true;
       } catch (error) {
         set({ notice: { kind: 'error', text: `Couldn't save the ${label(field)}. ${RESTART}`, detail: toApiError(error).message, event: 'secret-failed' } });
@@ -177,7 +191,7 @@ export function createDetailStore(id: string, deps: DetailDeps) {
       if (state().busy) return;
       set({ busy: 'secret', notice: null });
       try {
-        await call.secret_delete({ integration: id, field });
+        await write(() => call.secret_delete({ integration: id, field }));
         set({ secrets: { ...state().secrets, [field]: { set: false, hint: null } } });
       } catch (error) {
         set({ notice: { kind: 'error', text: `Couldn't forget the ${label(field)}. ${RESTART}`, detail: toApiError(error).message, event: 'forget-failed' } });

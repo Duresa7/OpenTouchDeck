@@ -1,13 +1,11 @@
-import { useEffect, useId, useRef } from 'react';
-import { Dialog } from '@base-ui/react/dialog';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { useEffect, useId } from 'react';
 import { useStore } from 'zustand';
 import { brandfetchStore, DEVELOPER_PORTAL, isBusy, logoCount, type BrandfetchStep, type BrandfetchStore } from '../../lib/brandfetch/settings.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
 import { useKeychainName } from '../../lib/companion/keychain.ts';
-import { reloadIntoSettings } from '../../state/ui.ts';
-import { button } from '../button.ts';
-import { StoredField } from '../StoredField.tsx';
+import { button } from '../../shell/button.ts';
+import { StoredField } from '../../shell/StoredField.tsx';
+import { BRANDFETCH, reloadIntoIntegration } from '../../state/ui.ts';
 import './brandfetch.css';
 
 /**
@@ -54,11 +52,11 @@ function Keys({ store }: { store: BrandfetchStore }) {
   const saveClientId = async (value: string) => {
     const added = status.client_id === null;
     const saved = await state.saveClientId(value);
-    if (saved && added && RELOADS) reloadIntoSettings('brandfetch');
+    if (saved && added && RELOADS) reloadIntoIntegration(BRANDFETCH);
     return saved;
   };
   const forgetClientId = async () => {
-    if ((await state.forgetClientId()) && RELOADS) reloadIntoSettings('brandfetch');
+    if ((await state.forgetClientId()) && RELOADS) reloadIntoIntegration(BRANDFETCH);
   };
 
   const test = (
@@ -117,57 +115,18 @@ function Keys({ store }: { store: BrandfetchStore }) {
   );
 }
 
-/** The General view's row that opens this section, in the group beside Icon packs. */
-export function BrandfetchEntry({ onOpen, focus }: { onOpen(): void; focus: boolean }) {
+/** Brandfetch logos' settings: the keys, how the key is stored, and the terms that come with it. */
+export function BrandfetchBody() {
   const companion = useCompanion();
   const store = brandfetchStore(companion);
-  const view = useStore(store, (s) => s.view);
-  const entry = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    void store.getState().load();
-  }, [store]);
-  useEffect(() => {
-    if (focus) entry.current?.focus();
-  }, [focus]);
-  const on = view.kind === 'ready' && view.status.client_id !== null;
-  return (
-    <button ref={entry} type="button" className="row row-button" onClick={onOpen} data-testid="brandfetch-entry">
-      <span className="row-text">
-        <span className="row-title">Brandfetch logos</span>
-        <span className="row-sub">{on ? 'On. The icon picker searches Brandfetch with your client ID.' : 'Off. Add your own Brandfetch keys to search brand logos.'}</span>
-      </span>
-      <ChevronRight className="row-chevron" size={18} strokeWidth={1.9} aria-hidden />
-    </button>
-  );
-}
-
-export function BrandfetchView({ onBack, focusBack }: { onBack(): void; focusBack: boolean }) {
-  const companion = useCompanion();
-  const store = brandfetchStore(companion);
-  const back = useRef<HTMLButtonElement>(null);
   const id = useId();
   const keychain = useKeychainName();
   useEffect(() => {
     void store.getState().load();
   }, [store]);
-  useEffect(() => {
-    if (focusBack) back.current?.focus();
-  }, [focusBack]);
 
   return (
-    <>
-      <div className="dialog-head">
-        <div className="dialog-head-start">
-          <button ref={back} type="button" className={button({ kind: 'icon' })} aria-label="Back" onClick={onBack}>
-            <ChevronLeft size={18} strokeWidth={1.9} aria-hidden />
-          </button>
-          <Dialog.Title className="dialog-title">Brandfetch logos</Dialog.Title>
-        </div>
-        <Dialog.Close className={button({ kind: 'icon' })} aria-label="Close">
-          <X size={18} strokeWidth={1.9} aria-hidden />
-        </Dialog.Close>
-      </div>
-      <p className="dialog-lede">Search brand logos in the icon picker with your own Brandfetch account. It stays off until you add a client ID.</p>
+    <div className="detail-body">
       <Keys store={store} />
       <section className="settings-section" aria-labelledby={`${id}-stored`}>
         <h3 id={`${id}-stored`}>How the key is stored</h3>
@@ -187,6 +146,8 @@ export function BrandfetchView({ onBack, focusBack }: { onBack(): void; focusBac
           Get a client ID and API key from Brandfetch
         </a>
       </section>
-    </>
+    </div>
   );
 }
+
+export const BRANDFETCH_LEDE = 'Search brand logos in the icon picker with your own Brandfetch account. It stays off until you add a client ID and an API key.';

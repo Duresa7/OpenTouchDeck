@@ -8,6 +8,9 @@ import {
   countsLine,
   formatCount,
   formOf,
+  headerLine,
+  outcomeAt,
+  settingsTitle,
   offersPresets,
   parseAction,
   lineOf,
@@ -37,12 +40,11 @@ describe('the form a schema builds', () => {
   it('gives each field its control kind and the copy guide label, and keeps secret fields apart', () => {
     const { fields, secrets } = formOf('cliproxyapi', SCHEMA);
     expect(fields.map((f) => [f.name, f.kind, f.label])).toEqual([
-      ['enabled', 'boolean', 'Turn on CLIProxyAPI'],
       ['url', 'string', 'Hub address'],
       ['interval_s', 'integer', 'Check every'],
     ]);
-    expect(fields[1].placeholder).toBe('https://hub.example.com');
-    expect(fields[2].unit).toBe('s');
+    expect(fields[0].placeholder).toBe('https://hub.example.com');
+    expect(fields[1].unit).toBe('s');
     expect(secrets.map((f) => [f.name, f.label])).toEqual([['management_key', 'Management key']]);
   });
 
@@ -61,8 +63,8 @@ describe('the form a schema builds', () => {
 
   it('starts from the config the Companion holds', () => {
     const { fields } = formOf('cliproxyapi', SCHEMA);
-    expect(valuesOf(fields, { enabled: true, url: 'https://hub.example.com', interval_s: 300 })).toEqual({ enabled: true, url: 'https://hub.example.com', interval_s: '300' });
-    expect(valuesOf(fields, null)).toEqual({ enabled: false, url: '', interval_s: '' });
+    expect(valuesOf(fields, { enabled: true, url: 'https://hub.example.com', interval_s: 300 })).toEqual({ url: 'https://hub.example.com', interval_s: '300' });
+    expect(valuesOf(fields, null)).toEqual({ url: '', interval_s: '' });
   });
 
   it.each([
@@ -80,8 +82,25 @@ describe('the form a schema builds', () => {
   it('sends only the schema settings, typed, and never a secret field even when one is in the values', () => {
     const { fields } = formOf('cliproxyapi', SCHEMA);
     const config = serialize(fields, { enabled: true, url: 'https://hub.example.com', interval_s: '120', management_key: 'sk-never-sent' });
-    expect(config).toEqual({ enabled: true, url: 'https://hub.example.com', interval_s: 120 });
+    expect(config).toEqual({ url: 'https://hub.example.com', interval_s: 120 });
     expect(JSON.stringify(config)).not.toContain('sk-never-sent');
+  });
+
+  it('leaves the switch out of the form, so Save never carries enabled', () => {
+    const { fields, secrets } = formOf('volume', [{ name: 'enabled', kind: 'boolean', secret: false }]);
+    expect(fields).toEqual([]);
+    expect(secrets).toEqual([]);
+    expect(serialize(formOf('cliproxyapi', SCHEMA).fields, { enabled: false, url: 'https://hub.example.com', interval_s: '300' })).not.toHaveProperty('enabled');
+  });
+
+  it('heads the form for what it holds and puts each outcome under the part it came from', () => {
+    expect(settingsTitle('cliproxyapi')).toBe('Connection');
+    expect(settingsTitle('custom')).toBe('Sources');
+    expect(settingsTitle('elsewhere')).toBe('Settings');
+    expect(['saved', 'save-failed', 'secret-forgotten', 'saving'].map(outcomeAt)).toEqual(['settings', 'settings', 'settings', 'settings']);
+    expect(['secret-saved', 'secret-failed', 'forget-failed'].map(outcomeAt)).toEqual(['secret', 'secret', 'secret']);
+    expect(['refreshed', 'refresh-floor', 'refresh-failed'].map(outcomeAt)).toEqual(['status', 'status', 'status']);
+    expect(outcomeAt('load-failed')).toBe('page');
   });
 });
 
@@ -153,10 +172,19 @@ describe('usage', () => {
 
   it('describes the last checks', () => {
     const usage = { polled_ms: NOW - 12_000, fails: 0, stale: false, accounts: [account] };
-    expect(usageLine(usage, NOW)).toBe('Connected. 1 account, checked 12 s ago.');
+    expect(usageLine(usage, NOW)).toBe('1 account · checked 12 s ago');
     expect(usageLine({ ...usage, fails: 2 }, NOW)).toBe('The hub missed the last 2 checks. Retrying.');
     expect(usageLine({ ...usage, fails: 3, stale: true }, NOW)).toBe("Can't connect. The hub missed 3 checks, so its Tiles are greyed out.");
     expect(usageLine({ ...usage, polled_ms: null }, NOW)).toBe('Checking…');
+  });
+
+  it('says beside the status box what the box does not', () => {
+    const usage = { polled_ms: NOW - 12_000, fails: 0, stale: false, accounts: [account, account] };
+    expect(headerLine(statusOf(summary('ok')), usage, NOW)).toBe('2 accounts · checked 12 s ago');
+    expect(headerLine(statusOf(summary('ok')), null, NOW)).toBe('Running');
+    expect(headerLine(statusOf(summary('error')), usage, NOW)).toBe("Can't connect");
+    expect(headerLine(statusOf(summary('not_configured')), null, NOW)).toBe('Finish setup');
+    expect(headerLine(statusOf(summary('warming')), null, NOW)).toBe('Checking…');
   });
 
   it('words times, resets and badges as the copy guide does', () => {
