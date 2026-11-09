@@ -31,7 +31,7 @@ test('the stream picker lists every numeric stream of every Integration, in orde
     sources.slice(10).map((s) => [s.integrationName, s.name, s.unit]),
     [
       ['Hub', 'Five hour pct', '%'],
-      ['Hub', 'requests', null],
+      ['Hub', 'Requests', null],
     ],
   );
   assert.equal(new Set(sources.map(sourceKey)).size, sources.length);

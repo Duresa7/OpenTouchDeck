@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openDeviceSettings } from './layout-helpers.ts';
 
 const ID = 'mock0009';
 const dialog = (page: Page) => page.getByTestId('onboarding');
@@ -26,8 +27,7 @@ async function record(page: Page): Promise<Record> {
 async function panel(page: Page, name: string) {
   await page.getByRole('button', { name: `Edit ${name}` }).click();
   await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', ID);
-  await page.getByTestId('device-name').click();
-  await expect(page.getByTestId('device-panel')).toBeVisible();
+  await openDeviceSettings(page, ID);
 }
 
 async function home(page: Page) {
@@ -44,7 +44,7 @@ async function reconnect(page: Page) {
   await page.evaluate((id) => window.touchdeckDemo?.offline(id), ID);
   await expect(shelf(page)).toContainText('Not connected');
   await page.evaluate((id) => window.touchdeckDemo?.device(id, { link: { state: 'connected', port: 'COM9', since_ms: Date.now(), protocol: 2 } }), ID);
-  await expect(shelf(page).getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
+  await expect(shelf(page).getByTestId('device-status')).toHaveText(/: Connected/);
 }
 
 async function named(page: Page, name = 'Shelf') {
@@ -98,6 +98,8 @@ test('Skip leaves the Device usable, does not reopen, and the Device panel can s
   await expect(name).toBeEnabled();
   await name.fill('Shelf');
   await name.press('Enter');
+  await expect(page.getByTestId('settings-title')).toHaveText('Shelf');
+  await page.getByRole('button', { name: 'Layout', exact: true }).click();
   await expect(page.getByTestId('device-name')).toHaveText('Shelf');
 });
 

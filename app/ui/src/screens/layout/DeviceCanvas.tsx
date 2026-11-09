@@ -7,6 +7,7 @@ import { buildDots, buildPage, buildTitle, sampleScene, type PageView, type Scen
 import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
 import type { GridPage, Layout, Tile } from '../../lib/layout/model.ts';
+import { openDetails } from '../../state/ui.ts';
 import { SceneText, TileFace } from './TileScene.tsx';
 
 type ModLook = 'one-shot' | 'locked';
@@ -248,12 +249,15 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
   const [target, targetRef, setTarget] = useStateRef<Span | null>(null);
   const tileEls = useRef(new Map<string, HTMLElement>());
   const settle = useRef<{ id: string; x: number; y: number } | null>(null);
+  /** Whether the last press on a Tile moved or resized it, so the click that follows doesn't open the Details panel. */
+  const dragged = useRef(false);
   const grid = current.kind === 'grid' ? current : null;
   const rectOf = (tile: Span) => (grid ? tileRect(grid, tile, g.grid, g.gap) : { x: 0, y: 0, w: 0, h: 0 });
 
   function grab(event: ReactPointerEvent<HTMLElement>, tile: Tile, how: Drag['mode']) {
     if (!editing || event.button !== 0 || !grid) return;
     event.stopPropagation();
+    dragged.current = false;
     const point = toScreen(event);
     const [row, col] = cellAt(grid, g.grid, g.gap, point.x, point.y);
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -291,6 +295,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     if (!done || event.pointerId !== done.pointer) return;
     event.stopPropagation();
     const to = targetRef.current;
+    dragged.current = done.moved;
     setDrag(null);
     setTarget(null);
     if (!done.moved || !to) {
@@ -333,6 +338,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       store.select(tile.id);
+      openDetails();
       return;
     }
     if (event.key === 'Escape') {
@@ -432,7 +438,10 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
                 data-testid="empty-cell"
                 data-row={cell.row}
                 data-col={cell.col}
-                onClick={() => store.openAdd({ row: cell.row, col: cell.col })}
+                onClick={() => {
+                  store.openAdd({ row: cell.row, col: cell.col });
+                  openDetails();
+                }}
               >
                 <Plus size={44} strokeWidth={2.4} aria-hidden />
               </button>
@@ -476,7 +485,11 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
               onPointerMove={follow}
               onPointerUp={drop}
               onPointerCancel={drop}
-              onClick={() => editing && store.select(tile.id)}
+              onClick={() => {
+                if (!editing) return;
+                store.select(tile.id);
+                if (!dragged.current) openDetails();
+              }}
               onKeyDown={(event) => tileKeys(event, tile)}
             >
               <TileFace view={tv} label={tile.label} badge={badge} locked={mod === 'locked'} />

@@ -127,10 +127,13 @@ async function openWindow() {
     quit: () => { closing = true; app.quit(); },
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(process.platform, app.isPackaged)));
+  // A persistent partition keeps the page's local storage across restarts: Layout drafts are saved there as you edit,
+  // so closing the app loses no work. No credential lives there; the window session arrives over IPC and is revoked
+  // on close. The page's origin stays put because the Companion keeps its port.
   window = new BrowserWindow({
     title: 'Open TouchDeck', useContentSize: true, width: 1100, height: 760, minWidth: 800, minHeight: 600, autoHideMenuBar: true,
     webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true,
-      nodeIntegration: false, webviewTag: false, partition: 'touchdeck-window' },
+      nodeIntegration: false, webviewTag: false, partition: 'persist:touchdeck-window' },
   });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.webContents.session.setPermissionCheckHandler(() => false);

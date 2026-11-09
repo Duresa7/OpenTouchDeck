@@ -126,8 +126,9 @@ test.describe('Integrations, Icon packs', () => {
   test('Settings no longer lists Icon packs', async ({ page }) => {
     await page.goto('/');
     await nav(page).getByRole('button', { name: 'Settings' }).click();
-    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
-    await expect(page.getByRole('dialog', { name: 'Settings' })).not.toContainText('Icon packs');
+    const settings = page.getByTestId('settings');
+    await expect(settings).toBeVisible();
+    await expect(settings).not.toContainText('Icon packs');
   });
 });
 

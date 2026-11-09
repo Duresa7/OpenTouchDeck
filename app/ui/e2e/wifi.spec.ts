@@ -1,9 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openDeviceSettings, settingsPage } from './layout-helpers.ts';
 
 // The demo data: Stream deck by the window is linked over Wi-Fi at 192.0.2.23, Desk is
 // plugged in and on the network at 192.0.2.21, and Studio isn't on the network.
 
-const panel = (page: Page) => page.getByTestId('device-panel');
 const wifiStatus = (page: Page) => page.getByTestId('device-panel-wifi-status');
 const problem = (page: Page) => page.getByTestId('device-panel-wifi-problem');
 
@@ -12,8 +12,7 @@ async function openPanel(page: Page, name: string) {
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: `Edit ${name}` }).click();
   await expect(page.getByTestId('editor')).toBeVisible();
-  await page.getByTestId('device-name').click();
-  await expect(panel(page)).toBeVisible();
+  await openDeviceSettings(page);
   await expect(page.getByTestId('device-panel-wifi-begin').or(page.getByTestId('device-panel-wifi-forget'))).toBeVisible();
 }
 
@@ -28,12 +27,12 @@ async function startPairing(page: Page, address?: string) {
 test('Home and the Device settings name the Carrier', async ({ page }) => {
   await page.goto('/');
   const devices = page.getByRole('list', { name: 'Devices' });
-  await expect(devices.getByRole('listitem').nth(2).getByTestId('device-status')).toHaveAccessibleName(/: Connected over Wi-Fi$/);
-  await expect(devices.getByRole('listitem').nth(0).getByTestId('device-status')).toHaveAccessibleName(/: Connected over USB$/);
+  await expect(devices.getByRole('listitem').nth(2).getByTestId('device-status')).toHaveText(/: Connected over Wi-Fi$/);
+  await expect(devices.getByRole('listitem').nth(0).getByTestId('device-status')).toHaveText(/: Connected over USB$/);
   await expect(devices.getByRole('listitem').nth(0).locator('.device-meta .status')).toHaveCount(0);
 
   await openPanel(page, 'Stream deck by the window');
-  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over Wi-Fi$/);
+  await expect(settingsPage(page).locator('.page-lede')).toHaveText('Connected over Wi-Fi');
   await expect(page.getByTestId('device-panel-carrier')).toHaveText('Connected over Wi-Fi at 192.0.2.23:47820');
   await expect(wifiStatus(page)).toHaveText('Paired at 192.0.2.23:47820.');
   await expect(page.getByTestId('device-panel-usb-only')).toHaveText('Plug in Stream deck by the window with a USB cable to update or restart it.');

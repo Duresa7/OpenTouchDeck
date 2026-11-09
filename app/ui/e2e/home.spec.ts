@@ -50,13 +50,13 @@ test('an unplugged Device keeps its Page and shows last seen', async ({ page }) 
   await page.goto('/');
   const device = page.locator('.device-figure').nth(2);
   await expect(device.locator('.device-scene')).toHaveAttribute('data-page', 'media');
-  await expect(device.locator('.device-spill')).toHaveCount(1);
+  await expect(device.locator('.device-object')).not.toHaveClass(/\bis-off\b/);
   await demo(page).offline('mock0003');
   await expect(device).toContainText('Not connected');
   await expect(device).toContainText('Last seen');
   await expect(device.locator('.device-scene')).toHaveAttribute('data-page', 'media');
   await expect(device.locator('.device-scene')).toContainText('Play/Pause');
-  await expect(device.locator('.device-spill')).toHaveCSS('opacity', '0');
+  await expect(device.locator('.device-object')).toHaveClass(/\bis-off\b/);
   await expect(device.locator('.device-scene')).toHaveCSS('filter', 'grayscale(1)');
   await expect(page.getByText('Firmware update', { exact: true })).toHaveCount(1);
 });

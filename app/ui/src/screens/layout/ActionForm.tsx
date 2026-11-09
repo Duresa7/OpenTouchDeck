@@ -12,7 +12,9 @@ import {
   splitArgs,
   switchKind,
 } from '../../lib/layout/actions.ts';
+import { useIntegrations } from '../../lib/companion/integrations.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
+import { idWords, streamLabel } from '../../lib/integrations/model.ts';
 import { ACTION_TYPES, MODIFIERS, type Action, type GridPage, type Layout, type Tile } from '../../lib/layout/model.ts';
 import { useEffectiveTileEdit } from './editor.ts';
 import { described, Field, FieldError, Select, useFieldIds } from './fields.tsx';
@@ -209,16 +211,33 @@ function CommandFields({ action, commit, error }: KindProps<'command'>) {
   );
 }
 
+const PROXY = 'cliproxyapi';
+
 function WidgetFields({ action, commit, error }: KindProps<'widget'>) {
   const source = useFieldIds();
   const field = useFieldIds();
-  const proxy = action.source === 'cliproxyapi';
+  const integrations = useIntegrations((s) => s.integrations);
+  const proxy = action.source === PROXY;
+  // As before, a Live tile keeps its Integration or turns into a CLIProxyAPI one; now each is named for people.
+  const sources = integrations.filter((i) => i.id === PROXY || i.id === action.source);
+  const current = integrations.find((i) => i.id === action.source);
+  const streams = current?.streams ?? [];
+  // Another Integration starts on its first reading, so the Tile never names one the new Integration lacks.
+  const pick = (next: string) => {
+    const first = next === PROXY ? Object.keys(PROXY_FIELDS)[0] : integrations.find((i) => i.id === next)?.streams[0]?.id;
+    commit({ ...action, source: next, field: first ?? action.field, account: next === PROXY ? action.account : '' });
+  };
   return (
     <>
       <Field ids={source} label="Integration" error={error('source')}>
-        <Select id={source.control} value={action.source} onChange={(event) => commit({ ...action, source: event.target.value })} data-testid="action-source">
-          {!proxy && <option value={action.source}>{action.source}</option>}
-          <option value="cliproxyapi">CLIProxyAPI</option>
+        <Select id={source.control} value={action.source} onChange={(event) => pick(event.target.value)} data-testid="action-source">
+          {!sources.some((i) => i.id === action.source) && <option value={action.source}>{current?.name ?? idWords(action.source)}</option>}
+          {sources.map((integration) => (
+            <option key={integration.id} value={integration.id}>
+              {integration.name}
+            </option>
+          ))}
+          {!sources.some((i) => i.id === PROXY) && <option value={PROXY}>CLIProxyAPI</option>}
         </Select>
       </Field>
       <Field ids={field} label="Show" error={error('field')}>
@@ -231,19 +250,29 @@ function WidgetFields({ action, commit, error }: KindProps<'widget'>) {
               </option>
             ))}
           </Select>
+        ) : streams.length > 0 && current ? (
+          <Select id={field.control} value={action.field} onChange={(event) => commit({ ...action, field: event.target.value })} data-testid="action-field">
+            {!streams.some((s) => s.id === action.field) && <option value={action.field}>{idWords(action.field)}</option>}
+            {streams.map((stream) => (
+              <option key={stream.id} value={stream.id}>
+                {streamLabel(current, stream.id)}
+              </option>
+            ))}
+          </Select>
         ) : (
           <input id={field.control} className="input" value={action.field} spellCheck={false} onChange={(event) => commit({ ...action, field: event.target.value })} data-testid="action-field" />
         )}
       </Field>
-      <TextField
-        label="Account"
-        value={action.account}
-        placeholder="All accounts"
-        hint="Shows the number with a bar. Set up CLIProxyAPI under Integrations."
-        error={error('account')}
-        onChange={(account) => commit({ ...action, account })}
-        testId="action-account"
-      />
+      {proxy && (
+        <TextField
+          label="Account"
+          value={action.account}
+          placeholder="All accounts"
+          error={error('account')}
+          onChange={(account) => commit({ ...action, account })}
+          testId="action-account"
+        />
+      )}
     </>
   );
 }

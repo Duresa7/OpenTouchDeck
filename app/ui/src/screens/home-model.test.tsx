@@ -42,13 +42,11 @@ describe('Home', () => {
     expect(before).toContain('Media');
     expect(before).toContain('Play/Pause');
     expect(before).toContain('is-off');
-    expect(before).toContain('device-spill');
     const after = renderToStaticMarkup(<DevicePreview preview={previewOf(demoLayout(['work', 'media']))} live />);
     expect(after).toContain('Work');
     expect(after).toContain('Copy');
     expect(after).not.toContain('Play/Pause');
     expect(after).not.toContain('is-off');
-    expect(after).toContain('device-spill');
   });
   it('draws the Page the Device shows when its summary names this Layout', () => {
     const layout = demoLayout();
@@ -86,7 +84,7 @@ describe('Home', () => {
     store.getState().openDevice('two');
     expect(store.getState()).toMatchObject({ section: 'layout', deviceId: 'two' });
     store.getState().openTroubleshooting();
-    expect(store.getState()).toMatchObject({ settingsOpen: true, settingsSection: 'troubleshooting' });
+    expect(store.getState()).toMatchObject({ section: 'settings', settingsSection: 'troubleshooting' });
   });
 });
 

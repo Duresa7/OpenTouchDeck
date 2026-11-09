@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { openLayout } from './layout-helpers.ts';
+import { openDeviceSettings, openLayout } from './layout-helpers.ts';
 
 // The demo data: Desk runs the radio build with its Bluetooth keyboard on and two computers and phones bonded,
 // 00:00:5e:00:53:01 connected and 00:00:5e:00:53:02 not. Studio runs the normal build.
@@ -16,8 +16,7 @@ const bonds = (page: Page) => page.getByTestId('device-panel-bluetooth-bond');
 
 async function openDesk(page: Page) {
   await openLayout(page);
-  await page.getByTestId('device-name').click();
-  await expect(page.getByTestId('device-panel')).toBeVisible();
+  await openDeviceSettings(page);
   await expect(bonds(page)).toHaveCount(2);
 }
 
@@ -142,7 +141,7 @@ test('a Device without the Bluetooth keyboard shows no section', async ({ page }
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Edit Studio' }).click();
   await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0002');
-  await page.getByTestId('device-name').click();
+  await openDeviceSettings(page);
   await expect(page.getByTestId('device-panel-update')).toBeVisible();
   await expect(section(page)).toHaveCount(0);
 });
@@ -158,7 +157,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.mouse.move(0, 0);
       await page.waitForTimeout(300);
       await section(page).scrollIntoViewIfNeeded();
-      await page.getByTestId('device-panel').screenshot({ path: join(folder!, `bluetooth-${name}-${theme}.png`) });
+      await section(page).screenshot({ path: join(folder!, `bluetooth-${name}-${theme}.png`) });
     }
 
     test('the keyboard with two computers and phones', async ({ page }) => {

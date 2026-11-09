@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 
-export type Reading = 'opacity' | 'scale' | 'rotate' | 'translate-x' | 'matrix-a' | 'matrix-x' | 'matrix-y' | 'visible-width';
+export type Reading = 'opacity' | 'scale' | 'rotate' | 'translate-x' | 'matrix-a' | 'matrix-x' | 'matrix-y' | 'visible-width' | 'width';
 
 export interface Probe {
   selector: string;
@@ -69,6 +69,8 @@ export async function trace(page: Page, probes: Probe[]) {
           return matrix(style.transform)[5];
         case 'visible-width':
           return visibleWidth(el, style.clipPath);
+        case 'width':
+          return el.getBoundingClientRect().width;
         default: {
           const unknown: never = probe.reading;
           return unknown;

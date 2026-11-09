@@ -32,7 +32,7 @@ Integration secrets and the Brandfetch API key stay in the system keychain eithe
 6. If a Firmware update is offered, choose **Update** and keep USB connected, or **Skip** to continue with the current Firmware.
 7. Choose **Edit Layout** to customize it, or **Done** to return Home.
 
-Click the Device on Home to edit it. The bottom-left navigation opens Home, Layout, Integrations and Settings. In Settings, choose **Appearance** and whether to **Start at sign-in**.
+Click the Device on Home to edit it. The navigation at the bottom centre opens Home, Layout, Integrations and Settings. Settings is a page with its categories down the left: **General** (**Appearance** and **Start at sign-in**), one entry per Device under **Devices**, then **Paired browsers**, **Troubleshooting**, **Errors** and **About**.
 
 Closing the window leaves the Companion running in the tray. **Open** brings the window back; **Quit** stops it. Keep the Companion running for keyboard input, commands, Volume, Media and live readings. Keyboard Tiles send input to the focused window on this PC. The Device is not a standalone USB keyboard.
 
@@ -56,10 +56,14 @@ A supported board without working Open TouchDeck Firmware appears as **New board
 2. Select a Page below the preview. **+ Page** adds another Page.
 3. Select a Tile to edit its label, icon, color, size and action in the right panel. **Add Tile** or an empty cell opens the choices for action Tiles and Preset tiles.
 4. Drag Tiles to move them. Use the size controls to resize them. Changes that overlap another Tile or go outside the grid are refused.
-5. Click away from a Tile to edit the Page name and grid. **Full screen** hides the Page name and dots; swiping still changes Pages.
-6. Choose **Send to Device**. Wait for confirmation that the Layout was sent before unplugging.
+5. Click away from a Tile to edit the Page name and grid. Pick the grid by sweeping over the squares, as you would to insert a table, and click the size you want. **Full screen** hides the Page name and dots; swiping still changes Pages. The trash can at the bottom of the panel removes the Page after a second click.
+6. Choose **Send to Device**. It turns into a spinner while it sends, says **Saved** when the Device has the Layout, then folds away until you change something. Wait for **Saved** before unplugging. To send again without a change, choose **Send to Desk** in the Layout options menu.
 
-The orientation buttons in the editor choose which Layout to edit. They do not turn the Device. To change how it stands, click its name, change **Orientation** in the Device panel and confirm **Restart**. Send the other orientation's Layout separately.
+The panel button at the right of the header hides the details panel, so the Device can grow into the room. Selecting a Tile or choosing **Add Tile** brings the panel back.
+
+The pencil beside the Device's name at the top left renames it. Press Enter to save the name to the Device, or Escape to keep the old one. Its other settings are in **Settings**, under its name in **Devices**.
+
+The orientation buttons in the editor choose which Layout to edit. They do not turn the Device. To change how it stands, open its page in **Settings**, change **Orientation** and confirm **Restart**. Send the other orientation's Layout separately.
 
 Choose **Preview** or press **P** to try Page swipes, Tile presses and Page jumps. Arrow keys change Pages. **Actual size** shows Device pixels at their original size. Preview does not run commands on this PC.
 
@@ -73,7 +77,7 @@ After an upgrade, reinstall or move to another PC, a Device can show live values
 2. If you have an unsent draft, choose whether to replace it with the Device's Layout or **Keep mine**. Export a draft first if you need both.
 3. Click away from a Tile to see **Controls** in the Page inspector. It lists control Tiles on every Page, their Integration and account and what each control does. Select a row to edit that Tile. Resolve any **Unknown Integration** or **Unknown account** before sending.
 4. Choose **Send to Device** when the Layout is the one you want. Sending replaces the Layout on the Device and lets its Tiles control the Integrations shown here.
-5. Wait through **Checking controls…**. The notice clears after the Companion checks the Device's Layout, not just when the transfer finishes. If it cannot check, follow the message to reconnect the Device or update its Firmware. A failed send keeps the guidance and shows **Details**.
+5. Wait through **Checking controls…**. The notice clears after the Companion checks the Device's Layout, not just when the transfer finishes. If it cannot check, follow the message to reconnect the Device or update its Firmware. A failed send keeps the guidance, and its error card's **Details** opens **Settings > Errors**.
 
 Loading or reviewing a Layout does not authorize its controls. Repeat for each Device and orientation you use.
 
@@ -95,9 +99,9 @@ For more icons, choose **Get more icons** in the picker, or open **Settings > Ic
 
 To search brand logos as well, turn on [Brandfetch logos](#brandfetch-logos) with your own keys.
 
-Drafts are kept in this window or browser's local storage, separately for each Device and orientation. Export files for backups and transfers between browsers or PCs.
+Drafts are saved as you edit, in this window or browser's local storage, separately for each Device and orientation. Closing the app keeps them, and nothing reaches the Device until you send. Export files for backups and transfers between browsers or PCs.
 
-The **Layout options** menu (three dots) offers **Export**, **Import**, **Load from Desk**, starting Layouts and **Remove unused Assets**. Export both orientations before replacing a Layout. Open the exported files again to check them.
+The **Layout options** menu (three dots) offers **Send to Desk**, **Load from Desk**, **Export**, **Import**, starting Layouts and **Remove unused Assets**. Export both orientations before replacing a Layout. Open the exported files again to check them.
 
 A Layout JSON file contains Asset references, not the image files, Integration secrets or command approvals. Keep original custom images and GIFs separately. On another PC, set up Integrations again, check program paths and prepare missing Assets before sending. Loading a Layout from the Device does not copy its Assets back to this PC. Remove unused Assets only after keeping the originals you need.
 
@@ -216,9 +220,9 @@ If preparation fails, shorten the animation, reduce its dimensions or use fewer 
 
 ## Photo frame and idle screen
 
-Click the Device's name to open its panel. Turn on **Photo frame**, set **Start after** and use **Choose folder** in the desktop app. Pick a folder of pictures on this PC. Folder selection is not available in the browser.
+Open the Device's page in **Settings**. Turn on **Photo frame**, set **Start after** and use **Choose folder** in the desktop app. Pick a folder of pictures on this PC. Folder selection is not available in the browser.
 
-When idle, the Device shows pictures sent by the Companion, one at a time. They are not kept on the Device. Without the Companion, the idle screen shows a clock. Touch the screen to return to the Layout. Change **Brightness** in the same panel. If a field says it needs newer Firmware, update before using it.
+When idle, the Device shows pictures sent by the Companion, one at a time. They are not kept on the Device. Without the Companion, the idle screen shows a clock. Touch the screen to return to the Layout. Change **Brightness** on the same page. If a field says it needs newer Firmware, update before using it.
 
 ## Use the browser version
 
@@ -241,7 +245,7 @@ The app verifies the update signature before running the installer. If verificat
 
 ### Update Firmware
 
-Click the Device's name in Layout. If newer Firmware is offered, choose **Update** in its panel. Keep USB connected until the result is known. The panel shows these phases:
+Open the Device's page in **Settings**. If newer Firmware is offered, choose **Update** under **Firmware**. Keep USB connected until the result is known. The page shows these phases:
 
 1. **Checking the file…** validates the bundle.
 2. **Updating…** with a percentage sends the Firmware.
@@ -275,8 +279,8 @@ App launches and file opens can now ask for command approval on this PC too.
 | No Device on Home | Use a USB data cable and the USB-Serial/JTAG port. Unplug and reconnect. Linux source builds also need serial permissions from the [setup guide](setup.md). |
 | In use by another program | Close serial monitors and flash tools. The Companion reconnects automatically. |
 | Not connected after the Device drops the link | The Companion reconnects automatically after the Device drops its session, even if USB stays plugged in. Controls wait for the new connection and fresh readings. Repeated drops make retries less frequent. If it stays disconnected, check USB and open **Settings > Troubleshooting** for the last error. |
-| Couldn't send a Layout, or an Asset operation failed | Read **Details**, reconnect and retry. A stalled transfer or an unreadable Asset list shows an error. Check that Tiles and Assets fit the Device's capabilities. |
-| Needs newer Firmware | Update from the Device panel. Older Firmware cannot draw every Live tile or animation. |
+| Couldn't send a Layout, or an Asset operation failed | Choose **Details** on the error card to read the full error in **Settings > Errors**, then reconnect and retry. A stalled transfer or an unreadable Asset list shows an error. Check that Tiles and Assets fit the Device's capabilities. |
+| Needs newer Firmware | Update from the Device's page in **Settings**. Older Firmware cannot draw every Live tile or animation. |
 | Controls need Send to Device | Choose **Review Layout**, check the Controls list and **Send to Device**. See [the recovery steps](#when-controls-need-send-to-device). |
 | Volume or Media does not respond | Enable the Integration and check the control notice. For Media, start a supported player; for Volume, check the default audio output. After reconnection, wait for fresh readings. |
 | Waiting for approval on this PC | Find the native dialog. Check the exact command before approving. |
@@ -284,5 +288,7 @@ App launches and file opens can now ask for command approval on this PC too.
 | Photo folder is missing | Choose an existing folder again in the desktop app. |
 | Pairing code is wrong or expired | Choose **Open in browser** from the tray again for a new code. |
 | Firmware update failed | Keep the Device plugged in until the result is known. Check whether it rolled back, then read **Details** before retrying. |
+
+When something fails, a card pops up at the bottom of the window with what went wrong. Its **Details** opens **Settings > Errors**, which lists the errors since Open TouchDeck opened, newest first, with the full detail and a button to copy it.
 
 **Settings > Troubleshooting** includes Device details and a Firmware console. Overlong console lines are truncated and heavy output can drop lines so Device replies keep flowing. Logs can contain personal data; remove it before sharing. If the Device's Layout prevents normal use, its ten-second touch hold starts the built-in Layout without removing stored files. See [Firmware recovery](firmware.md#recovery) before using it.

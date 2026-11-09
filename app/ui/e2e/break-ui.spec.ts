@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { consoleErrors, sideScroll, spills } from './break-helpers.ts';
+import { openDeviceSettings, openSettings } from './layout-helpers.ts';
 
 const survey = process.env.TD_BREAK_SURVEY;
 const shots = process.env.TD_SHOTS;
@@ -115,12 +116,18 @@ for (const theme of ['light', 'dark'] as const) {
 
         const head = page.locator('.editor-head');
         const push = page.getByTestId('push');
+        await expect(push, 'a Layout just loaded has nothing to send').toHaveAttribute('data-state', 'hidden');
+        // Send to Device shows once there is a change to send.
+        const layoutName = page.getByTestId('layout-name');
+        await layoutName.fill('Edited Layout');
+        await layoutName.press('Enter');
+        await expect(push).toHaveAttribute('data-state', 'send');
         const headBox = await boxOf(head);
         const pushBox = await boxOf(push);
         expect(pushBox.x + pushBox.width, 'Send to Device stays inside the header').toBeLessThanOrEqual(headBox.x + headBox.width);
         expect(await uncovered(push), 'Send to Device can be clicked').toBe(true);
-        await expect(page.locator('.device-switch-name')).toHaveAttribute('title', 'Aleksandra Wiśniewska-Kowalczyk’s desk');
-        await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over USB$/);
+        await expect(page.getByTestId('device-name')).toHaveAttribute('title', 'Aleksandra Wiśniewska-Kowalczyk’s desk');
+        await expect(page.getByTestId('connection')).toHaveText(/: Connected over USB$/);
         await shot(head, { ...at, row: 'row-01-14-editor-header' });
 
         const canvas = page.locator('.canvas');
@@ -129,7 +136,7 @@ for (const theme of ['light', 'dark'] as const) {
         await page.mouse.wheel(0, 4000);
         await expect.poll(() => canvas.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1), { message: 'the canvas scrolls to its foot' }).toBe(true);
         expect(await uncovered(page.getByTestId('page-add')), 'the last Page tab clears the nav').toBe(true);
-        expect(await uncovered(page.locator('.editor-status-text')), 'the status line clears the nav').toBe(true);
+        expect(await uncovered(page.locator('.canvas-foot')), 'the canvas foot clears the nav').toBe(true);
         await expect(pageTab(page, 'full')).toHaveAttribute('title', 'Wiśniewska-Kowalczyk Pro');
         await shot(canvas, { ...at, row: 'row-02-editor-canvas-foot' });
         await canvas.evaluate((el) => el.scrollTo(0, 0));
@@ -165,12 +172,15 @@ for (const theme of ['light', 'dark'] as const) {
         expect(await arabic.evaluate((el) => getComputedStyle(el).direction)).toBe('rtl');
         await shot(page.locator('[data-testid="preset-group"][data-id="custom"] .preset-grid'), { ...at, row: 'row-11-12-preset-labels' });
         await page.getByTestId('add-tile').click();
-        await page.getByTestId('device-name').click();
-        await expect(page.getByTestId('device-panel')).toBeVisible();
-        await check(page, { ...at, name: 'editor-device-panel' });
-        await page.keyboard.press('Escape');
         await page.getByTestId('preview').click();
         await check(page, { ...at, name: 'editor-try-it' });
+        await page.getByTestId('preview').click();
+        await page.getByTestId('device-rename').click();
+        await expect(page.getByTestId('device-rename-input')).toBeFocused();
+        await check(page, { ...at, name: 'editor-rename' });
+        await page.keyboard.press('Escape');
+        await openDeviceSettings(page);
+        await check(page, { ...at, name: 'device-settings' });
         expect(errors).toEqual([]);
       });
 
@@ -241,14 +251,13 @@ for (const theme of ['light', 'dark'] as const) {
       test('settings, paired browsers and troubleshooting', async ({ page }) => {
         const errors = consoleErrors(page);
         await home(page, '');
-        await nav(page).getByRole('button', { name: 'Settings' }).click();
-        const settings = page.getByRole('dialog', { name: 'Settings' });
-        await expect(settings).toBeVisible();
+        await openSettings(page);
         await check(page, { ...at, name: 'settings', fullPage: false });
-        await settings.getByRole('button', { name: /^Troubleshooting/ }).click();
-        await expect(page.getByRole('dialog', { name: 'Troubleshooting' })).toBeVisible();
+        await openSettings(page, 'browsers');
+        await check(page, { ...at, name: 'settings-browsers', fullPage: false });
+        await openSettings(page, 'troubleshooting');
         await check(page, { ...at, name: 'troubleshooting', fullPage: false });
-        const picker = page.locator('.dialog-settings .row:has(> .segmented)').first();
+        const picker = page.locator('.settings-content .row:has(> .segmented)').first();
         await picker.scrollIntoViewIfNeeded();
         await check(page, { ...at, name: 'troubleshooting-console', fullPage: false });
         await shot(picker, { ...at, row: 'row-24-console-device-picker' });

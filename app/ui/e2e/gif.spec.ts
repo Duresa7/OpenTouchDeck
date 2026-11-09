@@ -4,7 +4,7 @@ import { fakeGif } from '../src/lib/companion/fake.ts';
 import { GIF_CAPS } from '../src/lib/companion/samples.ts';
 import type { Layout, Tile } from '../src/lib/layout/model.ts';
 import { DESK, openStarter } from './inspector-helpers.ts';
-import { gridPage, importText, status, tile, waitEvent } from './layout-helpers.ts';
+import { errorDetail, gridPage, importText, status, tile, waitEvent } from './layout-helpers.ts';
 
 const folder = process.env.TD_SHOTS;
 
@@ -141,10 +141,11 @@ test('a Page with more GIF Tiles than the Device plays is refused when sent, and
   await expect(tile(page, 'gif1').getByTestId('gif-missing')).toBeVisible();
   await page.getByTestId('push').click();
   await waitEvent(page, 'push-failed');
-  await expect(status(page).locator('.editor-status-text')).toHaveText('This Page has too many animations for Desk. Remove an animated Tile.');
-  await expect(page.getByTestId('status-detail')).toContainText('layout.animation_limit');
+  const refused = 'This Page has too many animations for Desk. Remove an animated Tile.';
+  await expect(status(page).locator('.editor-status-text')).toHaveText(refused);
   await shot(page, 'gif-refused');
   expect(await record(page)).toEqual(before);
+  await expect(await errorDetail(page, refused)).toContainText('layout.animation_limit');
 });
 
 test('with reduced motion the editor shows each GIF paused on its first frame', async ({ page }) => {

@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { openSettings } from './layout-helpers.ts';
 
 const UNREACHABLE = "Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry.";
 
@@ -10,7 +11,7 @@ async function errorToast(page: Page) {
   });
   await page.goto('/');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings' }).click();
+  await openSettings(page, 'browsers');
   await page.getByTestId('open-browser').click();
   return page.locator('[data-sonner-toast]').filter({ hasText: UNREACHABLE });
 }
@@ -70,6 +71,13 @@ test('toasts sit at the bottom centre, clear of the details panel and the nav', 
   const box = (await error.boundingBox())!;
   const width = page.viewportSize()!.width;
   expect(Math.abs(box.x + box.width / 2 - width / 2)).toBeLessThan(2);
+  const dock = (await page.locator('.nav-dock').boundingBox())!;
+  await expect
+    .poll(async () => {
+      const settled = (await error.boundingBox())!;
+      return settled.y + settled.height;
+    }, { message: 'the toast rises above the nav' })
+    .toBeLessThanOrEqual(dock.y);
 });
 
 test('toasts drop their slide when the system asks for reduced motion', async ({ page }) => {

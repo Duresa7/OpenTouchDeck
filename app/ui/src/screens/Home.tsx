@@ -63,8 +63,8 @@ function DeviceCard({ device, width }: { device: DeviceSummary; width: number })
     <div className="device-caption">
       <span className="device-name-row">
         <span className="device-name" title={name}>{name}</span>
-        <span className="device-status-box" title={`${name}: ${status.words}`}>
-          <StatusBox tone={status.tone} label={`${name}: ${status.words}`} testId="device-status" />
+        <span className="visually-hidden" data-testid="device-status" data-tone={status.tone}>
+          {name}: {status.words}
         </span>
       </span>
       <span className="device-meta">

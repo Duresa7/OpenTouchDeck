@@ -55,7 +55,7 @@ UI tickets copy strings from here. When a screen needs a string this guide doesn
 | --- | --- | --- | --- |
 | Update | Updating… {pct}% | Updated to {version} | Couldn't update. {fix} |
 | Install Firmware | Installing Firmware… {pct}% | Firmware installed | Couldn't install Firmware. {fix} |
-| Send to Device | Sending… | Sent to {device} | Couldn't send to {device}. {fix} |
+| Send to Device | Sending… | Saved on the button, then it folds away; Sent to {device} in the status line | Couldn't send to {device}. {fix} |
 | Load from {device} | Loading… | Loaded “{layout}” from {device} | Couldn't load from {device}. {fix} |
 | Restart | Restarting… | (the Device's status returns to Connected) | Couldn't restart {device}. {fix} |
 | Repair | Repairing… {pct}% | Repaired | Couldn't repair {device}. {fix} |
@@ -132,7 +132,7 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | Name | Error, too long | Names can be up to {max} characters. |
 | Orientation | Heading | How does it stand? |
 | Orientation | Options | Landscape, Portrait |
-| Orientation | Hint | Each orientation keeps its own Layout. You can change it later in the Device panel. |
+| Orientation | Hint | Each orientation keeps its own Layout. You can change it later in Settings. |
 | Starting Layout | Heading | Pick a starting Layout |
 | Starting Layout | Option | Starter Layout |
 | Starting Layout | Option hint | Media controls and everyday shortcuts, ready to change. |
@@ -199,14 +199,16 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | Offline | You're offline. Connect to the internet, then retry. |
 | Install failed | Couldn't start the installer. Retry, or download it from the releases page. |
 
-### Device panel
+### Device settings
 
-Opens from the Device's name.
+A Device's page in Settings, under **Devices**. The pencil beside the Device's name in the editor renames it in place.
 
 | Element | String |
 | --- | --- |
 | Name field label | Name |
-| Name hint | Stored on {device}. |
+| Pencil, tooltip | Rename {device} |
+| Pencil, tooltip, not connected | Plug in {device} to rename it |
+| Name input, accessible name | Device name |
 | Name error, empty | Give the Device a name. |
 | Name error, too long | That name is too long for the Device. |
 | Name error, control characters | Remove tabs, line breaks and other special characters. |
@@ -252,7 +254,7 @@ Opens from the Device's name.
 | Save failed | Couldn't save to {device}. Check that it's plugged in, then retry. |
 | Not connected | Plug in {device} to change its settings. |
 
-### Device panel, Wi-Fi
+### Device settings, Wi-Fi
 
 One section for the network the Device joins (radio build only, set over USB), its Pairing with this app over that network, and the Carrier. `{ssid}` is the network name the user typed.
 
@@ -321,7 +323,7 @@ One section for the network the Device joins (radio build only, set over USB), i
 | Carrier, USB | Connected over USB |
 | Carrier, Wi-Fi | Connected over Wi-Fi at {address} |
 
-### Device panel, Bluetooth keyboard
+### Device settings, Bluetooth keyboard
 
 Shown only for a Device whose Firmware has the Bluetooth keyboard (the radio build). It changes only over USB. A Keyboard host is a computer or phone it types on; the copy says "computer or phone" and keeps "pair" for the Wi-Fi Pairing.
 
@@ -392,8 +394,16 @@ Shown only for a Device whose Firmware has the Bluetooth keyboard (the radio bui
 
 | Element | String |
 | --- | --- |
-| Dialog title | Settings |
-| Close button label | Close |
+| Page title, nav | Settings |
+| Category labels | General, Devices, App |
+| Categories | General, {device} (one per Device), Paired browsers, Troubleshooting, Errors, About |
+| Category, no Device | No Device |
+| Errors, lede | What went wrong since Open TouchDeck opened, newest first. |
+| Errors, empty | No errors. |
+| Errors, clear button | Clear |
+| Errors, copy button label | Copy |
+| Error card, where | Layout · {device} |
+| Error card button | Details |
 | Start at sign-in toggle | Start at sign-in |
 | Start at sign-in hint | Runs in the tray when you sign in to Windows, so your Devices work right away. |
 | Appearance label | Appearance |
@@ -515,7 +525,7 @@ Opens from Settings, and from Get more icons in the icon picker.
 | Too many imports | You can import up to 20 packs. Remove one, then import “{file}” again. |
 | Footnote | Downloads come from the npm registry and must match a pinned checksum. Logos belong to their owners. |
 
-## Tooltip names for the bottom-left icons
+## Tooltip names for the nav icons
 
 | Icon | Tooltip |
 | --- | --- |

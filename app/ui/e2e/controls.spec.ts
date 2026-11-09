@@ -4,7 +4,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type { Capabilities, ControlLayout } from '../src/lib/companion/api.ts';
 import type { GridPage, Layout, Tile } from '../src/lib/layout/model.ts';
 import { consoleErrors, sideScroll, spills, underDock } from './break-helpers.ts';
-import { layoutOf, waitEvent } from './layout-helpers.ts';
+import { errorCard, errorDetail, layoutOf, waitEvent } from './layout-helpers.ts';
 
 const shots = process.env.TD_SHOTS;
 
@@ -92,7 +92,7 @@ test('a Device that needs a Send: Home notice, Review Layout, Send, Checking con
   await onDevice(page, RECOVERED, NO_COPY);
 
   const desk = card(page, 'Desk');
-  await expect(desk.getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
+  await expect(desk.getByTestId('device-status')).toHaveText(/: Connected/);
   await expect(desk.getByTestId('controls-notice')).toHaveAttribute('data-state', 'no-pushed-copy');
   await expect(desk.getByTestId('controls-notice')).toContainText('Controls need Send to Device');
   await expect(card(page, 'Studio').getByTestId('controls-notice')).toHaveCount(0);
@@ -143,7 +143,7 @@ test('Review Layout goes through the load flow and keeps an unsent draft until t
   await onDevice(page, RECOVERED, NO_COPY);
   await card(page, 'Desk').locator('.device-hit').click();
   await page.getByTestId('start-new').click();
-  await expect(page.getByTestId('save-state')).toHaveAttribute('data-state', 'unsent');
+  await expect(page.getByTestId('editor-head')).toHaveAttribute('data-save-state', 'unsent');
   await page.getByTestId('controls-review').click();
   await expect(page.getByTestId('replace-dialog')).toBeVisible();
   await page.getByTestId('keep-mine').click();
@@ -165,12 +165,15 @@ test('a Send that fails keeps the guidance and the details', async ({ page }) =>
   await waitEvent(page, 'pulled');
   await page.getByTestId('push').click();
   await waitEvent(page, 'push-failed');
-  await expect(page.getByTestId('status-detail')).toContainText('asset.unsupported');
+  const failed = (await page.getByTestId('status').locator('.editor-status-text').textContent()) ?? '';
+  await expect(errorCard(page, failed)).toBeVisible();
+  await expect(page.getByTestId('push'), 'a failed send never says Saved').toHaveAttribute('data-state', 'send');
   await expect(notice(page)).toHaveAttribute('data-state', 'no-pushed-copy');
   await expect(page.getByTestId('controls-notice-body')).toHaveText(NO_COPY_TEXT);
   await expect(page.getByTestId('control-binding')).toHaveCount(3);
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await expect(card(page, 'Desk').getByTestId('controls-notice')).toHaveAttribute('data-state', 'no-pushed-copy');
+  await expect(await errorDetail(page, failed)).toContainText('asset.unsupported');
 });
 
 test('a check that ends unread says so on Home and in the editor, and Home announces it', async ({ page }) => {
@@ -240,7 +243,7 @@ test('an offline Device and a matching or control-free Layout show nothing new',
     { state: 'unavailable', reason: 'read-failed' },
   ] satisfies ControlLayout[]) {
     await page.evaluate((next) => window.touchdeckDemo?.controls.set('mock0001', next), status);
-    await expect(card(page, 'Desk').getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
+    await expect(card(page, 'Desk').getByTestId('device-status')).toHaveText(/: Connected/);
     await expect(page.getByTestId('controls-notice')).toHaveCount(0);
   }
 });
@@ -299,9 +302,8 @@ for (const theme of ['light', 'dark'] as const) {
         await noSpill(page, `failed-${size}-${theme}`);
         await shot(page, `failed-${size}-${theme}`);
 
-        await page.getByTestId('status').getByText('Details').click();
-        await expect(page.getByTestId('status-detail')).toBeVisible();
-        await page.locator('.canvas').evaluate((canvas) => canvas.scrollTo(0, canvas.scrollHeight));
+        const failed = (await page.getByTestId('status').locator('.editor-status-text').textContent()) ?? '';
+        await expect(await errorDetail(page, failed)).toBeVisible();
         await noSpill(page, `failed-details-${size}-${theme}`);
         await shot(page, `failed-details-${size}-${theme}`);
       });

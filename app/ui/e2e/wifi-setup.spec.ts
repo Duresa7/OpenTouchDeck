@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openLayout } from './layout-helpers.ts';
+import { openDeviceSettings, openLayout } from './layout-helpers.ts';
 
 // Desk (mock0001) runs the radio build in the demo; Studio (mock0002) runs the normal build. The fake Companion's
 // networks and every password here are made up.
@@ -10,8 +10,7 @@ const wifiStatus = (page: Page) => page.getByTestId('device-panel-wifi-setup-sta
 
 async function openPanel(page: Page) {
   await openLayout(page);
-  await page.getByTestId('device-name').click();
-  await expect(page.getByTestId('device-panel')).toBeVisible();
+  await openDeviceSettings(page);
   await expect(wifiStatus(page)).toHaveAttribute('data-state', 'off');
 }
 
@@ -38,8 +37,9 @@ test('joins a network, and the password field empties and never comes back', asy
   expect(await stored(page)).toEqual({ ssid: NETWORK, password: PASSWORD });
   expect(await page.content()).not.toContain(PASSWORD);
 
-  await page.keyboard.press('Escape');
-  await page.getByTestId('device-name').click();
+  await page.getByRole('button', { name: 'Layout', exact: true }).click();
+  await expect(page.getByTestId('editor')).toBeVisible();
+  await openDeviceSettings(page);
   await expect(wifiStatus(page)).toHaveAttribute('data-state', 'connected');
   await expect(page.getByTestId('device-panel-wifi-setup-password')).toHaveValue('');
 });
@@ -79,7 +79,7 @@ test('a Device on the normal build shows pairing but no Wi-Fi setup', async ({ p
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Edit Studio' }).click();
   await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0002');
-  await page.getByTestId('device-name').click();
+  await openDeviceSettings(page);
   await expect(page.getByTestId('device-panel-name')).toBeEnabled();
   await expect(page.getByTestId('device-panel-wifi')).toBeVisible();
   await expect(page.getByTestId('device-panel-wifi-setup')).toHaveCount(0);

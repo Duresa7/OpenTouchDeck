@@ -82,6 +82,7 @@ export function InspectorResizer({ editor, width, limits, onWidth }: { editor: R
         now.frame = requestAnimationFrame(() => {
           now.frame = 0;
           editor.current?.style.setProperty('--inspector-w', `${now.next}px`);
+          document.documentElement.style.setProperty('--dock-inset', `${now.next}px`);
           handle.current?.setAttribute('aria-valuenow', String(now.next));
         });
       }}

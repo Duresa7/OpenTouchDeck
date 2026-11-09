@@ -94,6 +94,23 @@ test('isolated shell, exact preload, navigation, renewal, single instance and cl
   } finally { await app.close(); await fake.close(); }
 });
 
+test("the window's local storage survives a restart, so Layout drafts are kept", async () => {
+  const fake = await fakeCompanion();
+  const env = { ...process.env, TOUCHDECK_APP_DATA_DIR: fake.dir };
+  delete env.ELECTRON_RUN_AS_NODE;
+  try {
+    for (const before of [null, 'kept']) {
+      const app = await electron.launch({ args: [resolve('.')], env });
+      try {
+        const page = await app.firstWindow();
+        await page.waitForURL(fake.origin + '/');
+        expect(await page.evaluate(() => localStorage.getItem('touchdeck.restart-check'))).toBe(before);
+        await page.evaluate(() => localStorage.setItem('touchdeck.restart-check', 'kept'));
+      } finally { await app.close(); }
+    }
+  } finally { await fake.close(); }
+});
+
 test('wrong proof never loads a window or hands over credentials', async () => {
   const fake = await fakeCompanion({ wrongProof: true });
   // The stand-in "Companion" exits at once, so the shell keeps seeing the impostor's runtime file.

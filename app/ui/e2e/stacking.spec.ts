@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { importText, menu, openLayout, waitEvent } from './layout-helpers.ts';
+import { importText, menu, openLayout, openSettings as openSettingsAt, waitEvent } from './layout-helpers.ts';
 
 const devText = readFileSync(join(import.meta.dirname, '..', '..', '..', 'schema', 'examples', 'dev.json'), 'utf8');
 const folder = process.env.TD_SHOTS ?? '';
@@ -27,10 +27,10 @@ async function openHome(page: Page, path = '/') {
   await page.evaluate(() => document.fonts.ready);
 }
 
+/** Settings at Paired browsers, whose Reset opens a confirm. */
 async function openSettings(page: Page) {
   await openHome(page);
-  await page.getByRole('button', { name: 'Settings' }).click();
-  const settings = page.getByRole('dialog', { name: 'Settings' });
+  const settings = await openSettingsAt(page, 'browsers');
   await expect(settings.getByTestId('paired-browser')).toHaveCount(2);
   return settings;
 }
@@ -55,12 +55,14 @@ async function openReplace(page: Page) {
   return confirm;
 }
 
-test.describe('the nav dock sits under every dialog', () => {
-  test('Settings', async ({ page }) => {
-    await openSettings(page);
-    expect((await topAt(dock(page))).className).toBe('scrim');
-  });
+test('the nav dock draws over the Settings page', async ({ page }) => {
+  await openSettings(page);
+  const at = await topAt(dock(page));
+  expect(at.inside).toBe(true);
+  expect(at.below.some((name) => name.includes('settings'))).toBe(true);
+});
 
+test.describe('the nav dock sits under every dialog', () => {
   test('the Update dialog', async ({ page }) => {
     await openUpdate(page);
     expect((await topAt(dock(page))).className).toBe('scrim');
@@ -74,15 +76,11 @@ test.describe('the nav dock sits under every dialog', () => {
 
 test('a confirm opened from Settings draws over Settings and its scrim covers it', async ({ page }) => {
   const settings = await openSettings(page);
-  const close = page.locator('.dialog-settings [aria-label="Close"]');
   await settings.getByRole('button', { name: 'Reset', exact: true }).click();
   const confirm = page.getByRole('alertdialog', { name: 'Reset pairing?' });
   await expect(confirm).toBeVisible();
   expect((await topAt(confirm)).inside).toBe(true);
-  // Clicking Reset may scroll the Settings dialog, which is taller than the window, so its head
-  // goes out of view. Bring it back to see what covers its Close button.
-  await close.evaluate((el) => el.closest('.dialog-settings')?.scrollTo(0, 0));
-  expect((await topAt(close)).className).toBe('scrim');
+  expect((await topAt(page.getByTestId('settings-nav-general'))).className).toBe('scrim');
   expect((await topAt(dock(page))).className).toBe('scrim');
 });
 

@@ -99,6 +99,29 @@ test('without graph Firmware a This PC Preset stays a value Tile', async ({ page
   await expect(placed.getByTestId('tile-graph')).toHaveCount(0);
 });
 
+test('a Live tile offers its own Integration and CLIProxyAPI by name, with its readings by name', async ({ page }) => {
+  await openLayout(page);
+  await page.getByTestId('start-starter').click();
+  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
+  await page.getByTestId('add-presets').locator('[data-id="this_pc"] [data-preset="cpu_pct"]').click();
+  const source = page.getByTestId('action-source');
+  await expect(source).toHaveValue('this_pc');
+  expect((await source.locator('option').allTextContents()).sort()).toEqual(['CLIProxyAPI', 'This PC']);
+  const field = page.getByTestId('action-field');
+  await expect(field).toHaveValue('cpu_pct');
+  await expect(field.locator('option:checked')).toHaveText('CPU usage');
+  await expect(field.locator('option')).toHaveCount(10);
+  await expect(page.getByTestId('action-account')).toHaveCount(0);
+
+  await source.selectOption({ label: 'CLIProxyAPI' });
+  await expect(source).toHaveValue('cliproxyapi');
+  await expect(page.getByTestId('action-account')).toBeVisible();
+  const action = gridPage(layoutOf(await exportText(page)).pages[1]).tiles.find((t) => t.row === 2 && t.col === 2)?.action;
+  expect(action).toMatchObject({ type: 'widget', source: 'cliproxyapi', account: '' });
+  expect(action).not.toMatchObject({ field: 'cpu_pct' });
+});
+
 test('an offline Device shows its graphs stale, at 60% with the unavailable marker', async ({ page }) => {
   await starterWithGraphs(page);
   await tile(page, 'next').click();

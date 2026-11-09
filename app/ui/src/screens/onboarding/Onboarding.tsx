@@ -185,7 +185,7 @@ function OrientationStep({ setup, headingId }: { setup: SetupStore; headingId: s
         ))}
       </div>
       <p className="field-hint" id={`${id}-hint`}>
-        Each orientation keeps its own Layout. You can change it later in the Device panel.
+        Each orientation keeps its own Layout. You can change it later in Settings.
       </p>
     </>
   );
@@ -302,7 +302,7 @@ function WifiStep({ device, headingId }: { device: DeviceSummary; headingId: str
           {opening(called)} runs the radio build. Wi-Fi and Bluetooth stay off until you set them up.
         </p>
       </div>
-      <p className="field-hint">Set up Wi-Fi in the Device panel, now or later. Until then, {called} works over USB as usual.</p>
+      <p className="field-hint">Set up Wi-Fi in Settings, now or later. Until then, {called} works over USB as usual.</p>
     </>
   );
 }

@@ -13,7 +13,7 @@ A Device is a 5-inch, 1024 × 600 touchscreen with a black glass bezel. The app 
 ### Principles
 
 1. **Only lit things have color.** The screen, the status lights and the focus ring glow. Everything else is ink on a surface. Primary buttons are ink, not blue.
-2. **The Device is an object, not a card.** It has a bezel, a contact shadow and, in dark mode, light spilling onto the mat. No rounded panel wraps it.
+2. **The Device is an object, not a card.** It has a bezel and a contact shadow. No light spills onto the mat, and no rounded panel wraps it.
 3. **Chrome is small, solid and quiet.** Navigation, the inspector and dialogs never compete with the screen. Surfaces are opaque. No blur and no translucent panels: blur over a busy dark screen hurts legibility and costs GPU time in Electron.
 4. **The app borrows the Device's vocabulary.** The pager pill marks the current Page, Preset tiles are drawn in screen colors, and the app and the Firmware share one typeface, Archivo.
 5. **Each color has one meaning.** Green means connected. Amber means something waits for you. Blue is the Device's accent and your keyboard focus. Selection in the app's own chrome uses ink, so blue stays unambiguous.
@@ -31,7 +31,7 @@ Light is the default. Dark follows `prefers-color-scheme`. The Appearance settin
 | Token | Value | Role |
 | --- | --- | --- |
 | `--palette-ash-felt` | `#e4e6e9` | Light desk mat |
-| `--palette-slate-felt` | `#1f252c` | Dark desk mat, lighter than the bezel so the glass reads as the darkest thing |
+| `--palette-night` | `#000000` | Dark desk mat: true black. The bezel's edge highlight and shadow set the glass apart from it |
 | `--palette-bezel` | `#15171a` | The Device's black glass, both themes |
 | `--palette-screen` | `#081018` | The Device's screen background |
 | `--palette-backlight` | `#58a8ff` | The Device's accent, selection on the Device, dark-theme focus |
@@ -42,8 +42,8 @@ Light is the default. Dark follows `prefers-color-scheme`. The Appearance settin
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
-| `--mat` | `#e4e6e9` | `#1f252c` | Window background |
-| `--mat-grain` | 0.045 | 0.06 | Opacity of the felt grain over the mat |
+| `--mat` | `#e4e6e9` | `#000000` | Window background |
+| `--mat-grain` | 0.045 | 0 | Opacity of the felt grain over the mat; none on black |
 | `--surface` | `#f6f7f8` | `#262d35` | Inspector rail, Integrations list |
 | `--surface-raised` | `#ffffff` | `#2c343d` | Dialogs, popovers, nav cluster, inputs, secondary buttons |
 | `--surface-inset` | `#eceef0` | `#1b2026` | Grouped Settings rows, change list, tracks |
@@ -149,7 +149,6 @@ The Device's case is `--bezel` with a 1px `--bezel-edge` highlight (white at 7%)
 | `--shadow-float` | The nav cluster |
 | `--shadow-float-filter` | The Update icon. It's clipped, which would cut a box-shadow, so it casts this drop-shadow from its wrapper |
 | `--shadow-dialog` | Dialogs and popovers, always with a 1px `--line` ring |
-| `--spill-opacity` | 0 in light, 0.32 in dark: screen light falling on the mat under a connected Device |
 
 ### Focus
 
@@ -174,14 +173,15 @@ Each part below is in the reference prototype; [Reference prototype](#reference-
 
 ### Nav cluster
 
-- Fixed at the bottom left, 16px from both edges. Order: Home, Layout, Integrations, Settings.
+- Fixed at the bottom centre, 12px up. In the Layout editor it centres over the canvas rather than the window, and slides with the Details panel as it opens and closes. It doesn't slide when you switch screens. Order: Home, Layout, Integrations, Settings.
+- Toasts centre on the same line and rise 72px from the bottom, so they sit above it.
 - A puck of `--surface-raised` with radius 12, 4px padding, 2px gaps, a 1px `--line` ring and `--shadow-float`.
-- Buttons are 36 × 36, radius 8, with an 18px Lucide icon at stroke 1.9 in `--ink-2`. Hover: `--fill-hover` and `--ink`. Current: `--fill-active` and `--ink`, with `aria-current="page"`. Settings shows as current while the Settings dialog is open.
+- Buttons are 36 × 36, radius 8, with an 18px Lucide icon at stroke 1.9 in `--ink-2`. Hover: `--fill-hover` and `--ink`. Current: `--fill-active` and `--ink`, with `aria-current="page"`. Settings is current while its page is open.
 - A tooltip above each button names it after a 500ms delay. Later tooltips open instantly while the pointer stays in the cluster.
 
 ### Update icon
 
-A separate puck 8px right of the nav cluster, so nothing it does moves the nav icons. It isn't rendered when no update exists.
+A separate puck 8px right of the nav cluster. An empty column of the same width on the cluster's left keeps the nav icons centred, so nothing it does moves them. Only the visible part of the icon takes clicks. It isn't rendered when no update exists.
 
 | State | Icon | Label |
 | --- | --- | --- |
@@ -204,19 +204,14 @@ A separate puck 8px right of the nav cluster, so nothing it does moves the nav i
 
 Opened from the keyboard, focus lands on the first control. Opened with the pointer, focus goes to the dialog itself, so no ring appears. Escape closes it and focus returns to the Update icon. Each dialog has at most one primary button.
 
-### Settings dialog
+### Settings
 
-600 wide. A head row with the nameplate title and a 32px close icon button. Sections have a 14/620 heading over a group of rows in `--surface-inset` with a `--line` ring. A row is at least 56 tall: title 14/520 and an optional 12px hint in `--ink-2` on the left, the control on the right. Rows inside a group are split by a `--line` hairline.
+A full screen, like Home or Integrations, reached from the nav's Settings icon. Switching to it never animates.
 
-Controls in rows: a switch, a segmented control (the theme: System, Light, Dark) or a secondary button. Settings for one Device aren't here; they're in the Device panel.
-
-### Device panel
-
-A popover anchored to the Device's name in the editor header: below it, aligned to its start, 8px away. The name keeps its place, so the panel reads as the name opening up.
-
-- 320 wide, 16px padding, `--radius-group`, `--surface-raised`, a `--line` ring and `--shadow-dialog`. Title 14/620.
-- Fields, top to bottom: Name (input), Orientation (segmented), Brightness (slider, with the value tabular at the label's right), Photo frame (a switch; when on, Start after (select) and Folder, the path in one ellipsized line with Choose folder on its right in the desktop app only), then a row with the Firmware version and its status on the left and Restart on the right.
-- The trigger is the nameplate name with a chevron. It shows `--fill-active` while the panel is open, and the chevron turns 180°.
+- **Categories** down the left in a 232-wide `--surface` column with a 1px `--line` right edge, sticky to the window's height: the nameplate title "Settings", then **General**; a **Devices** label over one entry per Device, named by it; an **App** label over **Paired browsers**, **Troubleshooting**, **Errors** and **About**. Labels are 12/620 `--ink-2`. An entry is 36 tall with a 16px icon and its name in 14/520 `--ink-2`; hover is `--fill-hover`, the current one `--fill-active` in `--ink` with `aria-current="page"`. **Errors** shows its count in a `--danger-ink` pill. Below 760 wide the column sits above the content.
+- **Content,** at most 760 wide with 40 × 48 padding: a 24/620 nameplate page title, which takes focus when the category changes, and an optional `--ink-2` lede. Sections have a 14/620 heading over a group of rows in `--surface-inset` with a `--line` ring. A row is at least 56 tall: title 14/520 and an optional 12px hint in `--ink-2` on the left, the control on the right. Rows inside a group are split by a `--line` hairline. Controls in rows: a switch, a segmented control (the theme: System, Light, Dark) or a secondary button.
+- **A Device's page** is titled with its name, its status as the lede. Its fields sit in `--surface-inset` cards with 16px padding and 20px between fields, under the headings General (Name, Orientation), Screen (Brightness, with the value tabular at the label's right; Photo frame, a switch, then Start after and Folder when on), Wireless (Wi-Fi, Bluetooth keyboard) and Firmware (the version and its status with Update and Restart, then the Firmware build). A Device that isn't connected leads with a `--signal-tint` line asking to plug it in.
+- **Errors** lists what went wrong since the window opened, newest first, at most 50: a `--surface-inset` card each with the message in 14/520, the time and where in 12px `--ink-2`, a Copy icon button, and the detail in a `--surface-raised` monospace block. **Clear** empties it.
 
 ### Home
 
@@ -225,20 +220,26 @@ Home has no headline. The Devices are the content, centered on the mat.
 - **One Device:** drawn 560px wide, name at 24 nameplate.
 - **Two or three:** 312px each, in one row with 56px gaps.
 - **More than three:** the row wraps. Not prototyped yet.
-- **Caption under each Device**, aligned to its left edge: the name in nameplate 18/620, cut with an ellipsis, then a row with the status light and its words. A Device that isn't connected adds when it was last seen. A Firmware update adds the amber badge.
+- **Caption under each Device**, aligned to its left edge: the name in nameplate 18/620, cut with an ellipsis. There is no status light: the lit screen says the Device is connected, and screen readers hear the name with its status. A Device that isn't connected shows its status words and when it was last seen. A Firmware update adds the amber badge.
 - **The Device is the button.** Clicking it opens its Layout. On a fine pointer it lifts 2px with `--shadow-device-lifted`.
-- **Connected:** the lit screen and, in dark mode, the light spill on the mat.
-- **Not connected:** the saved Page stays visible through the offline preview tokens, with no spill. The status light is `--led-off`, and both the status and last-seen words stay.
+- **Connected:** the lit screen.
+- **Not connected:** the saved Page stays visible through the offline preview tokens. The status and last-seen words show under the name.
 - **Controls need Send to Device:** a connected Device whose controls wait for **Send to Device** keeps its status row and adds a second row under it: a `--signal-led` light with its words, then a small secondary **Review Layout** button. After Send to Device it shows a `--led-off` light with "Checking controls…" until the Companion reports a match, or a `--signal-led` light with "Couldn't check…" when the Companion can't read the Layout. Both are polite live regions, and the light sits on the first line when the words wrap.
 - **No Devices:** a switched-off Device silhouette, 360px at 55% opacity, then a nameplate title, a 16px body in `--ink-2` that asks for a USB data cable, a 14px line about New boards, and a secondary **Connection help** button. No promise about how long detection takes. Max width 440.
 
 ### Layout editor
 
-A grid of the canvas and a 340px inspector rail on the right edge.
+A grid of the canvas and the Details panel on the right edge, 340 to 600 wide, resized from its left edge.
 
-**Header,** 64 tall over the canvas: the Device panel trigger, the connection status, then on the right the save state (12px `--ink-2` with a check) and **Add Tile**, a secondary button with a plus icon.
+**Hiding the Details panel.** The panel button at the right end of the header hides it. The panel slides out to the right over `--duration-expand` with `--ease-drawer`, keeping its width so nothing inside squeezes, and the canvas takes its room. Selecting a Tile (a click or Enter, not the press that starts a drag), **Add Tile**, an empty cell, **Review** in the controls notice, or an approval waiting for this Device brings it back. Hiding it ends Add Tile.
 
-**Canvas.** The Device, centered, drawn between 420 and 680 wide to fit, with no light spill. Under it, 32px down, the Page tabs: 34 tall, `--ink-2`; the current tab is `--ink` with an 18 × 4 `--accent` pill 6px below, the same shape as the Device's pager. **+ Page** follows in `--ink-2`; it's an enabled action, so it never uses the disabled color.
+**Header,** 64 tall over the canvas: the Device's name on the left in nameplate 18/620 with a 32px pencil icon button in `--ink-2` after it, then on the right the orientation buttons, Preview, the Layout menu, **Add Tile** (a secondary button with a plus icon), **Send to Device** and the Details panel button. There is no save state and no connection light. The pencil's tooltip and Send to Device say when the Device isn't connected, and screen readers hear the connection with the Device's name.
+
+**Renaming.** The pencil swaps the name for a 240-wide input at the same size, its text selected. Enter or leaving the field saves the name to the Device; Escape keeps the old one. Enter and Escape put focus back on the pencil. A name the Device refuses keeps the field open with the reason in a small raised card under it, in `--danger-ink`.
+
+**Send to Device** shows only while the Layout has changes the Device lacks, or while its controls need a send. A click turns it into a spinner and "Sending…", then a check and "Saved" for 1.6 s, then it folds to nothing. Its width follows its words, measured, and slides over `--duration-expand` with `--ease-drawer`; it folds over `--duration-collapse`, and each new look fades in over `--duration-label`. The spinner turns once per `--duration-spin`. The Layout menu's **Send to {device}** sends again without a change.
+
+**Canvas.** The Device, centered, drawn between 420 and 680 wide to fit, or up to 860 with the Details panel hidden, with no light spill. Under it, 32px down, the Page tabs: 34 tall, `--ink-2`; the current tab is `--ink` with an 18 × 4 `--accent` pill 6px below, the same shape as the Device's pager. **+ Page** follows in `--ink-2`; it's an enabled action, so it never uses the disabled color.
 
 On the canvas, the editor adds marks the Device never draws, in screen pixels:
 
@@ -247,6 +248,12 @@ On the canvas, the editor adds marks the Device never draws, in screen pixels:
 - **Add Tile target:** the cell gets a 5px solid `--screen-accent` outline, a `--screen-tile` fill and an accent plus.
 
 **Controls notice.** Above the Device on the canvas, at most 680 wide, while the open Device's controls wait for **Send to Device**: `--signal-tint` with a `--line` ring and `--radius-group`, a 14/620 `--signal-ink` title led by a `--signal-led` light, one 12px paragraph in `--ink` whose last sentence is `--ink-2`, and one small secondary button on the right. The canvas counts the notice's full height when it fits the Device. Below 700 tall, the canvas over the Device pads 16 on top and spaces its parts 16 apart while any notice shows, and the notice pads 8 × 12. When the Device is already at its 420 minimum, the notice gives up height before anything else and scrolls inside itself, never below its title and one line, so the Page tabs and the status line stay above the nav. While Checking it's one `--surface-raised` line with a `--led-off` light. When the check can't read the Device it's the same line in `--ink` with a `--signal-led` light. The inspector's Page details then start with a **Controls** list in a `--surface-inset` group: each row names the Tile, its Page, the Integration and account, and its controls, and selects the Tile. Unknown names use `--danger-ink`.
+
+**Status line.** Under the Page tabs, 12px `--ink-2`. It reports refusals, imports and sends. A load from the Device shows nothing there, but screen readers still hear it.
+
+**Error card.** An error pops up as a toast card at the bottom centre instead of a line: the error icon in `--danger-ink`, the message, where it happened in 12px `--ink-2`, and a small **Details** button that opens **Settings > Errors**. It stays 10 s, longer while the pointer rests on it. The status line keeps the words for screen readers only.
+
+**Page details.** The Page name, then **Grid**: an 8 × 8 board of 4px-gapped squares, 220 wide, with the size in words at the label's right. Squares up to the current size are `--accent`; hovering or focusing a square previews its size at 40% `--accent` and names it, and a click, Enter or Space sets it. Only one square is in the tab order, and the arrow keys, Home and End move between them. The footer, pinned to the bottom, holds Remove Page: a quiet-danger trash icon that asks “Remove “{page}”?” on the first click and removes on the second.
 
 **Inspector.** `--surface` with a 1px `--line` left edge, 20px padding and 20px between fields. The head has a 44px Tile thumbnail in screen colors, the Tile's name at 16/620 and a 12px line saying what it is and where. The footer stays pinned to the bottom while the fields scroll: Duplicate on the left, Clear Tile (quiet danger) on the right.
 
@@ -324,7 +331,7 @@ Motion gives feedback and shows where things come from. It never decorates. Anim
 | Hover color | background, color | `--duration-hover` 150ms | `--ease-color` (`ease`) |
 | Device lift on Home (fine pointer only) | `translateY(--lift-device)` (-2px), and the lifted shadow crossfades over the resting one by `opacity` | `--duration-lift` 150ms | `--ease-out` |
 | Tooltip in | opacity, scale `--enter-scale-tooltip` (0.96) to 1 from its trigger | `--duration-tooltip` 140ms | `--ease-out` |
-| Device panel in | opacity, scale `--enter-scale` (0.97) to 1 from the trigger | `--duration-popover` 180ms | `--ease-out` |
+| Popover in | opacity, scale `--enter-scale` (0.97) to 1 from the trigger | `--duration-popover` 180ms | `--ease-out` |
 | Dialog in | opacity, scale `--enter-scale` (0.97) to 1 from the center; the scrim fades | `--duration-dialog` 220ms | `--ease-out` |
 | Any exit | the reverse of its enter | `--duration-exit` 140ms | `--ease-out` |
 | Update icon opens | `clip-path` | `--duration-expand` 280ms | `--ease-out` |
@@ -332,8 +339,10 @@ Motion gives feedback and shows where things come from. It never decorates. Anim
 | Update label in | opacity, after `--delay-label` 60ms | `--duration-label` 160ms | `--ease-out` |
 | Update label out | opacity | `--duration-label-out` 140ms | `--ease-out` |
 | Switch thumb | `translate` | `--duration-switch` 180ms | `--ease-out` |
-| Device panel chevron | `rotate(180deg)` | `--duration-chevron` 180ms | `--ease-out` |
-| A Device's screen lights up as it connects, on Home and in setup | opacity of the screen from `--screen-offline-opacity`, and of its light spill in dark | `--duration-screen-light` 240ms; dims in `--duration-exit` | `--ease-out` |
+| Send to Device grows to its words | `width`, measured | `--duration-expand` 280ms | `--ease-drawer` |
+| Send to Device folds away after Saved | `width`, opacity | `--duration-collapse` 200ms; fades in `--duration-label-out` | `--ease-drawer` |
+| Send to Device's spinner | `rotate`, one turn | `--duration-spin` 800ms, repeating | `linear` |
+| A Device's screen lights up as it connects, on Home and in setup | opacity of the screen from `--screen-offline-opacity` | `--duration-screen-light` 240ms; dims in `--duration-exit` | `--ease-out` |
 | A dropped Tile settles into its cell | `transform` | `--duration-tile-settle` 160ms | `--ease-out` |
 | Download progress | `scaleX` | `--duration-progress` 120ms | `--ease-progress` (`linear`) |
 | Theme change | background, color | `--duration-theme` 240ms | `--ease-color` |
@@ -438,7 +447,6 @@ lv_font_conv --font Archivo-Medium.ttf --size 26 --bpp 4 --format lvgl \
 The Firmware never draws these. They exist only in the app's picture of a Device or in the app's chrome:
 
 - The felt grain on the mat
-- The screen's light spilling onto the mat
 - The glass reflection across the screen
 - The bezel, its edge highlight and every shadow
 - Blur of any kind

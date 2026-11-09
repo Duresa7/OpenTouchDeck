@@ -97,7 +97,7 @@ const notice = (page: Page) => page.getByTestId('controls-notice');
 async function home(page: Page) {
   await page.goto('/');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
-  await expect(card(page).getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
+  await expect(card(page).getByTestId('device-status')).toHaveText(/: Connected/);
 }
 
 async function shot(page: Page, name: string) {
@@ -161,7 +161,7 @@ test('Review Layout goes through the load flow and keeps an unsent draft until t
   await home(page);
   await card(page).locator('.device-hit').click();
   await page.getByTestId('start-new').click();
-  await expect(page.getByTestId('save-state')).toHaveAttribute('data-state', 'unsent');
+  await expect(page.getByTestId('editor-head')).toHaveAttribute('data-save-state', 'unsent');
   await page.getByTestId('controls-review').click();
   await expect(page.getByTestId('replace-dialog')).toBeVisible();
   await page.getByTestId('keep-mine').click();
@@ -222,7 +222,7 @@ test('a matching Layout, a Device without live values, a Layout without controls
 
   await showWithoutPushedCopy(api, NO_CONTROLS);
   await expect.poll(() => assessment(api)).toEqual({ ...NO_COPY, has_controls: false });
-  await expect(card(page).getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
+  await expect(card(page).getByTestId('device-status')).toHaveText(/: Connected/);
   await expect(card(page).getByTestId('controls-notice')).toHaveCount(0);
 
   await showWithoutPushedCopy(api, RECOVERED);

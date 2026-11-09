@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { openLayout } from './layout-helpers.ts';
+import { openDeviceSettings, openLayout, settingsPage } from './layout-helpers.ts';
 
 // In the demo, Desk (mock0001) runs the opt-in radio build and Studio (mock0002) the normal build.
 const build = (page: Page) => page.getByTestId('device-panel-build');
@@ -18,8 +18,7 @@ async function openPanel(page: Page, device: 'Desk' | 'Studio', { starter = fals
     await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0002');
   }
   if (starter) await page.getByTestId('start-starter').click();
-  await page.getByTestId('device-name').click();
-  await expect(page.getByTestId('device-panel')).toBeVisible();
+  await openDeviceSettings(page);
   await expect(toggle(page)).toBeVisible();
 }
 
@@ -38,7 +37,7 @@ test('a Device on the radio build switches back after a warning that its Wi-Fi a
   await expect(build(page)).toHaveAttribute('data-channel', 'normal');
   await expect(current(page)).toHaveText('Normal build');
   await expect(toggle(page)).toHaveText('Install the radio build');
-  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over USB$/);
+  await expect(settingsPage(page).locator('.page-lede')).toHaveText('Connected over USB');
 });
 
 test('a Device on the normal build offers the radio build and says Wi-Fi and Bluetooth stay off until set up', async ({ page }) => {
@@ -71,9 +70,9 @@ test('Cancel keeps the build and starts nothing', async ({ page }) => {
 
 test('the switch is reachable with the keyboard and shows the focus ring', async ({ page }) => {
   await openLayout(page);
-  await page.getByTestId('device-name').focus();
-  await page.keyboard.press('Enter');
+  await openDeviceSettings(page);
   await expect(toggle(page)).toBeVisible();
+  await page.getByTestId('device-panel-name').focus();
   // Desk also has Wi-Fi setup and the Bluetooth keyboard before the build switch.
   const MAX_TABS = 40;
   let tabs = 0;
@@ -97,8 +96,8 @@ test('a Device linked over Wi-Fi keeps its build until it is plugged in', async 
   await page.goto('/');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Edit Stream deck by the window' }).click();
-  await page.getByTestId('device-name').click();
-  await expect(page.getByTestId('connection').getByRole('img')).toHaveAccessibleName(/: Connected over Wi-Fi$/);
+  await openDeviceSettings(page, 'mock0003');
+  await expect(settingsPage(page).locator('.page-lede')).toHaveText('Connected over Wi-Fi');
   await expect(current(page)).toHaveText('Radio build');
   await expect(toggle(page)).toHaveAttribute('aria-disabled', 'true');
   await toggle(page).dispatchEvent('click');

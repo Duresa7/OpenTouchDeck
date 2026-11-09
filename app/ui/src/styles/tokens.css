@@ -15,7 +15,7 @@
 
   /* Named palette. The semantic tokens below derive from these. */
   --palette-ash-felt: #e4e6e9; /* light desk mat */
-  --palette-slate-felt: #1f252c; /* dark desk mat */
+  --palette-night: #000000; /* dark desk mat: true black */
   --palette-bezel: #15171a; /* the Device's black glass, both themes */
   --palette-screen: #081018; /* the Device's screen background */
   --palette-backlight: #58a8ff; /* the Device's accent, selection, focus */
@@ -100,6 +100,7 @@
   --delay-label: 60ms;
   --duration-tile-settle: 160ms;
   --duration-progress: 120ms;
+  --duration-spin: 800ms; /* one turn of a busy spinner */
   --duration-status: 150ms; /* a status box changes colour */
   --delay-resizer: 120ms; /* the details panel's edge lights up after the pointer rests on it */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -219,7 +220,6 @@
   /* The Update icon is clipped, which would cut a box-shadow, so it casts a drop-shadow instead */
   --shadow-float-filter: drop-shadow(0 0 0.5px rgba(16, 20, 26, 0.3)) drop-shadow(0 6px 10px rgba(16, 20, 26, 0.12));
   --shadow-dialog: 0 2px 4px rgba(16, 20, 26, 0.08), 0 24px 64px -12px rgba(16, 20, 26, 0.3);
-  --spill-opacity: 0;
 }
 
 /*
@@ -228,8 +228,8 @@
  */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --mat: var(--palette-slate-felt);
-    --mat-grain: 0.06;
+    --mat: var(--palette-night);
+    --mat-grain: 0; /* no felt on black */
     --surface: #262d35;
     --surface-raised: #2c343d;
     --surface-inset: #1b2026;
@@ -268,13 +268,12 @@
     --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 10px 28px -8px rgba(0, 0, 0, 0.55);
     --shadow-float-filter: drop-shadow(0 0 0.5px rgba(238, 241, 245, 0.28)) drop-shadow(0 8px 12px rgba(0, 0, 0, 0.45));
     --shadow-dialog: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 28px 72px -12px rgba(0, 0, 0, 0.7);
-    --spill-opacity: 0.32; /* light from the screen falling on the mat */
   }
 }
 
 :root[data-theme='dark'] {
-  --mat: var(--palette-slate-felt);
-  --mat-grain: 0.06;
+  --mat: var(--palette-night);
+  --mat-grain: 0; /* no felt on black */
   --surface: #262d35;
   --surface-raised: #2c343d;
   --surface-inset: #1b2026;
@@ -313,7 +312,6 @@
   --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 10px 28px -8px rgba(0, 0, 0, 0.55);
   --shadow-float-filter: drop-shadow(0 0 0.5px rgba(238, 241, 245, 0.28)) drop-shadow(0 8px 12px rgba(0, 0, 0, 0.45));
   --shadow-dialog: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 28px 72px -12px rgba(0, 0, 0, 0.7);
-  --spill-opacity: 0.32; /* light from the screen falling on the mat */
 }
 
 :root[data-theme='light'] {

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { counts, validateSource, type Layout } from '../src/lib/layout/model.ts';
 import { worstCase } from './fixtures/worst-case.ts';
-import { drag, exportText, gridPage, importText, layoutOf, menu, openLayout, placeOf, sorted, status, swipe, tile, waitEvent } from './layout-helpers.ts';
+import { drag, errorCard, errorDetail, exportText, gridCell, gridPage, importText, layoutOf, menu, openLayout, placeOf, sorted, status, swipe, tile, waitEvent } from './layout-helpers.ts';
 
 const examples = join(import.meta.dirname, '..', '..', '..', 'schema', 'examples');
 const devText = readFileSync(join(examples, 'dev.json'), 'utf8');
@@ -51,20 +51,20 @@ test('moves F5 onto a free cell, then refuses a move onto Mute and keeps F5 in p
   await drag(page, 'f5', quiet.row, quiet.col, 'move');
   await expect(status(page)).toHaveAttribute('data-kind', 'error');
   await expect(status(page).locator('.editor-status-text')).toHaveText('That spot is taken by “Mute”. Pick an empty one.');
-  await expect(page.getByTestId('status-detail')).toHaveText('overlaps quiet');
   expect(await placeOf(page, 'f5')).toMatchObject(free);
+  await expect(await errorDetail(page, 'That spot is taken by “Mute”. Pick an empty one.')).toHaveText('overlaps quiet');
 });
 
 test("sends and shows the Device's Page and Tile counts", async ({ page }) => {
   await importDev(page);
-  await expect(page.getByTestId('save-state')).toHaveAttribute('data-state', 'unsent');
+  await expect(page.getByTestId('editor-head')).toHaveAttribute('data-save-state', 'unsent');
   await page.getByTestId('push').click();
   const { pages, tiles } = counts(dev);
   const sent = await waitEvent(page, 'pushed');
   await expect(sent).toHaveAttribute('data-pages', String(pages));
   await expect(sent).toHaveAttribute('data-tiles', String(tiles));
   await expect(sent).toHaveText('Sent to Desk');
-  await expect(page.getByTestId('save-state')).toHaveText('Saved on Device');
+  await expect(page.getByTestId('editor-head')).toHaveAttribute('data-save-state', 'saved');
   expect((await record(page)).layouts.landscape?.name).toBe(dev.name);
   await menu(page, 'prune');
   await expect(await waitEvent(page, 'assets-removed')).toHaveText('Removed 0 unused Assets from Desk');
@@ -93,7 +93,7 @@ test("loads the Device's Layout after a confirm, and every Tile matches", async 
   const loaded = layoutOf(await exportText(page));
   const stored = (await record(page)).layouts.landscape!;
   expect(sorted(loaded)).toEqual(sorted(stored));
-  await expect(page.getByTestId('save-state')).toHaveAttribute('data-state', 'saved');
+  await expect(page.getByTestId('editor-head')).toHaveAttribute('data-save-state', 'saved');
   expect((await drawn(page)).sort()).toEqual(gridPage(stored.pages[0]).tiles.map((t) => t.id).sort());
 });
 
@@ -126,7 +126,9 @@ test('renders a 64-Tile Page and times five sends', async ({ page }) => {
   await page.evaluate(() => performance.clearMeasures('push'));
   const pushes = () => page.evaluate(() => performance.getEntriesByName('push').map((entry) => Math.round(entry.duration)));
   for (let n = 1; n <= 5; n++) {
-    await page.getByTestId('push').click();
+    // Send to Device folds away once the Device has the Layout, so the sends after the first come from the menu.
+    if (n === 1) await page.getByTestId('push').click();
+    else await menu(page, 'menu-push');
     await expect.poll(async () => (await pushes()).length).toBe(n);
     await waitEvent(page, 'pushed');
   }
@@ -193,8 +195,7 @@ test('explains a refused change and a file it cannot open', async ({ page }) => 
   await importText(page, '{"schema": 1, "name": "Broken"', 'broken.json');
   await expect(status(page)).toHaveAttribute('data-kind', 'error');
   await expect(status(page).locator('.editor-status-text')).toHaveText('“broken.json” isn\'t a Layout file. Nothing changed.');
-  await status(page).getByText('Details').click();
-  await expect(page.getByTestId('status-detail')).toBeVisible();
+  await expect(errorCard(page, '“broken.json” isn\'t a Layout file. Nothing changed.')).toBeVisible();
   if (folder) await page.screenshot({ path: join(folder, 'layout-file-refused-light.png') });
 
   const tooMany = { ...dev, pages: Array.from({ length: 9 }, (_, i) => ({ id: `p${i}`, title: `P${i}`, kind: 'grid', rows: 1, cols: 1, tiles: [] })) };
@@ -203,10 +204,10 @@ test('explains a refused change and a file it cannot open', async ({ page }) => 
   await expect(page.getByTestId('start-layout')).toBeVisible();
 
   await importDev(page);
-  await page.getByTestId('grid-rows').selectOption('1');
+  await gridCell(page, 1, first.cols).click();
   await expect(status(page)).toHaveAttribute('data-event', 'refused');
   await expect(status(page).locator('.editor-status-text')).toHaveText(/^The grid can't shrink past “.+”\. Move or remove it first\.$/);
-  await expect(page.getByTestId('grid-rows')).toHaveValue(String(first.rows));
+  await expect(gridCell(page, first.rows, first.cols)).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('grid')).toHaveAttribute('data-rows', String(first.rows));
 });
 
@@ -225,7 +226,7 @@ test('holds up to the worst realistic Layout', async ({ page }) => {
     const foot = (await page.locator('.canvas-foot').boundingBox())!;
     const dock = (await page.locator('.nav-dock').boundingBox())!;
     expect(foot.y + foot.height).toBeLessThanOrEqual(dock.y + 0.5);
-    expect(await page.locator('.device-switch-name').evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(30);
+    expect(await page.getByTestId('device-name').evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(30);
   };
   await importText(page, JSON.stringify(worstCase), 'worst-case.json');
   await waitEvent(page, 'opened');
@@ -269,7 +270,8 @@ test('a send that finds the Layout changed on the Device offers Replace and Keep
   expect((await record(page)).layouts.landscape?.name).toBe('Demo Layout');
 
   await storeOnDevice(page, elsewhere);
-  await page.getByTestId('push').click();
+  await expect(page.getByTestId('push'), 'nothing changed since the send').toHaveAttribute('data-state', 'hidden');
+  await menu(page, 'menu-push');
   await dialog.getByRole('button', { name: 'Replace' }).click();
   await expect(await waitEvent(page, 'pulled')).toHaveText('Loaded “Changed elsewhere” from Desk');
   await expect(page.getByTestId('page-tab')).toHaveText(['X']);
@@ -371,7 +373,8 @@ test('focus is visible on Tiles, Page tabs and header controls', async ({ page }
       return { visible: node.matches(':focus-visible'), ring: style.outlineStyle !== 'none' || style.boxShadow.includes('inset') };
     });
   };
-  for (const id of ['device-name', 'orientation-landscape', 'preview', 'layout-menu', 'add-tile', 'push', 'page-tab', 'page-add']) {
+  await expect(page.getByTestId('push')).toHaveAttribute('data-state', 'send');
+  for (const id of ['device-rename', 'orientation-landscape', 'preview', 'layout-menu', 'add-tile', 'push', 'details-toggle', 'page-tab', 'page-add']) {
     expect({ id, ...(await reach(id)) }).toEqual({ id, visible: true, ring: true });
   }
   expect(await reach('tile', 1)).toEqual({ visible: true, ring: true });
@@ -379,4 +382,207 @@ test('focus is visible on Tiles, Page tabs and header controls', async ({ page }
   const ring = await page.getByTestId('tile').nth(1).evaluate((node) => getComputedStyle(node).boxShadow);
   const scale = Number(await page.getByTestId('deck-screen').getAttribute('data-scale'));
   expect(Number(/([\d.]+)px inset/.exec(ring)?.[1])).toBeCloseTo(2 / scale, 1);
+});
+
+const centerOf = async (page: Page, selector: string) => {
+  const box = (await page.locator(selector).boundingBox())!;
+  return box.x + box.width / 2;
+};
+
+test('hiding Details grows the Device, and picking a Tile, even the selected one, or Add Tile brings it back', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await importDev(page);
+  const toggle = page.getByTestId('details-toggle');
+  const inspector = page.getByTestId('inspector');
+  const width = async () => (await page.locator('.device').boundingBox())!.width;
+  await tile(page, 'f5').click();
+  await expect(page.getByTestId('tile-title')).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(toggle).toHaveAttribute('aria-controls', 'editor-details');
+  await expect.poll(async () => Math.abs((await centerOf(page, '.nav-dock')) - (await centerOf(page, '.canvas'))), { message: 'the dock centers over the canvas' }).toBeLessThan(2);
+  const open = await width();
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toHaveAccessibleName('Show details');
+  await expect(page.getByTestId('editor')).toHaveClass(/\bis-details-hidden\b/);
+  await expect(inspector).toBeHidden();
+  await expect(page.locator('.inspector-resizer')).toHaveCount(0);
+  await expect.poll(width, { message: 'the Device grows into the room' }).toBeGreaterThan(open + 100);
+  await expect.poll(async () => Math.abs((await centerOf(page, '.nav-dock')) - (await centerOf(page, '.canvas'))), { message: 'the dock follows the canvas' }).toBeLessThan(2);
+
+  const free = { row: first.rows - 1, col: first.cols - 1 };
+  await drag(page, 'f5', free.row, free.col, 'move');
+  await expect(tile(page, 'f5')).toHaveAttribute('data-row', String(free.row));
+  await expect(inspector, 'moving a Tile leaves the panel hidden').toBeHidden();
+
+  await tile(page, 'f5').click();
+  await expect(inspector, 'clicking the selected Tile brings the panel back').toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+  await toggle.click();
+  await expect(inspector).toBeHidden();
+  await tile(page, 'f5').focus();
+  await page.keyboard.press('Enter');
+  await expect(inspector, 'Enter on a Tile brings the panel back').toBeVisible();
+
+  await toggle.click();
+  await expect(inspector).toBeHidden();
+  await page.getByTestId('add-tile').click();
+  await expect(inspector, 'Add Tile brings the panel back').toBeVisible();
+  await expect(page.getByTestId('add-tile')).toHaveAttribute('aria-expanded', 'true');
+  await toggle.click();
+  await expect(page.getByTestId('add-tile'), 'hiding the panel ends Add Tile').toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(inspector).toBeVisible();
+  await expect.poll(width, { message: 'the Device gives the room back' }).toBe(open);
+});
+
+test('the grid picker previews a size under the pointer and sets it with a click or the keyboard', async ({ page }) => {
+  await importDev(page);
+  const size = page.getByTestId('grid-size');
+  const grid = page.getByTestId('grid');
+  await expect(size).toHaveText(`${first.rows} rows × ${first.cols} columns`);
+  await expect(gridCell(page, first.rows, first.cols)).toHaveAttribute('aria-pressed', 'true');
+  await expect(gridCell(page, first.rows, first.cols)).toHaveAttribute('tabindex', '0');
+  await expect(page.getByTestId('grid-picker').locator('[tabindex="0"]')).toHaveCount(1);
+
+  await gridCell(page, 8, 8).hover();
+  await expect(size).toHaveText('8 rows × 8 columns');
+  await expect(gridCell(page, 8, 8)).toHaveAttribute('data-lit', 'preview');
+  await page.getByTestId('page-name').hover();
+  await expect(size, 'leaving the board drops the preview').toHaveText(`${first.rows} rows × ${first.cols} columns`);
+  await expect(gridCell(page, 8, 8)).not.toHaveAttribute('data-lit');
+
+  await gridCell(page, 5, 6).click();
+  await expect(grid).toHaveAttribute('data-rows', '5');
+  await expect(grid).toHaveAttribute('data-cols', '6');
+  await expect(gridCell(page, 5, 6)).toHaveAttribute('aria-pressed', 'true');
+
+  await gridCell(page, 5, 6).focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowRight');
+  await expect(gridCell(page, 6, 7)).toBeFocused();
+  await expect(size).toHaveText('6 rows × 7 columns');
+  await expect(grid, 'moving focus only previews').toHaveAttribute('data-rows', '5');
+  await page.keyboard.press('Enter');
+  await expect(grid).toHaveAttribute('data-rows', '6');
+  await expect(grid).toHaveAttribute('data-cols', '7');
+  await page.keyboard.press('End');
+  await expect(gridCell(page, 8, 8)).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(gridCell(page, 1, 1)).toBeFocused();
+  await expect(gridCell(page, 1, 1)).toHaveAttribute('tabindex', '0');
+});
+
+test('Remove Page is a trash can that asks once more before it removes', async ({ page }) => {
+  await importDev(page);
+  const remove = page.getByTestId('page-remove');
+  await expect(remove).toHaveAccessibleName('Remove Page');
+  await remove.click();
+  await expect(remove).toHaveAccessibleName(`Click again to remove “${first.title}”`);
+  await expect(remove).toContainText(`Remove “${first.title}”?`);
+  await remove.click();
+  await expect(page.getByTestId('page-tab')).toHaveCount(dev.pages.length - 1);
+  await expect(page.locator(`[data-testid="page-tab"][data-page="${first.id}"]`)).toHaveCount(0);
+});
+
+declare global {
+  interface Window {
+    pushStates?: { state: string | null; at: number }[];
+  }
+}
+
+test('Send to Device shows while there is something to send, turns to Sending… and Saved, then folds away until the next change', async ({ page }) => {
+  const push = page.getByTestId('push');
+  await page.getByTestId('start-pull').click();
+  await waitEvent(page, 'pulled');
+  await expect(push, 'a Layout just loaded has nothing to send').toHaveAttribute('data-state', 'hidden');
+  await expect(push).toBeHidden();
+  await expect(push).toHaveAttribute('inert', '');
+
+  await tile(page, 'media0').click();
+  await page.getByTestId('tile-clear').click();
+  await expect(push).toHaveAttribute('data-state', 'send');
+  await expect(push).toBeVisible();
+  await expect(push).toHaveText('Send to Device');
+  await expect(push).toHaveAttribute('aria-disabled', 'false');
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="push"]')!;
+    const seen = [{ state: el.getAttribute('data-state'), at: performance.now() }];
+    new MutationObserver(() => {
+      const state = el.getAttribute('data-state');
+      if (state !== seen.at(-1)?.state) seen.push({ state, at: performance.now() });
+    }).observe(el, { attributes: true, attributeFilter: ['data-state'] });
+    window.pushStates = seen;
+  });
+  await push.click();
+  await expect(push).toHaveText('Saved');
+  await waitEvent(page, 'pushed');
+  await expect(push).toHaveAttribute('data-state', 'hidden');
+  await expect(push).toBeHidden();
+  const states = (await page.evaluate(() => window.pushStates))!;
+  expect(states.map((s) => s.state)).toEqual(['send', 'sending', 'saved', 'hidden']);
+  // Saved stays up for SAVED_MS (1600 ms in SendButton.tsx) before the button folds away.
+  expect(states[3].at - states[2].at).toBeGreaterThanOrEqual(1500);
+
+  await tile(page, 'media1').click();
+  await page.getByTestId('tile-clear').click();
+  await expect(push, 'the next change brings it back').toHaveAttribute('data-state', 'send');
+  await expect(push).toBeVisible();
+  await push.click();
+  await waitEvent(page, 'pushed');
+  await expect(push).toHaveAttribute('data-state', 'hidden');
+
+  await page.getByTestId('layout-menu').click();
+  await expect(page.getByTestId('menu-push')).toContainText('Send to Desk');
+  await expect(page.getByTestId('menu-push')).toContainText('Send this Layout again, even without changes');
+  await page.getByTestId('menu-push').click();
+  await expect(await waitEvent(page, 'pushed')).toHaveText('Sent to Desk');
+  await expect(push, 'a send from the menu shows Saved, then folds away').toHaveAttribute('data-state', /^(hidden|saved)$/);
+  await expect(push).toHaveAttribute('data-state', 'hidden');
+});
+
+test("an editor error pops up a card, and its Details opens Settings at Errors with the error's detail", async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await importDev(page);
+  const quiet = first.tiles.find((t) => t.id === 'quiet')!;
+  await drag(page, 'f5', quiet.row, quiet.col, 'move');
+  const taken = 'That spot is taken by “Mute”. Pick an empty one.';
+  await expect(status(page).locator('.editor-status-text'), 'the status line keeps the words for screen readers').toHaveText(taken);
+  await expect(status(page).locator('.editor-status-text')).toHaveClass(/\bvisually-hidden\b/);
+  await expect(page.getByTestId('status-detail')).toHaveCount(0);
+  const card = errorCard(page, taken);
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('Layout · Desk');
+
+  await importText(page, '{"schema": 1', 'broken.json');
+  const broken = '“broken.json” isn\'t a Layout file. Nothing changed.';
+  await expect(errorCard(page, broken)).toBeVisible();
+
+  await errorCard(page, broken).getByRole('button', { name: 'Details' }).click();
+  const settings = page.getByTestId('settings');
+  await expect(settings).toHaveAttribute('data-section', 'errors');
+  await expect(page.getByTestId('settings-title')).toHaveText('Errors');
+  await expect(page.getByTestId('settings-nav-errors')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('settings-nav-errors')).toContainText('2');
+  await expect(page.getByRole('button', { name: 'Settings', exact: true })).toHaveAttribute('aria-current', 'page');
+  const entries = page.getByTestId('error-entry');
+  await expect(entries).toHaveCount(2);
+  await expect(entries.nth(0), 'newest first').toContainText(broken);
+  await expect(entries.nth(0)).toContainText('Layout · Desk');
+  await expect(entries.nth(0).getByTestId('error-detail')).not.toBeEmpty();
+  await expect(entries.nth(1)).toContainText(taken);
+  await expect(entries.nth(1).getByTestId('error-detail')).toHaveText('overlaps quiet');
+
+  await entries.nth(1).getByTestId('error-copy').click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('overlaps quiet');
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain(taken);
+  expect(copied).toContain('Layout · Desk');
+
+  await page.getByTestId('errors-clear').click();
+  await expect(entries).toHaveCount(0);
+  await expect(page.getByTestId('errors-empty')).toHaveText('No errors.');
+  await expect(page.getByTestId('settings-nav-errors')).not.toContainText(/\d/);
 });

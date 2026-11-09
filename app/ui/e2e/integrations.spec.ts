@@ -388,7 +388,7 @@ test('a Preset the Device draws without its graph is previewed as the Tile it pl
   await expect(volume).toHaveAttribute('data-needs', /Firmware/);
 });
 
-test('Add Tile names what is off or needs setup, and points to Integrations when none offers Tiles', async ({ page }) => {
+test('Add Tile points to Integrations when none offers Tiles', async ({ page }) => {
   await openIntegrations(page, '?integrations=new');
   for (const id of ['this_pc', 'volume', 'media']) {
     await row(page, id).getByTestId('integration-switch').click();
@@ -402,27 +402,9 @@ test('Add Tile names what is off or needs setup, and points to Integrations when
   await page.getByTestId('add-tab-integrations').click();
   const section = page.getByTestId('add-presets');
   await expect(section.getByTestId('add-presets-empty')).toContainText('Turn on an Integration to add its Tiles.');
-  await expect(section.getByTestId('add-presets-closing')).toHaveText('CLIProxyAPI, This PC, Volume and Media are off.');
+  await expect(section.getByTestId('add-presets-closing')).toHaveCount(0);
   await section.getByTestId('add-presets-setup').click();
   await expect(page.getByTestId('integration-list')).toBeVisible();
-});
-
-test("Add Tile's closing line opens the settings of an Integration that needs setup", async ({ page }) => {
-  await openCliProxy(page);
-  await page.getByTestId('secret-forget').click();
-  await page.getByTestId('forget-confirm').click();
-  await expect(page.getByTestId('secret-field')).toHaveAttribute('data-set', 'false');
-  await page.getByTestId('detail-back').click();
-  await expect(row(page, 'cliproxyapi').getByTestId('integration-status')).toHaveText('Finish setup');
-  await page.getByRole('button', { name: 'Layout', exact: true }).click();
-  await page.getByTestId('start-starter').click();
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
-  await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
-  const section = page.getByTestId('add-presets');
-  await expect(section.locator('[data-testid="preset-group"][data-id="cliproxyapi"]')).toHaveCount(0);
-  await expect(section.getByTestId('add-presets-closing')).toHaveText('CLIProxyAPI needs setup. Open settings');
-  await section.getByTestId('add-presets-open').click();
-  await expect(page.getByTestId('integration-detail')).toHaveAttribute('data-id', 'cliproxyapi');
 });
 
 test('focus is visible on the list and on every control of the CLIProxyAPI page', async ({ page }) => {

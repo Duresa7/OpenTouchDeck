@@ -48,20 +48,18 @@ test('01 the Update icon opens', async ({ page }) => {
   await film(page, '01-update-icon-open', () => page.locator('.update-button').hover(AT_VISIBLE_ICON));
 });
 
-test('02 Settings opens', async ({ page }) => {
-  await home(page);
-  await film(page, '02-settings-open', () => navButton(page, 'Settings').click());
-});
-
-test('02 Settings opens with reduced motion', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await home(page);
-  await film(page, '02r-settings-open-reduced', () => navButton(page, 'Settings').click());
-});
-
-test('03 the Device panel opens', async ({ page }) => {
+test('02 Send to Device slides open for a change', async ({ page }) => {
   await openLayout(page);
-  await film(page, '03-device-panel-open', () => page.getByTestId('device-name').click());
+  await page.getByTestId('start-pull').click();
+  await waitEvent(page, 'pulled');
+  await tile(page, 'media0').click();
+  await page.waitForTimeout(500);
+  await film(page, '02-send-open', () => page.getByTestId('tile-clear').click());
+});
+
+test('03 an error card pops up', async ({ page }) => {
+  await openLayout(page);
+  await film(page, '03-error-card', () => importText(page, '{"schema": 1', 'broken.json'));
 });
 
 test('04 a tooltip appears', async ({ page }) => {

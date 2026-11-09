@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { FakeUpdatesScript } from '../src/lib/companion/fake.ts';
+import { openSettings, settingsPage } from './layout-helpers.ts';
 
 const demo = (page: Page) => ({
   script: (next: Partial<FakeUpdatesScript>) => page.evaluate((next) => window.touchdeckDemo?.updates.script(next), next),
@@ -16,7 +17,7 @@ const AT_VISIBLE_ICON = { position: { x: 22, y: 22 } };
 const slot = (page: Page) => page.locator('.update-slot');
 const label = (page: Page) => page.locator('.update-label');
 const dialog = (page: Page) => page.getByRole('dialog');
-const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings' });
+const settings = settingsPage;
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
 
 async function start(page: Page, update = 'available') {
@@ -34,7 +35,7 @@ test.describe('the Update icon', () => {
     await start(page, 'none');
     await expect.poll(async () => (await demo(page).calls()).check).toBe(1);
     await expect(icon(page)).toHaveCount(0);
-    await nav(page).getByRole('button', { name: 'Settings' }).click();
+    await openSettings(page, 'about');
     await expect(settings(page)).toContainText('Up to date');
   });
 
@@ -120,10 +121,9 @@ test.describe('the Update dialog', () => {
   test('shows markup in release notes as text', async ({ page }) => {
     await start(page);
     await demo(page).script({ check: { ...offer, notes: '- <img src=x onerror="document.title=1"> <b>bold</b>' } });
-    await nav(page).getByRole('button', { name: 'Settings' }).click();
+    await openSettings(page, 'about');
     await settings(page).getByRole('button', { name: 'Check for updates' }).click();
     await expect.poll(async () => (await demo(page).calls()).check).toBe(2);
-    await page.keyboard.press('Escape');
     await icon(page).click(AT_VISIBLE_ICON);
     await expect(dialog(page).getByRole('listitem')).toHaveText('<img src=x onerror="document.title=1"> <b>bold</b>');
     await expect(dialog(page).locator('img, b')).toHaveCount(0);
@@ -200,7 +200,7 @@ test.describe('the Update dialog', () => {
 test.describe('checking from Settings, About', () => {
   test('an offline check shows no icon, says offline, and Check for updates finds the update', async ({ page }) => {
     await start(page, 'offline');
-    await nav(page).getByRole('button', { name: 'Settings' }).click();
+    await openSettings(page, 'about');
     await expect(settings(page)).toContainText("You're offline. Connect to the internet, then retry.");
     await expect(icon(page)).toHaveCount(0);
 
@@ -210,20 +210,19 @@ test.describe('checking from Settings, About', () => {
     await expect(settings(page).getByRole('button', { name: 'Check for updates' })).toHaveAttribute('aria-disabled', 'true');
     await expect(icon(page)).toHaveCount(1);
     await expect(settings(page)).not.toContainText('Checking…');
-    await page.keyboard.press('Escape');
     await expect(nav(page).getByRole('button', { name: 'Update available' })).toBeVisible();
   });
 
   test('a failed check says the update server is unreachable', async ({ page }) => {
     await start(page, 'failed');
-    await nav(page).getByRole('button', { name: 'Settings' }).click();
+    await openSettings(page, 'about');
     await expect(settings(page)).toContainText("Can't reach the update server. Check your internet connection, then retry.");
   });
 
   test('a source build without a public key offers no check', async ({ page }) => {
     await start(page, 'disabled');
     await expect.poll(async () => (await demo(page).calls()).check).toBe(1);
-    await nav(page).getByRole('button', { name: 'Settings' }).click();
+    await openSettings(page, 'about');
     await expect(settings(page).getByRole('button', { name: 'Check for updates' })).toHaveCount(0);
     await expect(icon(page)).toHaveCount(0);
   });

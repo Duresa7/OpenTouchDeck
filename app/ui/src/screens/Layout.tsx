@@ -25,6 +25,8 @@ import '../styles/layout.css';
 
 const LONG_MIN = 420;
 const LONG_MAX = 680;
+/** With the Details panel hidden, the Device may grow into the room it leaves. */
+const LONG_WIDE = 860;
 /** Below 800px the details panel can't give way, so the Device may shrink past LONG_MIN rather than overflow. */
 const LONG_NARROW = 240;
 
@@ -65,7 +67,12 @@ interface Around {
   foot: RefObject<HTMLDivElement | null>;
 }
 
-function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }: Around, portrait: boolean, drawn: boolean, floor = LONG_MIN) {
+interface Bounds {
+  floor: number;
+  ceiling: number;
+}
+
+function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }: Around, portrait: boolean, drawn: boolean, { floor, ceiling }: Bounds) {
   const [long, setLong] = useState(LONG_MAX);
   useLayoutEffect(() => {
     const el = canvas.current;
@@ -79,7 +86,7 @@ function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }:
       const w = el.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
       const h = el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom) - taken(head.current) - taken(foot.current);
       const fitted = portrait ? Math.min(h, w / aspect) : Math.min(w, h / aspect);
-      setLong(Math.round(Math.min(LONG_MAX, Math.max(floor, fitted))));
+      setLong(Math.round(Math.min(ceiling, Math.max(floor, fitted))));
     };
     fit();
     const observer = new ResizeObserver(fit);
@@ -87,8 +94,33 @@ function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }:
     if (head.current) observer.observe(head.current);
     if (foot.current) observer.observe(foot.current);
     return () => observer.disconnect();
-  }, [canvas, head, foot, portrait, drawn, floor]);
+  }, [canvas, head, foot, portrait, drawn, floor, ceiling]);
   return long;
+}
+
+/** Sets the dock's inset without the slide, as screens never animate when you switch between them. */
+function snapDock(set: (root: HTMLElement) => void) {
+  const root = document.documentElement;
+  root.setAttribute('data-dock-snap', '');
+  set(root);
+  const dock = document.querySelector('.nav-dock');
+  if (dock) getComputedStyle(dock).left;
+  root.removeAttribute('data-dock-snap');
+}
+
+/**
+ * Tells the nav dock how much of the window's right side the Details panel takes, so it centres over the canvas. The
+ * dock slides with the panel as it opens and closes, and jumps when the editor opens or leaves.
+ */
+function useDockInset(width: number) {
+  useLayoutEffect(() => {
+    snapDock((root) => root.style.setProperty('--dock-inset', `${width}px`));
+    return () => snapDock((root) => root.style.removeProperty('--dock-inset'));
+    // Only on mount and unmount: the width it starts with, then the effect below keeps it current.
+  }, []);
+  useLayoutEffect(() => {
+    document.documentElement.style.setProperty('--dock-inset', `${width}px`);
+  }, [width]);
 }
 
 function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }) {
@@ -106,9 +138,14 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   const picker = useRef<HTMLInputElement>(null);
   const editor = useRef<HTMLElement>(null);
   const inspector = useInspectorWidth(editor);
-  const long = useDeviceLong(canvas, { head, foot }, layout?.orientation === 'portrait', layout !== null, inspector.limits.fixed ? LONG_NARROW : LONG_MIN);
+  const detailsOpen = useUi((s) => s.detailsOpen);
+  const long = useDeviceLong(canvas, { head, foot }, layout?.orientation === 'portrait', layout !== null, {
+    floor: inspector.limits.fixed ? LONG_NARROW : LONG_MIN,
+    ceiling: detailsOpen ? LONG_MAX : LONG_WIDE,
+  });
   const offered = useOfferedFirmware(device);
   useEditorKeys(store);
+  useDockInset(layout !== null && detailsOpen ? inspector.width : 0);
 
   const current = layout?.pages.find((p) => p.id === page) ?? layout?.pages[0];
   const preview = mode === 'preview';
@@ -117,7 +154,7 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   return (
     <main
       ref={editor}
-      className={clsx('editor', !layout && 'is-empty')}
+      className={clsx('editor', !layout && 'is-empty', !detailsOpen && 'is-details-hidden')}
       style={{ '--inspector-w': `${inspector.width}px` } as CSSProperties}
       data-testid="editor"
       data-device-id={device.id}
@@ -150,7 +187,7 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
             />
             <div ref={foot} className="canvas-foot">
               <PageTabs store={store} layout={layout} page={current.id} />
-              {preview ? (
+              {preview && (
                 <div className="preview-bar">
                   <p className="canvas-hint">Swipe or press ← and → to change Pages. Tap a Tile to see it react.</p>
                   <label className="switch-label">
@@ -160,21 +197,19 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
                     Actual size
                   </label>
                 </div>
-              ) : (
-                current.kind === 'dashboard' && <p className="canvas-hint">A Usage page lists your accounts once CLIProxyAPI is set up. These rows are examples.</p>
               )}
-              <StatusLine store={store} />
+              <StatusLine store={store} device={name} />
             </div>
           </>
         ) : (
           <>
             <StartLayout store={store} device={name} connected={connected} onImport={openPicker} />
-            <StatusLine store={store} />
+            <StatusLine store={store} device={name} />
           </>
         )}
       </div>
       {layout && <Inspector store={store} layout={layout} device={name} />}
-      {layout && !inspector.limits.fixed && <InspectorResizer editor={editor} width={inspector.width} limits={inspector.limits} onWidth={inspector.choose} />}
+      {layout && detailsOpen && !inspector.limits.fixed && <InspectorResizer editor={editor} width={inspector.width} limits={inspector.limits} onWidth={inspector.choose} />}
       <ReplaceDialog store={store} device={name} />
       <input
         ref={picker}

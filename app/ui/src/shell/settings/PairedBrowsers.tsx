@@ -88,7 +88,8 @@ function BrowserRow({ browser, onForget }: { browser: SessionInfo; onForget(even
   );
 }
 
-export function PairedBrowsers() {
+/** The browsers that can open Open TouchDeck. On its own Settings page the page title names it, so `titled` hides the heading. */
+export function PairedBrowsers({ titled = true }: { titled?: boolean }) {
   const companion = useCompanion();
   const [store] = useState(() => createBrowsersStore(companion));
   const view = useStore(store, (s) => s.view);
@@ -111,7 +112,7 @@ export function PairedBrowsers() {
   return (
     <section className="settings-section" aria-labelledby={id}>
       <div className="settings-section-head">
-        <h3 id={id} ref={heading} tabIndex={-1}>
+        <h3 id={id} ref={heading} tabIndex={-1} className={titled ? undefined : 'visually-hidden'}>
           Paired browsers
         </h3>
         {browsers.length > 1 && (

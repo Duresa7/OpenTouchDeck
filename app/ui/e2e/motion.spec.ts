@@ -6,7 +6,6 @@ import { droppedFrames, expectArrived, expectHeld, expectJumped, expectTurnedBac
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
 const navButton = (page: Page, name: string) => nav(page).getByRole('button', { name, exact: true });
-const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings' });
 const AT_VISIBLE_ICON = { position: { x: 22, y: 22 } };
 const devText = readFileSync(join(import.meta.dirname, '..', '..', '..', 'schema', 'examples', 'dev.json'), 'utf8');
 const AWAY = { x: 600, y: 300 };
@@ -30,6 +29,19 @@ const demo = (page: Page) => ({
     page.evaluate((id) => window.touchdeckDemo?.device(id, { link: { state: 'connected', port: 'COM4', since_ms: 0, protocol: 2 } }), id),
   updates: (holdAt: number) => page.evaluate((holdAt) => window.touchdeckDemo?.updates.script({ holdAt }), holdAt),
 });
+
+/** The editor on Desk's own Layout with one Tile cleared, so Send to Device is out and has settled. */
+async function unsent(page: Page) {
+  await openLayout(page);
+  await page.getByTestId('start-pull').click();
+  await waitEvent(page, 'pulled');
+  await tile(page, 'media0').click();
+  await page.getByTestId('tile-clear').click();
+  const push = page.getByTestId('push');
+  await expect(push).toHaveAttribute('data-state', 'send');
+  await page.waitForTimeout(500);
+  return push;
+}
 
 async function tryIt(page: Page) {
   await openLayout(page);
@@ -66,49 +78,26 @@ test.describe('with motion', () => {
     expectTurnedBack(closed, { rest: open, goal: 44 });
   });
 
-  test('Escape mid-open shrinks Settings away from where it is, then it opens fully', async ({ page }) => {
-    await home(page);
-    await slowMotion(page);
-    const leaving = await trace(page, [{ selector: '.dialog-settings', reading: 'scale' }, { selector: '.dialog-settings', reading: 'opacity' }]);
-    await navButton(page, 'Settings').click();
+  test('Send to Device folds shut from Saved, and slides open again for the next change', async ({ page }) => {
+    const push = await unsent(page);
+    await push.click();
+    await expect(push).toHaveAttribute('data-state', 'saved');
     await page.waitForTimeout(400);
-    await page.keyboard.press('Escape');
-    await expect(settings(page)).toHaveCount(0, { timeout: 5000 });
-    const [scale, opacity] = await leaving.stop();
-    expectTurnedBack(scale, { rest: 0.97, goal: 1, removed: true });
-    expectTurnedBack(opacity, { rest: 0, goal: 1, removed: true });
-    await expect(navButton(page, 'Settings')).toBeFocused();
-
-    const entering = await trace(page, [{ selector: '.dialog-settings', reading: 'scale' }]);
-    await navButton(page, 'Settings').click();
-    await expect(settings(page)).toHaveCSS('scale', 'none', { timeout: 5000 });
-    await expect(settings(page)).toHaveCSS('opacity', '1');
-    const [grown] = await entering.stop();
-    expectArrived(grown, { rest: 0.97, goal: 1 });
-  });
-
-  test('a second click mid-open closes the Device panel from where it is, and its chevron turns back', async ({ page }) => {
-    await openLayout(page);
+    const saved = await widthOf(push);
     await slowMotion(page);
-    const name = page.getByTestId('device-name');
-    const panel = page.getByTestId('device-panel');
-    const toggled = await trace(page, [
-      { selector: '[data-testid="device-panel"]', reading: 'scale' },
-      { selector: '[data-testid="device-name"] .chev', reading: 'rotate' },
-    ]);
-    await name.click();
-    await page.waitForTimeout(350);
-    await name.click();
-    await expect(panel).toHaveCount(0, { timeout: 5000 });
-    await page.waitForTimeout(500);
-    const [scale, rotate] = await toggled.stop();
-    expectTurnedBack(scale, { rest: 0.97, goal: 1, removed: true });
-    expectTurnedBack(rotate, { rest: 0, goal: 180 });
+    const folding = await trace(page, [{ selector: '[data-testid="push"]', reading: 'width' }]);
+    await expect(push).toHaveAttribute('data-state', 'hidden', { timeout: 5000 });
+    await page.waitForTimeout(2500);
+    const [shut] = await folding.stop();
+    expectArrived(shut, { rest: saved, goal: 0 });
 
-    await name.click();
-    await expect(panel).toHaveCSS('scale', 'none', { timeout: 5000 });
-    await expect(panel).toHaveCSS('opacity', '1');
-    await expect(name.locator('.chev')).toHaveCSS('rotate', '180deg', { timeout: 5000 });
+    const opening = await trace(page, [{ selector: '[data-testid="push"]', reading: 'width' }]);
+    await tile(page, 'media1').click();
+    await page.getByTestId('tile-clear').click();
+    await expect(push).toHaveAttribute('data-state', 'send');
+    await page.waitForTimeout(3500);
+    const [grown] = await opening.stop();
+    expectArrived(grown, { rest: 0, goal: await widthOf(push) });
   });
 
   test('a tooltip fades back from where it is when the pointer leaves mid-open', async ({ page }) => {
@@ -181,28 +170,21 @@ test.describe('with motion', () => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await home(page, '?devices=1');
     const scene = page.locator('.device-scene');
-    const spill = page.locator('.device-spill');
     await demo(page).offline('mock0001');
     await expect(scene).toHaveCSS('opacity', '0.7');
-    await expect(spill).toHaveCSS('opacity', '0');
 
     await slowMotion(page);
-    const lit = await trace(page, [
-      { selector: '.device-scene', reading: 'opacity' },
-      { selector: '.device-spill', reading: 'opacity' },
-    ]);
+    const lit = await trace(page, [{ selector: '.device-scene', reading: 'opacity' }]);
     await demo(page).connect('mock0001');
-    await expect(page.getByRole('img', { name: /^Desk: Connected/ })).toBeVisible();
+    await expect(page.getByTestId('device-status')).toHaveText(/^Desk: Connected/);
     await page.waitForTimeout(400);
     await demo(page).offline('mock0001');
     await page.waitForTimeout(2500);
-    const [screen, light] = await lit.stop();
+    const [screen] = await lit.stop();
     expectTurnedBack(screen, { rest: 0.7, goal: 1 });
-    expectTurnedBack(light, { rest: 0, goal: 0.32 });
 
     await demo(page).connect('mock0001');
     await expect(scene).toHaveCSS('opacity', '1', { timeout: 5000 });
-    await expect(spill).toHaveCSS('opacity', '0.32', { timeout: 5000 });
   });
 
   test('a switch thumb slides back from where it is when clicked again mid-slide', async ({ page }) => {
@@ -334,31 +316,26 @@ test.describe('with motion', () => {
 test.describe('with reduced motion', () => {
   test.use({ reducedMotion: 'reduce' });
 
-  test('Settings fades in without growing', async ({ page }) => {
-    await home(page);
-    const opened = await trace(page, [{ selector: '.dialog-settings', reading: 'scale' }, { selector: '.dialog-settings', reading: 'opacity' }]);
-    await navButton(page, 'Settings').click();
-    await expect(settings(page)).toHaveCSS('opacity', '1');
+  test('Send to Device folds away and comes back at once', async ({ page }) => {
+    const push = await unsent(page);
+    await push.click();
+    await expect(push).toHaveAttribute('data-state', 'saved');
     await page.waitForTimeout(100);
-    const [scale, opacity] = await opened.stop();
-    expectHeld(scale, 1);
-    expectArrived(opacity, { rest: 0, goal: 1 });
-    await expect(page.locator('.dialog-settings')).toHaveCSS('transition-duration', '0.14s, 0.14s');
-  });
+    const saved = await widthOf(push);
+    const folding = await trace(page, [{ selector: '[data-testid="push"]', reading: 'width' }]);
+    await expect(push).toHaveAttribute('data-state', 'hidden', { timeout: 5000 });
+    await page.waitForTimeout(200);
+    const [shut] = await folding.stop();
+    expectJumped(shut, [saved, 0]);
+    expect(shut.at(-1)).toBe(0);
 
-  test('the Device panel fades in without growing, and its chevron turns at once', async ({ page }) => {
-    await openLayout(page);
-    const opened = await trace(page, [
-      { selector: '[data-testid="device-panel"]', reading: 'scale' },
-      { selector: '[data-testid="device-name"] .chev', reading: 'rotate' },
-    ]);
-    await page.getByTestId('device-name').click();
-    await expect(page.getByTestId('device-panel')).toHaveCSS('opacity', '1');
-    await page.waitForTimeout(100);
-    const [scale, rotate] = await opened.stop();
-    expectHeld(scale, 1);
-    expectJumped(rotate, [0, 180]);
-    expect(rotate.at(-1)).toBe(180);
+    const opening = await trace(page, [{ selector: '[data-testid="push"]', reading: 'width' }]);
+    await tile(page, 'media1').click();
+    await page.getByTestId('tile-clear').click();
+    await expect(push).toHaveAttribute('data-state', 'send');
+    await page.waitForTimeout(200);
+    const [grown] = await opening.stop();
+    expectJumped(grown, [0, await widthOf(push)]);
   });
 
   test('a tooltip fades in without growing', async ({ page }) => {

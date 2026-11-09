@@ -8,6 +8,7 @@ import { plural } from '../../lib/layout/messages.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
 import type { Layout, Orientation } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
+import { openDetails } from '../../state/ui.ts';
 import { CHECKING_CONTROLS, NEEDS_SEND, uncheckedText } from '../home-model.ts';
 import { reviewLayout, useEditorState } from './editor.ts';
 
@@ -70,7 +71,11 @@ export function ControlNoticeBar({ store, device }: { store: EditorStore; device
       type="button"
       className={button({ size: 'small' })}
       aria-disabled={busy !== null}
-      onClick={() => editing && busy === null && reviewLayout(store, editing, notice.orientation)}
+      onClick={() => {
+        if (!editing || busy !== null) return;
+        openDetails();
+        reviewLayout(store, editing, notice.orientation);
+      }}
       data-testid="controls-review"
     >
       {busy === 'load' ? 'Loading…' : 'Review Layout'}

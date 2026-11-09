@@ -1,8 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openSettings, settingsPage, type SettingsCategory } from './layout-helpers.ts';
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
-const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings' });
-const help = (page: Page) => page.getByRole('dialog', { name: 'Troubleshooting' });
+const navButton = (page: Page, name: string) => nav(page).getByRole('button', { name, exact: true });
+const settings = settingsPage;
+const title = (page: Page) => page.getByTestId('settings-title');
 const confirmation = (page: Page) => page.getByRole('alertdialog');
 const startSwitch = (page: Page) => settings(page).getByRole('switch', { name: 'Start at sign-in' });
 const browsers = (page: Page) => settings(page).getByTestId('paired-browser');
@@ -13,34 +15,106 @@ async function start(page: Page, query = '') {
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
 }
 
-async function openSettings(page: Page) {
-  await nav(page).getByRole('button', { name: 'Settings' }).click();
+async function general(page: Page) {
+  await openSettings(page);
   await expect(startSwitch(page)).toBeEnabled();
 }
 
-async function openTroubleshooting(page: Page) {
-  await openSettings(page);
-  await settings(page).getByRole('button', { name: /^Troubleshooting/ }).click();
-  await expect(help(page)).toBeVisible();
+/** Leaves Settings for Home, so the next visit starts the page afresh. */
+async function leave(page: Page) {
+  await navButton(page, 'Home').click();
+  await expect(settings(page)).toHaveCount(0);
 }
+
+test.describe('the Settings page', () => {
+  test('the nav opens it at General, with a category for each Device, and marks where you are', async ({ page }) => {
+    await start(page);
+    await general(page);
+    await expect(navButton(page, 'Settings')).toHaveAttribute('aria-current', 'page');
+    await expect(navButton(page, 'Home')).not.toHaveAttribute('aria-current');
+    await expect(page.getByRole('list', { name: 'Devices' }), 'Settings takes the whole window').toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(title(page)).toHaveText('General');
+    await expect(page.getByTestId('settings-nav-general')).toHaveAttribute('aria-current', 'page');
+    await expect(settings(page)).toContainText('Appearance');
+    await expect(settings(page).getByRole('button', { name: 'Close' })).toHaveCount(0);
+    await expect(settings(page).getByRole('button', { name: 'Back' })).toHaveCount(0);
+
+    const devices = page.getByTestId('settings-nav-device');
+    await expect(devices).toHaveText(['Desk', 'Studio', 'Stream deck by the window']);
+    expect(await devices.evaluateAll((els) => els.map((el) => el.getAttribute('data-device')))).toEqual(['mock0001', 'mock0002', 'mock0003']);
+
+    const categories: [SettingsCategory, string][] = [
+      ['browsers', 'Paired browsers'],
+      ['troubleshooting', 'Troubleshooting'],
+      ['errors', 'Errors'],
+      ['about', 'About'],
+      ['general', 'General'],
+    ];
+    for (const [category, words] of categories) {
+      await page.getByTestId(`settings-nav-${category}`).click();
+      await expect(settings(page)).toHaveAttribute('data-section', category);
+      await expect(title(page)).toHaveText(words);
+      await expect(title(page), 'focus moves to the new title').toBeFocused();
+      await expect(page.locator('.settings-nav-item[aria-current="page"]')).toHaveCount(1);
+      await expect(page.getByTestId(`settings-nav-${category}`)).toHaveAttribute('aria-current', 'page');
+    }
+    await expect(page.getByTestId('errors-empty')).toHaveCount(0);
+    await page.getByTestId('settings-nav-errors').click();
+    await expect(page.getByTestId('errors-empty')).toHaveText('No errors.');
+
+    await devices.nth(1).click();
+    await expect(settings(page)).toHaveAttribute('data-section', 'device');
+    await expect(title(page)).toHaveText('Studio');
+    await expect(devices.nth(1)).toHaveAttribute('aria-current', 'page');
+    await expect(devices.nth(0)).not.toHaveAttribute('aria-current');
+    await expect(page.getByTestId('device-panel')).toHaveAttribute('data-device', 'mock0002');
+
+    await page.getByTestId('settings-nav-about').click();
+    await leave(page);
+    await navButton(page, 'Settings').click();
+    await expect(settings(page), 'the nav always opens General').toHaveAttribute('data-section', 'general');
+  });
+
+  test('with no Device, the Devices category says how to connect one', async ({ page }) => {
+    await page.goto('/?devices=0');
+    await openSettings(page);
+    const device = page.getByTestId('settings-nav-device');
+    await expect(device).toHaveCount(1);
+    await expect(device).toHaveText('No Device');
+    await device.click();
+    await expect(settings(page)).toHaveAttribute('data-section', 'device');
+    await expect(title(page)).toHaveText('Devices');
+    await expect(settings(page)).toContainText('No Device connected. Plug one in with a USB cable.');
+    await expect(page.getByTestId('device-panel')).toHaveCount(0);
+  });
+
+  test('Escape leaves Settings where it is', async ({ page }) => {
+    await start(page);
+    await openSettings(page, 'troubleshooting');
+    await page.keyboard.press('Escape');
+    await expect(settings(page)).toBeVisible();
+    await expect(settings(page)).toHaveAttribute('data-section', 'troubleshooting');
+    await expect(navButton(page, 'Settings')).toHaveAttribute('aria-current', 'page');
+  });
+});
 
 test.describe('Start at sign-in', () => {
   test('toggles and is still set when Settings opens again', async ({ page }) => {
     await start(page);
-    await openSettings(page);
+    await general(page);
     await expect(startSwitch(page)).not.toBeChecked();
     await expect(settings(page)).toContainText('Runs in the tray when you sign in to Windows, so your Devices work right away.');
 
     await startSwitch(page).click();
     await expect(startSwitch(page)).toBeChecked();
-    await page.keyboard.press('Escape');
-    await expect(settings(page)).toBeHidden();
+    await leave(page);
 
-    await openSettings(page);
+    await general(page);
     await expect(startSwitch(page)).toBeChecked();
     await startSwitch(page).click();
-    await page.keyboard.press('Escape');
-    await openSettings(page);
+    await leave(page);
+    await general(page);
     await expect(startSwitch(page)).not.toBeChecked();
   });
 });
@@ -48,7 +122,7 @@ test.describe('Start at sign-in', () => {
 test.describe('Paired browsers', () => {
   test('lists each browser with its last use, and Forget asks first, then removes it for good', async ({ page }) => {
     await start(page);
-    await openSettings(page);
+    await openSettings(page, 'browsers');
     await expect(browsers(page)).toHaveCount(2);
     await expect(browsers(page).first()).toContainText('Edge on Windows · paired');
     await expect(browsers(page).first()).toContainText('Last used');
@@ -66,15 +140,15 @@ test.describe('Paired browsers', () => {
     await expect(browsers(page)).not.toContainText('Edge on Windows');
     await expect(settings(page).getByRole('button', { name: 'Forget all' })).toHaveCount(0);
 
-    await page.keyboard.press('Escape');
-    await openSettings(page);
+    await leave(page);
+    await openSettings(page, 'browsers');
     await expect(browsers(page)).toHaveCount(1);
     await expect(browsers(page)).toContainText('Firefox on Windows');
   });
 
   test('Forget all removes every browser and shows how to pair one', async ({ page }) => {
     await start(page);
-    await openSettings(page);
+    await openSettings(page, 'browsers');
     await settings(page).getByRole('button', { name: 'Forget all' }).click();
     await expect(confirmation(page)).toHaveAccessibleName('Forget all browsers?');
     await confirmation(page).getByRole('button', { name: 'Forget all' }).click();
@@ -84,7 +158,7 @@ test.describe('Paired browsers', () => {
 
   test('Reset pairing confirms first, then signs out every browser while this window carries on', async ({ page }) => {
     await start(page);
-    await openSettings(page);
+    await openSettings(page, 'browsers');
     await settings(page).getByRole('button', { name: 'Reset', exact: true }).click();
     await expect(confirmation(page)).toHaveAccessibleName('Reset pairing?');
     await expect(confirmation(page)).toContainText('Every window and browser is signed out.');
@@ -99,22 +173,22 @@ test.describe('Paired browsers', () => {
     await expect(settings(page)).toContainText('No browsers paired yet.');
     await expect(settings(page)).not.toContainText("Couldn't");
 
-    await page.keyboard.press('Escape');
+    await leave(page);
     await expect(page.getByRole('listitem')).toHaveCount(3);
-    await openSettings(page);
+    await openSettings(page, 'about');
     await expect(settings(page)).toContainText('Open TouchDeck 0.2.0');
   });
 
   test('the desktop window offers to open a browser here, and a browser does not', async ({ page }) => {
     await start(page);
-    await openSettings(page);
+    await openSettings(page, 'browsers');
     await expect(settings(page).getByTestId('open-browser-row')).toHaveCount(0);
     await page.addInitScript(() => {
       window.openTouchDeck = { version: 1, session: async () => 'demo', onSessionChanged: () => {} };
     });
     await start(page);
     await expect(page.locator('.open-browser')).toHaveCount(0);
-    await openSettings(page);
+    await openSettings(page, 'browsers');
     const row = settings(page).getByTestId('open-browser-row');
     await expect(row).toContainText('Open in a browser');
     await expect(row).toContainText('Pairs a browser on this PC.');
@@ -123,25 +197,27 @@ test.describe('Paired browsers', () => {
 
   test('Icon packs and Brandfetch logos moved to Integrations', async ({ page }) => {
     await start(page);
-    await openSettings(page);
-    await expect(settings(page)).not.toContainText('Icon packs');
-    await expect(settings(page)).not.toContainText('Brandfetch');
+    for (const category of ['general', 'browsers', 'troubleshooting', 'about'] as const) {
+      await openSettings(page, category);
+      await expect(settings(page)).not.toContainText('Icon packs');
+      await expect(settings(page)).not.toContainText('Brandfetch');
+    }
   });
 
   test('with none paired it says how to pair one', async ({ page }) => {
     await start(page, '?browsers=0');
-    await openSettings(page);
+    await openSettings(page, 'browsers');
     await expect(settings(page)).toContainText('No browsers paired yet.');
     await expect(settings(page).getByRole('button', { name: 'Forget all' })).toHaveCount(0);
   });
 });
 
 test.describe('Troubleshooting', () => {
-  test('shows each Device with its link and Firmware fields, and Back returns to Settings', async ({ page }) => {
+  test('shows each Device with its link and Firmware fields', async ({ page }) => {
     await start(page);
-    await openTroubleshooting(page);
-    await expect(help(page)).toContainText('Device details, and tools to check that taps reach this PC.');
-    const details = help(page).getByTestId('device-details');
+    await openSettings(page, 'troubleshooting');
+    await expect(settings(page)).toContainText('Device details, and tools to check that taps reach this PC.');
+    const details = settings(page).getByTestId('device-details');
     await expect(details).toHaveCount(3);
     for (const [i, name] of ['Desk', 'Studio', 'Stream deck by the window'].entries()) {
       await expect(details.nth(i)).toContainText(`${name} is the demo Device.`);
@@ -161,70 +237,67 @@ test.describe('Troubleshooting', () => {
     await expect(desk).toContainText('Lost Desk. Check the USB cable. It reconnects on its own.');
     await expect(desk).toContainText('Not connected');
     await expect(desk.locator('dl')).toHaveCount(0);
-
-    await help(page).getByRole('button', { name: 'Back' }).click();
-    await expect(settings(page)).toBeVisible();
-    await expect(settings(page).getByRole('button', { name: /^Troubleshooting/ })).toBeFocused();
   });
 
-  test('Connection help on an empty Home opens Troubleshooting, and the nav opens Settings again', async ({ page }) => {
+  test("Connection help on an empty Home opens Troubleshooting, and the nav's Settings opens General", async ({ page }) => {
     await page.goto('/?devices=0');
     await page.getByRole('button', { name: 'Connection help' }).click();
-    await expect(help(page)).toContainText('No Device connected. Plug one in with a USB cable.');
-    await expect(help(page).getByRole('heading', { name: 'Firmware console' })).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await nav(page).getByRole('button', { name: 'Settings' }).click();
-    await expect(settings(page)).toBeVisible();
+    await expect(settings(page)).toHaveAttribute('data-section', 'troubleshooting');
+    await expect(page.getByTestId('settings-nav-troubleshooting')).toHaveAttribute('aria-current', 'page');
+    await expect(settings(page)).toContainText('No Device connected. Plug one in with a USB cable.');
+    await expect(settings(page).getByRole('heading', { name: 'Firmware console' })).toHaveCount(0);
+    await navButton(page, 'Settings').click();
+    await expect(settings(page)).toHaveAttribute('data-section', 'general');
   });
 
   test('a console line round-trips, and the console listens only while it is open', async ({ page }) => {
     await start(page);
     expect(await topics(page)).toEqual([]);
-    await openTroubleshooting(page);
+    await openSettings(page, 'troubleshooting');
     await expect.poll(() => topics(page)).toEqual(['console/mock0001']);
-    await expect(help(page)).toContainText("Send a command to Desk's console, like version or layout state.");
+    await expect(settings(page)).toContainText("Send a command to Desk's console, like version or layout state.");
 
-    const field = help(page).getByRole('textbox', { name: 'Console command' });
-    const log = help(page).getByTestId('console-log');
+    const field = settings(page).getByRole('textbox', { name: 'Console command' });
+    const log = settings(page).getByTestId('console-log');
     await field.fill('version');
-    await help(page).getByRole('button', { name: 'Send' }).click();
+    await settings(page).getByRole('button', { name: 'Send' }).click();
     await expect(log.locator('[data-kind="sent"]')).toHaveText(['> version']);
     await expect(log.locator('[data-kind="line"]')).toHaveCount(1);
     await expect(log.locator('[data-kind="line"]')).toContainText('"cmd":"version"');
     await expect(field).toHaveValue('');
 
-    await help(page).getByRole('group', { name: 'Device' }).getByRole('button', { name: 'Studio' }).click();
+    await settings(page).getByRole('group', { name: 'Device' }).getByRole('button', { name: 'Studio' }).click();
     await expect.poll(() => topics(page)).toEqual(['console/mock0002']);
     await expect(log).toContainText('Nothing yet. Send a command below.');
 
-    await help(page).getByRole('button', { name: 'Back' }).click();
+    await page.getByTestId('settings-nav-general').click();
     await expect.poll(() => topics(page)).toEqual([]);
   });
 
   test('a line off the allowlist is not sent, and the console lists what it takes', async ({ page }) => {
     await start(page);
-    await openTroubleshooting(page);
-    const field = help(page).getByRole('textbox', { name: 'Console command' });
+    await openSettings(page, 'troubleshooting');
+    const field = settings(page).getByRole('textbox', { name: 'Console command' });
     await field.fill('reboot');
     await field.press('Enter');
-    const notice = help(page).getByTestId('console-forbidden');
+    const notice = settings(page).getByTestId('console-forbidden');
     await expect(notice).toContainText('“reboot” wasn\'t sent. The console takes only these read-only commands:');
     await expect(notice.getByRole('listitem')).toHaveCount(23);
     await expect(notice).toContainText('layout state');
-    await expect(help(page).getByTestId('console-log').locator('[data-kind]')).toHaveCount(0);
+    await expect(settings(page).getByTestId('console-log').locator('[data-kind]')).toHaveCount(0);
     await expect(field).toHaveValue('reboot');
 
     await field.fill('heap');
     await field.press('Enter');
     await expect(notice).toBeHidden();
-    await expect(help(page).getByTestId('console-log').locator('[data-kind="line"]')).toContainText('free_heap');
+    await expect(settings(page).getByTestId('console-log').locator('[data-kind="line"]')).toContainText('free_heap');
   });
 
   test('Update from a file updates a Device from the chosen file, and a file that is not Firmware says so', async ({ page }) => {
     await start(page);
-    await openTroubleshooting(page);
-    await expect(help(page).getByRole('heading', { name: 'Update from a file' })).toBeVisible();
-    const rows = help(page).getByTestId('firmware-file');
+    await openSettings(page, 'troubleshooting');
+    await expect(settings(page).getByRole('heading', { name: 'Update from a file' })).toBeVisible();
+    const rows = settings(page).getByTestId('firmware-file');
     await expect(rows).toHaveCount(3);
     const studio = rows.filter({ hasText: 'Studio' });
     const status = studio.getByTestId('firmware-file-status');
@@ -239,7 +312,7 @@ test.describe('Troubleshooting', () => {
     await page.evaluate(() => window.touchdeckDemo?.firmware.release('mock0002'));
     await expect(studio).toHaveAttribute('data-step', 'done');
     await expect(status).toHaveText('Updated to 1.5.0');
-    await expect(help(page).getByTestId('device-details').nth(1).locator('[data-fact="version"] dd')).toHaveText('1.5.0');
+    await expect(settings(page).getByTestId('device-details').nth(1).locator('[data-fact="version"] dd')).toHaveText('1.5.0');
 
     await page.evaluate(() => window.touchdeckDemo?.firmware.picks('not-firmware'));
     await choose.click();
@@ -255,7 +328,7 @@ test.describe('About', () => {
     await start(page, '?update=none');
     await expect.poll(() => page.evaluate(() => window.touchdeckDemo?.updates.calls.check ?? 0)).toBe(1);
     await page.evaluate(() => window.touchdeckDemo?.updates.script({ stepMs: 400 }));
-    await openSettings(page);
+    await openSettings(page, 'about');
     await expect(settings(page)).toContainText('Open TouchDeck 0.2.0');
     await expect(settings(page)).toContainText('Build demo');
     await settings(page).getByRole('button', { name: 'Check for updates' }).click();
@@ -265,17 +338,14 @@ test.describe('About', () => {
 });
 
 test.describe('keyboard', () => {
-  test('Tab reaches every Settings control with the visible focus ring', async ({ page }) => {
-    await start(page);
-    await nav(page).getByRole('button', { name: 'Settings' }).focus();
-    await page.keyboard.press('Enter');
-    await expect(startSwitch(page)).toBeEnabled();
-    await expect(browsers(page)).toHaveCount(2);
+  /** Tabs from a sidebar entry, and lists each control reached inside Settings, checking its focus ring. */
+  async function tabFrom(page: Page, testId: string, presses: number) {
+    await page.getByTestId(testId).focus();
     const reached: string[] = [];
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < presses; i++) {
       const focused = await page.evaluate(() => {
         const el = document.activeElement;
-        if (!(el instanceof HTMLElement) || !el.closest('[role="dialog"]')) return null;
+        if (!(el instanceof HTMLElement) || !el.closest('[data-testid="settings"]')) return null;
         const style = getComputedStyle(el);
         const labelledBy = el.getAttribute('aria-labelledby');
         const name = el.getAttribute('aria-label') ?? (labelledBy ? document.getElementById(labelledBy)?.textContent : el.textContent)?.trim() ?? '';
@@ -287,17 +357,29 @@ test.describe('keyboard', () => {
       }
       await page.keyboard.press('Tab');
     }
-    for (const name of ['Close', 'Start at sign-in', 'Match Windows', 'Forget all', 'Forget Edge on Windows', 'Forget Firefox on Windows', 'Reset', 'Check for updates']) {
-      expect(reached).toContain(name);
-    }
-    expect(reached.some((name) => name.startsWith('Troubleshooting'))).toBe(true);
-  });
+    return reached;
+  }
 
-  test('Escape closes Settings from Troubleshooting too', async ({ page }) => {
+  test('Tab reaches every category and every Settings control with the visible focus ring', async ({ page }) => {
     await start(page);
-    await openTroubleshooting(page);
-    await page.keyboard.press('Escape');
-    await expect(help(page)).toBeHidden();
-    await expect(settings(page)).toBeHidden();
+    await navButton(page, 'Settings').focus();
+    await page.keyboard.press('Enter');
+    await expect(settings(page)).toHaveAttribute('data-section', 'general');
+    await expect(title(page), 'focus lands on the page title').toBeFocused();
+    await expect(startSwitch(page)).toBeEnabled();
+    expect(await tabFrom(page, 'settings-nav-general', 12)).toEqual(
+      expect.arrayContaining(['General', 'Desk', 'Studio', 'Stream deck by the window', 'Paired browsers', 'Troubleshooting', 'Errors', 'About', 'Start at sign-in', 'Match Windows']),
+    );
+
+    await page.getByTestId('settings-nav-browsers').focus();
+    await page.keyboard.press('Enter');
+    await expect(browsers(page)).toHaveCount(2);
+    expect(await tabFrom(page, 'settings-nav-browsers', 10)).toEqual(
+      expect.arrayContaining(['Paired browsers', 'Troubleshooting', 'Errors', 'About', 'Forget all', 'Forget Edge on Windows', 'Forget Firefox on Windows', 'Reset']),
+    );
+
+    await page.getByTestId('settings-nav-about').focus();
+    await page.keyboard.press('Enter');
+    expect(await tabFrom(page, 'settings-nav-about', 3)).toEqual(['About', 'Check for updates']);
   });
 });

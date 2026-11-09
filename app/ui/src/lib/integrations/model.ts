@@ -313,6 +313,28 @@ export function presetLabel(name: string): string {
   return label.trim() || 'Tile';
 }
 
+const UNIT_WORDS = new Set(['pct', 'bytes', 's']);
+
+/** An id in words, without the unit parts the value shows anyway: "network_send_bytes_s" is "Network send". */
+export function idWords(id: string): string {
+  const words = id.split(/[_\s-]+/).filter(Boolean);
+  while (words.length > 1) {
+    const last = words.at(-1);
+    if (last === undefined || !UNIT_WORDS.has(last)) break;
+    words.pop();
+  }
+  return words.length ? sentence(words.join(' ')) : id;
+}
+
+/** A stream's name for people: the name of the Preset tile that shows it, else its id in words. */
+export function streamLabel(integration: Pick<IntegrationSummary, 'id' | 'presets'>, stream: string): string {
+  const preset = integration.presets.find((p) => {
+    const action = parseAction(p.action);
+    return action?.type === 'widget' && action.source === integration.id && action.field === stream;
+  });
+  return preset ? presetLabel(preset.name) : idWords(stream);
+}
+
 /** The Preset's action as a Layout Tile action, or null when the Layout rules refuse it. */
 export function parseAction(value: JsonValue): Action | null {
   const probe = {
