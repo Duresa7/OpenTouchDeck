@@ -1,0 +1,918 @@
+/* PROTOTYPE — throwaway, answers: how should the Layout editor lay out so the nav never shifts? */
+
+html,
+body {
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+}
+
+/* Bits layout.css owns in the real app, copied so the prototype never imports it */
+.segmented-icons .segment {
+  display: grid;
+  place-items: center;
+  padding: 0 8px;
+}
+
+.button-icon[data-pressed] {
+  background: var(--fill-active);
+  color: var(--ink);
+}
+
+.proto-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ---------- shared parts ---------- */
+
+.proto-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--radius-group);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+  z-index: 5;
+}
+
+.proto-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 64px;
+  padding: 0 var(--space-5);
+  flex: none;
+}
+
+.proto-head-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Mirrors the real header's .device-title: the name in nameplate 18 semibold, then a quiet pencil */
+.proto-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 300px;
+  height: 40px;
+}
+
+.proto-name-text {
+  font-size: var(--text-18);
+  line-height: var(--leading-18);
+  letter-spacing: var(--track-18);
+  font-weight: var(--weight-semibold);
+  font-stretch: var(--stretch-plate);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proto-name-pencil {
+  flex: none;
+  color: var(--ink-2);
+}
+
+.proto-name-input {
+  width: 240px;
+  height: 36px;
+  font-size: var(--text-18);
+  font-weight: var(--weight-semibold);
+  font-stretch: var(--stretch-plate);
+}
+
+.proto-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+}
+
+.proto-device {
+  padding: 14px;
+  border-radius: 26px;
+  background: var(--bezel);
+  box-shadow:
+    inset 0 0 0 1px var(--bezel-edge),
+    inset 0 1px 0 color-mix(in srgb, var(--screen-ink) 9%, transparent),
+    var(--shadow-device);
+}
+
+.proto-device.is-landscape {
+  width: min(660px, 100%);
+}
+
+.proto-device.is-landscape .proto-screen {
+  aspect-ratio: 1024 / 600;
+}
+
+.proto-device.is-portrait {
+  height: min(640px, calc(100vh - 200px));
+  aspect-ratio: 628 / 1052;
+}
+
+.proto-device.is-portrait .proto-screen {
+  height: 100%;
+}
+
+.proto-screen {
+  position: relative;
+  display: flex;
+  padding: 42px 14px 26px;
+  border-radius: 10px;
+  background: var(--screen-bg);
+  color: var(--screen-ink);
+  font-family: var(--screen-font);
+  overflow: hidden;
+  user-select: none;
+}
+
+.proto-screen-title {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.proto-grid {
+  flex: 1;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.proto-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--screen-tile);
+  color: var(--screen-ink);
+  font-family: var(--screen-font);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) var(--ease-color),
+    box-shadow var(--duration-hover) var(--ease-color);
+}
+
+.proto-tile:hover {
+  background: var(--screen-tile-raised);
+}
+
+.proto-tile.is-selected {
+  box-shadow:
+    0 0 0 2px var(--screen-bg),
+    0 0 0 4px var(--accent);
+}
+
+.proto-tile.has-value {
+  gap: 2px;
+}
+
+.proto-tile-value {
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-tile-label {
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--screen-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proto-empty {
+  display: grid;
+  place-items: center;
+  border: 1.5px dashed color-mix(in srgb, var(--screen-ink) 16%, transparent);
+  border-radius: 12px;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) var(--ease-color),
+    color var(--duration-hover) var(--ease-color);
+}
+
+.proto-empty:hover,
+.proto-empty:focus-visible {
+  color: var(--screen-ink-2);
+  background: color-mix(in srgb, var(--screen-ink) 5%, transparent);
+}
+
+[data-preview] .proto-tile {
+  cursor: default;
+}
+
+.proto-pager {
+  position: absolute;
+  bottom: 9px;
+  left: 50%;
+  translate: -50% 0;
+  display: flex;
+  gap: 6px;
+}
+
+.proto-pager-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--screen-pager-idle);
+}
+
+.proto-pager-dot.is-current {
+  background: var(--screen-pager-current);
+}
+
+.proto-thumb {
+  display: grid;
+  gap: 2px;
+  flex: none;
+  width: 56px;
+  aspect-ratio: 1024 / 600;
+  padding: 3px;
+  border-radius: 5px;
+  background: var(--screen-bg);
+}
+
+.proto-thumb-cell {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--screen-ink) 9%, transparent);
+}
+
+.proto-thumb-cell.is-used {
+  background: color-mix(in srgb, var(--screen-ink) 48%, var(--screen-tile));
+}
+
+.proto-pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-3);
+}
+
+.proto-pages-head {
+  margin: 0 0 2px 8px;
+  font-size: var(--text-12);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-2);
+}
+
+.proto-pages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proto-page-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--duration-hover) var(--ease-color);
+}
+
+.proto-page-row:hover {
+  background: var(--fill-hover);
+}
+
+.proto-page-row.is-current {
+  background: var(--fill-active);
+}
+
+.proto-page-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.proto-page-name {
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proto-page-sub {
+  font-size: var(--text-12);
+  color: var(--ink-2);
+}
+
+.proto-add-page {
+  justify-content: flex-start;
+  margin-top: var(--space-1);
+  border-style: dashed;
+  background: transparent;
+}
+
+.proto-send {
+  animation: proto-enter var(--duration-popover) var(--ease-out);
+}
+
+.proto-send[aria-disabled='true'] {
+  border-color: transparent;
+  background: var(--button-primary-bg);
+  color: var(--button-primary-ink);
+  cursor: default;
+}
+
+.proto-spin {
+  animation: proto-spin 800ms linear infinite;
+}
+
+.proto-orient {
+  display: block;
+  border: 1.6px solid currentColor;
+  border-radius: 2.5px;
+}
+
+.proto-orient.is-landscape {
+  width: 15px;
+  height: 10px;
+}
+
+.proto-orient.is-portrait {
+  width: 10px;
+  height: 15px;
+}
+
+.proto-pop-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.proto-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  translate: -50% 0;
+  z-index: 20;
+  padding: var(--space-3);
+  border-radius: var(--radius-sheet);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+}
+
+.proto-pop.is-up {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
+.proto-grid-button {
+  height: 32px;
+  padding: 0 10px;
+}
+
+.proto-gridpick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.proto-gridpick-size {
+  font-size: var(--text-12);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-gridpick-board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  width: 200px;
+}
+
+.proto-gridpick-cell {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: var(--fill-hover);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: pointer;
+}
+
+.proto-gridpick-cell[data-lit='set'] {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.proto-gridpick-cell[data-lit='preview'] {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: none;
+}
+
+.proto-iconchoice {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.proto-iconchoice-button {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line-control);
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+.proto-iconchoice-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(7, 32px);
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sheet);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+}
+
+.proto-iconchoice-pop.is-up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.proto-iconchoice-pop .is-current {
+  background: var(--fill-active);
+  color: var(--ink);
+}
+
+.proto-select {
+  padding-right: 8px;
+}
+
+.proto-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-radius: var(--radius-sheet);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+  z-index: 4;
+}
+
+.proto-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: -4px -4px -4px 0;
+}
+
+.proto-card-title {
+  font-size: var(--text-16);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proto-card-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.proto-card-foot.is-split {
+  justify-content: space-between;
+}
+
+.proto-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: var(--radius-group);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+}
+
+.proto-toolbar .button:not(.button-icon, .button-small) {
+  height: 32px;
+}
+
+.proto-toolbar-name {
+  width: 150px;
+  height: 32px;
+}
+
+.proto-toolbar-sep {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--line);
+}
+
+.proto-toolbar-tag {
+  padding: 0 4px 0 8px;
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.proto-other {
+  text-align: center;
+}
+
+.proto-other-title {
+  margin: 0;
+  font-size: var(--text-24);
+  line-height: var(--leading-24);
+  font-weight: var(--weight-semibold);
+}
+
+.proto-other-sub {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-2);
+}
+
+/* ---------- A: rail + Page list + overlay Details ---------- */
+
+.proto-a {
+  display: grid;
+  grid-template-columns: 76px 248px minmax(0, 1fr);
+  height: 100vh;
+}
+
+.proto-a-rail {
+  position: fixed;
+  top: 50%;
+  left: 16px;
+  translate: 0 -50%;
+}
+
+.proto-a-side {
+  grid-column: 2;
+  margin: var(--space-3) 0;
+  border-radius: var(--radius-sheet);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line);
+  overflow: auto;
+}
+
+.proto-a-canvas {
+  grid-column: 3;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The card's room is kept free even while it's closed, so the Device never moves and never sits under it */
+.proto-a .proto-stage {
+  padding-right: 340px;
+}
+
+.proto-a-card {
+  position: absolute;
+  top: 72px;
+  right: var(--space-4);
+  width: 308px;
+  transform-origin: top right;
+  animation: proto-enter var(--duration-popover) var(--ease-out);
+}
+
+.proto-a-other {
+  grid-column: 2 / -1;
+  display: grid;
+  place-items: center;
+}
+
+/* ---------- B: rail + Page list + toolbar ---------- */
+
+.proto-b {
+  display: grid;
+  grid-template-columns: 76px 264px minmax(0, 1fr);
+  height: 100vh;
+}
+
+.proto-b-rail {
+  position: fixed;
+  top: 50%;
+  left: 16px;
+  translate: 0 -50%;
+}
+
+.proto-b-side {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  margin: var(--space-3) 0;
+  border-radius: var(--radius-sheet);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line);
+  overflow: auto;
+}
+
+.proto-b-device {
+  padding: var(--space-4) var(--space-4) var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.proto-b-canvas {
+  grid-column: 3;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding-top: var(--space-5);
+}
+
+.proto-b-toolbar {
+  z-index: 3;
+}
+
+.proto-b-stage {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+}
+
+.proto-b-card {
+  position: absolute;
+  transform-origin: left center;
+  animation: proto-enter var(--duration-popover) var(--ease-out);
+}
+
+.proto-b-card.is-left {
+  transform-origin: right center;
+}
+
+.proto-b-other {
+  grid-column: 2 / -1;
+  display: grid;
+  place-items: center;
+}
+
+/* ---------- C: docked rail + filmstrip + bottom contextual toolbar ---------- */
+
+.proto-c {
+  display: grid;
+  grid-template-columns: 64px 160px minmax(0, 1fr);
+  height: 100vh;
+  transition: grid-template-columns var(--duration-expand) var(--ease-drawer);
+}
+
+.proto-c.is-strip-closed {
+  grid-template-columns: 64px 0px minmax(0, 1fr);
+}
+
+.proto-c-rail {
+  grid-column: 1;
+  align-items: center;
+  height: 100vh;
+  padding: var(--space-3) 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: 1px 0 0 var(--line);
+}
+
+.proto-c-strip {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) 10px;
+  overflow: hidden auto;
+  background: var(--surface-inset);
+  box-shadow: 1px 0 0 var(--line);
+}
+
+.proto-c.is-strip-closed .proto-c-strip {
+  visibility: hidden;
+  padding-inline: 0;
+  transition: visibility 0ms var(--duration-expand);
+}
+
+.proto-c-pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proto-c-page {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 4px 6px;
+  width: 100%;
+  padding: 6px 6px 6px 2px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.proto-c-page:hover {
+  background: var(--fill-hover);
+}
+
+.proto-c-page .proto-thumb {
+  width: 100%;
+}
+
+.proto-c-page.is-current .proto-thumb {
+  box-shadow:
+    0 0 0 2px var(--surface-inset),
+    0 0 0 4px var(--accent);
+}
+
+.proto-c-page-num {
+  align-self: start;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.proto-c-page-name {
+  grid-column: 2;
+  font-size: var(--text-12);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proto-c-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: 40px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.proto-c-add:hover {
+  color: var(--ink);
+  background: var(--fill-hover);
+}
+
+.proto-c-canvas {
+  grid-column: 3;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.proto-c .proto-stage {
+  padding-bottom: 96px;
+}
+
+.proto-c-toolbar {
+  position: absolute;
+  bottom: var(--space-5);
+  left: 50%;
+  translate: -50% 0;
+  z-index: 3;
+}
+
+.proto-c-swap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  animation: proto-fade var(--duration-popover) var(--ease-out);
+}
+
+.proto-toolbar-action {
+  width: 250px;
+  height: 32px;
+}
+
+.proto-c-other {
+  grid-column: 2 / -1;
+  display: grid;
+  place-items: center;
+}
+
+/* ---------- the prototype's own switcher: deliberately not part of the design ---------- */
+
+/* Bottom left, over the Page list's empty foot, so it covers none of the three editors' controls */
+.proto-switcher {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 340px;
+  padding: 6px 10px 8px;
+  border-radius: 12px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 12px;
+  box-shadow: var(--shadow-float);
+}
+
+.proto-switcher-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.proto-switcher button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.proto-switcher button:hover {
+  background: color-mix(in srgb, var(--surface) 14%, transparent);
+}
+
+.proto-switcher-label {
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proto-switcher-theme {
+  margin-left: 6px;
+  opacity: 0.8;
+}
+
+.proto-switcher-state {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* ---------- motion ---------- */
+
+@keyframes proto-enter {
+  from {
+    opacity: 0;
+    scale: var(--enter-scale);
+  }
+}
+
+@keyframes proto-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes proto-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:demo": "vite --mode demo",
+    "dev:prototype": "vite --port 5181 --strictPort",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
