@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
 import { Tabs } from '@base-ui/react/tabs';
-import { Film, Plus, X } from 'lucide-react';
+import { Film, Plus, Trash2, X } from 'lucide-react';
 import type { IntegrationSummary } from '../../lib/companion/api.ts';
 import { useDevices } from '../../lib/companion/devices.ts';
 import { useIntegrations } from '../../lib/companion/integrations.ts';
@@ -16,7 +16,7 @@ import { hasSettings } from '../../lib/integrations/switch.ts';
 import { button } from '../../shell/button.ts';
 import { useUi } from '../../state/ui.ts';
 import { IntegrationGlyph } from '../integrations/IntegrationGlyph.tsx';
-import { addTab, closingLine, missingPresets, previewGrid, type AddTab } from './add-tile.ts';
+import { addTab, previewGrid, type AddTab } from './add-tile.ts';
 import { PresetCard } from './PresetCard.tsx';
 import { usePresetNeeds } from './presets.ts';
 import { PendingApprovals } from './Approvals.tsx';
@@ -38,7 +38,7 @@ function GlyphWarning({ value, device }: { value: string; device: string }) {
   );
 }
 
-function NameField({ label, value, hint, device, onCommit, testId }: { label: string; value: string; hint?: string; device: string; onCommit(next: string): string | null; testId: string }) {
+function NameField({ label, value, device, onCommit, testId }: { label: string; value: string; device: string; onCommit(next: string): string | null; testId: string }) {
   const id = useId();
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
@@ -69,41 +69,112 @@ function NameField({ label, value, hint, device, onCommit, testId }: { label: st
         onKeyDown={keys}
         data-testid={testId}
       />
-      {hint && <p className="field-hint">{hint}</p>}
       <GlyphWarning value={draft} device={device} />
     </div>
   );
 }
 
-const SIZES = [1, 2, 3, 4, 5, 6, 7, 8];
+/** The id of the Details panel, which the header's panel button opens and closes. */
+export const DETAILS_ID = 'editor-details';
 
+const GRID_MAX = 8;
+const SIZES = Array.from({ length: GRID_MAX }, (_, i) => i + 1);
+
+interface GridSize {
+  rows: number;
+  cols: number;
+}
+
+const gridWords = ({ rows, cols }: GridSize) => `${plural(rows, 'row')} × ${plural(cols, 'column')}`;
+const clampSize = (n: number) => Math.min(GRID_MAX, Math.max(1, n));
+
+const MOVES: Partial<Record<string, GridSize>> = {
+  ArrowUp: { rows: -1, cols: 0 },
+  ArrowDown: { rows: 1, cols: 0 },
+  ArrowLeft: { rows: 0, cols: -1 },
+  ArrowRight: { rows: 0, cols: 1 },
+};
+
+/**
+ * Pick the grid by sweeping over an 8 × 8 board of squares, like inserting a table in a word processor. Hovering or
+ * moving focus previews the size; a click, Enter or Space sets it. Only one square is in the tab order, and the
+ * arrow keys move between them.
+ */
 function GridField({ store, page }: { store: EditorStore; page: GridPage }) {
   const id = useId();
+  const board = useRef<HTMLDivElement>(null);
+  const [preview, setPreview] = useState<GridSize | null>(null);
+  const [focus, setFocus] = useState<GridSize>({ rows: page.rows, cols: page.cols });
+  useEffect(() => setFocus({ rows: page.rows, cols: page.cols }), [page.id, page.rows, page.cols]);
+  const shown = preview ?? { rows: page.rows, cols: page.cols };
+
+  const keys = (event: KeyboardEvent<HTMLDivElement>) => {
+    const move = MOVES[event.key];
+    const next = move
+      ? { rows: clampSize(focus.rows + move.rows), cols: clampSize(focus.cols + move.cols) }
+      : event.key === 'Home'
+        ? { rows: 1, cols: 1 }
+        : event.key === 'End'
+          ? { rows: GRID_MAX, cols: GRID_MAX }
+          : null;
+    if (!next) return;
+    event.preventDefault();
+    setFocus(next);
+    setPreview(next);
+    board.current?.querySelector<HTMLButtonElement>(`[data-rows="${next.rows}"][data-cols="${next.cols}"]`)?.focus();
+  };
+
   return (
     <div className="field">
-      <span className="field-label" id={id}>
-        Grid
-      </span>
-      <div className="grid-size" role="group" aria-labelledby={id}>
-        <select className="input select-native tabular" aria-label="Rows" value={page.rows} onChange={(event) => store.setGrid(Number(event.target.value), page.cols)} data-testid="grid-rows">
-          {SIZES.map((n) => (
-            <option key={n} value={n}>
-              {plural(n, 'row')}
-            </option>
-          ))}
-        </select>
-        <span className="grid-times" aria-hidden>
-          ×
+      <div className="grid-picker-head">
+        <span className="field-label" id={id}>
+          Grid
         </span>
-        <select className="input select-native tabular" aria-label="Columns" value={page.cols} onChange={(event) => store.setGrid(page.rows, Number(event.target.value))} data-testid="grid-cols">
-          {SIZES.map((n) => (
-            <option key={n} value={n}>
-              {plural(n, 'column')}
-            </option>
-          ))}
-        </select>
+        <span className={clsx('grid-picker-size tabular', preview && 'is-preview')} aria-hidden data-testid="grid-size">
+          {gridWords(shown)}
+        </span>
       </div>
-      <p className="field-hint">More rows and columns make smaller Tiles. Empty squares stay blank.</p>
+      <div
+        ref={board}
+        className="grid-picker"
+        role="group"
+        aria-labelledby={id}
+        onKeyDown={keys}
+        onPointerLeave={() => setPreview(null)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setPreview(null);
+        }}
+        data-testid="grid-picker"
+      >
+        {SIZES.map((rows) =>
+          SIZES.map((cols) => {
+            const size = { rows, cols };
+            return (
+              <button
+                key={`${rows}x${cols}`}
+                type="button"
+                className="grid-picker-cell"
+                tabIndex={rows === focus.rows && cols === focus.cols ? 0 : -1}
+                aria-label={gridWords(size)}
+                aria-pressed={rows === page.rows && cols === page.cols}
+                data-lit={rows <= shown.rows && cols <= shown.cols ? (preview ? 'preview' : 'set') : undefined}
+                data-rows={rows}
+                data-cols={cols}
+                onPointerEnter={() => setPreview(size)}
+                onFocus={() => {
+                  setFocus(size);
+                  setPreview(size);
+                }}
+                onClick={() => {
+                  setPreview(null);
+                  if (rows !== page.rows || cols !== page.cols) store.setGrid(rows, cols);
+                }}
+                data-testid="grid-cell"
+              />
+            );
+          }),
+        )}
+      </div>
     </div>
   );
 }
@@ -117,84 +188,88 @@ function RemovePage({ store, layout, page }: { store: EditorStore; layout: Layou
     return () => clearTimeout(timer);
   }, [armed]);
   const last = layout.pages.length <= 1;
-  const control = (
-    <button
-      type="button"
-      className={button({ kind: 'danger', size: 'small' })}
-      aria-disabled={last}
-      onClick={() => {
-        if (last) return;
-        if (armed) store.removePage(page.id);
-        else setArmed(true);
-      }}
-      onBlur={() => setArmed(false)}
-      data-testid="page-remove"
-    >
-      {armed ? `Click again to remove “${page.title}”` : 'Remove Page'}
-    </button>
+  return (
+    <Tip label={last ? 'A Layout needs at least one Page' : armed ? 'Click again to remove' : 'Remove Page'}>
+      <button
+        type="button"
+        className={clsx(button({ kind: 'danger', size: 'small' }), 'page-remove', armed && 'is-armed')}
+        aria-disabled={last}
+        aria-label={armed ? `Click again to remove “${page.title}”` : 'Remove Page'}
+        onClick={() => {
+          if (last) return;
+          if (armed) store.removePage(page.id);
+          else setArmed(true);
+        }}
+        onBlur={() => setArmed(false)}
+        data-testid="page-remove"
+      >
+        <Trash2 size={16} strokeWidth={1.9} aria-hidden />
+        {armed && <span>Remove “{page.title}”?</span>}
+      </button>
+    </Tip>
   );
-  return last ? <Tip label="A Layout needs at least one Page">{control}</Tip> : control;
 }
 
 function Details({ store, layout, page, device }: { store: EditorStore; layout: Layout; page: Page; device: string }) {
   const index = layout.pages.findIndex((p) => p.id === page.id);
   const fullId = useId();
   return (
-    <div className="inspector-details" data-testid="page-details">
-      <ControlReview store={store} layout={layout} />
-      <section className="inspector-section" aria-labelledby={`${fullId}-page`}>
-        <div className="section-head">
-          <h2 className="section-title" id={`${fullId}-page`}>
-            {page.kind === 'dashboard' ? 'Usage page' : 'Page'}
-          </h2>
-          <span className="section-sub tabular">
-            Page {index + 1} of {layout.pages.length}
-          </span>
-        </div>
-        <NameField
-          key={page.id}
-          label="Name"
-          value={page.title}
-          hint={`Shown at the top left of ${device}. Up to 24 characters.`}
-          device={device}
-          onCommit={(title) => store.renamePage(page.id, title)}
-          testId="page-name"
-        />
-        {page.kind === 'grid' ? (
-          <GridField store={store} page={page} />
-        ) : (
-          <p className="field-hint">Lists each CLIProxyAPI account and how much of its limit is used. Shows examples until CLIProxyAPI is set up under Integrations.</p>
-        )}
-        <div>
-          <RemovePage store={store} layout={layout} page={page} />
-        </div>
-      </section>
-      <section className="inspector-section" aria-labelledby={`${fullId}-layout`}>
-        <div className="section-head">
-          <h2 className="section-title" id={`${fullId}-layout`}>
-            Layout
-          </h2>
-        </div>
-        <NameField label="Name" value={layout.name} device={device} onCommit={(name) => store.renameLayout(name)} testId="layout-name" />
-        <div className="field">
-          <div className="switch-row">
-            <span className="field-label" id={`${fullId}-full`}>
-              Full screen
+    <>
+      <div className="inspector-details" data-testid="page-details">
+        <ControlReview store={store} layout={layout} />
+        <section className="inspector-section" aria-labelledby={`${fullId}-page`}>
+          <div className="section-head">
+            <h2 className="section-title" id={`${fullId}-page`}>
+              {page.kind === 'dashboard' ? 'Usage page' : 'Page'}
+            </h2>
+            <span className="section-sub tabular">
+              Page {index + 1} of {layout.pages.length}
             </span>
-            <Switch.Root
-              className="switch"
-              checked={layout.fullScreen === true}
-              onCheckedChange={(on) => store.setFullScreen(on)}
-              aria-labelledby={`${fullId}-full`}
-              data-testid="full-screen"
-            >
-              <Switch.Thumb className="switch-thumb" />
-            </Switch.Root>
           </div>
-          <p className="field-hint">Hide the Page name and dots so Tiles fill the screen. Swiping between Pages still works.</p>
-        </div>
-      </section>
-    </div>
+          <NameField
+            key={page.id}
+            label="Name"
+            value={page.title}
+            device={device}
+            onCommit={(title) => store.renamePage(page.id, title)}
+            testId="page-name"
+          />
+          {page.kind === 'grid' ? (
+            <GridField store={store} page={page} />
+          ) : (
+            <p className="field-hint">Lists each CLIProxyAPI account and how much of its limit is used.</p>
+          )}
+        </section>
+        <section className="inspector-section" aria-labelledby={`${fullId}-layout`}>
+          <div className="section-head">
+            <h2 className="section-title" id={`${fullId}-layout`}>
+              Layout
+            </h2>
+          </div>
+          <NameField label="Name" value={layout.name} device={device} onCommit={(name) => store.renameLayout(name)} testId="layout-name" />
+          <div className="field">
+            <div className="switch-row">
+              <span className="field-label" id={`${fullId}-full`}>
+                Full screen
+              </span>
+              <Switch.Root
+                className="switch"
+                checked={layout.fullScreen === true}
+                onCheckedChange={(on) => store.setFullScreen(on)}
+                aria-labelledby={`${fullId}-full`}
+                data-testid="full-screen"
+              >
+                <Switch.Thumb className="switch-thumb" />
+              </Switch.Root>
+            </div>
+            <p className="field-hint">Hide the Page name and dots so Tiles fill the screen. Swiping between Pages still works.</p>
+          </div>
+        </section>
+      </div>
+      <div className="inspector-foot is-end">
+        <RemovePage store={store} layout={layout} page={page} />
+      </div>
+    </>
   );
 }
 
@@ -275,25 +350,16 @@ function PresetGroup({ store, integration, rows, cols }: { store: EditorStore; i
   );
 }
 
-/** Preset tiles from every Integration that is on and set up, drawn as they will look, then what's off or needs setup. */
+/** Preset tiles from every Integration that is on and set up, drawn as they will look. */
 function IntegrationTiles({ store, page, target }: { store: EditorStore; page: Page; target: Target }) {
   const integrations = useIntegrations((s) => s.integrations);
   const go = useUi((s) => s.go);
-  const openIntegration = useUi((s) => s.openIntegration);
   const offered = integrations.filter(offersPresets);
-  const missing = missingPresets(integrations);
-  const closing = closingLine(missing);
   const { rows, cols } = previewGrid(page, target === 'new-page');
-  const onlySetUp = missing.off.length === 0 && missing.setUp.length === 1 && hasSettings(missing.setUp[0]) ? missing.setUp[0] : null;
   return (
     <div className="add-integrations" data-testid="add-presets">
       {offered.length ? (
-        <>
-          <p className="add-caption">Previews show example data.</p>
-          {offered.map((integration) => (
-            <PresetGroup key={integration.id} store={store} integration={integration} rows={rows} cols={cols} />
-          ))}
-        </>
+        offered.map((integration) => <PresetGroup key={integration.id} store={store} integration={integration} rows={rows} cols={cols} />)
       ) : (
         <div className="add-empty" data-testid="add-presets-empty">
           <p className="add-empty-text">Turn on an Integration to add its Tiles.</p>
@@ -303,22 +369,6 @@ function IntegrationTiles({ store, page, target }: { store: EditorStore; page: P
             </button>
           </div>
         </div>
-      )}
-      {closing && (
-        <p className="add-closing" data-testid="add-presets-closing">
-          {closing}{' '}
-          {onlySetUp ? (
-            <button type="button" className="link-button" onClick={() => openIntegration(onlySetUp.id, { setUp: true })} data-testid="add-presets-open">
-              Open settings
-            </button>
-          ) : (
-            offered.length > 0 && (
-              <button type="button" className="link-button" onClick={() => go('integrations')} data-testid="add-presets-open">
-                Open Integrations
-              </button>
-            )
-          )}
-        </p>
       )}
     </div>
   );
@@ -435,7 +485,7 @@ export function Inspector({ store, layout, device }: { store: EditorStore; layou
   const page = layout.pages.find((p) => p.id === pageId) ?? layout.pages[0];
   const tileOpen = mode === 'edit' && selected !== null && page.kind === 'grid' && page.tiles.some((t) => t.id === selected);
   return (
-    <aside className={clsx('inspector', adding !== null && 'is-adding')} aria-label="Details" data-testid="inspector">
+    <aside id={DETAILS_ID} className={clsx('inspector', adding !== null && 'is-adding')} aria-label="Details" data-testid="inspector">
       {deviceId && <PendingApprovals deviceId={deviceId} device={device} layout={layout} />}
       {adding !== null ? (
         <AddTile store={store} page={page} pages={layout.pages.length} target={adding} />

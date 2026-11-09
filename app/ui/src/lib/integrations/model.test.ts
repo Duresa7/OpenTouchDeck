@@ -9,6 +9,7 @@ import {
   formatCount,
   formOf,
   headerLine,
+  idWords,
   outcomeAt,
   settingsTitle,
   offersPresets,
@@ -18,6 +19,7 @@ import {
   presetLabel,
   presetLook,
   resetLine,
+  streamLabel,
   serialize,
   statusOf,
   transportOf,
@@ -232,6 +234,16 @@ describe('Preset tiles', () => {
     expect(presetLook({ ...preset('five_hour_pct'), render: 'bar' }, streams)).toBe('level');
     expect(presetLook({ ...preset('plan'), render: 'now-playing' }, streams)).toBe('now-playing');
     expect(presetLook({ ...preset('success'), render: 'graph' }, streams)).toBe('graph');
+  });
+
+  it('names a reading by the Preset tile that shows it, else by its id in words without the unit', () => {
+    const thisPc = { id: 'this_pc', presets: [{ id: 'cpu_pct', name: 'CPU usage', action: { type: 'widget', source: 'this_pc', field: 'cpu_pct', account: '' } }] };
+    expect(streamLabel(thisPc, 'cpu_pct')).toBe('CPU usage');
+    expect(streamLabel(thisPc, 'network_send_bytes_s')).toBe('Network send');
+    expect(idWords('ram_total_bytes')).toBe('Ram total');
+    expect(idWords('this_pc')).toBe('This pc');
+    expect(idWords('pct')).toBe('Pct');
+    expect(idWords('')).toBe('');
   });
 
   it('gives Volume and Media one line each', () => {

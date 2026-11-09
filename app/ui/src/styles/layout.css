@@ -1,22 +1,28 @@
 /* The Layout screen, built from tokens.css. Never write a raw color here. */
 
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
-}
-
 .editor {
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--inspector-w, 400px);
   grid-template-rows: 64px minmax(0, 1fr);
   height: 100vh;
+  overflow: clip;
+  transition: grid-template-columns var(--duration-expand) var(--ease-drawer);
+}
+
+/* The Details panel slides out to the right and the canvas takes its room. The panel keeps its width as it goes,
+   so its content doesn't squeeze, and turns invisible once it's out, which also takes it out of the tab order. */
+.editor.is-details-hidden {
+  grid-template-columns: minmax(0, 1fr) 0px;
+}
+
+.editor.is-details-hidden .inspector {
+  visibility: hidden;
+  transition: visibility 0ms var(--duration-expand);
+}
+
+/* A drag follows the pointer 1:1, with no easing behind it */
+body.is-resizing .editor {
+  transition: none;
 }
 
 /* The details panel's left edge: drag, or focus and use the arrow keys, to resize it */
@@ -93,28 +99,20 @@ body.is-resizing {
   flex: none;
 }
 
-.device-switch {
+/* The Device's name and the pencil that renames it in place */
+.device-title {
+  position: relative;
   flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   min-width: 96px;
-  max-width: 260px;
+  max-width: 300px;
   height: 40px;
-  padding: 0 10px 0 12px;
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  cursor: pointer;
+  padding-left: 12px;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .device-switch:hover {
-    background: var(--fill-hover);
-  }
-}
-
-.device-switch-name {
+.device-title-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -125,26 +123,40 @@ body.is-resizing {
   font-stretch: var(--stretch-plate);
 }
 
-.chev {
+.device-title > .button-icon {
   flex: none;
   color: var(--ink-2);
-  transition: rotate var(--duration-chevron) var(--ease-out);
 }
 
-.device-switch[data-popup-open] {
-  background: var(--fill-active);
+.device-title.is-editing {
+  padding-left: 4px;
 }
 
-.device-switch[data-popup-open] .chev {
-  rotate: 180deg;
+.device-title-input {
+  width: 240px;
+  /* A narrow header shrinks the field with its box rather than letting it run over the controls beside it */
+  min-width: 0;
+  height: 36px;
+  font-size: var(--text-18);
+  font-weight: var(--weight-semibold);
+  font-stretch: var(--stretch-plate);
 }
 
-.connection {
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  margin-left: calc(-1 * var(--space-1));
+.device-title-problem {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 4px;
+  z-index: 5;
+  width: max-content;
+  max-width: 320px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-dialog);
+  color: var(--danger-ink);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
 }
 
 .status-words {
@@ -153,28 +165,9 @@ body.is-resizing {
   text-overflow: ellipsis;
 }
 
-.save-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+/* The Device picker sits on the left; everything after it goes to the right */
+.editor-head-row > .segmented {
   margin-left: auto;
-  margin-right: var(--space-2);
-  font-size: var(--text-12);
-  line-height: var(--leading-12);
-  letter-spacing: var(--track-12);
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-
-.save-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--signal-led);
-}
-
-.save-state.is-sending .save-dot {
-  background: var(--accent);
 }
 
 /* Before the narrow header's rules, so a collapsed Add Tile centres its icon */
@@ -182,18 +175,75 @@ body.is-resizing {
   padding-left: 10px;
 }
 
-/* A narrow header keeps the save state's mark and drops its words, then Add Tile keeps only its icon */
-@container editor-head (max-width: 800px) {
-  .save-words {
-    display: none;
+/* Send to Device: its width follows the words it shows, so Send, Sending… and Saved slide into each other, and it
+   folds to nothing once the Device has the Layout. The padding lives on the inner row, which keeps its own width. */
+.push-button {
+  justify-content: flex-start;
+  /* --push-w is the inner row's measured width; the button's 1px borders sit outside it. Until it's measured the
+     declaration is invalid, so the width is auto. */
+  width: calc(var(--push-w) + 2px);
+  padding: 0;
+  overflow: hidden;
+  transition:
+    background-color var(--duration-hover) var(--ease-color),
+    color var(--duration-hover) var(--ease-color),
+    transform var(--duration-press) var(--ease-out),
+    width var(--duration-expand) var(--ease-drawer),
+    margin var(--duration-expand) var(--ease-drawer),
+    opacity var(--duration-label) var(--ease-out);
+}
+
+.push-inner {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 14px;
+  animation: push-words-in var(--duration-label) var(--ease-out) both;
+}
+
+.push-button[data-state='saved'] {
+  cursor: default;
+}
+
+.push-button[data-state='hidden'] {
+  width: 0;
+  margin-left: calc(-1 * var(--space-2));
+  border-width: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    width var(--duration-collapse) var(--ease-drawer),
+    margin var(--duration-collapse) var(--ease-drawer),
+    opacity var(--duration-label-out) var(--ease-out),
+    visibility 0ms var(--duration-collapse);
+}
+
+.push-spinner {
+  animation: push-spin var(--duration-spin) linear infinite;
+}
+
+@keyframes push-spin {
+  to {
+    rotate: 360deg;
   }
 }
 
+@keyframes push-words-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* A narrow header keeps only the icons of Add Tile and Send */
 @container editor-head (max-width: 680px) {
-  .add-tile-button,
-  .push-button {
+  .add-tile-button {
     width: 34px;
     padding: 0;
+  }
+
+  .push-inner {
+    padding: 0 9px;
   }
 
   .add-tile-words,
@@ -770,19 +820,6 @@ body.is-resizing {
   color: var(--danger-ink);
 }
 
-.editor-status-details summary {
-  color: var(--ink-2);
-  cursor: pointer;
-}
-
-.editor-status-details p {
-  margin: var(--space-1) 0 0;
-  color: var(--ink-2);
-  text-align: start;
-  white-space: pre-line;
-  overflow-wrap: anywhere;
-}
-
 /* ---------- Page tabs ---------- */
 
 .page-tabs {
@@ -1330,6 +1367,9 @@ body.is-resizing {
 .inspector {
   grid-column: 2;
   grid-row: 1 / span 2;
+  justify-self: start;
+  /* Fills its column as it narrows, and keeps its width as the column closes to nothing */
+  width: max(100%, var(--inspector-w, 400px));
   container: inspector / inline-size;
   display: flex;
   flex-direction: column;
@@ -1403,6 +1443,17 @@ body.is-resizing {
   background: var(--surface);
 }
 
+.inspector-foot.is-end {
+  justify-content: flex-end;
+}
+
+/* Remove Page: a trash can that asks once more, in words, before it removes */
+.page-remove {
+  gap: 6px;
+  min-width: 32px;
+  padding: 0 8px;
+}
+
 .inspector-details {
   display: flex;
   flex-direction: column;
@@ -1436,19 +1487,61 @@ body.is-resizing {
   line-height: var(--leading-12);
 }
 
-.grid-size {
+/* The grid picker: an 8 × 8 board of squares, lit up to the size it shows */
+.grid-picker-head {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
-.grid-size .select-native {
-  flex: 1;
-  padding-right: 8px;
-}
-
-.grid-times {
+.grid-picker-size {
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
   color: var(--ink-2);
+}
+
+.grid-picker-size.is-preview {
+  color: var(--ink);
+}
+
+.grid-picker {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
+  width: 220px;
+  max-width: 100%;
+}
+
+.grid-picker-cell {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--line-control);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) var(--ease-color),
+    box-shadow var(--duration-hover) var(--ease-color);
+}
+
+.grid-picker-cell[data-lit] {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.grid-picker-cell[data-lit='set'] {
+  background: var(--accent);
+}
+
+.grid-picker-cell[data-lit='preview'] {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.grid-picker-cell:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 .switch-label {
@@ -2172,8 +2265,6 @@ body.is-resizing {
   gap: var(--space-6);
 }
 
-.add-caption,
-.add-closing,
 .add-empty-text {
   margin: 0;
   color: var(--ink-2);
@@ -2181,15 +2272,6 @@ body.is-resizing {
   line-height: var(--leading-12);
   letter-spacing: var(--track-12);
   text-wrap: pretty;
-}
-
-.add-caption {
-  margin-bottom: calc(-1 * var(--space-3));
-}
-
-.add-closing {
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--line);
 }
 
 .add-empty {

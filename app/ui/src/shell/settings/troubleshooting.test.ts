@@ -77,15 +77,15 @@ describe('Troubleshooting', () => {
     expect(lastError(sampleDevice('a', 'Desk', connected))).toBeNull();
   });
 
-  test('Settings opened from the nav starts on its main view, even after Connection help opened Troubleshooting', () => {
+  test('Settings opened from the nav starts on General, even after Connection help opened Troubleshooting', () => {
     const ui = createUiStore();
     ui.getState().openTroubleshooting();
-    expect(ui.getState()).toMatchObject({ settingsOpen: true, settingsSection: 'troubleshooting' });
-    ui.getState().setSettingsOpen(false);
+    expect(ui.getState()).toMatchObject({ section: 'settings', settingsSection: 'troubleshooting' });
+    ui.getState().go('home');
     expect(ui.getState().settingsSection).toBe('troubleshooting');
-    ui.getState().setSettingsOpen(true);
-    expect(ui.getState()).toMatchObject({ settingsOpen: true, settingsSection: 'general' });
-    ui.getState().showSettingsSection('troubleshooting');
-    expect(ui.getState().settingsSection).toBe('troubleshooting');
+    ui.getState().openSettings();
+    expect(ui.getState()).toMatchObject({ section: 'settings', settingsSection: 'general', settingsDevice: null });
+    ui.getState().openSettings('device', 'two');
+    expect(ui.getState()).toMatchObject({ settingsSection: 'device', settingsDevice: 'two' });
   });
 });

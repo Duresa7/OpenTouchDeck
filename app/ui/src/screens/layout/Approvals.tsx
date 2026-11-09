@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { AllowedAction, ApprovalRequest } from '../../lib/companion/api.ts';
 import { actionsStore, useActions } from '../../lib/companion/actions.ts';
@@ -7,6 +7,7 @@ import { isApiError, toApiError } from '../../lib/companion/errors.ts';
 import { commandLine, escapeInvisible, processOf, sameProcess, type Started } from '../../lib/layout/actions.ts';
 import type { Action, Layout } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
+import { openDetails } from '../../state/ui.ts';
 
 const UNREACHABLE = "Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry.";
 
@@ -78,6 +79,12 @@ export function PendingApprovals({ deviceId, device, layout }: { deviceId: strin
     );
   }, [companion]);
   const mine = approvals.filter((request) => request.device === deviceId);
+  const waiting = mine.length;
+  const seen = useRef(0);
+  useEffect(() => {
+    if (waiting > seen.current) openDetails();
+    seen.current = waiting;
+  }, [waiting]);
   return (
     <div className="approvals" aria-live="polite" data-testid="approvals">
       {mine.map((request) => (

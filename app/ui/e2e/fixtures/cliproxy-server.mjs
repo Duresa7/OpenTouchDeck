@@ -32,12 +32,12 @@ export async function start({ port = 0, key = DEFAULT_KEY, fixture = DEFAULT_FIX
     if (request.url === AUTH_FILES) return send(200, body);
     const now = Math.floor(Date.now() / 1000);
     let usage;
-    if (json?.auth_index === 'codex-alice' && json?.url === CODEX_USAGE && json?.method === 'GET') {
+    if (json?.authIndex === 'codex-alice' && json?.url === CODEX_USAGE && json?.method === 'GET') {
       usage = { plan_type: 'pro', rate_limit: {
         primary_window: { used_percent: fiveHourPercent, reset_at: now + 7800, limit_window_seconds: 18000 },
         secondary_window: { used_percent: 10, reset_at: now + 273600, limit_window_seconds: 604800 },
       } };
-    } else if (json?.auth_index === 'claude-alice' && json?.url === CLAUDE_USAGE && json?.method === 'GET') {
+    } else if (json?.authIndex === 'claude-alice' && json?.url === CLAUDE_USAGE && json?.method === 'GET') {
       usage = { five_hour: { utilization: 24, resets_at: new Date((now + 7800) * 1000).toISOString() },
         seven_day: { utilization: 61, resets_at: new Date((now + 273600) * 1000).toISOString() } };
     } else return send(404, '{"error":"unknown fixture account or URL"}');

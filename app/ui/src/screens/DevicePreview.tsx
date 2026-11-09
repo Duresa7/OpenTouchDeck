@@ -49,7 +49,6 @@ export function DevicePreview({ preview, live, orientation = 'landscape', empty 
   const page = preview && buildPage(preview.layout.pages[preview.index], g);
   const title = page && buildTitle(page.title, g);
   return <span className={clsx('device-object', !live && 'is-off')} aria-hidden="true">
-    <span className="device-spill" />
     <span className="device-bezel">
       <span className="device-screen" style={{ aspectRatio: `${g.screen.w} / ${g.screen.h}` }}>
         <svg className="device-scene" viewBox={`0 0 ${g.screen.w} ${g.screen.h}`} data-page={page?.id}>

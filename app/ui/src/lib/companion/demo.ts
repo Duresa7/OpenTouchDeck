@@ -116,21 +116,33 @@ const DATA_SETS: { label: string; params: DataParams }[] = [
   { label: 'All offline', params: { data: 'worst', offline: 'all' } },
 ];
 
+/**
+ * A small chip in the bottom-left corner, clear of the centred nav dock. It opens upward into the data sets; picking
+ * one reloads the page with it.
+ */
 function mountDataToggle(target: Window, params: URLSearchParams) {
   if (params.get('toggle') === '0') return;
   const doc = target.document;
+  const isChosen = (set: (typeof DATA_SETS)[number]) => DATA_KEYS.every((name) => (params.get(name) ?? undefined) === set.params[name]);
+  const box = doc.createElement('details');
+  box.dataset.demoToggle = '';
+  box.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:2147483647;font:12px system-ui,sans-serif;color:var(--ink)';
+  const summary = doc.createElement('summary');
+  summary.textContent = DATA_SETS.find(isChosen)?.label ?? 'Demo data';
+  summary.title = 'Demo data';
+  summary.style.cssText = 'list-style:none;cursor:pointer;padding:5px 12px;border-radius:999px;background:var(--fill-active)';
   const bar = doc.createElement('div');
   bar.setAttribute('role', 'group');
   bar.setAttribute('aria-label', 'Demo data');
-  bar.dataset.demoToggle = '';
-  bar.style.cssText = 'position:fixed;left:50%;bottom:8px;translate:-50% 0;z-index:2147483647;display:flex;gap:2px;padding:2px;border-radius:999px;background:var(--fill-active);font:12px system-ui,sans-serif';
+  bar.style.cssText = 'position:absolute;left:0;bottom:calc(100% + 4px);display:flex;flex-direction:column;gap:2px;padding:2px;border-radius:12px;background:var(--fill-active);white-space:nowrap';
+  box.append(summary, bar);
   for (const set of DATA_SETS) {
-    const chosen = DATA_KEYS.every((name) => (params.get(name) ?? undefined) === set.params[name]);
+    const chosen = isChosen(set);
     const segment = doc.createElement('button');
     segment.type = 'button';
     segment.textContent = set.label;
     segment.setAttribute('aria-pressed', String(chosen));
-    segment.style.cssText = `border:0;border-radius:999px;padding:4px 10px;cursor:pointer;color:var(--ink);background:${chosen ? 'var(--surface-raised)' : 'transparent'}`;
+    segment.style.cssText = `border:0;border-radius:10px;padding:4px 10px;text-align:left;cursor:pointer;color:var(--ink);background:${chosen ? 'var(--surface-raised)' : 'transparent'}`;
     segment.addEventListener('click', () => {
       const url = new URL(target.location.href);
       for (const name of DATA_KEYS) url.searchParams.delete(name);
@@ -142,7 +154,7 @@ function mountDataToggle(target: Window, params: URLSearchParams) {
     });
     bar.append(segment);
   }
-  doc.body.append(bar);
+  doc.body.append(box);
 }
 
 function deviceCount(params: URLSearchParams, worst: boolean) {

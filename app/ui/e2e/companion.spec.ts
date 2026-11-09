@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { expect, test, type APIRequestContext, type Locator, type Page, type Response } from '@playwright/test';
 import type { ActionLog, AllowedAction, ApprovalRequest, NewBoard } from '../src/lib/companion/api.ts';
 import type { Layout } from '../src/lib/layout/model.ts';
-import { exportText, menu, openLayout, sorted, status, tile, waitEvent } from './layout-helpers.ts';
+import { exportText, menu, openDeviceSettings, openLayout, sorted, status, tile, waitEvent } from './layout-helpers.ts';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -36,8 +36,8 @@ test('Home lists the mock Devices from the real Companion and opens one', async 
   await expect(cards).toHaveCount(3);
   for (let i = 0; i < 3; i++) {
     await expect(cards.nth(i)).toContainText(`Mock Device mock000${i + 1}`);
-    await expect(cards.nth(i).getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
-    await expect(cards.nth(i).locator('.device-spill')).toHaveCount(1);
+    await expect(cards.nth(i).getByTestId('device-status')).toHaveText(/: Connected/);
+    await expect(cards.nth(i).locator('.device-object')).not.toHaveClass(/\bis-off\b/);
   }
   const widths = await cards.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width));
   expect(widths).toEqual([312, 312, 312]);
@@ -50,7 +50,7 @@ test('a Layout pushed to a Device shows on its miniature, and stays when it is u
   const api = await companion(request);
   await page.goto('/');
   const card = page.getByRole('list', { name: 'Devices' }).getByRole('listitem').nth(1);
-  await expect(card.getByTestId('device-status')).toHaveAccessibleName(/: Connected/);
+  await expect(card.getByTestId('device-status')).toHaveText(/: Connected/);
   await expect(card.locator('.device-scene')).not.toHaveAttribute('data-page');
   await page.evaluate(() => { (window as unknown as { notReloaded: boolean }).notReloaded = true; });
 
@@ -64,7 +64,7 @@ test('a Layout pushed to a Device shows on its miniature, and stays when it is u
   expect((await api('POST', '/test/ports', { unplug: 'mock0002' })).status()).toBe(204);
   await expect(card).toContainText('Not connected');
   await expect(card).toContainText('Last seen');
-  await expect(card.locator('.device-spill')).toHaveCSS('opacity', '0');
+  await expect(card.locator('.device-object')).toHaveClass(/\bis-off\b/);
   await expect(card.locator('.device-scene')).toHaveAttribute('data-page', 'keys');
   await expect(card.locator('.device-scene')).toContainText('Copy');
   if (process.env.TD_SHOTS) await page.screenshot({ path: join(process.env.TD_SHOTS, 'home-companion-3.png') });
@@ -95,7 +95,7 @@ test('the Layout screen sends a Layout to a mock Device, and the Device shows it
   await expect(sent).toHaveText('Sent to Mock Device mock0001');
   await expect(sent).toHaveAttribute('data-pages', '2');
   await expect(sent).toHaveAttribute('data-tiles', '16');
-  await expect(page.getByTestId('save-state')).toHaveAttribute('data-state', 'saved');
+  await expect(page.getByTestId('editor-head')).toHaveAttribute('data-save-state', 'saved');
   const mine = JSON.parse(await exportText(page)) as Layout;
   expect(sorted((await stored(api, 'mock0001'))!)).toEqual(sorted(mine));
   await page.getByRole('button', { name: 'Home', exact: true }).click();
@@ -142,7 +142,7 @@ test('the Device panel renames a mock Device, switches its orientation with a re
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Edit Mock Device mock0003' }).click();
   await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0003');
-  await page.getByTestId('device-name').click();
+  await openDeviceSettings(page, 'mock0003');
   const status = page.getByTestId('device-panel-status');
   const name = page.getByTestId('device-panel-name');
   await expect(name).toBeEditable();
@@ -150,7 +150,8 @@ test('the Device panel renames a mock Device, switches its orientation with a re
   await name.fill('Bench');
   await name.press('Enter');
   await expect(status).toHaveAttribute('data-event', 'saved');
-  await expect(page.getByTestId('device-name')).toHaveText('Bench');
+  await expect(page.getByTestId('settings-title')).toHaveText('Bench');
+  await expect(page.locator('[data-testid="settings-nav-device"][data-device="mock0003"]')).toHaveText('Bench');
   const renamed: { name: string } = await (await api('GET', '/devices/mock0003')).json();
   expect(renamed.name).toBe('Bench');
   await expect(page.getByTestId('device-panel-brightness')).toHaveCount(0);
@@ -183,7 +184,7 @@ test('the Device panel turns on the photo frame of a mock Device, which stores i
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Edit Mock Device mock0003' }).click();
   await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0003');
-  await page.getByTestId('device-name').click();
+  await openDeviceSettings(page, 'mock0003');
   const photo = page.getByTestId('device-panel-photo-frame');
   await expect(photo).toBeEnabled();
   await photo.click();

@@ -1,43 +1,21 @@
-import type { ComponentType, ReactElement } from 'react';
+import type { ComponentType } from 'react';
 import clsx from 'clsx';
-import { Dialog } from '@base-ui/react/dialog';
 import { Tooltip } from '@base-ui/react/tooltip';
 import { Cable, House, LayoutGrid, Settings, type LucideProps } from 'lucide-react';
 import { useUi, type Section } from '../state/ui.ts';
-import { SettingsDialog } from './SettingsDialog.tsx';
 import { UpdateSlot } from './UpdateSlot.tsx';
 
 const destinations: { section: Section; label: string; icon: ComponentType<LucideProps> }[] = [
   { section: 'home', label: 'Home', icon: House },
   { section: 'layout', label: 'Layout', icon: LayoutGrid },
   { section: 'integrations', label: 'Integrations', icon: Cable },
+  { section: 'settings', label: 'Settings', icon: Settings },
 ];
 
-function NavButton({
-  label,
-  icon: Icon,
-  current,
-  page,
-  onClick,
-  render,
-}: {
-  label: string;
-  icon: ComponentType<LucideProps>;
-  current: boolean;
-  /** A destination marks itself as the current page; Settings only looks current while open. */
-  page?: boolean;
-  onClick?: () => void;
-  render?: ReactElement;
-}) {
+function NavButton({ label, icon: Icon, current, onClick }: { label: string; icon: ComponentType<LucideProps>; current: boolean; onClick(): void }) {
   return (
     <Tooltip.Root>
-      <Tooltip.Trigger
-        render={render}
-        className={clsx('nav-button', current && 'is-current')}
-        aria-label={label}
-        aria-current={page && current ? 'page' : undefined}
-        onClick={onClick}
-      >
+      <Tooltip.Trigger className={clsx('nav-button', current && 'is-current')} aria-label={label} aria-current={current ? 'page' : undefined} onClick={onClick}>
         <Icon size={18} strokeWidth={1.9} aria-hidden />
       </Tooltip.Trigger>
       <Tooltip.Portal>
@@ -50,27 +28,29 @@ function NavButton({
 }
 
 /**
- * The bottom-left cluster: Home, Layout, Integrations and Settings, then the
+ * The bottom-centre cluster: Home, Layout, Integrations and Settings, then the
  * Update slot in its own puck. Names appear as tooltips after 500ms, and at
  * once while the pointer stays in the cluster.
  */
 export function NavCluster() {
   const section = useUi((s) => s.section);
   const go = useUi((s) => s.go);
-  const settingsOpen = useUi((s) => s.settingsOpen);
-  const setSettingsOpen = useUi((s) => s.setSettingsOpen);
+  const openSettings = useUi((s) => s.openSettings);
 
   return (
     <Tooltip.Provider delay={500} closeDelay={0}>
       <nav className="nav-dock" aria-label="Main">
         <div className="nav-puck">
           {destinations.map((d) => (
-            <NavButton key={d.section} label={d.label} icon={d.icon} current={section === d.section} page onClick={() => go(d.section)} />
+            <NavButton
+              key={d.section}
+              label={d.label}
+              icon={d.icon}
+              current={section === d.section}
+              // Settings opens on General, wherever it was left, as the nav's way in.
+              onClick={() => (d.section === 'settings' ? openSettings() : go(d.section))}
+            />
           ))}
-          <Dialog.Root open={settingsOpen} onOpenChange={setSettingsOpen}>
-            <NavButton label="Settings" icon={Settings} current={settingsOpen} render={<Dialog.Trigger />} />
-            <SettingsDialog />
-          </Dialog.Root>
         </div>
         <UpdateSlot />
       </nav>

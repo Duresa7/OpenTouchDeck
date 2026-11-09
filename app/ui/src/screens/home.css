@@ -19,9 +19,7 @@
 .device-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.4cqw; padding: 0 8cqw; text-align: center; font-family: var(--screen-font); font-weight: var(--screen-weight-medium); }
 .device-empty-title { color: var(--screen-ink); font-size: 4.2cqw; line-height: 1.15; font-stretch: var(--screen-stretch-plate); }
 .device-empty-hint { color: var(--screen-ink-2); font-size: 2.8cqw; line-height: 1.25; }
-.device-spill { position: absolute; left: 8%; right: 8%; top: 34%; bottom: -9%; border-radius: 50%; background: var(--screen-accent); filter: blur(46px); opacity: var(--spill-opacity); pointer-events: none; transition: opacity var(--duration-screen-light) var(--ease-out); }
 .is-off .device-scene { opacity: var(--screen-offline-opacity); filter: grayscale(var(--screen-offline-grayscale)); transition-duration: var(--duration-exit); }
-.is-off .device-spill { opacity: 0; transition-duration: var(--duration-exit); }
 .device-caption { display: flex; flex-direction: column; gap: var(--space-2); padding-left: 2px; min-width: 0; }
 .home-single .device-name { font-size: var(--text-24); line-height: var(--leading-24); letter-spacing: var(--track-24); }
 .device-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
@@ -49,7 +47,6 @@
 .board-details p { margin: var(--space-1) 0 0; color: var(--ink-2); font-size: var(--text-12); line-height: var(--leading-12); white-space: pre-line; overflow-wrap: anywhere; }
 .status.is-waiting { color: var(--ink); }
 .device-name-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.device-status-box { display: inline-flex; flex: none; }
 .ignored-boards { display: flex; justify-content: center; margin: var(--space-10) 0 0; gap: var(--space-2); padding: 0; list-style: none; }
 .ignored-board { color: var(--ink-2); }
 .device-controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); min-width: 0; }

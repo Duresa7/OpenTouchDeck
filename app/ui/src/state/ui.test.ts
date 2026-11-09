@@ -24,11 +24,11 @@ describe('a reload into Settings', () => {
 
     const ui = createUiStore(() => storage);
     reopenSettings(ui, storage);
-    expect(ui.getState()).toMatchObject({ settingsOpen: true, settingsSection: 'troubleshooting' });
+    expect(ui.getState()).toMatchObject({ section: 'settings', settingsSection: 'troubleshooting' });
 
     const again = createUiStore(() => storage);
     reopenSettings(again, storage);
-    expect(again.getState().settingsOpen).toBe(false);
+    expect(again.getState().section).toBe('home');
   });
 
   it('ignores a section it does not know and works without storage', () => {
@@ -36,7 +36,7 @@ describe('a reload into Settings', () => {
     storage.setItem('touchdeck.reopen-settings', 'elsewhere');
     const ui = createUiStore(() => storage);
     reopenSettings(ui, storage);
-    expect(ui.getState().settingsOpen).toBe(false);
+    expect(ui.getState().section).toBe('home');
     reopenSettings(ui, null);
     let reloads = 0;
     reloadIntoSettings('general', { storage: null, reload: () => reloads++ });
@@ -55,9 +55,9 @@ describe('Integration settings pages', () => {
 
   it('Icon packs opens its Integrations page, not Settings', () => {
     const ui = createUiStore(() => null);
-    ui.getState().setSettingsOpen(true);
+    ui.getState().openSettings();
     ui.getState().openIconPacks();
-    expect(ui.getState()).toMatchObject({ section: 'integrations', settingsOpen: false, integration: { id: ICON_PACKS } });
+    expect(ui.getState()).toMatchObject({ section: 'integrations', integration: { id: ICON_PACKS } });
   });
 
   it('keep a pending enable while the page is open, and drop it on Back or on going elsewhere', () => {
@@ -89,7 +89,7 @@ describe('Integration settings pages', () => {
 
     const after = createUiStore(() => storage);
     reopenSettings(after, storage);
-    expect(after.getState()).toMatchObject({ section: 'integrations', integration: { id: BRANDFETCH }, pendingEnable: BRANDFETCH, settingsOpen: false });
+    expect(after.getState()).toMatchObject({ section: 'integrations', integration: { id: BRANDFETCH }, pendingEnable: BRANDFETCH });
   });
 
   it('a plain reload drops a pending enable left behind', () => {

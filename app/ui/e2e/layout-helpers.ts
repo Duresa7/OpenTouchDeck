@@ -25,9 +25,55 @@ export async function importText(page: Page, text: string, name: string) {
   await page.getByTestId('import-file').setInputFiles({ name, mimeType: 'application/json', buffer: Buffer.from(text) });
 }
 
-export async function menu(page: Page, item: 'pull' | 'import' | 'export' | 'menu-starter' | 'menu-new' | 'prune') {
+export async function menu(page: Page, item: 'menu-push' | 'pull' | 'import' | 'export' | 'menu-starter' | 'menu-new' | 'prune') {
   await page.getByTestId('layout-menu').click();
   await page.getByTestId(item).click();
+}
+
+/** The Settings page's categories, as its sidebar's test ids name them. */
+export type SettingsCategory = 'general' | 'browsers' | 'troubleshooting' | 'errors' | 'about';
+
+export const settingsPage = (page: Page) => page.getByTestId('settings');
+
+/** Goes to Settings with the nav's Settings button, which always opens General, then to a category. */
+export async function openSettings(page: Page, category: SettingsCategory = 'general'): Promise<Locator> {
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(settingsPage(page)).toHaveAttribute('data-section', 'general');
+  if (category !== 'general') await page.getByTestId(`settings-nav-${category}`).click();
+  await expect(settingsPage(page)).toHaveAttribute('data-section', category);
+  return settingsPage(page);
+}
+
+/**
+ * Opens a Device's settings, the `device-panel`: Settings from the nav, then the Device in its sidebar. Without an id
+ * it opens the Device the editor shows, or the first Device.
+ */
+export async function openDeviceSettings(page: Page, device?: string): Promise<Locator> {
+  const editor = page.getByTestId('editor');
+  const layoutButton = page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Layout', exact: true });
+  if (!device && (await layoutButton.getAttribute('aria-current')) === 'page') await expect(editor).toBeVisible();
+  const id = device ?? ((await editor.count()) > 0 ? await editor.getAttribute('data-device-id') : null);
+  await openSettings(page);
+  const items = page.getByTestId('settings-nav-device');
+  await (id ? items.and(page.locator(`[data-device="${id}"]`)) : items.first()).click();
+  const panel = page.getByTestId('device-panel');
+  await expect(panel).toBeVisible();
+  if (id) await expect(panel).toHaveAttribute('data-device', id);
+  return panel;
+}
+
+/** The card an error pops up, found by its words. */
+export const errorCard = (page: Page, text: string | RegExp) => page.getByTestId('error-card').filter({ hasText: text });
+
+/**
+ * Opens Settings → Errors from an error card's Details button, and returns the newest entry's detail.
+ */
+export async function errorDetail(page: Page, text: string | RegExp): Promise<Locator> {
+  await errorCard(page, text).getByRole('button', { name: 'Details' }).click();
+  await expect(settingsPage(page)).toHaveAttribute('data-section', 'errors');
+  const entry = page.getByTestId('error-entry').first();
+  await expect(entry).toContainText(text);
+  return entry.getByTestId('error-detail');
 }
 
 export async function exportText(page: Page): Promise<string> {
@@ -37,6 +83,9 @@ export async function exportText(page: Page): Promise<string> {
 }
 
 export const tile = (page: Page, id: string) => page.locator(`[data-testid="tile"][data-id="${id}"]`);
+
+/** A square of the Details panel's grid picker: clicking it sets the grid to that many rows and columns. */
+export const gridCell = (page: Page, rows: number, cols: number) => page.locator(`[data-testid="grid-cell"][data-rows="${rows}"][data-cols="${cols}"]`);
 
 export async function placeOf(page: Page, id: string) {
   const el = tile(page, id);

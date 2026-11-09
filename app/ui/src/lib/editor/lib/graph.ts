@@ -1,5 +1,5 @@
 import type { IntegrationSummary, PresetTile } from '../../companion/api.ts';
-import { parseAction, presetLabel } from '../../integrations/model.ts';
+import { parseAction, streamLabel } from '../../integrations/model.ts';
 import { RENDER_STREAMS, type BarStreams, type GraphBinding, type LiveLook, type Renderer, type StreamType, type Tile, type WidgetAction } from '../../layout/model.ts';
 
 /** A numeric Integration stream a graph Tile can draw, named as its Preset tile when it has one. */
@@ -14,19 +14,13 @@ export function graphSources(integrations: readonly IntegrationSummary[]): Graph
   return integrations.flatMap((integration) =>
     integration.streams
       .filter((stream) => stream.kind === 'numeric')
-      .map((stream) => {
-        const preset = integration.presets.find((p) => {
-          const action = parseAction(p.action);
-          return action?.type === 'widget' && action.source === integration.id && action.field === stream.id;
-        });
-        return {
-          integration: integration.id,
-          stream: stream.id,
-          integrationName: integration.name,
-          name: preset ? presetLabel(preset.name) : stream.id,
-          unit: stream.unit,
-        };
-      }),
+      .map((stream) => ({
+        integration: integration.id,
+        stream: stream.id,
+        integrationName: integration.name,
+        name: streamLabel(integration, stream.id),
+        unit: stream.unit,
+      })),
   );
 }
 

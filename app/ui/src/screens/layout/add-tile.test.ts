@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { IntegrationSummary } from '../../lib/companion/api.ts';
-import { addTab, closingLine, missingPresets, presetView, previewGrid } from './add-tile.ts';
+import { addTab, presetView, previewGrid } from './add-tile.ts';
 
 const preset = (id: string, render?: 'graph' | 'bar' | 'now-playing') => ({ id, name: id === 'cpu_pct' ? 'CPU usage' : id, action: { type: 'widget', source: 'this_pc', field: id, account: '' }, ...(render ? { render } : {}) });
 
@@ -15,23 +15,6 @@ describe('Add Tile', () => {
     expect(addTab([integration('cliproxyapi', 'CLIProxyAPI', true, 'not_configured')], null)).toBe('actions');
     expect(addTab([integration('this_pc', 'This PC', true)], 'actions')).toBe('actions');
     expect(addTab([], 'integrations')).toBe('integrations');
-  });
-
-  it('closes the Integrations tab by naming what is off and what needs setup', () => {
-    const list = [
-      integration('this_pc', 'This PC', true),
-      integration('volume', 'Volume', false),
-      integration('media', 'Media', false),
-      integration('cliproxyapi', 'CLIProxyAPI', true, 'not_configured'),
-      integration('extra', 'Extra', false, 'ok', []),
-    ];
-    const missing = missingPresets(list);
-    expect(missing.off.map((i) => i.id)).toEqual(['volume', 'media']);
-    expect(missing.setUp.map((i) => i.id)).toEqual(['cliproxyapi']);
-    expect(closingLine(missing)).toBe('Volume and Media are off. CLIProxyAPI needs setup.');
-    expect(closingLine(missingPresets([integration('volume', 'Volume', false)]))).toBe('Volume is off.');
-    expect(closingLine(missingPresets([integration('a', 'A', false), integration('b', 'B', false), integration('c', 'C', false)]))).toBe('A, B and C are off.');
-    expect(closingLine(missingPresets([integration('this_pc', 'This PC', true)]))).toBeNull();
   });
 
   it("previews on the target Page's grid, or a new Page's when Add Tile starts one", () => {

@@ -1,12 +1,10 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { useStore } from 'zustand';
-import { Popover } from '@base-ui/react/popover';
 import { Slider } from '@base-ui/react/slider';
 import { Switch } from '@base-ui/react/switch';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
-import { ChevronDown } from 'lucide-react';
 import type { DeviceSummary, Orientation } from '../../lib/companion/api.ts';
 import { useFolderPicker } from '../../lib/companion/connection.ts';
 import { inProgress, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
@@ -56,7 +54,7 @@ function NameField({ device, name, settings, live, editable }: PanelProps) {
       setDraft(value);
     }
   };
-  const hint = problem ?? needs ?? `Stored on ${name}.`;
+  const hint = problem ?? needs ?? null;
   const save = editable ? commit : () => {};
   return (
     <div className="field">
@@ -72,16 +70,18 @@ function NameField({ device, name, settings, live, editable }: PanelProps) {
         spellCheck={false}
         autoComplete="off"
         aria-invalid={problem !== undefined}
-        aria-describedby={`${id}-hint`}
+        aria-describedby={hint ? `${id}-hint` : undefined}
         onChange={(event) => setDraft(event.target.value)}
         onFocus={() => (dropped.current = false)}
         onBlur={save}
         onKeyDown={editable ? keys : undefined}
         data-testid="device-panel-name"
       />
-      <p id={`${id}-hint`} className={clsx('field-hint', problem && 'is-warning')} data-testid="device-panel-name-hint">
-        {hint}
-      </p>
+      {hint && (
+        <p id={`${id}-hint`} className={clsx('field-hint', problem && 'is-warning')} data-testid="device-panel-name-hint">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
@@ -467,7 +467,22 @@ function Notice({ settings }: { settings: DeviceSettingsStore }) {
   );
 }
 
-function PanelBody({ device }: { device: DeviceSummary }) {
+/** A titled card of fields on the Device's settings page. */
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <section className="settings-section" aria-labelledby={id}>
+      <h3 id={id}>{title}</h3>
+      <div className="settings-card">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * A Device's settings: its name, how it stands, its screen, the photo frame, its radios and its Firmware. The Settings
+ * page shows them, one Device at a time.
+ */
+export function DeviceSettings({ device }: { device: DeviceSummary }) {
   const { settings, firmware, wifi, wifiSetup, bluetooth } = useDeviceStores(device);
   const name = device.name ?? 'Unnamed Device';
   const live = device.link.state === 'connected';
@@ -480,47 +495,29 @@ function PanelBody({ device }: { device: DeviceSummary }) {
 
   const props: PanelProps = { device, name, settings, live, editable: live && loaded && !restarting };
   return (
-    <>
+    <div className="device-settings" data-testid="device-panel" data-device={device.id}>
       {!live && device.link.state !== 'updating' && !restarting && (
-        <p className="field-hint" data-testid="device-panel-offline">
+        <p className="settings-offline" data-testid="device-panel-offline">
           Plug in {name} to change its settings.
         </p>
       )}
-      <NameField {...props} />
-      <OrientationField {...props} />
-      <BrightnessField {...props} />
-      <PhotoFrameField {...props} />
-      <WifiField device={device} name={name} wifi={wifi} setup={wifiSetup} live={live && !restarting} />
-      <BluetoothField device={device} name={name} bluetooth={bluetooth} live={live && !restarting} />
-      <FirmwareRow {...props} firmware={firmware} />
-      <BuildField {...props} firmware={firmware} />
+      <Group title="General">
+        <NameField {...props} />
+        <OrientationField {...props} />
+      </Group>
+      <Group title="Screen">
+        <BrightnessField {...props} />
+        <PhotoFrameField {...props} />
+      </Group>
+      <Group title="Wireless">
+        <WifiField device={device} name={name} wifi={wifi} setup={wifiSetup} live={live && !restarting} />
+        <BluetoothField device={device} name={name} bluetooth={bluetooth} live={live && !restarting} />
+      </Group>
+      <Group title="Firmware">
+        <FirmwareRow {...props} firmware={firmware} />
+        <BuildField {...props} firmware={firmware} />
+      </Group>
       <Notice settings={settings} />
-    </>
-  );
-}
-
-export function DevicePanel({ device }: { device: DeviceSummary }) {
-  const name = device.name ?? 'Unnamed Device';
-  const popup = useRef<HTMLDivElement>(null);
-  return (
-    <Popover.Root>
-      <Popover.Trigger className="device-switch" data-testid="device-name">
-        <span className="device-switch-name" title={name}>{name}</span>
-        <ChevronDown className="chev" size={16} strokeWidth={2} aria-hidden />
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner className="popover-positioner" side="bottom" align="start" sideOffset={8}>
-          <Popover.Popup
-            ref={popup}
-            className="popover device-panel"
-            initialFocus={(type) => (type === 'keyboard' ? true : popup.current)}
-            data-testid="device-panel"
-          >
-            <Popover.Title className="popover-title">{name}</Popover.Title>
-            <PanelBody device={device} />
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+    </div>
   );
 }

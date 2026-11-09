@@ -11,6 +11,7 @@ import { useUi } from './state/ui.ts';
 
 const Layout = lazy(() => import('./screens/Layout.tsx').then((screen) => ({ default: screen.Layout })));
 const Integrations = lazy(() => import('./screens/Integrations.tsx').then((screen) => ({ default: screen.Integrations })));
+const Settings = lazy(() => import('./screens/Settings.tsx').then((screen) => ({ default: screen.Settings })));
 
 const TOAST_ICONS: ToasterProps['icons'] = {
   success: <CircleCheck size={16} strokeWidth={2} aria-hidden />,
@@ -18,6 +19,9 @@ const TOAST_ICONS: ToasterProps['icons'] = {
   warning: <TriangleAlert size={16} strokeWidth={2} aria-hidden />,
   info: <Info size={16} strokeWidth={2} aria-hidden />,
 };
+
+/** Toasts rise above the nav dock, which sits 12px up and stands 44px tall. */
+const TOAST_OFFSET: ToasterProps['offset'] = { bottom: 72 };
 
 const TOAST_OPTIONS: ToasterProps['toastOptions'] = {
   unstyled: true,
@@ -65,9 +69,14 @@ export function App() {
           <Integrations />
         </Suspense>
       )}
+      {section === 'settings' && (
+        <Suspense fallback={null}>
+          <Settings />
+        </Suspense>
+      )}
       <NavCluster />
       <SetupHost />
-      <Toaster theme={appearance} position="bottom-center" icons={TOAST_ICONS} toastOptions={TOAST_OPTIONS} />
+      <Toaster theme={appearance} position="bottom-center" offset={TOAST_OFFSET} icons={TOAST_ICONS} toastOptions={TOAST_OPTIONS} />
     </MotionConfig>
   );
 }

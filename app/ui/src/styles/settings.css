@@ -1,0 +1,224 @@
+/* ---------- Settings page: categories down the left, the chosen one on the right ---------- */
+
+.settings-screen {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
+  padding: var(--space-8) var(--space-3) 96px;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.settings-nav-title {
+  margin: 0 var(--space-3) var(--space-4);
+  font-size: var(--text-18);
+  line-height: var(--leading-18);
+  letter-spacing: var(--track-18);
+  font-weight: var(--weight-semibold);
+  font-stretch: var(--stretch-plate);
+}
+
+.settings-nav-label {
+  margin: var(--space-5) var(--space-3) var(--space-1);
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  font-weight: var(--weight-semibold);
+}
+
+.settings-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-item svg {
+  flex: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .settings-nav-item:hover {
+    background: var(--fill-hover);
+    color: var(--ink);
+  }
+}
+
+.settings-nav-item[aria-current='page'] {
+  background: var(--fill-active);
+  color: var(--ink);
+}
+
+.settings-nav-item:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.settings-nav-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-nav-count {
+  flex: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--danger-ink);
+  color: var(--surface-raised);
+  font-size: var(--text-12);
+  line-height: 18px;
+  text-align: center;
+}
+
+.settings-content {
+  width: 100%;
+  max-width: 760px;
+  padding: var(--space-10) var(--space-12) 120px;
+}
+
+.settings-content .page-title:focus {
+  outline: none;
+}
+
+/* A Device's name can be one long word, such as in Troubleshooting's rows; it wraps rather than run out of its row. */
+.settings-content .row-title {
+  overflow-wrap: anywhere;
+}
+
+.settings-content > .settings-section:first-of-type,
+.settings-content .device-settings > .settings-section:first-of-type {
+  margin-top: 0;
+}
+
+@media (max-width: 760px) {
+  .settings-screen {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-nav {
+    position: static;
+    height: auto;
+    padding: var(--space-6) var(--space-3) var(--space-3);
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .settings-content {
+    padding-inline: var(--space-6);
+  }
+}
+
+/* ---------- A Device's settings ---------- */
+
+.device-settings {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-4);
+  border-radius: var(--radius-group);
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* The Firmware row draws its own rule in the old panel; a card needs none */
+.settings-card > .panel-firmware:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.settings-offline {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-group);
+  background: var(--signal-tint);
+  color: var(--signal-ink);
+}
+
+.device-settings > .panel-status {
+  margin-top: var(--space-4);
+}
+
+.device-settings > .panel-status:empty {
+  display: none;
+}
+
+/* ---------- Errors ---------- */
+
+.error-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.error-entry {
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-radius: var(--radius-group);
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.error-entry-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.error-entry-text {
+  text-wrap: pretty;
+}
+
+.error-entry-detail {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink-2);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

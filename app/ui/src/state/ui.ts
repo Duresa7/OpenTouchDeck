@@ -2,8 +2,10 @@ import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import type { Appearance } from './theme.ts';
 
-export type Section = 'home' | 'layout' | 'integrations';
-export type SettingsSection = 'general' | 'troubleshooting';
+export type Section = 'home' | 'layout' | 'integrations' | 'settings';
+/** The Settings page's categories, in the order its sidebar lists them. */
+export const SETTINGS_SECTIONS = ['general', 'device', 'browsers', 'troubleshooting', 'errors', 'about'] as const;
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 /** The Integrations screens that live in this window rather than in the Companion: they feed the icon picker. */
 export const ICON_PACKS = 'icon-packs';
@@ -17,9 +19,10 @@ export interface OpenIntegration {
 
 export interface UiState {
   section: Section;
-  settingsOpen: boolean;
   deviceId: string | null;
   settingsSection: SettingsSection;
+  /** The Device whose settings the Settings page shows, or null for the one open in the editor. */
+  settingsDevice: string | null;
   /** The settings page open on the Integrations screen, or null for the list. */
   integration: OpenIntegration | null;
   /**
@@ -30,8 +33,13 @@ export interface UiState {
   /** The Add Tile tab chosen by hand this session, or null to open on the one that fits. */
   addTileTab: 'actions' | 'integrations' | null;
   setAddTileTab(tab: 'actions' | 'integrations'): void;
+  /** Whether the Layout editor's Details panel is out. Picking a Tile or adding one brings it back. */
+  detailsOpen: boolean;
+  setDetailsOpen(open: boolean): void;
   openDevice(id: string): void;
   openTroubleshooting(): void;
+  /** Goes to the Settings page, at a category, and for the device category at a Device. */
+  openSettings(section?: SettingsSection, device?: string | null): void;
   openIconPacks(): void;
   /** Opens an Integration's settings page on the Integrations screen. */
   openIntegration(id: string, options?: { setUp?: boolean; pendingEnable?: boolean }): void;
@@ -41,7 +49,6 @@ export interface UiState {
   showSettingsSection(section: SettingsSection): void;
   appearance: Appearance;
   go(section: Section): void;
-  setSettingsOpen(open: boolean): void;
   setAppearance(appearance: Appearance): void;
 }
 
@@ -74,27 +81,29 @@ export function createUiStore(storage: () => Storage | null = sessionStorageOrNu
       section: 'home',
       deviceId: null,
       settingsSection: 'general',
+      settingsDevice: null,
       integration: null,
       pendingEnable: null,
       addTileTab: null,
       setAddTileTab: (addTileTab) => set({ addTileTab }),
+      detailsOpen: true,
+      setDetailsOpen: (detailsOpen) => set({ detailsOpen }),
       openDevice: (deviceId) => set({ section: 'layout', deviceId, integration: null, ...pending(null) }),
-      openTroubleshooting: () => set({ settingsOpen: true, settingsSection: 'troubleshooting' }),
+      openTroubleshooting: () => get().openSettings('troubleshooting'),
+      openSettings: (settingsSection = 'general', device = null) =>
+        set({ section: 'settings', settingsSection, settingsDevice: device, integration: null, ...pending(null) }),
       openIconPacks: () => get().openIntegration(ICON_PACKS),
       openIntegration: (id, options = {}) =>
         set({
           section: 'integrations',
-          settingsOpen: false,
           integration: { id, setUp: options.setUp ?? false },
           ...pending(options.pendingEnable ? id : get().pendingEnable === id ? id : null),
         }),
       closeIntegration: () => set({ integration: null, ...pending(null) }),
       setPendingEnable: (id) => set(pending(id)),
       showSettingsSection: (settingsSection) => set({ settingsSection }),
-      settingsOpen: false,
       appearance: 'system',
       go: (section) => set({ section, integration: null, ...pending(null) }),
-      setSettingsOpen: (settingsOpen) => set(settingsOpen ? { settingsOpen, settingsSection: 'general' } : { settingsOpen }),
       setAppearance: (appearance) => set({ appearance }),
     };
   });
@@ -102,10 +111,14 @@ export function createUiStore(storage: () => Storage | null = sessionStorageOrNu
 
 export const uiStore = createUiStore();
 
+/** Brings the Layout editor's Details panel out: called when the user picks a Tile, adds one, or something needs them there. */
+export function openDetails(store: UiStore = uiStore) {
+  store.getState().setDetailsOpen(true);
+}
+
 export type UiStore = ReturnType<typeof createUiStore>;
 
 const REOPEN_KEY = 'touchdeck.reopen-settings';
-const SECTIONS: readonly SettingsSection[] = ['general', 'troubleshooting'];
 const INTEGRATION_PREFIX = 'integration:';
 
 interface Reload {
@@ -154,8 +167,8 @@ export function reopenSettings(store: UiStore = uiStore, storage: Storage | null
     return;
   }
   if (pendingEnable !== null) writePending(storage, null);
-  const wanted = SECTIONS.find((s) => s === section);
-  if (wanted) store.setState({ settingsOpen: true, settingsSection: wanted });
+  const wanted = SETTINGS_SECTIONS.find((s) => s === section);
+  if (wanted) store.setState({ section: 'settings', settingsSection: wanted });
 }
 
 export function useUi<T>(select: (state: UiState) => T): T {

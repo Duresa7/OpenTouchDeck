@@ -21,9 +21,13 @@ for (const theme of ['light', 'dark'] as const) {
     test('settings opened from the keyboard, focus on its first control', async ({ page }) => {
       await page.getByRole('button', { name: 'Settings' }).focus();
       await page.keyboard.press('Enter');
-      const dialog = page.getByRole('dialog', { name: 'Settings' });
-      await expect(dialog).toBeVisible();
-      await expect(dialog.locator(':focus-visible')).toHaveCount(1);
+      const settings = page.getByTestId('settings');
+      await expect(settings).toBeVisible();
+      await expect(page.getByTestId('settings-title')).toBeFocused();
+      await expect(settings.getByRole('switch', { name: 'Start at sign-in' })).toBeEnabled();
+      await page.keyboard.press('Tab');
+      await expect(settings.getByRole('switch', { name: 'Start at sign-in' })).toBeFocused();
+      await expect(settings.locator(':focus-visible')).toHaveCount(1);
       await page.waitForTimeout(400);
       await page.screenshot({ path: join(folder!, `settings-focus-${theme}.png`) });
     });

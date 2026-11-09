@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
+import { openDeviceSettings } from './layout-helpers.ts';
 
 test.describe.configure({ mode: 'serial' });
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
@@ -96,13 +97,13 @@ test('Troubleshooting shows mock hello facts and Forget all signs browsers out i
       const window = await windowContext.newPage();
       await window.goto(origin);
       await window.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings' }).click();
-      await window.getByRole('button', { name: /^Troubleshooting/ }).click();
+      await window.getByTestId('settings-nav-troubleshooting').click();
       const details = window.getByTestId('device-details');
       for (const [key, value] of [['product', 'touchdeck'], ['running', 'ota_0'], ['sinks', 'log, link'], ['layout', 'builtin']]) {
         await expect(details.locator(`[data-fact="${key}"] dd`)).toHaveText(value);
       }
       await window.screenshot({ path: test.info().outputPath('troubleshooting.png') });
-      await window.getByRole('button', { name: 'Back', exact: true }).click();
+      await window.getByTestId('settings-nav-browsers').click();
       const deletes: string[] = [];
       window.on('request', req => { if (req.method() === 'DELETE') deletes.push(req.url()); });
       await window.getByRole('button', { name: 'Forget all', exact: true }).click();
@@ -111,7 +112,7 @@ test('Troubleshooting shows mock hello facts and Forget all signs browsers out i
       await expect(page).toHaveURL(`${origin}/pair`);
       await expect(second).toHaveURL(`${origin}/pair`);
       expect(deletes).toEqual([`${origin}/api/v1/auth/sessions?kind=browser`]);
-      await expect(window.getByRole('dialog', { name: 'Settings', exact: true })).toBeVisible();
+      await expect(window.getByTestId('settings')).toHaveAttribute('data-section', 'browsers');
     } finally { await windowContext.close(); }
   } finally { await paired.close(); }
 });
@@ -158,12 +159,11 @@ test('paired browser uses every available screen without leaking credentials', a
   await expect(page.getByTestId('editor')).toBeVisible();
   await page.getByTestId('start-pull').click();
   await expect(page.getByTestId('status')).toHaveAttribute('data-event', 'pulled', { timeout: 30_000 });
-  await page.getByTestId('device-name').click();
+  await openDeviceSettings(page, 'mock0001');
   const name = page.getByTestId('device-panel-name');
   await name.fill('Browser Device');
   await name.press('Enter');
-  await expect(page.getByTestId('device-name')).toHaveText('Browser Device');
-  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('settings-title')).toHaveText('Browser Device');
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
   const thisPc = page.locator('[data-testid="integration"][data-id="this_pc"]').getByTestId('integration-switch');
   await thisPc.click();
@@ -173,12 +173,14 @@ test('paired browser uses every available screen without leaking credentials', a
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'Dark', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Dark', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('settings-nav-about').click();
+  await expect(page.getByTestId('settings-title')).toHaveText('About');
   await expect(page.getByRole('button', { name: 'Check for updates' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Update available' })).toHaveCount(0);
-  await page.getByRole('button', { name: /^Troubleshooting/ }).click();
+  await page.getByTestId('settings-nav-troubleshooting').click();
   await expect(page.getByTestId('device-details')).toBeVisible();
-  await page.getByRole('button', { name: 'Back', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Paired browsers' })).toBeVisible();
+  await page.getByTestId('settings-nav-browsers').click();
+  await expect(page.getByTestId('settings-title')).toHaveText('Paired browsers');
   await page.screenshot({ path: test.info().outputPath('browser-settings.png') });
   const history = await context.newCDPSession(page);
   const entries = await history.send('Page.getNavigationHistory');
@@ -215,6 +217,7 @@ for (const own of [false, true]) {
       await expect(window.getByRole('list', { name: 'Devices' })).toBeVisible();
       const control = own ? page : window;
       await control.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings' }).click();
+      await control.getByTestId('settings-nav-browsers').click();
       const rows = control.getByTestId('paired-browser');
       const row = own ? rows.filter({ hasText: 'This browser' }) : rows.first();
       await row.getByRole('button').click();
@@ -223,7 +226,6 @@ for (const own of [false, true]) {
       expect((await request.get(`${origin}/api/v1/system`, { headers: { Authorization: `Bearer ${copied}` } })).status()).toBe(401);
       await second.reload();
       await expect(second.getByRole('list', { name: 'Devices' })).toBeVisible();
-      if (!own) await window.keyboard.press('Escape');
       await expect(window.getByRole('navigation', { name: 'Main' })).toBeVisible();
     } finally { await secondContext.close(); await windowContext.close(); }
   });

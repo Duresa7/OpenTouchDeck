@@ -1,11 +1,8 @@
-import { useEffect, useId, useRef } from 'react';
+import { useId } from 'react';
 import clsx from 'clsx';
-import { Dialog } from '@base-ui/react/dialog';
-import { ChevronLeft, X } from 'lucide-react';
 import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { useDevices } from '../../lib/companion/devices.ts';
 import { statusOf } from '../../screens/home-model.ts';
-import { button } from '../button.ts';
 import { StatusBox } from '../StatusBox.tsx';
 import { FirmwareConsole } from './FirmwareConsole.tsx';
 import { FirmwareFile } from './FirmwareFile.tsx';
@@ -54,31 +51,15 @@ function FirmwareRepairSlot() {
   return null;
 }
 
-export function TroubleshootingView({ onBack, focusBack }: { onBack(): void; focusBack: boolean }) {
-  const back = useRef<HTMLButtonElement>(null);
+/** Device details, and tools to check that taps reach this PC. The Settings page gives it its title. */
+export function TroubleshootingView() {
   const devices = useDevices((s) => s.devices);
   const info = useSystemInfo();
   const demo = info !== null && info !== 'unknown' && info.mock;
   const id = useId();
-  useEffect(() => {
-    if (focusBack) back.current?.focus();
-  }, [focusBack]);
 
   return (
     <>
-      <div className="dialog-head">
-        <div className="dialog-head-start">
-          <button ref={back} type="button" className={button({ kind: 'icon' })} aria-label="Back" onClick={onBack}>
-            <ChevronLeft size={18} strokeWidth={1.9} aria-hidden />
-          </button>
-          <Dialog.Title className="dialog-title">Troubleshooting</Dialog.Title>
-        </div>
-        <Dialog.Close className={button({ kind: 'icon' })} aria-label="Close">
-          <X size={18} strokeWidth={1.9} aria-hidden />
-        </Dialog.Close>
-      </div>
-      <p className="dialog-lede">Device details, and tools to check that taps reach this PC.</p>
-
       <section className="settings-section" aria-labelledby={id}>
         <h3 id={id}>Connection</h3>
         <div className="groups">

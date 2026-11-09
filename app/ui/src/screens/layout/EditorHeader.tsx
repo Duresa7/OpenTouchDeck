@@ -2,27 +2,42 @@ import clsx from 'clsx';
 import { Menu } from '@base-ui/react/menu';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
-import { Check, Eye, MoreHorizontal, Plus, RectangleHorizontal, RectangleVertical, Upload } from 'lucide-react';
+import { Eye, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, RectangleHorizontal, RectangleVertical } from 'lucide-react';
 import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { saveState, type EditorStore } from '../../lib/editor/store.ts';
 import type { Orientation } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
-import { StatusBox } from '../../shell/StatusBox.tsx';
+import { openDetails, useUi } from '../../state/ui.ts';
 import { deviceStatus } from '../home-model.ts';
-import { DevicePanel } from './DevicePanel.tsx';
+import { DeviceName } from './DeviceName.tsx';
 import { useEditorState } from './editor.ts';
+import { DETAILS_ID } from './Inspector.tsx';
+import { SendButton } from './SendButton.tsx';
 import { Tip } from './Tip.tsx';
 
-const SAVE_WORDS = { saved: 'Saved on Device', unsent: 'Unsent changes', sending: 'Sending…' } as const;
-
-function SaveState({ store }: { store: EditorStore }) {
-  const state = useEditorState(store, saveState);
-  if (state === 'none') return <span className="save-state" />;
+/** Hiding the panel also ends Add Tile, whose picker lives there, so Add Tile never stays open out of sight. */
+function DetailsToggle({ store }: { store: EditorStore }) {
+  const open = useUi((s) => s.detailsOpen);
+  const setOpen = useUi((s) => s.setDetailsOpen);
+  const label = open ? 'Hide details' : 'Show details';
+  const Icon = open ? PanelRightClose : PanelRightOpen;
   return (
-    <span className={clsx('save-state', `is-${state}`)} data-testid="save-state" data-state={state}>
-      {state === 'saved' ? <Check size={14} strokeWidth={2} aria-hidden /> : <i className="save-dot" aria-hidden />}
-      <span className="save-words">{SAVE_WORDS[state]}</span>
-    </span>
+    <Tip label={label}>
+      <button
+        type="button"
+        className={button({ kind: 'icon' })}
+        aria-label={label}
+        aria-expanded={open}
+        aria-controls={DETAILS_ID}
+        onClick={() => {
+          if (open && store.getState().adding !== null) store.closeAdd();
+          setOpen(!open);
+        }}
+        data-testid="details-toggle"
+      >
+        <Icon size={18} strokeWidth={1.9} aria-hidden />
+      </button>
+    </Tip>
   );
 }
 
@@ -44,6 +59,10 @@ function LayoutMenu({ store, device, connected, onImport, onExport }: { store: E
       <Menu.Portal>
         <Menu.Positioner className="menu-positioner" side="bottom" align="end" sideOffset={6}>
           <Menu.Popup className="menu" aria-label="Layout options">
+            <Menu.Item className="menu-item" disabled={!connected || !hasDraft || busy !== null} onClick={() => void store.push()} data-testid="menu-push">
+              <span className="menu-name">{busy === 'push' ? 'Sending…' : `Send to ${device}`}</span>
+              <span className="menu-line">{connected ? 'Send this Layout again, even without changes' : `${device} isn't connected`}</span>
+            </Menu.Item>
             <Menu.Item className="menu-item" disabled={!connected || busy !== null} onClick={() => void store.load()} data-testid="pull">
               <span className="menu-name">{busy === 'load' ? 'Loading…' : `Load from ${device}`}</span>
               <span className="menu-line">{connected ? `Replace this Layout with the one on ${device}` : `${device} isn't connected`}</span>
@@ -90,21 +109,17 @@ export function EditorHeader({ store, device, onImport, onExport }: EditorHeader
   const status = deviceStatus(device);
   const orientation = useEditorState(store, (s) => s.orientation);
   const mode = useEditorState(store, (s) => s.mode);
-  const busy = useEditorState(store, (s) => s.busy);
   const adding = useEditorState(store, (s) => s.adding !== null);
   const hasDraft = useEditorState(store, (s) => s.drafts[s.orientation] !== null);
-  const canSend = status.live && hasDraft && busy === null;
+  const saved = useEditorState(store, saveState);
 
   return (
-    <header className="editor-head">
+    <header className="editor-head" data-testid="editor-head" data-save-state={saved}>
       <div className="editor-head-row">
-        <DevicePanel device={device} />
-        <Tip label={`${name}: ${status.words}`}>
-          <span className="connection" data-testid="connection" data-tone={status.tone}>
-            <StatusBox tone={status.tone} label={`${name}: ${status.words}`} />
-          </span>
-        </Tip>
-        <SaveState store={store} />
+        <DeviceName device={device} />
+        <span className="visually-hidden" data-testid="connection" data-tone={status.tone}>
+          {name}: {status.words}
+        </span>
         <ToggleGroup
           value={[orientation]}
           onValueChange={(value) => value[0] && store.setOrientation(value[0])}
@@ -139,24 +154,21 @@ export function EditorHeader({ store, device, onImport, onExport }: EditorHeader
               type="button"
               className={clsx(button(), 'add-tile-button')}
               aria-expanded={adding}
-              onClick={() => (adding ? store.closeAdd() : store.openAdd())}
+              onClick={() => {
+                if (adding) {
+                  store.closeAdd();
+                  return;
+                }
+                store.openAdd();
+                openDetails();
+              }}
               data-testid="add-tile"
             >
               <Plus size={16} strokeWidth={2} aria-hidden />
               <span className="add-tile-words">Add Tile</span>
             </button>
-            <Tip label={status.live ? `Send this Layout to ${name}` : `${name} isn't connected`}>
-              <button
-                type="button"
-                className={clsx(button({ kind: 'primary' }), 'push-button')}
-                aria-disabled={!canSend}
-                onClick={() => canSend && void store.push()}
-                data-testid="push"
-              >
-                <Upload size={16} strokeWidth={2} aria-hidden />
-                <span className="push-words">{busy === 'push' ? 'Sending…' : 'Send to Device'}</span>
-              </button>
-            </Tip>
+            <SendButton store={store} name={name} live={status.live} />
+            <DetailsToggle store={store} />
           </>
         )}
       </div>

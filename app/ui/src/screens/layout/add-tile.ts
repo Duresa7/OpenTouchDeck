@@ -13,30 +13,6 @@ export function addTab(integrations: readonly IntegrationSummary[], chosen: AddT
   return chosen ?? (integrations.some(offersPresets) ? 'integrations' : 'actions');
 }
 
-/** The Integrations that would offer Preset tiles but are off, or on and waiting for setup. */
-export interface Missing {
-  off: IntegrationSummary[];
-  setUp: IntegrationSummary[];
-}
-
-export function missingPresets(integrations: readonly IntegrationSummary[]): Missing {
-  const withPresets = integrations.filter((i) => i.presets.length > 0);
-  return {
-    off: withPresets.filter((i) => !i.enabled),
-    setUp: withPresets.filter((i) => i.enabled && i.status.state === 'not_configured'),
-  };
-}
-
-const and = (names: readonly string[]) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
-
-/** The line closing the Integrations tab: which Integrations are off or need setup. Null when none is. */
-export function closingLine({ off, setUp }: Missing): string | null {
-  const parts: string[] = [];
-  if (off.length) parts.push(`${and(off.map((i) => i.name))} ${off.length === 1 ? 'is' : 'are'} off.`);
-  if (setUp.length) parts.push(`${and(setUp.map((i) => i.name))} ${setUp.length === 1 ? 'needs' : 'need'} setup.`);
-  return parts.length ? parts.join(' ') : null;
-}
-
 /** The grid a preview is drawn for: the Page Add Tile targets, or a new Page's grid when it starts one. */
 export function previewGrid(page: { kind: string; rows?: number; cols?: number } | undefined, newPage: boolean): { rows: number; cols: number } {
   if (!newPage && page?.kind === 'grid' && page.rows && page.cols) return { rows: page.rows, cols: page.cols };
