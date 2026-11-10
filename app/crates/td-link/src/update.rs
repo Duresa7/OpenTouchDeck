@@ -151,7 +151,8 @@ pub fn begin(
 const TRANSFER_WAIT: Duration = Duration::from_secs(10);
 
 /// Takes the session's one transfer once it is free. The update shares the session with the rest of
-/// the app, so a Layout read or an Asset upload that started just before it can still be running.
+/// the app, so a transfer that started just before it, such as a Layout read, can still be running
+/// and has to end first.
 fn free_transfer(session: &Session) -> Result<crate::Transfer<'_>, String> {
     let end = Instant::now() + TRANSFER_WAIT;
     loop {
@@ -418,9 +419,11 @@ mod tests {
             });
             // The update asks for the transfer right after its hello.
             let end = Instant::now() + Duration::from_secs(5);
-            while !mock.received().iter().any(|r| r["m"] == "hello") && Instant::now() < end {
+            let greeted = || mock.received().iter().any(|r| r["m"] == "hello");
+            while !greeted() && Instant::now() < end {
                 std::thread::sleep(Duration::from_millis(5));
             }
+            assert!(greeted(), "the update started");
             std::thread::sleep(Duration::from_millis(100));
             assert!(!update.is_finished(), "the update waits for the transfer");
             drop(reading);
