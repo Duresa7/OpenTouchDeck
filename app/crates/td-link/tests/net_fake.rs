@@ -491,7 +491,7 @@ fn a_request_cut_off_by_a_closed_session_has_an_unknown_outcome() {
     let device = fake();
     let paired = pair_with(&device, COMPANION);
     let (session, _incoming) = session(&device, &paired.credential);
-    // The reply never beats the drop: the Device holds it for as long as the call waits.
+    // The Device holds its reply for as long as the call waits, so the drop comes first.
     device.deck().delay_replies(TIMEOUT);
     let before = device.deck().received().len();
     let dropper = {
@@ -504,6 +504,10 @@ fn a_request_cut_off_by_a_closed_session_has_an_unknown_outcome() {
             while device.deck().received().len() == before && Instant::now() < end {
                 thread::sleep(Duration::from_millis(5));
             }
+            assert!(
+                device.deck().received().len() > before,
+                "the Device never got the request"
+            );
             device.drop_connection();
             call.join().unwrap()
         })
