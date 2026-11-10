@@ -491,12 +491,19 @@ fn a_request_cut_off_by_a_closed_session_has_an_unknown_outcome() {
     let device = fake();
     let paired = pair_with(&device, COMPANION);
     let (session, _incoming) = session(&device, &paired.credential);
-    device.deck().delay_replies(Duration::from_millis(500));
+    // The reply never beats the drop: the Device holds it for as long as the call waits.
+    device.deck().delay_replies(TIMEOUT);
+    let before = device.deck().received().len();
     let dropper = {
         let device = &device;
         thread::scope(|scope| {
             let call = scope.spawn(|| session.call(&json!({"m": "ping"}), TIMEOUT));
-            thread::sleep(Duration::from_millis(100));
+            // Drop once the Device holds the request. A session that ends before the request
+            // goes out refuses it as closed, which is a known outcome.
+            let end = Instant::now() + TIMEOUT;
+            while device.deck().received().len() == before && Instant::now() < end {
+                thread::sleep(Duration::from_millis(5));
+            }
             device.drop_connection();
             call.join().unwrap()
         })
