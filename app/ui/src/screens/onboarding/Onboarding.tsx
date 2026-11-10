@@ -528,7 +528,9 @@ export function Onboarding({ device, open, onClose, onClosed }: { device: Device
                   wifi={wifi}
                   headingId={headingId}
                   // Focus leaves the emptied password field: Enter there again would store the network without a password.
-                  onJoined={() => body.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus({ preventScroll: true })}
+                  onJoined={() => {
+                    if (setup.getState().flow.at === 'wifi') body.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+                  }}
                 />
               )}
               {at === 'done' && <DoneStep device={device} headingId={headingId} />}
