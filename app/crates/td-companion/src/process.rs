@@ -19,6 +19,9 @@ pub(crate) async fn rewrite_runtime(ctx: &Ctx) -> bool {
 /// false when the Companion must stop.
 pub(crate) async fn maintain(ctx: &Ctx) -> bool {
     ctx.sweep_sessions();
+    // Dropping a large pack can take a moment, and waits for any pack still loading.
+    let packs = ctx.packs.clone();
+    let _ = tokio::task::spawn_blocking(move || packs.evict_idle()).await;
     let ok = rewrite_runtime(ctx).await;
     if !ok {
         ctx.desktop
