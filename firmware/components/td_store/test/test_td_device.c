@@ -18,8 +18,11 @@ TEST_CASE("Device names enforce UTF-8 byte and whitespace rules", "[td_device]")
     TEST_ASSERT_FALSE(td_device_name_valid(name));
 }
 
-TEST_CASE("Device names refuse format characters and Hangul fillers", "[td_device]")
+TEST_CASE("Device names refuse controls, format characters and Hangul fillers", "[td_device]")
 {
+    TEST_ASSERT_FALSE(td_device_name_valid("Desk\x7fPC"));                /* U+007F delete */
+    TEST_ASSERT_FALSE(td_device_name_valid("Desk\xc2\x85PC"));            /* U+0085, a C1 control */
+    TEST_ASSERT_TRUE(td_device_name_valid("Desk\xc2\xa0PC"));             /* U+00A0 follows the C1 controls */
     TEST_ASSERT_FALSE(td_device_name_valid("Desk\xe2\x80\xaePC"));      /* U+202E right-to-left override */
     TEST_ASSERT_FALSE(td_device_name_valid("\xef\xbb\xbf" "Desk"));        /* U+FEFF first */
     TEST_ASSERT_FALSE(td_device_name_valid("a\xe2\x80\x8d" "b"));       /* U+200D */

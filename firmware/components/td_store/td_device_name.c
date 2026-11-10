@@ -44,9 +44,10 @@ bool td_device_name_valid(const char *name)
             if ((*p & 0xc0) != 0x80) return false;
             c = (c << 6) | (*p++ & 63);
         }
-        if (c < min || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff) || c < 32 || c == 127) return false;
+        /* Controls (Cc): C0, DEL and the C1 controls U+0080 to U+009F. */
+        if (c < min || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff) || c < 32 || (c >= 127 && c <= 0x9f)) return false;
         if (format_character(c) || hangul_filler(c)) return false;
-        bool space = c == 32 || c == 0x85 || c == 0xa0 || c == 0x1680 ||
+        bool space = c == 32 || c == 0xa0 || c == 0x1680 ||
                      (c >= 0x2000 && c <= 0x200a) || c == 0x2028 || c == 0x2029 ||
                      c == 0x202f || c == 0x205f || c == 0x3000;
         visible |= !space;

@@ -971,7 +971,7 @@ refuses association. The legacy discovery API remains available.
 
 The `td-link` CLI provides `discover-identities`, `identity`, `name`, and
 `set-name "Studio"`. Names default to `Open TouchDeck`, contain 1–48 UTF-8
-bytes, hold no format character or Hangul filler, and persist in NVS separately
+bytes, hold no control or format character or Hangul filler, and persist in NVS separately
 from Layouts. See the
 [protocol contract](../schema/protocol/link-v2.md) for validation rules.
 It advertises the `static`, `graph`, `photo-frame`, and `clock` Tile kinds, the

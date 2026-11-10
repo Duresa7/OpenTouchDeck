@@ -1,6 +1,7 @@
-// The characters a Device name refuses beyond controls: format characters
-// (General_Category Cf, pinned to Unicode 17.0) and the Hangul fillers. They are
-// invisible or reorder text, so a name could look like another name. The table is
+// The characters a Device name refuses: controls (Cc, U+0000 to U+001F and U+007F
+// to U+009F), format characters (General_Category Cf, pinned to Unicode 17.0) and
+// the Hangul fillers. They are invisible or reorder text, so a name could look like
+// another name. The format table is
 // the one link-v2.md and net-v2.md pin, so no runtime's Unicode version changes it;
 // schema/protocol/name-vectors-v2.json checks it.
 const FORMAT_RANGES: readonly (readonly [number, number])[] = [
@@ -18,7 +19,7 @@ const HANGUL_FILLERS: readonly number[] = [0x115f, 0x1160, 0x3164, 0xffa0];
 export function hasHiddenCharacter(name: string): boolean {
   for (const character of name) {
     const code = character.codePointAt(0)!;
-    if (code <= 0x1f || code === 0x7f || HANGUL_FILLERS.includes(code)) return true;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f) || HANGUL_FILLERS.includes(code)) return true;
     if (FORMAT_RANGES.some(([first, last]) => code >= first && code <= last)) return true;
   }
   return false;

@@ -20,12 +20,12 @@ describe('the shared name vectors', () => {
     expect(nameError(name)).toBe(SPECIAL_CHARACTERS);
   });
 
-  test('every character of the pinned format table and each Hangul filler is refused, and no other is', () => {
-    const hidden = new Set([...vectors.format_ranges.flatMap(codePoints), ...vectors.hangul_fillers.map((h) => parseInt(h, 16))]);
+  test('every control, every character of the pinned format table and each Hangul filler is refused, and no other is', () => {
+    const hidden = new Set([...vectors.control_ranges.flatMap(codePoints), ...vectors.format_ranges.flatMap(codePoints), ...vectors.hangul_fillers.map((h) => parseInt(h, 16))]);
     // One assertion over the mismatches: an expect() per code point takes over 5 s on CI.
     const wrong: string[] = [];
-    for (let code = 0x20; code <= 0x10ffff; code++) {
-      if (code === 0x7f || (code >= 0xd800 && code <= 0xdfff)) continue;
+    for (let code = 0; code <= 0x10ffff; code++) {
+      if (code >= 0xd800 && code <= 0xdfff) continue;
       if (hasHiddenCharacter(`a${String.fromCodePoint(code)}b`) !== hidden.has(code)) wrong.push(`U+${code.toString(16)}`);
     }
     expect(wrong).toEqual([]);
