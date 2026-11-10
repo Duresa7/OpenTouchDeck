@@ -1,7 +1,7 @@
 //! The Wi-Fi Carrier against fake net-v2 Devices on loopback: discovery, a typed address,
 //! pairing, reconnecting, busy, the USB/Wi-Fi switch, a Layout push and Firmware.
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use td_companion::{
     api::NoQuery,
     devices::{Carrier, LinkState},
@@ -22,6 +22,20 @@ use td_link::net::{self, NetCarrier, fake::FakeNetDevice};
 
 /// Mock Devices report this id in `hello`, so USB and Wi-Fi merge under it.
 const SERIAL: &str = "020000000001";
+
+/// Starts a pairing as another app once the fake Device has let go of the previous connection: right after a
+/// pairing it can still answer `busy` for a moment, more often on a loaded CI runner.
+fn pair_when_free(address: &net::Address, app: [u8; 16]) -> net::Pairing {
+    let end = Instant::now() + Duration::from_secs(5);
+    loop {
+        match net::pair(address, &app, "Other app", Duration::from_secs(5)) {
+            Err(net::NetError::Refused(net::Refusal::Busy)) if Instant::now() < end => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            result => return result.unwrap(),
+        }
+    }
+}
 
 /// The status and error body of a request that fails.
 async fn failure(request: reqwest::RequestBuilder) -> (u16, Value) {
@@ -547,13 +561,7 @@ async fn a_full_device_gets_advice_by_its_advertised_count() {
     let address = net::Address::from(fake.addr());
     for app in 0..4u8 {
         fake.open_window().unwrap();
-        let mut other = net::pair(
-            &address,
-            &[0x70 + app; 16],
-            "Other app",
-            Duration::from_secs(5),
-        )
-        .unwrap();
+        let mut other = pair_when_free(&address, [0x70 + app; 16]);
         other
             .submit(&fake.code().unwrap(), &mut |_| Ok(()))
             .unwrap();
@@ -567,14 +575,22 @@ async fn a_full_device_gets_advice_by_its_advertised_count() {
     let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
     assert_eq!(found[0].paired, Some(4));
     fake.open_window().unwrap();
-    let (status, error) = failure(td.request::<PairStartEndpoint>(
-        (),
-        NoQuery,
-        &PairStart {
-            address: fake.addr().to_string(),
-        },
-    ))
-    .await;
+    // The fourth pairing's connection can still hold the Device, which answers busy until it closes.
+    let end = Instant::now() + Duration::from_secs(5);
+    let (status, error) = loop {
+        let refused = failure(td.request::<PairStartEndpoint>(
+            (),
+            NoQuery,
+            &PairStart {
+                address: fake.addr().to_string(),
+            },
+        ))
+        .await;
+        if refused.1["code"] != "wifi.busy" || Instant::now() >= end {
+            break refused;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
     assert_eq!((status, error["code"].as_str()), (409, Some("wifi.full")));
     assert_eq!(error["details"]["paired"], 4);
     assert!(
