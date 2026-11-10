@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-test-hooks = ["dep:reqwest", "dep:tokio-tungstenite", "dep:tempfile", "td-link/fake"]
+test-hooks = ["dep:reqwest", "dep:tokio-tungstenite", "dep:tempfile", "td-link/fake", "td-host/testing"]
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }

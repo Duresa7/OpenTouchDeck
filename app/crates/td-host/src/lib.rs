@@ -21,6 +21,8 @@ pub mod keymap;
 pub mod packs;
 pub mod sources;
 mod tarball;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use approval::{Approvals, CommandSpec, Grant};
 pub use input::{FakeSink, InputSink, KeyEvent, Mirror, Mirrored, Outcome};

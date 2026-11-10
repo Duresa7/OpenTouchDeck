@@ -697,11 +697,11 @@ fn is_license(name: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use crate::tarball::{
-        MAX_UNPACKED,
-        tests::{archive, tarball},
+    use crate::{
+        tarball::MAX_UNPACKED,
+        testing::{archive, listed, tarball},
     };
 
     #[test]
@@ -741,32 +741,6 @@ pub(crate) mod tests {
         fn fetch(&self, url: &str) -> Result<Vec<u8>, catalog::Error> {
             assert!(url.starts_with(REGISTRY), "{url}");
             Ok(self.0.clone())
-        }
-    }
-
-    pub fn listed(prefix: &str, tarball: &[u8]) -> Curated {
-        Curated {
-            prefix: prefix.into(),
-            name: "Mono".into(),
-            package: format!("@iconify-json/{prefix}"),
-            version: "1.0.0".into(),
-            tarball: format!("{REGISTRY}@iconify-json/{prefix}/-/{prefix}-1.0.0.tgz"),
-            integrity: integrity_of(tarball),
-            unpacked_size: 1000,
-            icons: 2,
-            license: PackLicense {
-                title: "MIT".into(),
-                spdx: Some("MIT".into()),
-                url: None,
-            },
-            author: PackAuthor {
-                name: "Someone".into(),
-                url: None,
-            },
-            attribution: false,
-            brands: false,
-            palette: false,
-            samples: vec!["spotify".into()],
         }
     }
 

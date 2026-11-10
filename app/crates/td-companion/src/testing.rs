@@ -17,6 +17,39 @@ enum Ports {
     Mock,
     Real { device_console: bool },
 }
+/// How [`TestCompanion::start_router`] sets up a Companion. The default is what
+/// [`TestCompanion::start`] runs.
+struct StartOptions {
+    limits: crate::Limits,
+    /// Serve the release router instead of the one with test routes.
+    release: bool,
+    /// Grants kept here instead of in a file.
+    grants: Option<Arc<dyn GrantStore>>,
+    /// The desktop to keep, as a restart does.
+    desktop: Option<Arc<crate::tray::Desktop>>,
+    /// Where catalog images are fetched from.
+    catalog: Box<dyn td_host::catalog::Fetcher>,
+    /// The Icon pack list and where its tarballs download from, instead of the bundled list
+    /// with no network.
+    packs: Option<(
+        Vec<td_host::packs::Curated>,
+        Box<dyn td_host::catalog::Fetcher>,
+    )>,
+    ports: Ports,
+}
+impl Default for StartOptions {
+    fn default() -> Self {
+        Self {
+            limits: crate::Limits::default(),
+            release: false,
+            grants: None,
+            desktop: None,
+            catalog: Box::new(NoCatalogNetwork),
+            packs: None,
+            ports: Ports::Mock,
+        }
+    }
+}
 pub struct TestCompanion {
     ctx: Ctx,
     ports: MockPorts,
@@ -45,90 +78,68 @@ impl TestCompanion {
     }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
-        Self::start_router(
+        Self::start_router(StartOptions {
             limits,
-            false,
-            None,
-            None,
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Mock,
-        )
+            ..Default::default()
+        })
         .await
     }
     pub async fn start_with_catalog(
         limits: crate::Limits,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
     ) -> Self {
-        Self::start_router(limits, false, None, None, fetcher, None, Ports::Mock).await
+        Self::start_router(StartOptions {
+            limits,
+            catalog: fetcher,
+            ..Default::default()
+        })
+        .await
     }
     /// Starts offering `curated` as the Icon pack list, downloaded through `fetcher`.
     pub async fn start_with_packs(
         curated: Vec<td_host::packs::Curated>,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
     ) -> Self {
-        Self::start_router(
-            crate::Limits::default(),
-            false,
-            None,
-            None,
-            Box::new(NoCatalogNetwork),
-            Some((curated, fetcher)),
-            Ports::Mock,
-        )
+        Self::start_router(StartOptions {
+            packs: Some((curated, fetcher)),
+            ..Default::default()
+        })
         .await
     }
     pub async fn start_release_router() -> Self {
-        Self::start_router(
-            crate::Limits::default(),
-            true,
-            None,
-            None,
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Mock,
-        )
+        Self::start_router(StartOptions {
+            release: true,
+            ..Default::default()
+        })
         .await
     }
     /// Starts on mock ports that the Companion treats as real ones, as a Companion without
     /// `--mock-devices` does, with or without `--test-real-device-console`.
     pub async fn start_on_real_ports(device_console: bool) -> Self {
-        Self::start_router(
-            crate::Limits::default(),
-            false,
-            None,
-            None,
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Real { device_console },
-        )
+        Self::start_router(StartOptions {
+            ports: Ports::Real { device_console },
+            ..Default::default()
+        })
         .await
     }
     /// Starts with grants kept in `grants` instead of a file.
     pub async fn start_with_grants(grants: Arc<dyn GrantStore>) -> Self {
-        Self::start_router(
-            crate::Limits::default(),
-            false,
-            Some(grants),
-            None,
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Mock,
-        )
+        Self::start_router(StartOptions {
+            grants: Some(grants),
+            ..Default::default()
+        })
         .await
     }
-    async fn start_router(
-        limits: crate::Limits,
-        release: bool,
-        grants: Option<Arc<dyn GrantStore>>,
-        desktop: Option<Arc<crate::tray::Desktop>>,
-        fetcher: Box<dyn td_host::catalog::Fetcher>,
-        packs: Option<(
-            Vec<td_host::packs::Curated>,
-            Box<dyn td_host::catalog::Fetcher>,
-        )>,
-        mode: Ports,
-    ) -> Self {
+    async fn start_router(options: StartOptions) -> Self {
+        let StartOptions {
+            limits,
+            release,
+            grants,
+            desktop,
+            catalog: fetcher,
+            packs,
+            ports: mode,
+        } = options;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let data = tempfile::tempdir().unwrap();
@@ -208,15 +219,10 @@ impl TestCompanion {
     pub async fn restart(&mut self) {
         let desktop = self.ctx.desktop.clone();
         assert!(self.stop(Duration::from_secs(5)).await);
-        *self = Self::start_router(
-            crate::Limits::default(),
-            false,
-            None,
-            Some(desktop),
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Mock,
-        )
+        *self = Self::start_router(StartOptions {
+            desktop: Some(desktop),
+            ..Default::default()
+        })
         .await;
     }
     pub fn pairing_delivery(&self) -> (Option<String>, Option<String>) {
