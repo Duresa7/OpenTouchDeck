@@ -1101,8 +1101,8 @@ static void utf8(uint32_t c, char out[5])
     out[n] = '\0';
 }
 
-/* The validator takes and refuses the shared names, and refuses every code point of the pinned Cf table and each
- * Hangul filler, and only those. */
+/* The validator takes and refuses the shared names, and refuses every control, every code point of the pinned Cf
+ * table and each Hangul filler, and only those. */
 static void test_name_vectors_in_the_validator(void)
 {
     const cJSON *item;
@@ -1115,17 +1115,20 @@ static void test_name_vectors_in_the_validator(void)
         CHECK(!td_device_name_valid(vector_name(item)));
     }
     static unsigned char marked[0x110000];
-    cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(g_names, "format_ranges")) {
-        const char *end;
-        uint32_t first = hex_value(item->valuestring, &end);
-        uint32_t last = *end == '-' ? hex_value(end + 1, &end) : first;
-        for (uint32_t c = first; c <= last; c++) marked[c] = 1;
+    static const char *const RANGES[] = { "control_ranges", "format_ranges" };
+    for (size_t i = 0; i < sizeof RANGES / sizeof RANGES[0]; i++) {
+        cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(g_names, RANGES[i])) {
+            const char *end;
+            uint32_t first = hex_value(item->valuestring, &end);
+            uint32_t last = *end == '-' ? hex_value(end + 1, &end) : first;
+            for (uint32_t c = first; c <= last; c++) marked[c] = 1;
+        }
     }
     cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(g_names, "hangul_fillers")) {
         marked[hex_value(item->valuestring, NULL)] = 1;
     }
-    for (uint32_t c = 0x20; c < 0x110000; c++) {
-        if (c == 0x7f || (c >= 0xd800 && c <= 0xdfff)) continue; /* DEL and surrogates have their own rules */
+    for (uint32_t c = 1; c < 0x110000; c++) { /* U+0000 would end the C string */
+        if (c >= 0xd800 && c <= 0xdfff) continue; /* surrogates are not UTF-8 */
         char text[16] = "a";
         utf8(c, text + 1);
         strcat(text, "b");

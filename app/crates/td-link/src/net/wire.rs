@@ -69,7 +69,8 @@ fn auth(detail: impl Into<String>) -> NetError {
     NetError::Auth(detail.into())
 }
 
-/// `\p{Cf}`, the format characters, pinned to Unicode 17.0 as net-v2 lists them.
+/// `\p{Cf}`, the format characters, pinned to Unicode 17.0 as net-v2 lists them, so no
+/// toolchain's Unicode version changes a name rule. Every Rust copy of the table is this one.
 pub const FORMAT_RANGES: &[(u32, u32)] = &[
     (0x00ad, 0x00ad),
     (0x0600, 0x0605),
@@ -97,13 +98,17 @@ pub const FORMAT_RANGES: &[(u32, u32)] = &[
 /// Letters that render as blank space.
 pub const HANGUL_FILLERS: [char; 4] = ['\u{115f}', '\u{1160}', '\u{3164}', '\u{ffa0}'];
 
-/// Whether `c` may appear in a Companion name: not a control character (`\p{Cc}`), a
-/// format character (`\p{Cf}`) or a Hangul filler.
-pub fn name_char_allowed(c: char) -> bool {
+/// Whether `c` is a format character (`\p{Cf}`) of the pinned table.
+pub fn is_format(c: char) -> bool {
     let u = u32::from(c);
-    !c.is_control()
-        && !FORMAT_RANGES.iter().any(|&(lo, hi)| (lo..=hi).contains(&u))
-        && !HANGUL_FILLERS.contains(&c)
+    FORMAT_RANGES.iter().any(|&(lo, hi)| (lo..=hi).contains(&u))
+}
+
+/// Whether `c` may appear in a Companion name or a Device name: not a control character
+/// (`\p{Cc}`, U+0000 to U+001F and U+007F to U+009F), a format character (`\p{Cf}`) or a
+/// Hangul filler.
+pub fn name_char_allowed(c: char) -> bool {
+    !c.is_control() && !is_format(c) && !HANGUL_FILLERS.contains(&c)
 }
 
 /// Whether a Companion name may go in `pair.request`: 1 to 64 UTF-8 bytes of allowed

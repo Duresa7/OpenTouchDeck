@@ -8,7 +8,7 @@ import {
   MAX_ITEM, MIN_INITIAL_CREDIT, FORMAT_RANGES, nameAllowed, PeerBackoff, COUNTED, NOT_COUNTED,
   HANGUL_FILLERS, closeOutcome, PairFailures, PairingStore, manage, FULL_ERROR,
 } from './net-v2.mjs';
-import { buildNameVectors, readNameVectors, serialize, namesPath } from './name-vectors.mjs';
+import { buildNameVectors, readNameVectors, serialize, namesPath, CONTROL_RANGES } from './name-vectors.mjs';
 import { readFileSync } from 'node:fs';
 import { inputs, goldenFrames, pairing, session, buildVectors, readVectors, managementVectors } from './vectors-v2.mjs';
 
@@ -420,6 +420,11 @@ test('names: the shared name vectors match the generator and the net-v2 table', 
   assert.equal(readFileSync(namesPath, 'utf8'), serialize(buildNameVectors()));
   assert.deepEqual(shared.format_ranges, fixture.companion_names.format_ranges);
   assert.deepEqual(shared.hangul_fillers, HANGUL_FILLERS.map((cp) => cp.toString(16)));
+  for (let cp = 0; cp <= 0x10ffff; cp++) {
+    if (cp >= 0xd800 && cp <= 0xdfff) continue;
+    const control = CONTROL_RANGES.some(([first, last]) => cp >= first && cp <= last);
+    assert.equal(control, /\p{Cc}/u.test(String.fromCodePoint(cp)), `U+${cp.toString(16)}`);
+  }
   for (const { label, name } of shared.accepted) assert.equal(nameAllowed(name), true, label);
   for (const { label, name } of shared.rejected) assert.equal(nameAllowed(name), false, label);
 });

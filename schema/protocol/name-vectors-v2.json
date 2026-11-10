@@ -1,6 +1,10 @@
 {
   "protocol": "touchdeck/names-v2",
-  "notice": "Shared by link-v2 Device names and net-v2 companion names. A name that holds a format character or a Hangul filler is refused; the rest of each rule (length, controls, blank names) is in its own spec.",
+  "notice": "Shared by link-v2 Device names and net-v2 companion names. A name that holds a control character, a format character or a Hangul filler is refused; the rest of each rule (length, blank names) is in its own spec.",
+  "control_ranges": [
+    "0000-001f",
+    "007f-009f"
+  ],
   "format_ranges": [
     "00ad",
     "0600-0605",
@@ -54,6 +58,14 @@
     {
       "label": "unassigned neighbour U+2065",
       "name": "Desk\u2065PC"
+    },
+    {
+      "label": "U+007E before DEL and the C1 controls",
+      "name": "Desk~PC"
+    },
+    {
+      "label": "no-break space U+00A0 after the C1 controls",
+      "name": "Desk\u00a0PC"
     },
     {
       "label": "U+00AC beside a range",
@@ -173,6 +185,18 @@
     }
   ],
   "rejected": [
+    {
+      "label": "U+0080",
+      "name": "Desk\u0080PC"
+    },
+    {
+      "label": "U+0085",
+      "name": "Desk\u0085PC"
+    },
+    {
+      "label": "U+009F",
+      "name": "Desk\u009fPC"
+    },
     {
       "label": "U+00AD",
       "name": "Desk\u00adPC"

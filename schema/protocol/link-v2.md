@@ -135,13 +135,15 @@ update or conflicting reuse of its counter. `rate` includes `retry_ms`, 1 to
 `v2.name.set` requires `name` and returns the stored `name`. The name is 1 to 48
 UTF-8 bytes, contains at least one non-whitespace Unicode code point, and obeys
 the string rules above. No truncation, normalization, or trimming occurs.
-The name also MUST NOT contain a format character (`\p{Cf}`) or one of the
-Hangul fillers U+115F, U+1160, U+3164 and U+FFA0. Format characters are
-invisible or reorder text, so they can make one name look like another on
-screen, and the fillers are letters that render as blank space. This is the
-rule net-v2 applies to `companion_name`, with the `\p{Cf}` set pinned to Unicode
-17.0's, the inclusive ranges listed in [net-v2.md](net-v2.md#pairing) so a
-receiver needs no Unicode database. Rejecting U+200D also rejects emoji joined
+The name also MUST NOT contain a C1 control (U+0080 to U+009F), a format
+character (`\p{Cf}`) or one of the Hangul fillers U+115F, U+1160, U+3164 and
+U+FFA0. With the string rules, the C1 controls make every control character
+(`\p{Cc}`) refused: they draw nothing, and a terminal can act on them. Format
+characters are invisible or reorder text, so they can make one name look like
+another on screen, and the fillers are letters that render as blank space. This
+is the rule net-v2 applies to `companion_name`, with the `\p{Cf}` set pinned to
+Unicode 17.0's, the inclusive ranges listed in [net-v2.md](net-v2.md#pairing) so
+a receiver needs no Unicode database. Rejecting U+200D also rejects emoji joined
 into one glyph; single emoji are fine. Firmware refuses such a name with
 `args`, and the Companion and the UI refuse it before they send it. The names
 in [name-vectors-v2.json](name-vectors-v2.json), shared with net-v2, show which
