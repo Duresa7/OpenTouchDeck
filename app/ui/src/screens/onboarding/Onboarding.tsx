@@ -291,7 +291,7 @@ function FirmwareStep({ firmware, device, offered, headingId }: { firmware: Firm
 
 /** The network is set here over USB, with the Device panel's field. Firmware that doesn't offer it leaves the pointer
  * to Settings. */
-function WifiStep({ device, wifi, headingId }: { device: DeviceSummary; wifi: WifiSetupStore; headingId: string }) {
+function WifiStep({ device, wifi, headingId, onJoined }: { device: DeviceSummary; wifi: WifiSetupStore; headingId: string; onJoined(): void }) {
   const called = device.name ?? 'the Device';
   const inline = offersWifiSetup(device);
   return (
@@ -307,7 +307,7 @@ function WifiStep({ device, wifi, headingId }: { device: DeviceSummary; wifi: Wi
           {opening(called)} runs the radio build. Wi-Fi and Bluetooth stay off until you set them up.
         </p>
       </div>
-      {inline && <WifiSetupField device={device} name={called} setup={wifi} live={device.link.state === 'connected'} />}
+      {inline && <WifiSetupField device={device} name={called} setup={wifi} live={device.link.state === 'connected'} onJoined={onJoined} />}
       <p className="field-hint" data-testid="onboarding-wifi-hint">
         {inline
           ? 'Wi-Fi is optional. You can set it up or change it in Settings later.'
@@ -522,7 +522,15 @@ export function Onboarding({ device, open, onClose, onClosed }: { device: Device
               {at === 'orientation' && <OrientationStep setup={setup} headingId={headingId} />}
               {at === 'layout' && <LayoutStep setup={setup} headingId={headingId} />}
               {at === 'firmware' && <FirmwareStep firmware={firmware} device={device} offered={offered} headingId={headingId} />}
-              {at === 'wifi' && <WifiStep device={device} wifi={wifi} headingId={headingId} />}
+              {at === 'wifi' && (
+                <WifiStep
+                  device={device}
+                  wifi={wifi}
+                  headingId={headingId}
+                  // Focus leaves the emptied password field: Enter there again would store the network without a password.
+                  onJoined={() => body.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus({ preventScroll: true })}
+                />
+              )}
               {at === 'done' && <DoneStep device={device} headingId={headingId} />}
             </section>
             <Footer setup={setup} firmware={firmware} device={device} onClose={onClose} />

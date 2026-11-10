@@ -123,6 +123,15 @@ describe('the Wi-Fi store', () => {
     expect(sent).toEqual([]);
   });
 
+  test('a field that opens again shows no problem from the last drafts', async () => {
+    const store = wifiFor(radio);
+    await store.load();
+    expect(await store.join(NETWORK, 'short')).toBe(false);
+    expect(store.getState().problem.password).toBeDefined();
+    await store.load();
+    expect(store.getState().problem).toEqual({});
+  });
+
   test('forgets the network', async () => {
     const store = wifiFor(radio);
     await store.load();

@@ -12,11 +12,13 @@ interface WifiSetupFieldProps {
   setup: WifiSetupStore;
   /** Connected and not restarting. */
   live: boolean;
+  /** Runs once the Device has taken a network, before the join is known to work. */
+  onJoined?(): void;
 }
 
 /** The network the Device joins, set over USB on a Device whose Firmware has a Wi-Fi station. The password field
  * empties after every join, and the password is never read back. */
-export function WifiSetupField({ device, name, setup, live }: WifiSetupFieldProps) {
+export function WifiSetupField({ device, name, setup, live, onJoined }: WifiSetupFieldProps) {
   const id = useId();
   const shown = useStore(setup, (s) => s.wifi);
   const busy = useStore(setup, (s) => s.busy);
@@ -52,7 +54,9 @@ export function WifiSetupField({ device, name, setup, live }: WifiSetupFieldProp
   const join = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!editable) return;
-    if (await setup.join(ssid, password)) setPassword('');
+    if (!(await setup.join(ssid, password))) return;
+    setPassword('');
+    onJoined?.();
   };
   const status = !live
     ? `Plug in ${name} to change its Wi-Fi network.`

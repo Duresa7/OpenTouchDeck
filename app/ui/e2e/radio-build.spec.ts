@@ -164,6 +164,18 @@ test.describe('onboarding', () => {
     await expect(dialog(page)).toHaveAttribute('data-step', 'done');
   });
 
+  test('Enter joins from the password field, and Enter again goes on without changing the network', async ({ page }) => {
+    await plugIn(page, 'radio');
+    await page.getByTestId('device-panel-wifi-setup-ssid').fill(NETWORK);
+    await password(page).fill(PASSWORD);
+    await password(page).press('Enter');
+    await expect(next(page)).toBeFocused();
+    await expect(wifiStatus(page)).toHaveAttribute('data-state', 'connected');
+    await page.keyboard.press('Enter');
+    await expect(dialog(page)).toHaveAttribute('data-step', 'done');
+    expect(await stored(page)).toEqual({ ssid: NETWORK, password: PASSWORD });
+  });
+
   test('setup refuses a short password before sending it, says why a join failed, and still moves on', async ({ page }) => {
     await plugIn(page, 'radio');
     await expect(wifiStatus(page)).toHaveAttribute('data-state', 'off');
