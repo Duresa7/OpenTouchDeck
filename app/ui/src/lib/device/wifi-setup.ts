@@ -157,6 +157,8 @@ export function createWifiSetup(deps: WifiSetupDeps) {
 
   const api = {
     async load(): Promise<void> {
+      // A field that opens again starts with new drafts, and the next join checks them again.
+      set({ problem: {} });
       if (!live() || !offersWifiSetup(device)) return;
       if (state().load !== 'ready') set({ load: 'loading' });
       pollUntil = Date.now() + pollForMs;

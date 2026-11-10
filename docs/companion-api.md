@@ -1158,7 +1158,7 @@ One exception lets a board pass drive the real Device while the Companion owns i
 | `test.record` | `GET /test/devices/{device}/record` | → `{received, lines, settings, reboots, assets, layouts}` |
 | `test.emit` | `POST /test/devices/{device}/emit` | `{events, repeat?, every_ms?}` → `()`. Events: `key.report`, `key.resync`, `press` (with an optional renderer `part`), `v2.input` (`page`, `tile`, `stream`, `phase`, `value`) and `drop` |
 | `test.input_log` | `GET /test/input-log` | → `string[]` |
-| `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "device-radio" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()`. `device-radio` is a v2 Device with a Wi-Fi station and the Bluetooth keyboard |
+| `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "device-radio" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()`. `device-radio` is a v2 Device on the radio build: its hello says `radio`, and it has a Wi-Fi station and the Bluetooth keyboard |
 | `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |
 | `test.clock` | `POST /test/clock` | `{advance_ms}` → `()`. Moves the Companion's clock for expiry tests |
 | `test.firmware_script` | `POST /test/firmware/script` | `{answers: ("accept" \| "decline")[]}` → `()`. Replaces the native Firmware dialogs with a scripted prompter that gives these consent answers in order and waits once they run out. Its file picker returns the test bundle |

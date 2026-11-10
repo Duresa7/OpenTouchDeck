@@ -9,12 +9,14 @@ import { jobsStore, waitForJob } from '../../lib/companion/jobs.ts';
 import { inProgress, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
 import { createSetup, describeOnDevice, stepCount, type Busy, type LayoutChoice, type SetupState, type SetupStore } from '../../lib/device/onboarding.ts';
+import { offersWifiSetup, type WifiSetupStore } from '../../lib/device/wifi-setup.ts';
 import { newLayout, starterLayout, type Layout, type Orientation } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
 import { DevicePreview } from '../DevicePreview.tsx';
 import { statusOf } from '../home-model.ts';
 import { StatusBox } from '../../shell/StatusBox.tsx';
 import { deviceStoresFor, useOfferedFirmware } from '../layout/device.ts';
+import { WifiSetupField } from '../layout/WifiSetupField.tsx';
 import './onboarding.css';
 
 export type CloseThen = 'stay' | 'edit';
@@ -41,7 +43,7 @@ function drafts() {
 
 const opening = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
 
-function useSetup(device: DeviceSummary): { setup: SetupStore; firmware: FirmwareUpdateStore; offered: string | null } {
+function useSetup(device: DeviceSummary): { setup: SetupStore; firmware: FirmwareUpdateStore; wifi: WifiSetupStore; offered: string | null } {
   const companion = useCompanion();
   const stores = deviceStoresFor(companion, device);
   const offered = useOfferedFirmware(device);
@@ -67,7 +69,7 @@ function useSetup(device: DeviceSummary): { setup: SetupStore; firmware: Firmwar
     const known = job ? jobsStore.getState().jobs[job] : undefined;
     if (known) stores.firmware.attach(known);
   }, [stores, job]);
-  return { setup, firmware: stores.firmware, offered };
+  return { setup, firmware: stores.firmware, wifi: stores.wifiSetup, offered };
 }
 
 function Pager({ setup }: { setup: SetupStore }) {
@@ -287,8 +289,11 @@ function FirmwareStep({ firmware, device, offered, headingId }: { firmware: Firm
   );
 }
 
-function WifiStep({ device, headingId }: { device: DeviceSummary; headingId: string }) {
+/** The network is set here over USB, with the Device panel's field. Firmware that doesn't offer it leaves the pointer
+ * to Settings. */
+function WifiStep({ device, wifi, headingId, onJoined }: { device: DeviceSummary; wifi: WifiSetupStore; headingId: string; onJoined(): void }) {
   const called = device.name ?? 'the Device';
+  const inline = offersWifiSetup(device);
   return (
     <>
       <h3 className="onboarding-heading" id={headingId}>
@@ -302,7 +307,12 @@ function WifiStep({ device, headingId }: { device: DeviceSummary; headingId: str
           {opening(called)} runs the radio build. Wi-Fi and Bluetooth stay off until you set them up.
         </p>
       </div>
-      <p className="field-hint">Set up Wi-Fi in Settings, now or later. Until then, {called} works over USB as usual.</p>
+      {inline && <WifiSetupField device={device} name={called} setup={wifi} live={device.link.state === 'connected'} onJoined={onJoined} />}
+      <p className="field-hint" data-testid="onboarding-wifi-hint">
+        {inline
+          ? 'Wi-Fi is optional. You can set it up or change it in Settings later.'
+          : `Set up Wi-Fi in Settings, now or later. Until then, ${called} works over USB as usual.`}
+      </p>
     </>
   );
 }
@@ -467,7 +477,7 @@ function Footer({ setup, firmware, device, onClose }: { setup: SetupStore; firmw
 }
 
 export function Onboarding({ device, open, onClose, onClosed }: { device: DeviceSummary; open: boolean; onClose(then: CloseThen): void; onClosed(): void }) {
-  const { setup, firmware, offered } = useSetup(device);
+  const { setup, firmware, wifi, offered } = useSetup(device);
   const at = useStore(setup, (s) => s.flow.at);
   const headingId = useId();
   const body = useRef<HTMLDivElement>(null);
@@ -512,7 +522,17 @@ export function Onboarding({ device, open, onClose, onClosed }: { device: Device
               {at === 'orientation' && <OrientationStep setup={setup} headingId={headingId} />}
               {at === 'layout' && <LayoutStep setup={setup} headingId={headingId} />}
               {at === 'firmware' && <FirmwareStep firmware={firmware} device={device} offered={offered} headingId={headingId} />}
-              {at === 'wifi' && <WifiStep device={device} headingId={headingId} />}
+              {at === 'wifi' && (
+                <WifiStep
+                  device={device}
+                  wifi={wifi}
+                  headingId={headingId}
+                  // Focus leaves the emptied password field: Enter there again would store the network without a password.
+                  onJoined={() => {
+                    if (setup.getState().flow.at === 'wifi') body.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+                  }}
+                />
+              )}
               {at === 'done' && <DoneStep device={device} headingId={headingId} />}
             </section>
             <Footer setup={setup} firmware={firmware} device={device} onClose={onClose} />

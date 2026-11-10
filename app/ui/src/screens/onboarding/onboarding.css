@@ -235,6 +235,19 @@
   gap: var(--space-3);
 }
 
+/* The Wi-Fi field is the Device panel's. Its rules live in the Layout screen's stylesheet, which Home never loads. */
+.onboarding-step .panel-wifi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.onboarding-step .panel-wifi-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
 .onboarding-progress-group {
   display: flex;
   flex-direction: column;

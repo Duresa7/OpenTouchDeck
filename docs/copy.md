@@ -148,6 +148,11 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | Firmware | Success | Updated to {latest} |
 | Firmware | Failure | Couldn't update. {device} went back to {current} and still works. |
 | Firmware | Failure buttons | Retry, Skip |
+| Wi-Fi (radio build only) | Heading | Wi-Fi and Bluetooth |
+| Wi-Fi | Body | {device} runs the radio build. Wi-Fi and Bluetooth stay off until you set them up. |
+| Wi-Fi | Network field | The Device settings Wi-Fi network field, with the same strings (see Device settings, Wi-Fi) |
+| Wi-Fi | Hint, with the network field | Wi-Fi is optional. You can set it up or change it in Settings later. |
+| Wi-Fi | Hint, Firmware without the network field | Set up Wi-Fi in Settings, now or later. Until then, {device} works over USB as usual. |
 | Done | Heading | {device} is ready |
 | Done | Body | Tap a Tile on {device} to try it, or edit its Layout here. |
 | Done | Buttons | Edit Layout, Done |
