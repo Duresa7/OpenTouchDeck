@@ -11,7 +11,9 @@ import { windowSession } from '../companion/session.ts';
 import { isSent, readDraft, writeDraft, type DraftStorage } from '../editor/store.ts';
 import { canonical, newLayout, starterLayout, type Orientation } from '../layout/model.ts';
 import { createSetup, describeOnDevice, flowStep, nameError, startFlow, stepCount, type Flow, type SetupStore } from './onboarding.ts';
+import { offersWifi } from './radio-build.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from './settings.ts';
+import { offersWifiSetup } from './wifi-setup.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const URL = 'ws://127.0.0.1:51234/api/v1/events';
@@ -167,6 +169,14 @@ describe('setting up a Device', () => {
     }
     events.close();
     vi.unstubAllGlobals();
+  });
+
+  test('a fresh Device on the radio build can be told its network during setup, and a normal one cannot', () => {
+    const radio = freshDevice({ id: 'mock0007', port: 'COM7', firmware: { version: '1.5.0', protocol: 2, channel: 'radio' } });
+    expect(offersWifi(radio)).toBe(true);
+    expect(offersWifiSetup(radio)).toBe(true);
+    expect(offersWifi(shelf)).toBe(false);
+    expect(offersWifiSetup(shelf)).toBe(false);
   });
 
   test('only a Device on the radio build is offered Wi-Fi setup, after its other steps', () => {

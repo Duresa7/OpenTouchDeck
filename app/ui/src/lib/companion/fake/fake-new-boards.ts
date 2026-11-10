@@ -1,4 +1,5 @@
 import type { DeviceSummary, ErrorBody, FirmwareBuild, FirmwareChannel, FirmwareProgress, FirmwareResult, Job, NewBoard } from '../api.ts';
+import { RADIO_CAPS } from '../samples.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -42,7 +43,8 @@ export function freshDevice({ id, port, firmware }: { id: string; port: string; 
     link: { state: 'connected', port, since_ms: Date.now(), protocol: firmware.protocol },
     carrier: 'usb',
     firmware: { channel: 'normal', ...firmware, build: 'fake', recovery: false, update_available: null },
-    capabilities: null,
+    // The radio build says what it can do from its first hello, so its setup can offer Wi-Fi.
+    capabilities: firmware.channel === 'radio' ? RADIO_CAPS : null,
     diagnostics: null,
     orientation: 'landscape',
     layout: null,

@@ -123,12 +123,56 @@ test.describe('onboarding', () => {
     await next(page).click();
   }
 
-  test('a Device on the radio build is offered Wi-Fi setup before it is done', async ({ page }) => {
+  // The fake Companion's network and every password here are made up.
+  const NETWORK = 'td-demo-network';
+  const PASSWORD = 'demo-pass-1234';
+  const wifiStatus = (page: Page) => page.getByTestId('device-panel-wifi-setup-status');
+  const password = (page: Page) => page.getByTestId('device-panel-wifi-setup-password');
+  const stored = (page: Page): Promise<{ ssid: string; password: string } | null> =>
+    page.evaluate(async (id) => (await fetch(`/api/v1/test/devices/${id}/wifi`)).json(), ID);
+
+  async function joinNetwork(page: Page, ssid: string, secret: string) {
+    await page.getByTestId('device-panel-wifi-setup-ssid').fill(ssid);
+    await password(page).fill(secret);
+    await page.getByTestId('device-panel-wifi-setup-join').click();
+  }
+
+  test('a Device on the radio build is offered Wi-Fi setup before it is done, and can skip it', async ({ page }) => {
     await plugIn(page, 'radio');
     await expect(dialog(page)).toHaveAttribute('data-step', 'wifi');
     await expect(page.getByTestId('onboarding-count')).toHaveText('Step 4 of 5');
     await expect(page.getByTestId('onboarding-wifi')).toContainText('Shelf runs the radio build. Wi-Fi and Bluetooth stay off until you set them up.');
+    await expect(wifiStatus(page)).toHaveText('No network. Shelf works over USB without one.');
+    await expect(page.getByTestId('onboarding-wifi-hint')).toHaveText('Wi-Fi is optional. You can set it up or change it in Settings later.');
     await expect(next(page)).toBeFocused();
+    await next(page).click();
+    await expect(dialog(page)).toHaveAttribute('data-step', 'done');
+    expect(await stored(page)).toBeNull();
+  });
+
+  test('a Device on the radio build joins a network during setup, and the password field empties', async ({ page }) => {
+    await plugIn(page, 'radio');
+    await expect(wifiStatus(page)).toHaveAttribute('data-state', 'off');
+    await expect(password(page)).toHaveAttribute('type', 'password');
+    await joinNetwork(page, NETWORK, PASSWORD);
+    await expect(wifiStatus(page)).toHaveAttribute('data-state', 'connected');
+    await expect(wifiStatus(page)).toHaveText(`Connected to ${NETWORK} at 192.0.2.10`);
+    await expect(password(page)).toHaveValue('');
+    expect(await stored(page)).toEqual({ ssid: NETWORK, password: PASSWORD });
+    expect(await page.content()).not.toContain(PASSWORD);
+    await next(page).click();
+    await expect(dialog(page)).toHaveAttribute('data-step', 'done');
+  });
+
+  test('setup refuses a short password before sending it, says why a join failed, and still moves on', async ({ page }) => {
+    await plugIn(page, 'radio');
+    await expect(wifiStatus(page)).toHaveAttribute('data-state', 'off');
+    await joinNetwork(page, NETWORK, 'short');
+    await expect(page.getByTestId('device-panel-wifi-setup-password-hint')).toHaveText('A Wi-Fi password has at least 8 characters.');
+    expect(await stored(page)).toBeNull();
+    await joinNetwork(page, NETWORK, 'wrong-pass-5678');
+    await expect(wifiStatus(page)).toHaveAttribute('data-reason', 'wrong-password');
+    await expect(wifiStatus(page)).toHaveText(`${NETWORK} refused the password. Shelf keeps trying.`);
     await next(page).click();
     await expect(dialog(page)).toHaveAttribute('data-step', 'done');
   });
@@ -137,6 +181,7 @@ test.describe('onboarding', () => {
     await plugIn(page, 'normal');
     await expect(dialog(page)).toHaveAttribute('data-step', 'done');
     await expect(page.getByTestId('onboarding-wifi')).toHaveCount(0);
+    await expect(page.getByTestId('device-panel-wifi-setup')).toHaveCount(0);
   });
 });
 
@@ -170,6 +215,20 @@ for (const theme of ['light', 'dark'] as const) {
       await page.mouse.move(0, 0);
       await page.waitForTimeout(300);
       await page.screenshot({ path: join(folder!, `onboarding-wifi-${theme}.png`) });
+      const wifiStatus = page.getByTestId('device-panel-wifi-setup-status');
+      const joinWith = async (password: string) => {
+        await page.getByTestId('device-panel-wifi-setup-ssid').fill('td-demo-network');
+        await page.getByTestId('device-panel-wifi-setup-password').fill(password);
+        await page.getByTestId('device-panel-wifi-setup-join').click();
+      };
+      await joinWith('wrong-pass-5678');
+      await expect(wifiStatus).toHaveAttribute('data-reason', 'wrong-password');
+      await page.mouse.move(0, 0);
+      await page.screenshot({ path: join(folder!, `onboarding-wifi-refused-${theme}.png`) });
+      await joinWith('demo-pass-1234');
+      await expect(wifiStatus).toHaveAttribute('data-state', 'connected');
+      await page.mouse.move(0, 0);
+      await page.screenshot({ path: join(folder!, `onboarding-wifi-joined-${theme}.png`) });
     });
   });
 }
