@@ -15,8 +15,8 @@ pub(crate) async fn rewrite_runtime(ctx: &Ctx) -> bool {
         .await
         .unwrap_or(false)
 }
-/// The 60 s maintenance step: sweeps ended sessions, then checks the runtime file. Returns
-/// false when the Companion must stop.
+/// The 60 s maintenance step: sweeps ended sessions, drops idle Icon packs from memory, then
+/// checks the runtime file. Returns false when the Companion must stop.
 pub(crate) async fn maintain(ctx: &Ctx) -> bool {
     ctx.sweep_sessions();
     // Dropping a large pack can take a moment, and waits for any pack still loading.
