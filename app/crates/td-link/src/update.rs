@@ -1,6 +1,6 @@
 use crate::bundle::{Bundle, sha256};
 use crate::recover::Recovery;
-use crate::{Incoming, LinkError, Session, SessionConfig, XferFrame};
+use crate::{Incoming, Session, SessionConfig, XferFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -119,6 +119,16 @@ pub fn begin(
     approval: Approval,
     prompted: &mut dyn FnMut(),
 ) -> Result<Value, String> {
+    begin_reply(session, bytes, sha256, approval, prompted).map(|reply| reply.to_value())
+}
+
+fn begin_reply(
+    session: &Session,
+    bytes: usize,
+    sha256: &str,
+    approval: Approval,
+    prompted: &mut dyn FnMut(),
+) -> Result<td_core::Reply, String> {
     let message = json!({"m":"update.begin","bytes":bytes,"sha256":sha256});
     let start = Instant::now();
     let mut asked_prompt = false;
@@ -128,7 +138,7 @@ pub fn begin(
             .call(&message, Duration::from_secs(15))
             .map_err(|e| e.to_string())?;
         if reply.ok {
-            return Ok(reply.to_value());
+            return Ok(reply);
         }
         match reply.fields.get("reason").and_then(Value::as_str) {
             Some("confirm") => {
@@ -147,37 +157,22 @@ pub fn begin(
     }
 }
 
-/// How long an update waits for a transfer that is already running on the session.
-const TRANSFER_WAIT: Duration = Duration::from_secs(10);
-
-/// Takes the session's one transfer once it is free. The update shares the session with the rest of
-/// the app, so a transfer that started just before it, such as a Layout read, can still be running
-/// and has to end first.
-fn free_transfer(session: &Session) -> Result<crate::Transfer<'_>, String> {
-    let end = Instant::now() + TRANSFER_WAIT;
-    loop {
-        match session.transfer() {
-            Err(LinkError::TransferBusy) if Instant::now() < end => {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            result => return result.map_err(|e| e.to_string()),
-        }
-    }
-}
-
 fn send(
     session: &Session,
     bundle: &Bundle,
     emit: &mut dyn FnMut(UpdateState),
+    mut transfer: crate::Transfer<'_>,
 ) -> Result<String, String> {
-    let transfer = free_transfer(session)?;
-    let opened = begin(
-        session,
-        bundle.app().len(),
-        &sha256(bundle.app()),
-        Approval::default(),
-        &mut || {},
-    )?;
+    let opened = transfer.begin(|| {
+        begin_reply(
+            session,
+            bundle.app().len(),
+            &sha256(bundle.app()),
+            Approval::default(),
+            &mut || {},
+        )
+    })?;
+    let opened = opened.to_value();
     let id = opened["xfer"]
         .as_u64()
         .and_then(|n| u8::try_from(n).ok())
@@ -189,6 +184,7 @@ fn send(
         .ok_or("bad update slot")?
         .to_owned();
     emit(UpdateState::Sending { pct: 0 });
+    let deadline = transfer.data_deadline(bundle.app().len());
     let chunks = bundle.app().chunks(CHUNK_DATA_MAX);
     let count = chunks.len();
     let mut shown = 0;
@@ -199,7 +195,7 @@ fn send(
             transfer
                 .send_chunk(id, idx, data)
                 .map_err(|e| e.to_string())?;
-            let end = Instant::now() + Duration::from_millis(200);
+            let end = deadline.min(Instant::now() + Duration::from_millis(200));
             while let Some(left) = end.checked_duration_since(Instant::now()) {
                 match transfer.frames.recv_timeout(left) {
                     Ok(XferFrame::Ack { xfer, next }) if xfer == id && next == idx + 1 => {
@@ -223,11 +219,13 @@ fn send(
             shown = pct;
         }
     }
-    checked(
-        session,
-        json!({"m":"update.end","xfer":id}),
-        Duration::from_secs(10),
-    )?;
+    transfer.finish(|| {
+        checked(
+            session,
+            json!({"m":"update.end","xfer":id}),
+            Duration::from_secs(10),
+        )
+    })?;
     Ok(slot)
 }
 fn confirm(
@@ -290,6 +288,7 @@ pub fn run_session(
     emit: &mut dyn FnMut(UpdateState),
 ) -> Result<(), String> {
     emit(UpdateState::Checking);
+    let transfer = session.transfer().map_err(|e| e.to_string())?;
     let hello = session
         .hello(Duration::from_secs(10))
         .map_err(|e| e.to_string())?;
@@ -302,7 +301,7 @@ pub fn run_session(
         });
         return Ok(());
     }
-    let slot = send(session, bundle, emit)?;
+    let slot = send(session, bundle, emit, transfer)?;
     session.close();
     emit(UpdateState::Rebooting);
     confirm(connector, bundle, Some(&slot), limits, emit)?;
@@ -327,6 +326,7 @@ pub fn run(
             Some("ota_0".into())
         } else {
             let (session, _incoming) = connector.connect()?;
+            let transfer = session.transfer().map_err(|e| e.to_string())?;
             let hello = session
                 .hello(Duration::from_secs(10))
                 .map_err(|e| e.to_string())?;
@@ -339,7 +339,7 @@ pub fn run(
                 });
                 return Ok(());
             }
-            Some(send(&session, bundle, emit)?)
+            Some(send(&session, bundle, emit, transfer)?)
         };
         emit(UpdateState::Rebooting);
         confirm(connector, bundle, slot.as_deref(), limits, emit)?;
@@ -409,24 +409,33 @@ mod tests {
     fn an_update_waits_for_a_transfer_already_running_on_the_session() {
         let mut mock = crate::MockDeck::new();
         let (session, _incoming) = Connector::connect(&mut mock).unwrap();
-        // Another part of the app, such as a Layout read, holds the session's one transfer.
-        let reading = session.transfer().unwrap();
+        let layout =
+            td_core::Layout::parse(include_bytes!("../../../../schema/examples/dev.json")).unwrap();
+        crate::xfer::put_layout(&session, td_core::Orientation::Landscape, &layout).unwrap();
+        mock.lose_sent_chunks([0, 0]);
         std::thread::scope(|scope| {
-            let mut connector = mock.clone();
+            let reading =
+                scope.spawn(|| crate::xfer::get_layout(&session, td_core::Orientation::Landscape));
+            let end = Instant::now() + Duration::from_secs(5);
+            while !mock.received().iter().any(|r| r["m"] == "layout.get") {
+                assert!(Instant::now() < end, "the Layout read started");
+                std::thread::sleep(Duration::from_millis(5));
+            }
             let session = &session;
+            let mut connector = mock.clone();
             let update = scope.spawn(move || {
                 run_session(session, &mut connector, &bundle(), limits(), &mut |_| {})
             });
-            // The update asks for the transfer right after its hello.
-            let end = Instant::now() + Duration::from_secs(5);
-            let greeted = || mock.received().iter().any(|r| r["m"] == "hello");
-            while !greeted() && Instant::now() < end {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            assert!(greeted(), "the update started");
             std::thread::sleep(Duration::from_millis(100));
-            assert!(!update.is_finished(), "the update waits for the transfer");
-            drop(reading);
+            assert!(
+                !update.is_finished(),
+                "the update waits for the Layout read"
+            );
+            assert!(!mock.received().iter().any(|r| r["m"] == "update.begin"));
+            assert_eq!(
+                reading.join().unwrap().unwrap().data,
+                layout.to_canonical_json()
+            );
             update.join().unwrap().unwrap();
         });
         assert_eq!(mock.reboots(), 1);

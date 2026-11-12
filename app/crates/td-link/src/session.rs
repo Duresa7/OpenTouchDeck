@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
 use std::io;
@@ -6,7 +7,7 @@ use std::io;
 use std::io::{ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
-use std::sync::{Arc, Mutex, PoisonError, TryLockError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, TryLockError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -181,6 +182,8 @@ struct Shared {
     queued: Arc<AtomicUsize>,
     overflow: Arc<AtomicBool>,
     xfer: Mutex<Option<SyncSender<XferFrame>>>,
+    xfer_ready: Condvar,
+    transferring: AtomicBool,
     layout_reply: Mutex<Option<LayoutReply>>,
     close_on_drop: bool,
     protocol_2: AtomicBool,
@@ -190,6 +193,11 @@ impl Shared {
     fn shutdown(&self, reason: &str) {
         if self.open.swap(false, Ordering::AcqRel) {
             *self.reason.lock().unwrap_or_else(PoisonError::into_inner) = reason.to_owned();
+            self.xfer
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            self.xfer_ready.notify_all();
             self.pending
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -297,6 +305,11 @@ impl Shared {
                     Ok(mut writer) => {
                         if Instant::now() >= deadline {
                             return Err(LinkError::Timeout(timeout));
+                        }
+                        if !self.transferring.load(Ordering::Acquire) {
+                            writer
+                                .start_operation()
+                                .map_err(|error| LinkError::Io(error.to_string()))?;
                         }
                         let result = self.send_locked(
                             &mut **writer,
@@ -435,13 +448,45 @@ impl Shared {
 }
 
 /// The one transfer a session runs at a time. Chunks and acks reach [`Transfer::frames`]
-/// until it drops.
+/// until it drops. `begin` and `finish` wrap the protocol-specific requests; a guard
+/// dropped between them closes the Carrier to abort the Device's transfer. A refused
+/// begin or an already-present Asset needs no cancellation.
 pub struct Transfer<'a> {
     session: &'a Session,
     pub frames: Receiver<XferFrame>,
+    unfinished: bool,
+    deadline: Cell<Option<(Instant, Duration)>>,
 }
 
 impl Transfer<'_> {
+    /// Runs the begin request under this operation's admission. If its outcome is
+    /// unknown or the caller abandons it, closing the session aborts Device state.
+    pub fn begin<E>(&mut self, request: impl FnOnce() -> Result<Reply, E>) -> Result<Reply, E> {
+        self.unfinished = true;
+        let reply = request()?;
+        self.unfinished =
+            reply.ok && reply.fields.get("present").and_then(Value::as_bool) != Some(true);
+        Ok(reply)
+    }
+
+    /// Runs completion before releasing admission. Failed completion has an unknown
+    /// outcome, so Drop closes the session rather than allowing another operation.
+    pub fn finish<T, E>(&mut self, request: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+        let result = request();
+        if result.is_ok() {
+            self.unfinished = false;
+        }
+        result
+    }
+
+    /// Bounds data movement by size, in addition to each protocol's idle/retry limits.
+    pub fn data_deadline(&self, bytes: usize) -> Instant {
+        let timeout = Duration::from_secs(5 + (bytes as u64).div_ceil(4096));
+        let deadline = Instant::now() + timeout;
+        self.deadline.set(Some((deadline, timeout)));
+        deadline
+    }
+
     /// Writes one chunk as a request frame with a fresh `seq`, which the receiver's ack echoes.
     pub fn send_chunk(&self, xfer: u8, idx: u16, data: &[u8]) -> Result<(), LinkError> {
         let shared = &self.session.shared;
@@ -466,6 +511,11 @@ impl Transfer<'_> {
 
     fn write(&self, frame: Frame) -> Result<(), LinkError> {
         let shared = &self.session.shared;
+        if let Some((deadline, timeout)) = self.deadline.get()
+            && Instant::now() >= deadline
+        {
+            return Err(LinkError::Timeout(timeout));
+        }
         if !shared.open.load(Ordering::Acquire) {
             return Err(shared.closed());
         }
@@ -478,12 +528,23 @@ impl Transfer<'_> {
 
 impl Drop for Transfer<'_> {
     fn drop(&mut self) {
-        self.session
+        if self.unfinished {
+            self.session
+                .shared
+                .shutdown("transfer abandoned; reconnect to go on");
+        }
+        let mut slot = self
+            .session
             .shared
             .xfer
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+            .unwrap_or_else(PoisonError::into_inner);
+        slot.take();
+        self.session
+            .shared
+            .transferring
+            .store(false, Ordering::Release);
+        self.session.shared.xfer_ready.notify_all();
     }
 }
 
@@ -533,6 +594,8 @@ impl Session {
             queued,
             overflow,
             xfer: Mutex::new(None),
+            xfer_ready: Condvar::new(),
+            transferring: AtomicBool::new(false),
             layout_reply: Mutex::new(None),
             close_on_drop: config.close_on_drop,
             protocol_2: AtomicBool::new(false),
@@ -583,17 +646,49 @@ impl Session {
         self.shared.call(name, payload, timeout)
     }
 
-    /// Starts the session's one transfer. A second one is refused until the first drops.
+    /// Waits up to ten seconds for the session's transfer, waking on release or close.
+    /// The guard owns admission through begin, chunks and completion on every Carrier.
     pub fn transfer(&self) -> Result<Transfer<'_>, LinkError> {
+        let wait = Duration::from_secs(10);
+        let deadline = Instant::now() + wait;
         let mut slot = self.shared.xfer.lock().unwrap();
-        if slot.is_some() {
-            return Err(LinkError::TransferBusy);
+        while slot.is_some() && self.is_open() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(LinkError::Timeout(wait));
+            }
+            slot = self.shared.xfer_ready.wait_timeout(slot, left).unwrap().0;
+        }
+        if !self.is_open() {
+            return Err(self.shared.closed());
+        }
+        loop {
+            if !self.is_open() {
+                return Err(self.shared.closed());
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(LinkError::Timeout(wait));
+            }
+            match self.shared.writer.try_lock() {
+                Ok(mut writer) => {
+                    writer
+                        .start_operation()
+                        .map_err(|error| LinkError::Io(error.to_string()))?;
+                    self.shared.transferring.store(true, Ordering::Release);
+                    break;
+                }
+                Err(TryLockError::WouldBlock) => thread::sleep(left.min(Duration::from_millis(1))),
+                Err(TryLockError::Poisoned(error)) => panic!("{error}"),
+            }
         }
         let (sink, frames) = mpsc::sync_channel(TRANSFER_CAPACITY);
         *slot = Some(sink);
         Ok(Transfer {
             session: self,
             frames,
+            unfinished: false,
+            deadline: Cell::new(None),
         })
     }
 
@@ -726,7 +821,7 @@ fn read_loop(shared: &Shared, mut reader: Box<dyn FrameReader>) {
             }
         }
     }
-    drop(shared.writer.lock().unwrap_or_else(PoisonError::into_inner));
+    *shared.writer.lock().unwrap_or_else(PoisonError::into_inner) = Box::new(Released);
 }
 
 fn ping_loop(shared: &Shared, stop: &Receiver<()>, every: Duration, config: SessionConfig) {
@@ -801,6 +896,28 @@ mod tests {
             )),
             &mut ConsoleLine::default(),
         );
+    }
+
+    #[test]
+    fn closing_wakes_transfer_admission_and_the_active_receiver() {
+        let deck = MockDeck::new();
+        let (session, _) = Session::open(Box::new(deck.connect()), quiet()).unwrap();
+        let active = session.transfer().unwrap();
+        thread::scope(|scope| {
+            let (started, waiting) = mpsc::channel();
+            let session = &session;
+            let next = scope.spawn(move || {
+                started.send(()).unwrap();
+                matches!(session.transfer(), Err(LinkError::Closed(_)))
+            });
+            waiting.recv().unwrap();
+            session.close();
+            assert!(next.join().unwrap());
+            assert_eq!(
+                active.frames.recv_timeout(Duration::from_millis(100)),
+                Err(RecvTimeoutError::Disconnected)
+            );
+        });
     }
 
     #[test]

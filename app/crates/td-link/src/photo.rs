@@ -285,13 +285,19 @@ pub fn put_photo(session: &Session, data: &[u8], limit: usize) -> Result<PhotoSh
     }
     let started = Instant::now();
     let sha256 = crate::bundle::sha256(data);
-    let transfer = session.transfer()?;
+    let mut transfer = session.transfer()?;
     let put = Put {
         m: "v2.photo.put",
         bytes: data.len(),
         sha256: &sha256,
     };
-    let opened: Opened = call(session, put.m, &put, REQUEST_TIMEOUT)?;
+    let opened: Opened = fields(&transfer.begin(|| {
+        session.call_payload(
+            put.m,
+            serde_json::to_vec(&put).expect("photo request serializes"),
+            REQUEST_TIMEOUT,
+        )
+    })?)?;
     let end = End {
         m: "v2.photo.end",
         xfer: opened.xfer,
@@ -299,13 +305,21 @@ pub fn put_photo(session: &Session, data: &[u8], limit: usize) -> Result<PhotoSh
     let (chunks, retransmits) = match send_chunks(&transfer, opened.xfer, data) {
         Ok(sent) => sent,
         Err(error) => {
-            return Err(match call::<Shown>(session, end.m, &end, REQUEST_TIMEOUT) {
-                Err(refused @ PhotoError::Refused { .. }) => refused,
-                _ => error.into(),
-            });
+            return Err(
+                match transfer.finish(|| call::<Shown>(session, end.m, &end, REQUEST_TIMEOUT)) {
+                    Err(refused @ PhotoError::Refused { .. }) => refused,
+                    _ => error.into(),
+                },
+            );
         }
     };
-    let shown: Shown = call(session, end.m, &end, END_TIMEOUT)?;
+    let shown: Shown = fields(&transfer.finish(|| {
+        session.call_payload(
+            end.m,
+            serde_json::to_vec(&end).expect("photo request serializes"),
+            END_TIMEOUT,
+        )
+    })?)?;
     if !shown.shown {
         return Err(PhotoError::Link(LinkError::Reply(
             td_core::ReplyError::Fields("v2.photo.end did not show the picture".into()),

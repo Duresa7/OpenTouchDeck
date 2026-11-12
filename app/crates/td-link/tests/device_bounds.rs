@@ -213,9 +213,8 @@ fn irrelevant_chunks_do_not_keep_a_get_alive() {
     assert!(td_link::xfer::get_layout(&session, td_core::Orientation::Landscape).is_err());
     assert!(start.elapsed() < Duration::from_secs(3));
     assert!(
-        session
-            .call(&json!({"m":"ping"}), Duration::from_secs(1))
-            .is_ok()
+        !session.is_open(),
+        "an abandoned transfer closes Device state"
     );
     session.close();
 }
@@ -275,11 +274,10 @@ fn duplicate_chunks_do_not_keep_a_get_alive() {
     assert!(td_link::xfer::get_layout(&session, td_core::Orientation::Landscape).is_err());
     assert!(start.elapsed() < Duration::from_secs(3));
     assert!(
-        session
-            .call(&json!({"m":"ping"}), Duration::from_secs(1))
-            .is_ok()
+        !session.is_open(),
+        "an abandoned transfer closes Device state"
     );
-    assert!(session.transfer().is_ok());
+    assert!(session.transfer().is_err());
     session.close();
 }
 
@@ -304,10 +302,9 @@ fn duplicate_acks_do_not_keep_a_put_alive() {
     );
     assert!(start.elapsed() < Duration::from_secs(3));
     assert!(
-        session
-            .call(&json!({"m":"ping"}), Duration::from_secs(1))
-            .is_ok()
+        !session.is_open(),
+        "an abandoned transfer closes Device state"
     );
-    assert!(session.transfer().is_ok());
+    assert!(session.transfer().is_err());
     session.close();
 }
