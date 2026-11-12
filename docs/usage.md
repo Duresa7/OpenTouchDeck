@@ -53,19 +53,19 @@ A supported board without working Open TouchDeck Firmware appears as **New board
 ![Layout editor in light mode with demo Pages](images/app-layout-light.png)
 
 1. Open a Device from Home. At **Start a Layout**, choose **Load from Desk** (using the Device's name), **Starter Layout**, **Blank Layout** or **Import**.
-2. Select a Page below the preview. **+ Page** adds another Page.
+2. Select a Page in the Pages column between the navigation rail and the preview. Each Page shows its number, a thumbnail of its Tiles and its name; a Usage page keeps its **Usage** tag. **Add Page** at the end of the column adds one, up to eight.
 3. Select a Tile to edit its label, icon, color, size and action in the right panel. **Add Tile** or an empty cell opens the choices for action Tiles and Preset tiles.
 4. Drag Tiles to move them. Use the size controls to resize them. Changes that overlap another Tile or go outside the grid are refused.
-5. Click away from a Tile to edit the Page name and grid. Pick the grid by sweeping over the squares, as you would to insert a table, and click the size you want. **Full screen** hides the Page name and dots; swiping still changes Pages. The trash can at the bottom of the panel removes the Page after a second click.
+5. Click away from a Tile to edit the Page name and grid. Pick the grid by sweeping over the squares, as you would to insert a table, and click the size you want. **Full screen** hides the Page name and dots; swiping still changes Pages. To remove a Page, right-click it in the Pages column, or hover it and choose its **…** button, then choose **Remove Page** twice.
 6. Choose **Send to Device**. It turns into a spinner while it sends, says **Saved** when the Device has the Layout, then folds away until you change something. Wait for **Saved** before unplugging. To send again without a change, choose **Send to Desk** in the Layout options menu.
 
-The panel button at the right of the header hides the details panel, so the Device can grow into the room. Selecting a Tile or choosing **Add Tile** brings the panel back.
+The panel button at the right of the header hides the details panel, so the Device can grow into the room. Selecting a Tile or choosing **Add Tile** brings the panel back. The button at the left of the header, before the Device's name, folds the Pages column away and brings it back; this PC remembers which. In a window too narrow for both panels, one is out at a time: while the details panel is out the Pages column steps aside, and showing the Pages column hides the details panel.
 
 The pencil beside the Device's name at the top left renames it. Press Enter to save the name to the Device, or Escape to keep the old one. Its other settings are in **Settings**, under its name in **Devices**.
 
 The orientation buttons in the editor choose which Layout to edit. They do not turn the Device. To change how it stands, open its page in **Settings**, change **Orientation** and confirm **Restart**. Send the other orientation's Layout separately.
 
-Choose **Preview** or press **P** to try Page swipes, Tile presses and Page jumps. Arrow keys change Pages. **Actual size** shows Device pixels at their original size. Preview does not run commands on this PC.
+Choose **Preview** or press **P** to try Page swipes, Tile presses and Page jumps. Arrow keys change Pages, and the Pages column follows. **Actual size** shows Device pixels at their original size. Preview does not run commands on this PC.
 
 ### When controls need Send to Device
 

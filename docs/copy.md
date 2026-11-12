@@ -574,6 +574,25 @@ Opens from Settings, and from Get more icons in the icon picker.
 | Too many imports | You can import up to 20 packs. Remove one, then import “{file}” again. |
 | Footnote | Downloads come from the npm registry and must match a pinned checksum. Logos belong to their owners. |
 
+### Layout editor, Pages column
+
+The column of Page thumbnails between the nav rail and the canvas. It replaces the Page tabs, and Remove Page moves here from the Details panel.
+
+| Element | String |
+| --- | --- |
+| Column, aria-label | Pages |
+| Header button, tooltip and aria-label | Hide Pages / Show Pages |
+| Entry | {n}, then the Page's name. The number is hidden from screen readers; the list gives the position |
+| Usage page tag | Usage |
+| Add button | Add Page |
+| Add button tooltip, at 8 Pages | A Layout holds up to 8 Pages |
+| Entry menu button, tooltip | More |
+| Entry menu button and menu, aria-label | Options for “{page}” |
+| Menu item | Remove Page |
+| Menu item, after the first click | Remove “{page}”? |
+| Line under it, after the first click | Click again to remove |
+| Line under it, with one Page left | A Layout needs at least one Page |
+
 ## Tooltip names for the nav icons
 
 | Icon | Tooltip |
@@ -775,8 +794,8 @@ Every user-visible string in today's app. Locations are relative to `app/`. "Dro
 | `src/lib/editor/Inspector.svelte:87` | {n} column / columns | {n} column / columns | Added by hand |
 | `src/lib/editor/Inspector.svelte:90` | More rows and columns make smaller buttons. Empty squares are left blank on the deck. | More rows and columns make smaller Tiles. Empty squares stay blank. | |
 | `src/lib/editor/Inspector.svelte:93` | This page lists each AI account with how much of its limit is used. Set it up under AI usage. The rows on the deck are examples until then. | Lists each CLIProxyAPI account and how much of its limit is used. Shows examples until CLIProxyAPI is set up under Integrations. | |
-| `src/lib/editor/Inspector.svelte:100` | A layout needs at least one page | A Layout needs at least one Page | Tooltip |
-| `src/lib/editor/Inspector.svelte:101` | Click again to remove “{title}” / Remove this page | Click again to remove “{page}” / Remove Page | |
+| `src/lib/editor/Inspector.svelte:100` | A layout needs at least one page | A Layout needs at least one Page | Now the line under Remove Page in a Page's menu; see Layout editor, Pages column |
+| `src/lib/editor/Inspector.svelte:101` | Click again to remove “{title}” / Remove this page | Click again to remove / Remove Page | Now in a Page's menu in the Pages column, which also shows Remove “{page}”? |
 | `src/lib/editor/Inspector.svelte:107` | Whole layout | Dropped | The heading below says Layout |
 | `src/lib/editor/Inspector.svelte:108` | All pages | Layout | Heading |
 | `src/lib/editor/Inspector.svelte:111` | Layout name | Name | |
@@ -861,14 +880,16 @@ The menu button becomes an icon button.
 | `src/lib/editor/messages.ts:75` | “{name}” isn't a TouchDeck layout file, so nothing changed. | “{file}” isn't a Layout file. Nothing changed. | |
 | `src/lib/editor/messages.ts:76` | “{name}” has a problem the deck can't take, so nothing changed. | “{file}” breaks a Layout rule. Nothing changed. See Details. | |
 
-### Page tabs
+### Page tabs (now the Pages column)
+
+The tabs became the Pages column; its strings are under Layout editor, Pages column.
 
 | Location | Old | New | Note |
 | --- | --- | --- | --- |
 | `src/lib/editor/PageTabs.svelte:25` | Pages | Pages | aria-label |
 | `src/lib/editor/PageTabs.svelte:41` | AI usage | Usage | Tag on a Usage page tab |
 | `src/lib/editor/PageTabs.svelte:46` | A layout can have up to {n} pages / Add a page | A Layout holds up to {n} Pages / Dropped | Tooltip when full. The other tooltip repeated the label |
-| `src/lib/editor/PageTabs.svelte:48` | Add page | Add Page | |
+| `src/lib/editor/PageTabs.svelte:48` | Add page | Add Page | Now the dashed button at the end of the Pages column |
 
 ### Tile details
 

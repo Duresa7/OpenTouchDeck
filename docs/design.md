@@ -15,7 +15,7 @@ A Device is a 5-inch, 1024 × 600 touchscreen with a black glass bezel. The app 
 1. **Only lit things have color.** The screen, the status lights and the focus ring glow. Everything else is ink on a surface. Primary buttons are ink, not blue.
 2. **The Device is an object, not a card.** It has a bezel and a contact shadow. No light spills onto the mat, and no rounded panel wraps it.
 3. **Chrome is small, solid and quiet.** Navigation, the inspector and dialogs never compete with the screen. Surfaces are opaque. No blur and no translucent panels: blur over a busy dark screen hurts legibility and costs GPU time in Electron.
-4. **The app borrows the Device's vocabulary.** The pager pill marks the current Page, Preset tiles are drawn in screen colors, and the app and the Firmware share one typeface, Archivo.
+4. **The app borrows the Device's vocabulary.** The current Page wears the pager pill's accent, Preset tiles are drawn in screen colors, and the app and the Firmware share one typeface, Archivo.
 5. **Each color has one meaning.** Green means connected. Amber means something waits for you. Blue is the Device's accent and your keyboard focus. Selection in the app's own chrome uses ink, so blue stays unambiguous.
 6. **Status is a light plus words.** Never color alone.
 7. **Disabled looks different from quiet.** A secondary action and a meaningful empty value use secondary text. Disabled controls lose their edge and fade further.
@@ -46,9 +46,9 @@ Light is the default. Dark follows `prefers-color-scheme`. The Appearance settin
 | `--mat-grain` | 0.045 | 0 | Opacity of the felt grain over the mat; none on black |
 | `--surface` | `#f6f7f8` | `#262d35` | Nav rail, inspector rail, Settings categories, Integrations list |
 | `--surface-raised` | `#ffffff` | `#2c343d` | Dialogs, popovers, the Update icon, inputs, secondary buttons |
-| `--surface-inset` | `#eceef0` | `#1b2026` | Grouped Settings rows, change list, tracks |
+| `--surface-inset` | `#eceef0` | `#1b2026` | Grouped Settings rows, change list, tracks, the Layout editor's Pages column |
 | `--ink` | `#1a1d22` | `#eef1f5` | Primary text and icons |
-| `--ink-2` | `#565d68` | `#a3acb8` | Secondary text, enabled secondary actions such as **+ Page**, meaningful empty values such as "Nothing" |
+| `--ink-2` | `#565d68` | `#a3acb8` | Secondary text, enabled secondary actions such as **Add Page**, meaningful empty values such as "Nothing" |
 | `--ink-disabled` | `#a3a9b1` | `#5f6873` | Disabled text only |
 | `--line` | ink at 11% | ink at 9% | Hairlines, rings around raised surfaces |
 | `--line-strong` | ink at 20% | ink at 17% | Secondary button border |
@@ -56,7 +56,7 @@ Light is the default. Dark follows `prefers-color-scheme`. The Appearance settin
 | `--fill-hover` | ink at 5.5% | ink at 6% | Hover, segmented track |
 | `--fill-active` | ink at 9% | ink at 10% | Current nav button, open trigger, Add Tile while open |
 | `--fill-disabled` | ink at 4% | ink at 4% | Disabled button fill |
-| `--accent` | `#1f6fd1` | `#58a8ff` | Current Page pill, progress, slider fill |
+| `--accent` | `#1f6fd1` | `#58a8ff` | Current Page's ring in the Pages column, progress, slider fill |
 | `--focus-ring` | `#2f7bd9` | `#58a8ff` | The one focus ring |
 | `--live-led` / `--live-ink` | `#2fbf71` / `#17804a` | `#40d890` / `#40d890` | Connected light / switch on |
 | `--led-off` | `#8a919b` | `#6e7884` | Not connected light |
@@ -190,7 +190,7 @@ Each part below is in the reference prototype; [Reference prototype](#reference-
 
 The rail isn't in the reference prototype. It's variant C of the Layout editor prototype on the `prototype/layout-editor-variants` branch.
 
-- Docked to the window's left edge for its full height, below the drag strip in the Electron window (see [Window frame](#window-frame)): 64 wide, `--surface`, with a 1px `--line` right edge. Every screen lays out to its right, from 800 × 600 up. Nothing on a screen moves it: not switching screens, not scrolling, not the Details panel opening or closing.
+- Docked to the window's left edge for its full height, below the drag strip in the Electron window (see [Window frame](#window-frame)): 64 wide, `--surface`, with a 1px `--line` right edge. Every screen lays out to its right, from 800 × 600 up. Nothing on a screen moves it: not switching screens, not scrolling, not the Pages column or the Details panel opening or closing.
 - Home, Layout, Integrations and Settings sit at the top, 12px down with 2px gaps, centred in the rail. The Update icon sits at the bottom, 12px up.
 - Buttons are 36 × 36, radius 8, with a 20px Lucide icon at stroke 1.9 in `--ink-2`. Hover: `--fill-hover` and `--ink`. Current: `--fill-active` and `--ink`, with `aria-current="page"`. Settings is current while its page is open.
 - A tooltip to the right of each button names it after a 500ms delay. Later tooltips open instantly while the pointer stays in the rail.
@@ -248,17 +248,29 @@ Home has no headline. The Devices are the content, centered on the mat.
 
 ### Layout editor
 
-A grid of the canvas and the Details panel on the right edge, 340 to 600 wide, resized from its left edge.
+A grid of the Pages column against the nav rail, the canvas under its header, and the Details panel on the right edge, 340 to 600 wide, resized from its left edge.
+
+**Pages column.** It isn't in the reference prototype. It's variant C of the Layout editor prototype on the `prototype/layout-editor-variants` branch, like the nav rail. It runs the editor's full height, 160 wide, in `--surface-inset` with a 1px `--line` right edge and 12 × 10 padding, and scrolls on its own. It lists the Pages like a presentation app's slides, 8px apart:
+
+- **An entry** is a button, radius 8, padded 6 × 6 × 6 × 2: the Page number on the left in 12px tabular `--ink-2`, then a thumbnail, then the Page name under it on one line in 12/520, cut with an ellipsis and whole in its `title`. The name is `--ink-2`, and `--ink` for the current Page. A Usage page keeps its **Usage** tag after the name. Hover is `--fill-hover`. Clicking an entry shows that Page.
+- **The thumbnail** is the Page as the Device draws it, from the same scene as the canvas: its name, Tiles or Usage rows, and pager, in screen colors, at the Device's shape with a 112px long side, radius 5. Landscape and portrait Layouts each get their own shape. It follows every edit as you make it.
+- **The current Page** has `aria-current` and a 2px `--accent` ring around its thumbnail with a 2px gap of `--surface-inset`, the pager pill's color. The column scrolls to keep it in view however the Page changes, and keyboard focus on another entry moves to it.
+- **An entry's menu** opens from a right-click (a long press on touch) at the pointer, or from a 24px **…** button over the thumbnail's top right corner: `--surface-raised` with a `--line` ring, radius 6. The button shows on hover and keyboard focus, while its menu is open, and always on a touch screen. Its tooltip is **More**. The menu holds **Remove Page** in `--danger-ink` with a trash icon. The first click arms it, as the Details panel's trash can did: it reads “Remove “{page}”?” over "Click again to remove", and the second click removes the Page. It disarms after 4 s or when the menu closes. With one Page left it's disabled and says why. After a removal, focus goes to the current Page's entry.
+- **Add Page** ends the list: 40 tall, a 1.5px dashed `--line-strong` edge, radius 8, a plus and its words in 12/520 `--ink-2`; hover `--fill-hover` and `--ink`. At 8 Pages it's disabled: `--ink-disabled` on a `--line` dashed edge, with the tooltip "A Layout holds up to 8 Pages".
+
+**Folding the Pages column.** The button at the left end of the header folds the column away and brings it back. The column's width animates over `--duration-expand` with `--ease-drawer`; the column keeps its width as it slides out to the left behind the rail, then turns invisible. It's inert while folded, so it leaves the tab order and screen readers. The canvas and the Device grow into the room. This PC remembers the choice across restarts; when storage isn't available, the column stays out and folding lasts until the window closes.
+
+**Narrow windows.** When the editor is narrower than the Pages column, the smallest canvas and the smallest Details panel side by side (160 + 460 + 340), only one panel is out at a time. The Details panel wins while it's out, so picking a Tile or Add Tile folds the column aside; the Pages button brings the column back and hides the Details panel. The column keeps its remembered state underneath.
 
 **Hiding the Details panel.** The panel button at the right end of the header hides it. The panel slides out to the right over `--duration-expand` with `--ease-drawer`, keeping its width so nothing inside squeezes, and the canvas takes its room. Selecting a Tile (a click or Enter, not the press that starts a drag), **Add Tile**, an empty cell, **Review** in the controls notice, or an approval waiting for this Device brings it back. Hiding it ends Add Tile.
 
-**Header,** 64 tall over the canvas: the Device's name on the left in nameplate 18/620 with a 32px pencil icon button in `--ink-2` after it, then on the right the orientation buttons, Preview, the Layout menu, **Add Tile** (a secondary button with a plus icon), **Send to Device** and the Details panel button. There is no save state and no connection light. The pencil's tooltip and Send to Device say when the Device isn't connected, and screen readers hear the connection with the Device's name.
+**Header,** 64 tall over the canvas: the Pages button on the left, then the Device's name in nameplate 18/620 with a 32px pencil icon button in `--ink-2` after it, then on the right the orientation buttons, Preview, the Layout menu, **Add Tile** (a secondary button with a plus icon), **Send to Device** and the Details panel button. There is no save state and no connection light. The pencil's tooltip and Send to Device say when the Device isn't connected, and screen readers hear the connection with the Device's name.
 
 **Renaming.** The pencil swaps the name for a 240-wide input at the same size, its text selected. Enter or leaving the field saves the name to the Device; Escape keeps the old one. Enter and Escape put focus back on the pencil. A name the Device refuses keeps the field open with the reason in a small raised card under it, in `--danger-ink`.
 
 **Send to Device** shows only while the Layout has changes the Device lacks, or while its controls need a send. A click turns it into a spinner and "Sending…", then a check and "Saved" for 1.6 s, then it folds to nothing. Its width follows its words, measured, and slides over `--duration-expand` with `--ease-drawer`; it folds over `--duration-collapse`, and each new look fades in over `--duration-label`. The spinner turns once per `--duration-spin`. The Layout menu's **Send to {device}** sends again without a change.
 
-**Canvas.** The Device, centered, drawn between 420 and 680 wide to fit, or up to 860 with the Details panel hidden, with no light spill. Under it, 32px down, the Page tabs: 34 tall, `--ink-2`; the current tab is `--ink` with an 18 × 4 `--accent` pill 6px below, the same shape as the Device's pager. **+ Page** follows in `--ink-2`; it's an enabled action, so it never uses the disabled color.
+**Canvas.** The Device, centered, drawn between 420 and 680 wide to fit, or up to 860 with the Details panel hidden, with no light spill.
 
 On the canvas, the editor adds marks the Device never draws, in screen pixels:
 
@@ -266,13 +278,13 @@ On the canvas, the editor adds marks the Device never draws, in screen pixels:
 - **Empty cell:** a 3px dashed `--screen-pager-idle` outline at `--radius-tile` with a 44px plus in `--screen-ink-2`. Clicking one opens Add Tile for that cell.
 - **Add Tile target:** the cell gets a 5px solid `--screen-accent` outline, a `--screen-tile` fill and an accent plus.
 
-**Controls notice.** Above the Device on the canvas, at most 680 wide, while the open Device's controls wait for **Send to Device**: `--signal-tint` with a `--line` ring and `--radius-group`, a 14/620 `--signal-ink` title led by a `--signal-led` light, one 12px paragraph in `--ink` whose last sentence is `--ink-2`, and one small secondary button on the right. The canvas counts the notice's full height when it fits the Device. Below 700 tall, the canvas over the Device pads 16 on top and spaces its parts 16 apart while any notice shows, and the notice pads 8 × 12. When the Device is already at its 420 minimum, the notice gives up height before anything else and scrolls inside itself, never below its title and one line, so the Page tabs and the status line stay in the window. While Checking it's one `--surface-raised` line with a `--led-off` light. When the check can't read the Device it's the same line in `--ink` with a `--signal-led` light. The inspector's Page details then start with a **Controls** list in a `--surface-inset` group: each row names the Tile, its Page, the Integration and account, and its controls, and selects the Tile. Unknown names use `--danger-ink`.
+**Controls notice.** Above the Device on the canvas, at most 680 wide, while the open Device's controls wait for **Send to Device**: `--signal-tint` with a `--line` ring and `--radius-group`, a 14/620 `--signal-ink` title led by a `--signal-led` light, one 12px paragraph in `--ink` whose last sentence is `--ink-2`, and one small secondary button on the right. The canvas counts the notice's full height when it fits the Device. Below 700 tall, the canvas over the Device pads 16 on top and spaces its parts 16 apart while any notice shows, and the notice pads 8 × 12. When the Device is already at its 420 minimum, the notice gives up height before anything else and scrolls inside itself, never below its title and one line, so the status line stays in the window. While Checking it's one `--surface-raised` line with a `--led-off` light. When the check can't read the Device it's the same line in `--ink` with a `--signal-led` light. The inspector's Page details then start with a **Controls** list in a `--surface-inset` group: each row names the Tile, its Page, the Integration and account, and its controls, and selects the Tile. Unknown names use `--danger-ink`.
 
-**Status line.** Under the Page tabs, 12px `--ink-2`. It reports refusals, imports and sends. A load from the Device shows nothing there, but screen readers still hear it.
+**Status line.** Under the Device, 32px down, 12px `--ink-2`. It reports refusals, imports and sends. A load from the Device shows nothing there, but screen readers still hear it.
 
 **Error card.** An error pops up as a toast card at the bottom centre of the content right of the nav rail instead of a line: the error icon in `--danger-ink`, the message, where it happened in 12px `--ink-2`, and a small **Details** button that opens **Settings > Errors**. It stays 10 s, longer while the pointer rests on it. The status line keeps the words for screen readers only.
 
-**Page details.** The Page name, then **Grid**: an 8 × 8 board of 4px-gapped squares, 220 wide, with the size in words at the label's right. Squares up to the current size are `--accent`; hovering or focusing a square previews its size at 40% `--accent` and names it, and a click, Enter or Space sets it. Only one square is in the tab order, and the arrow keys, Home and End move between them. The footer, pinned to the bottom, holds Remove Page: a quiet-danger trash icon that asks “Remove “{page}”?” on the first click and removes on the second.
+**Page details.** The Page name, then **Grid**: an 8 × 8 board of 4px-gapped squares, 220 wide, with the size in words at the label's right. Squares up to the current size are `--accent`; hovering or focusing a square previews its size at 40% `--accent` and names it, and a click, Enter or Space sets it. Only one square is in the tab order, and the arrow keys, Home and End move between them. Removing a Page is in its menu in the Pages column.
 
 **Inspector.** `--surface` with a 1px `--line` left edge, 20px padding and 20px between fields. The head has a 44px Tile thumbnail in screen colors, the Tile's name at 16/620 and a 12px line saying what it is and where. The footer stays pinned to the bottom while the fields scroll: Duplicate on the left, Clear Tile (quiet danger) on the right.
 
@@ -358,6 +370,7 @@ Motion gives feedback and shows where things come from. It never decorates. Anim
 | Update label in | opacity, after `--delay-label` 60ms | `--duration-label` 160ms | `--ease-out` |
 | Update label out | opacity | `--duration-label-out` 140ms | `--ease-out` |
 | Switch thumb | `translate` | `--duration-switch` 180ms | `--ease-out` |
+| The Pages column or the Details panel folds and unfolds | the editor's grid columns; the panel keeps its width and slides | `--duration-expand` 280ms | `--ease-drawer` |
 | Send to Device grows to its words | `width`, measured | `--duration-expand` 280ms | `--ease-drawer` |
 | Send to Device folds away after Saved | `width`, opacity | `--duration-collapse` 200ms; fades in `--duration-label-out` | `--ease-drawer` |
 | Send to Device's spinner | `rotate`, one turn | `--duration-spin` 800ms, repeating | `linear` |
