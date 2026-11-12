@@ -768,12 +768,9 @@ impl DeviceManager {
         );
     }
     /// Stops the scan and Wi-Fi threads, which then close every link.
+    /// From here on, key reports type nothing; `wait_stopped` lets one already typing finish.
     pub fn stop(&self) {
-        {
-            // Under the input gate, a key report in flight finishes first and none types after.
-            let _gate = self.inner.input_gate.lock();
-            self.inner.stop.store(true, Ordering::SeqCst);
-        }
+        self.inner.stop.store(true, Ordering::SeqCst);
         self.inner.wake.kick();
         self.inner.wifi.wake.kick();
     }
@@ -782,6 +779,11 @@ impl DeviceManager {
     /// stuck in a USB write the kernel won't finish; that thread is left to end with the process.
     pub(crate) fn wait_stopped(&self, limit: std::time::Duration) -> bool {
         let deadline = std::time::Instant::now() + limit;
+        // A key report that began before `stop` may still be typing; reports after it are suppressed.
+        match self.inner.input_gate.try_lock_until(deadline) {
+            Some(gate) => drop(gate),
+            None => return false,
+        }
         loop {
             // Discovery may register actor threads while its final probe is completing.
             let threads = std::mem::take(&mut *self.inner.threads.lock());
@@ -1137,5 +1139,28 @@ mod wait_stopped_tests {
         let started = std::time::Instant::now();
         assert!(!devices.wait_stopped(std::time::Duration::from_millis(100)));
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_key_report_stuck_in_the_input_sink_cannot_hold_shutdown() {
+        let devices = DeviceManager::new(Events::default());
+        // Stands in for a key report stuck inside a synchronous input sink send.
+        let stuck = devices.pause_key_reports();
+        let (done, finished) = std::sync::mpsc::channel();
+        let stopper = devices.clone();
+        std::thread::spawn(move || {
+            stopper.stop();
+            let _ = done.send(());
+        });
+        assert!(
+            finished
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .is_ok(),
+            "stop must not wait for an in-flight key report"
+        );
+        let started = std::time::Instant::now();
+        assert!(!devices.wait_stopped(std::time::Duration::from_millis(100)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        drop(stuck);
     }
 }
