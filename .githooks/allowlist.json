@@ -42,19 +42,7 @@
     "comment": "Reserved-domain fixture email with a filename suffix or subdomain."
   },
   {
-    "file": "app/pnpm-lock.yaml",
-    "rule": "email",
-    "line_sha256": "a32b4904ef769dd0d8617abd307a6eb569696c96872e30dc2a64c2da96ea8aa6",
-    "comment": "Upstream dependency deprecation text includes its public support contact."
-  },
-  {
-    "file": "app/ui/src/lib/companion/fake/fake-worst.ts",
-    "rule": "email",
-    "line_sha256": "678430e14cf704333b088fbb47053963b2d3195ecdce2ea636989b2a784e32e2",
-    "comment": "Reserved-domain fixture email with a filename suffix or subdomain."
-  },
-  {
-    "file": "app/electron/tests/fixtures/tauri-cli-2.12.4-test-only-key.json",
+    "file": ".github/release-signer-test/fixtures/tauri-cli-2.12.4-test-only-key.json",
     "rule": "minisign-secret-wrapped",
     "line_sha256": "9eeb3920b097b844458cf37ae204098cbbce221424b95141ca3c05d39fed2f39",
     "comment": "Disposable test-only updater key for the release-signer tests; published on purpose."

@@ -14,15 +14,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Finds the checks this pull request needs, and lints the workflow files when one changed.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
-      frozen: ${{ steps.paths.outputs.frozen }}
       scripts: ${{ steps.paths.outputs.scripts }}
       firmware: ${{ steps.paths.outputs.firmware }}
-      actionlint: ${{ steps.paths.outputs.actionlint }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,18 +41,22 @@ jobs:
         run: |
           set -euo pipefail
           git diff --name-only -z "$BASE_SHA...$HEAD_SHA" | bash .github/scripts/changed-areas.sh | tee -a "$GITHUB_OUTPUT"
+      - name: Install pinned actionlint
+        if: steps.paths.outputs.actionlint == 'true'
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum --strict -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+      - name: Lint workflows
+        if: steps.paths.outputs.actionlint == 'true'
+        run: '"$RUNNER_TEMP/actionlint" -color'
 
   rust:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     uses: ./.github/workflows/rust.yml
-    with:
-      cache: true
-
-  frozen-app:
-    needs: changes
-    if: needs.changes.outputs.frozen == 'true'
-    uses: ./.github/workflows/app.yml
     with:
       cache: true
 
@@ -66,31 +72,9 @@ jobs:
     with:
       cache: true
 
-  actionlint:
-    needs: changes
-    if: needs.changes.outputs.actionlint == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    env:
-      ACTIONLINT_VERSION: 1.7.12
-      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install pinned actionlint
-        run: |
-          set -euo pipefail
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
-          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum --strict -c -
-          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
-      - name: Lint workflows
-        run: '"$RUNNER_TEMP/actionlint" -color'
-
   gate:
     name: gate
-    needs: [changes, rust, frozen-app, scripts, firmware, actionlint]
+    needs: [changes, rust, scripts, firmware]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -11,16 +11,10 @@ $env:APPDATA = "$FixtureRoot/appdata"
 $env:ProgramFiles = "$FixtureRoot/programfiles"
 ${env:ProgramFiles(x86)} = "$FixtureRoot/programfiles-x86"
 foreach ($dir in @('bin', 'staged', 'installed')) { New-Item -ItemType Directory "$FixtureRoot/$dir" | Out-Null }
-foreach ($tool in @('winget', 'node', 'npm', 'pnpm', 'rustup', 'rustc')) {
+foreach ($tool in @('winget', 'rustup', 'rustc')) {
     $body = "@echo off`r`n`"$pwsh`" -NoProfile -File `"$native`" -Tool $tool %*`r`nexit /b %errorlevel%`r`n"
-    # Unreachable target lines model npm's shims without ever using ShellExecute.
-    if ($tool -eq 'pnpm') { $body += '@"%~dp0%\node_modules\pnpm\bin\pnpm.exe" %*' + "`r`n" }
     Set-Content "$FixtureRoot/staged/$tool.cmd" $body
     if ($tool -notin $config.absent) { Copy-Item "$FixtureRoot/staged/$tool.cmd" "$FixtureRoot/bin/$tool.cmd" }
-}
-if ($config.placeholderPnpm) {
-    $shim = "$FixtureRoot/bin/pnpm.cmd"
-    (Get-Content $shim -Raw).Replace('node_modules\pnpm\bin\pnpm.exe', 'node_modules\pnpm\pnpm') | Set-Content $shim
 }
 . $SetupScript
 # Only OS reads are substituted. Native command lookup, invocation, output and exit

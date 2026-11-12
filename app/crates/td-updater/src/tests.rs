@@ -155,7 +155,7 @@ fn embeds_the_durable_committed_public_key() {
 #[test]
 fn accepts_the_actual_tauri_cli_fixture() {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../electron/tests/fixtures/tauri-cli-2.12.4-test-only-key.json"
+        "../../../../.github/release-signer-test/fixtures/tauri-cli-2.12.4-test-only-key.json"
     ))
     .unwrap();
     let file = tempfile::NamedTempFile::new().unwrap();

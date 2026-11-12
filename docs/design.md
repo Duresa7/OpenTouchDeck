@@ -1,5 +1,7 @@
 # Design system
 
+> The React UI this page names (`app/ui/...`) is on the `release/1.x` branch ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). The 2.0 Slint screens follow the same design.
+
 This is the look of Open TouchDeck: the desktop app and the screens the Firmware draws on a Device. Every UI ticket follows it. The tokens live in [`app/ui/src/styles/tokens.css`](../app/ui/src/styles/tokens.css), and this page explains each one, then shows how the parts are built from them.
 
 Words follow [`GLOSSARY.md`](../GLOSSARY.md). Every user-visible string comes from [`docs/copy.md`](copy.md). Strings quoted on this page describe a state; where one differs from the copy guide, the copy guide wins.

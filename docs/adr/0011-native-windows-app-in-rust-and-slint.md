@@ -1,6 +1,6 @@
 # One Rust program runs the Companion and a Slint UI
 
-Decided 2026-11-12. Supersedes ADR 0001 and ADR 0002.
+Decided 2026-11-12. Supersedes ADR 0001 and ADR 0002. ADR 0012 supersedes the Electron and React timing below: the lines it changes are marked.
 
 Open TouchDeck 2.0 is one Rust program: the Companion and a Slint UI run in the same process. Use Slint's Fluent style and AccessKit for Narrator, muda for native menus, and the winit backend for the HWND. The Microsoft `windows` crate handles DWM Mica, toasts, taskbar integration and a fixed AppUserModelID (AUMID). File and folder dialogs use `rfd`.
 
@@ -19,7 +19,7 @@ Slint is used under GPL-3.0: the shipped combined app is GPL-3.0, while our own 
 
 2.0 supports Windows 11 only. The installer blocks Windows 10 with a clear message; 1.x stays on Releases for Windows 10. Linux comes next, then macOS.
 
-Development happens on main beside the current app. The Electron shell, React UI and Companion local web API, including browser access, are frozen now and deleted at cutover. There is no interim app release. PR #341 is closed; issues #326–#329 are re-scoped for Slint. The Companion entry in GLOSSARY.md keeps its current UI-serving definition until cutover.
+Development happens on main beside the current app. The Electron shell, React UI and Companion local web API, including browser access, are frozen now and deleted at cutover. _(Superseded by ADR 0012: the Electron shell and React UI left main for the `release/1.x` branch, and only the local web API stays until cutover.)_ There is no interim app release. PR #341 is closed; issues #326–#329 are re-scoped for Slint. The Companion entry in GLOSSARY.md keeps its current UI-serving definition until cutover. _(Superseded by ADR 0012: the Companion no longer serves a UI, and its glossary entry says so.)_
 
 Tray left-click opens the app. Start at sign-in is a checkbox, on by default; a one-time notice explains close-to-tray. Use Mica, the Windows accent colour, Segoe UI Variable, contrast themes, text scaling and a minimum width of about 500 effective pixels. Draft Fluent-style app icon options for the maintainer to choose, then provide every required size. The [Windows guide](../research/windows-11-native.md) records integration work and proof requirements.
 
@@ -37,4 +37,4 @@ Tracked in #359.
 - **M3:** Layout editor.
 - **M4:** Integrations and the Device panel.
 - **M5:** MSI, updater, release pipeline and migration.
-- **M6:** delete Electron, React and the local web API; release 2.0.
+- **M6:** delete Electron, React and the local web API; release 2.0. _(Superseded by ADR 0012: Electron and React are already gone from main. M6 deletes the local web API and releases 2.0.)_
