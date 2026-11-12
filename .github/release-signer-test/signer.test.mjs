@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { blake2b, generateKeyPair, readSecretKey, scryptParams, signFile } from '../release-signer/minisign.mjs';
 
-// Run with: node --test .github/release-signer-test/
+// Run with: node --test .github/release-signer-test/signer.test.mjs
 const CLI = fileURLToPath(new URL('../release-signer/cli.mjs', import.meta.url));
 const tauri = JSON.parse(await readFile(new URL('./fixtures/tauri-cli-2.12.4-test-only-key.json', import.meta.url), 'utf8'));
 const run = promisify(execFile);

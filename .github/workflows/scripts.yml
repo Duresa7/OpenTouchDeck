@@ -44,7 +44,7 @@ jobs:
           python -B -m unittest discover -s scripts/tests -p "test_generate_packs.py" -v
       - name: Test the release signer
         working-directory: .
-        run: node --test .github/release-signer-test/
+        run: node --test .github/release-signer-test/signer.test.mjs
       - name: Test the Windows setup script
         if: runner.os == 'Windows'
         shell: pwsh
