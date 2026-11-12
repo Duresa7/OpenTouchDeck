@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Open TouchDeck app and tray icon, 24 px. Fitted to the 24 px grid: body 24 x 15 at y 3, 1 px rim, case edge 2 px, Tiles 6 x 5 with 1 px gaps, 2 px in from the body edge, no pager. -->
+  <!-- case edge -->
+  <rect x="0" y="5" width="24" height="15" rx="3" fill="#66738a"/>
+  <!-- rim: the lighter edge that keeps the outline on a dark taskbar -->
+  <rect x="0" y="3" width="24" height="15" rx="3" fill="#566072"/>
+  <!-- black glass -->
+  <rect x="1" y="4" width="22" height="13" rx="2" fill="#151a21"/>
+  <!-- Tiles: 3 x 2, the first one lit -->
+  <rect x="2" y="5" width="6" height="5" rx="1" fill="#8ccaff"/>
+  <rect x="9" y="5" width="6" height="5" rx="1" fill="#4f77b4"/>
+  <rect x="16" y="5" width="6" height="5" rx="1" fill="#4f77b4"/>
+  <rect x="2" y="11" width="6" height="5" rx="1" fill="#4f77b4"/>
+  <rect x="9" y="11" width="6" height="5" rx="1" fill="#4f77b4"/>
+  <rect x="16" y="11" width="6" height="5" rx="1" fill="#4f77b4"/>
+</svg>
