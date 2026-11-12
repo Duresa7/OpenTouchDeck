@@ -147,6 +147,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+      # Uncomment with sign-hook.yml's Azure block: a called workflow can't have more permissions than its caller.
+      # id-token: write
     uses: ./.github/workflows/sign-hook.yml
     with:
       unsigned-artifact: unsigned-binaries
@@ -219,6 +221,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+      # Uncomment with sign-hook.yml's Azure block: a called workflow can't have more permissions than its caller.
+      # id-token: write
     uses: ./.github/workflows/sign-hook.yml
     with:
       unsigned-artifact: unsigned-installer

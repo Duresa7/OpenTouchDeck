@@ -13,7 +13,7 @@ Only files built from the source in this repository, for the Windows release of 
 | `td-companion.exe`, and any other program the app's own source builds | The app |
 | `OpenTouchDeck-<version>-windows-x64.msi` | The installer, which holds those programs |
 
-Every signed file names the product **Open TouchDeck** and carries the version of its release. The programs say so in their Windows version resource and the installer in its product name and version; the release workflow checks both before anything is signed, and the signing service is set to refuse a file that says otherwise.
+Every signed file names the product **Open TouchDeck** and carries the version of its release. The programs say so in their Windows version resource and the installer in its product name and version. The release workflow checks the programs' version resource before they are signed and the installer's name and version in its verify stage. With SignPath, the signing policy is also set to refuse a file that says otherwise.
 
 Programs and libraries from other projects are never signed with this project's certificate. The installer may carry them unsigned, or signed by their own publishers.
 
@@ -25,7 +25,7 @@ A signed file comes from one place: the **release** workflow in this repository 
 
 - The tag is annotated and its commit is on `main`.
 - Every job runs on a GitHub-hosted runner. No job restores a cache, so nothing from an earlier run reaches the build.
-- The workflow uploads the unsigned files as a workflow artifact. The signing service fetches them from GitHub itself and checks that this repository's workflow built them from the tagged commit.
+- The workflow uploads the unsigned files as a workflow artifact. With SignPath, the signing service fetches them from GitHub itself and checks that this repository's workflow built them from the tagged commit. With Azure Artifact Signing, the workflow sends only the files' digests to be signed, so these guarantees rest on the workflow itself: it signs only for a `v2` tag on `main`, in the `release` environment the maintainer approves.
 - Nothing built on a developer's PC is ever signed. Runs for a pull request or from the Actions tab are dry runs: they never sign and never publish.
 - The workflow ends with a draft release. The maintainer reviews the draft before publishing it.
 

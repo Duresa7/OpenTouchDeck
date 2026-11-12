@@ -44,7 +44,8 @@ jobs:
       contents: read
       # SignPath reads this run's jobs and downloads the unsigned artifact with the workflow token.
       actions: read
-      # Azure signs in with a short-lived OpenID Connect token. Uncomment with the Azure block.
+      # Azure signs in with a short-lived OpenID Connect token. Uncomment with the Azure block, and in both
+      # release.yml jobs that call this workflow.
       # id-token: write
     env:
       PROVIDER: ${{ github.event_name == 'push' && vars.CODE_SIGNING_PROVIDER || '' }}
