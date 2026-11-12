@@ -11,6 +11,7 @@
 #include "cJSON.h"
 #include "td_netlink.h"
 #include "td_netlink_ble.h"
+#include "td_netlink_tcp.h"
 #include "td_netlink_manage.h"
 
 static int g_tag_computations;
@@ -1514,6 +1515,268 @@ static void test_advert(void)
     CHECK(td_netlink_window_open(&g_deck) != TD_NETLINK_REASON_NONE && !td_netlink_pairing_mode(&g_deck));
 }
 
+/* ---- TCP lifecycle: these socket callbacks replace only the OS, not the orchestration ---- */
+typedef struct {
+    uint8_t input[2048], output[4096];
+    size_t input_len, pos, output_len, read_max, write_max;
+    int read_budget, stalls, closes, writes;
+    bool eof, failed, blocked;
+} fake_socket_t;
+static fake_socket_t sockets[16];
+static td_netlink_tcp_t tcp;
+static int ready_events, ended_events, received_records;
+
+static int fake_read(void *ctx, int fd, uint8_t *buf, size_t len)
+{
+    (void)ctx;
+    fake_socket_t *s = &sockets[fd];
+    CHECK(s->closes == 0);
+    if (s->pos == s->input_len) return s->eof ? 0 : TD_NETLINK_TCP_AGAIN;
+    if (s->read_budget == 0) return TD_NETLINK_TCP_AGAIN;
+    s->read_budget--;
+    if (len > s->read_max) len = s->read_max;
+    if (len > s->input_len - s->pos) len = s->input_len - s->pos;
+    memcpy(buf, s->input + s->pos, len);
+    s->pos += len;
+    return (int)len;
+}
+static int fake_write(void *ctx, int fd, const uint8_t *buf, size_t len)
+{
+    (void)ctx;
+    fake_socket_t *s = &sockets[fd];
+    CHECK(s->closes == 0);
+    s->writes++;
+    if (s->failed) return -1;
+    if (s->blocked) return TD_NETLINK_TCP_AGAIN;
+    if (s->stalls > 0) { s->stalls--; return TD_NETLINK_TCP_AGAIN; }
+    if (len > s->write_max) len = s->write_max;
+    assert(s->output_len + len <= sizeof s->output);
+    memcpy(s->output + s->output_len, buf, len);
+    s->output_len += len;
+    return (int)len;
+}
+static void fake_close(void *ctx, int fd)
+{
+    (void)ctx;
+    CHECK(++sockets[fd].closes == 1);
+}
+static void fake_wait(void *ctx, int fd, uint32_t timeout_ms)
+{
+    (void)ctx; (void)fd;
+    g_now += timeout_ms;
+}
+static void fake_session(void *ctx, bool ready)
+{
+    (void)ctx;
+    if (ready) ready_events++; else ended_events++;
+}
+static void fake_receive(void *ctx, const uint8_t *body, size_t len)
+{
+    (void)ctx;
+    CHECK(body != NULL && len > 0);
+    received_records++;
+}
+static void fresh_tcp(void)
+{
+    fresh_deck(true, 0, 0);
+    memset(&tcp, 0, sizeof tcp);
+    tcp.deck = g_deck;
+    memset(sockets, 0, sizeof sockets);
+    for (size_t i = 0; i < 16; i++) {
+        sockets[i].read_max = 2048;
+        sockets[i].write_max = 4096;
+        sockets[i].read_budget = 4096;
+    }
+    ready_events = ended_events = received_records = 0;
+    const td_netlink_tcp_io_t io = {
+        .read = fake_read, .write = fake_write, .close = fake_close, .wait_write = fake_wait,
+        .session = fake_session, .receive = fake_receive,
+    };
+    td_netlink_tcp_init(&tcp, &io);
+}
+static void tcp_input(int fd, const char *path)
+{
+    fake_socket_t *s = &sockets[fd];
+    s->input_len = vec(path, s->input, sizeof s->input);
+    s->pos = 0;
+}
+static void tcp_output(int fd, const char *path)
+{
+    VEC(want, path);
+    CHECK(sockets[fd].output_len == want_len);
+    CHECK(!memcmp(sockets[fd].output, want, want_len));
+    sockets[fd].output_len = 0;
+}
+static void tcp_ready(void)
+{
+    td_netlink_tcp_accept(&tcp, 0, PEER_A, 4);
+    rng_push_vec("inputs.deviceEphemeral");
+    tcp_input(0, "session.wire.open");
+    td_netlink_tcp_read(&tcp, 0);
+    tcp_output(0, "session.wire.challenge");
+    tcp_input(0, "session.wire.proof");
+    td_netlink_tcp_read(&tcp, 0);
+    tcp_output(0, "session.wire.ready");
+    CHECK(ready_events == 1 && tcp.ready);
+}
+static void test_tcp_partial_and_takeover(void)
+{
+    fresh_tcp();
+    td_netlink_tcp_accept(&tcp, 0, PEER_A, 4);
+    td_netlink_tcp_accept(&tcp, 1, PEER_B, 4);
+    rng_push_vec("inputs.deviceEphemeral");
+    tcp_input(1, "session.wire.open");
+    sockets[1].read_max = sockets[1].write_max = 1;
+    sockets[1].stalls = 2;
+    /* A byte per poll splits both the prefix and the body, without releasing the waiter. */
+    for (size_t i = 0; i < sockets[1].input_len; i++) {
+        sockets[1].read_budget = 1;
+        td_netlink_tcp_read(&tcp, 1);
+        if (i + 1 < sockets[1].input_len) CHECK(sockets[0].closes == 0);
+    }
+    CHECK(sockets[0].closes == 1 && tcp.owner.fd == 1);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_A, 4) == 0);
+    tcp_output(1, "session.wire.challenge");
+    tcp_input(1, "session.wire.proof");
+    sockets[1].read_budget = 4096;
+    td_netlink_tcp_read(&tcp, 1);
+    tcp_output(1, "session.wire.ready");
+    CHECK(ready_events == 1);
+    sockets[1].eof = true;
+    td_netlink_tcp_read(&tcp, 1);
+    CHECK(sockets[1].closes == 1 && ended_events == 1 && !tcp.ready);
+    CHECK(tcp.conn.state == TD_NETLINK_CONN_CLOSED && tcp.owner.fd == -1);
+    const uint8_t erased[TD_NETLINK_KEY_LEN] = { 0 };
+    CHECK(!memcmp(tcp.conn.rx.key, erased, sizeof erased));
+    CHECK(!memcmp(tcp.conn.tx.key, erased, sizeof erased));
+    td_netlink_tcp_read(&tcp, 1);
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[1].closes == 1 && ended_events == 1);
+}
+static void test_tcp_refusal(void)
+{
+    fresh_tcp();
+    tcp_ready();
+    td_netlink_tcp_accept(&tcp, 1, PEER_B, 4);
+    sockets[1].write_max = 1;
+    sockets[1].stalls = 1;
+    for (int i = 0; i < 6; i++) td_netlink_tcp_tick(&tcp);
+    tcp_output(1, "errors.busy");
+    CHECK(sockets[1].closes == 0);
+    g_now += 99;
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[1].closes == 0);
+    g_now++;
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[1].closes == 1);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_B, 4) == 0);
+    /* The peer resets while the refusal is only partially sent. One final close, no half-close. */
+    td_netlink_tcp_accept(&tcp, 2, PEER_B, 4);
+    sockets[2].write_max = 1;
+    td_netlink_tcp_tick(&tcp);
+    sockets[2].failed = sockets[2].eof = true;
+    td_netlink_tcp_tick(&tcp);
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[2].closes == 1);
+    CHECK(tcp.ready && ended_events == 0);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_B, 4) == 0);
+}
+static void test_tcp_closer_exhaustion(void)
+{
+    fresh_tcp();
+    g_now = UINT32_MAX - 50; /* Refusal and drain deadlines cross clock wrap. */
+    tcp_ready();
+    for (int fd = 1; fd <= TD_NETLINK_TCP_CLOSERS + 1; fd++) {
+        sockets[fd].blocked = true;
+        td_netlink_tcp_accept(&tcp, fd, PEER_B, 4);
+    }
+    CHECK(sockets[TD_NETLINK_TCP_CLOSERS + 1].closes == 1);
+    CHECK(sockets[TD_NETLINK_TCP_CLOSERS + 1].writes == 1);
+    td_netlink_tcp_tick(&tcp);
+    g_now += 100;
+    td_netlink_tcp_tick(&tcp);
+    for (int fd = 1; fd <= TD_NETLINK_TCP_CLOSERS; fd++) CHECK(sockets[fd].closes == 0);
+    g_now += 100;
+    td_netlink_tcp_tick(&tcp);
+    for (int fd = 1; fd <= TD_NETLINK_TCP_CLOSERS + 1; fd++) CHECK(sockets[fd].closes == 1);
+    CHECK(tcp.ready && ended_events == 0);
+    td_netlink_tcp_end(&tcp, NULL);
+    CHECK(sockets[0].closes == 1 && ended_events == 1);
+    CHECK(!td_netlink_tcp_busy(&tcp));
+}
+static void test_tcp_records_and_close(void)
+{
+    fresh_tcp();
+    tcp_ready();
+    const cJSON *record;
+    cJSON_ArrayForEach(record, at(g_vectors, "records")) {
+        uint8_t wire[1100], plain[1100];
+        const size_t wire_len = vec_of(record, "wire", wire, sizeof wire);
+        const size_t plain_len = vec_of(record, "plaintext", plain, sizeof plain);
+        if (!strcmp(at(record, "direction")->valuestring, "c2d")) {
+            memcpy(sockets[0].input, wire, wire_len);
+            sockets[0].input_len = wire_len;
+            sockets[0].pos = 0;
+            sockets[0].read_max = 3;
+            td_netlink_tcp_read(&tcp, 0);
+        } else {
+            sockets[0].write_max = 3;
+            td_netlink_tcp_send(&tcp, plain, plain_len);
+            CHECK(sockets[0].output_len == wire_len);
+            CHECK(!memcmp(sockets[0].output, wire, wire_len));
+            sockets[0].output_len = 0;
+        }
+    }
+    CHECK(received_records == 2 && tcp.ready);
+    tcp_input(0, "tampered_record.wire");
+    td_netlink_tcp_read(&tcp, 0);
+    CHECK(sockets[0].closes == 1 && ended_events == 1 && !tcp.ready);
+    CHECK(tcp.conn.state == TD_NETLINK_CONN_CLOSED);
+
+    fresh_tcp();
+    tcp_ready();
+    tcp.conn.tx.counter = TD_NETLINK_COUNTER_LIMIT - 1;
+    td_netlink_tcp_flushed(&tcp);
+    CHECK(!tcp.ready && ended_events == 1 && tcp.owner.fd == -1);
+    CHECK(sockets[0].closes == 0);
+    td_netlink_tcp_tick(&tcp);
+    g_now += 100;
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[0].closes == 1);
+}
+
+static void test_tcp_terminal_owner(void)
+{
+    fresh_tcp();
+    td_netlink_tcp_accept(&tcp, 0, PEER_A, 4);
+    tcp_input(0, "pairing.wire.request");
+    td_netlink_tcp_read(&tcp, 0);
+    CHECK(tcp.owner.fd == -1 && tcp.conn.state == TD_NETLINK_CONN_CLOSED);
+    CHECK(!tcp.deck.window.open && ready_events == 0 && ended_events == 0);
+    sockets[0].write_max = 1;
+    for (int i = 0; i < 5; i++) td_netlink_tcp_tick(&tcp);
+    tcp_output(0, "errors.closed");
+    sockets[0].eof = true;
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[0].closes == 1);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_A, 4) == 0);
+    CHECK(!td_netlink_tcp_busy(&tcp));
+}
+
+static void test_tcp_write_deadline(void)
+{
+    fresh_tcp();
+    td_netlink_tcp_accept(&tcp, 0, PEER_A, 4);
+    rng_push_vec("inputs.deviceEphemeral");
+    tcp_input(0, "session.wire.open");
+    sockets[0].blocked = true;
+    const uint32_t start = g_now;
+    td_netlink_tcp_read(&tcp, 0);
+    CHECK(g_now - start == 1000 && sockets[0].closes == 1);
+    CHECK(tcp.owner.fd == -1 && !tcp.ready && ready_events == 0);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_A, 4) == 1000);
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) {
@@ -1544,6 +1807,12 @@ int main(int argc, char **argv)
         void (*fn)(void);
         const char *name;
     } tests[] = {
+        { test_tcp_partial_and_takeover, "TCP partial I/O and takeover" },
+        { test_tcp_refusal, "TCP refusal and peer close" },
+        { test_tcp_closer_exhaustion, "TCP exhausted closers" },
+        { test_tcp_records_and_close, "TCP records and final close" },
+        { test_tcp_terminal_owner, "TCP terminal owner error" },
+        { test_tcp_write_deadline, "TCP write deadline" },
         { test_primitives_match_vectors, "primitives" },
         { test_pairing_vectors, "pairing vectors" },
         { test_wrong_code_then_right, "wrong code then right" },
