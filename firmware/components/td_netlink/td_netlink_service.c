@@ -80,8 +80,8 @@ typedef struct {
     size_t got;
 } reader_t;
 
-/* A socket the Device is closing: it writes its last item within REFUSE_MS, shuts its write side, and reads whatever
- * still arrives for DRAIN_MS, so the peer reads that item instead of losing it to a reset. */
+/* A socket the Device is closing: it writes its last item within REFUSE_MS and reads whatever still arrives for
+ * DRAIN_MS, so the peer reads that item instead of losing it to a reset. */
 typedef struct {
     int fd;
     uint8_t item[CLOSER_ITEM_MAX];
@@ -276,7 +276,6 @@ static void closers_step(void)
             if (c->sent < c->len && (int32_t)(now - c->until_ms) < 0) {
                 continue;
             }
-            shutdown(c->fd, SHUT_WR);
             c->draining = true;
             c->until_ms = now + DRAIN_MS;
         }

@@ -423,8 +423,8 @@ something authenticated, never from an unauthenticated error.
 
 Errors close the carrier connection,
 except that the first two `auth` errors after a pairing proof return to code
-entry. After a terminal error, TCP shuts down its write side and drains input
-for at most 100 ms before closing; BLE waits at most 100 ms after the
+entry. After a terminal error, TCP drains input for at most 100 ms before
+closing, so the peer reads the error instead of a reset; BLE waits at most 100 ms after the
 notification before disconnecting. An established session closes silently on
 any cryptographic or framing error. Once `session.ready` is sent, no plaintext
 error is valid.
