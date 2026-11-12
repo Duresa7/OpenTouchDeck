@@ -433,13 +433,16 @@ pub fn put_asset(
     }
     let started = Instant::now();
     let id = asset_id(data);
-    let transfer = session.transfer()?;
+    let mut transfer = session.transfer()?;
     let request = AssetRequest::Put {
         id: &id,
         bytes: data.len(),
         format,
     };
-    let opened: PutOpened = call(session, &request, REQUEST_TIMEOUT)?;
+    let opened: PutOpened =
+        reply_fields(&transfer.begin(|| {
+            session.call_payload(request.name(), request.to_payload(), REQUEST_TIMEOUT)
+        })?)?;
     let mut report = AssetPut {
         id: id.clone(),
         bytes: data.len(),
@@ -456,7 +459,10 @@ pub fn put_asset(
             )))
         })?;
         let (chunks, retransmits) = send_chunks(&transfer, xfer, data)?;
-        let committed: AssetCommitted = call(session, &AssetRequest::End { xfer }, END_TIMEOUT)?;
+        let end = AssetRequest::End { xfer };
+        let committed: AssetCommitted = reply_fields(
+            &transfer.finish(|| session.call_payload(end.name(), end.to_payload(), END_TIMEOUT))?,
+        )?;
         if committed.id != id || committed.bytes != data.len() as u64 {
             return Err(AssetError::Link(LinkError::Reply(
                 td_core::ReplyError::Fields(format!(
