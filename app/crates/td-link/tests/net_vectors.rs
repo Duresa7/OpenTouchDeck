@@ -815,8 +815,16 @@ fn management_over_wifi_is_usb_only() {
     let paired = pairing
         .submit(&device.code().unwrap(), &mut |_| Ok(()))
         .unwrap();
-    let carrier =
-        NetCarrier::connect(&address, &paired.credential, Duration::from_secs(5)).unwrap();
+    // The pairing connection can still own the fake Device until its handler exits.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let carrier = loop {
+        match NetCarrier::connect(&address, &paired.credential, Duration::from_secs(5)) {
+            Err(NetError::Refused(Refusal::Busy)) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            result => break result.unwrap(),
+        }
+    };
     let (session, _incoming) = Session::over(
         Box::new(carrier),
         SessionConfig {
