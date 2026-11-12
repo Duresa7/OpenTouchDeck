@@ -83,6 +83,18 @@ cargo test -p td-app                                   # includes headless UI te
 keeps its place and the close-notice flag in `window.json` there. `SLINT_BACKEND=winit-software`
 selects Slint's software renderer.
 
+On Windows the program shows a notification-area icon from
+`td_companion::tray`, and closing the window keeps the app running there (a one-time notice
+says so). Left-click, Enter or Space on the icon opens the window; its menu has Open, Start at
+sign-in and Quit. The tray reaches the window through an open hook, an
+`Arc<dyn Fn() + Send + Sync>` that `td-app` builds from `App::opener()`, so the Companion crate
+never depends on the UI. Quit calls `Handle::request_shutdown()`, and the program then runs the
+Companion's bounded shutdown and removes the icon. `td-app.exe` embeds
+`icons/app/open-touchdeck.ico` (resource 1, the executable and window icon), `icons/app/tray.ico`
+(resource 2, loaded with `LoadIconMetric` at the notification area's size), the Common Controls
+v6 manifest and a version resource; release builds use the Windows subsystem, so no console
+opens. Linux has no tray yet, so closing the window ends the program.
+
 The crate's own source is Apache-2.0 like the rest of the repository, but it links Slint under
 GPL-3.0, so the program it builds is GPL-3.0-only. Its About page lists the licences of the
 components the program uses directly; `cargo test -p td-app` checks that list against the Cargo
@@ -125,23 +137,20 @@ pnpm --filter @touchdeck/electron e2e
 The shell starts the Companion from `TOUCHDECK_COMPANION_BIN` in development and
 tests, and from `td-companion` next to the app executable when packaged.
 
-### Windows Companion shell
+### Windows tray
 
-The Companion sets the fixed process AUMID `io.github.duresa7.touchdeck` before
-creating the tray. Its notification icon uses a permanent GUID and restores
-itself after Explorer restarts. Left-click and Enter/Space open the app;
-right-click and the context-menu key show the existing menu. The executable
-embeds the current `electron/installer/icon.ico` as resource 1 through `app.rc`,
-alongside the Common Controls v6 manifest, and loads it with `LoadIconMetric`.
-Windows builds need the SDK resource compiler (included in the documented
-MSVC setup); Linux cross-checks use MinGW's `x86_64-w64-mingw32-windres`.
+The program sets the fixed process AUMID `io.github.duresa7.touchdeck` before
+creating the window or the tray. The tray's notification icon uses a permanent
+GUID and restores itself after Explorer restarts. Left-click and Enter/Space open
+the native window; right-click and the context-menu key show Open, Start at
+sign-in and Quit. Only `td-app` starts the tray: the standalone `td-companion`
+has no window to open. Windows builds need the SDK resource compiler (included
+in the documented MSVC setup); Linux cross-checks use MinGW's
+`x86_64-w64-mingw32-windres`.
 
-`td_companion::tray::open_app(packaged)` is the single Windows app-opening
-hook, shared by tray activation and Open. It currently launches Electron next
-to the Companion, allowing `TOUCHDECK_WINDOW_BIN` only in development. At Slint
-cutover, replace its body with a dispatch to the native UI event loop.
-
-Start at sign-in defaults to on at the first packaged start. Its reported state
+Start at sign-in defaults to on at the first packaged start (`--packaged`, the
+command line the Run entry registers). The tray reads it each time its menu
+opens. Its reported state
 requires both the per-user Run registration and Explorer's matching
 `StartupApproved\Run` approval. That binary format is undocumented: the parser
 recognizes enabled DWORD states 2/6 in twelve-byte records, treats missing

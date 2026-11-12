@@ -2,7 +2,7 @@
 
 The Open TouchDeck 2.0 icon is the Device seen from the front: a slab of black glass, a 3 × 2 Page of Tiles with the first Tile lit, and the pager under the grid. Only lit things have colour. Light comes from the top, and there is no text.
 
-Nothing uses these files yet. The 2.0 window and tray work will embed them. The Electron installer keeps its own icon, [`app/electron/installer/icon.ico`](../../electron/installer/icon.ico).
+`td-app` embeds both `.ico` files in its executable ([`crates/td-app/build.rs`](../../crates/td-app/build.rs)): `open-touchdeck.ico` as icon resource 1 and `tray.ico` as icon resource 2. The Electron installer keeps its own icon, [`app/electron/installer/icon.ico`](../../electron/installer/icon.ico).
 
 ## Files
 

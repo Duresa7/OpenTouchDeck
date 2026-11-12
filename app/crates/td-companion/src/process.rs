@@ -94,9 +94,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         initial.runtime.as_ref().unwrap().repair(&value)
     })
     .await?;
-    // Own the tray until shutdown, including early returns during startup.
-    let tray = (!ctx.mock || args.contains(&"--native-desktop"))
-        .then(|| crate::tray::start(ctx.clone(), packaged));
+    // The tray belongs to the program with the window (td-app): this standalone Companion has
+    // no window for it to open.
     if written.is_err() {
         ctx.desktop
             .notify("The runtime file failed its check. Restart Open TouchDeck.");
@@ -107,12 +106,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     written.map_err(|e| format!("The runtime file could not be secured: {e}"))?;
     if packaged {
-        let marker = root.join("startup-initialized");
-        if !marker.exists() {
-            let startup = ctx.desktop.startup.clone();
-            tokio::task::spawn_blocking(move || startup.initialize_default()).await??;
-            std::fs::write(marker, b"1")?;
-        }
+        let (handle, root) = (crate::companion::Handle::clone(&ctx), root.clone());
+        tokio::task::spawn_blocking(move || {
+            crate::tray::initialize_start_at_sign_in(&handle, &root)
+        })
+        .await?
+        .map_err(|e| e.to_string())?;
     }
     #[cfg(feature = "test-hooks")]
     if let Some(count) = mock_devices {
@@ -145,7 +144,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     crate::serve::serve(listener, crate::api::router(ctx), limits, stop).await;
     companion.shutdown().await;
     maintenance.abort();
-    drop(tray);
     runtime.remove();
     Ok(())
 }
