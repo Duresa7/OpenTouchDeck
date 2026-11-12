@@ -37,32 +37,25 @@ impl Inner {
 
     /// The Device no longer keeps `app`: the mark goes, and so does this Companion's key when `app` was this
     /// Companion.
-    fn settled(
-        self: &Arc<Self>,
-        device: &DeviceId,
-        app: &CompanionId,
-    ) -> Result<(), PairingsError> {
-        // Keep the mark until both sides are settled, including a failed keychain deletion.
+    fn settled(self: &Arc<Self>, device: &DeviceId, app: &CompanionId) {
+        // The Device has already erased the Pairing, so a failure here is this Companion's own. Keep the mark until
+        // the local key is gone too, so the next list tries again; the snapshot shows it as still being removed.
         if *app == self.companion_id() && self.reg.lock().wifi.contains_key(device) {
-            DeviceManager {
+            let manager = DeviceManager {
                 inner: self.clone(),
-            }
-            .wifi_forget(device)
-            .map_err(|error| PairingsError::Refused {
-                reason: "storage".into(),
-                error: error.to_string(),
-            })?;
-        }
-        {
-            let mut forgetting = self.wifi.forgetting.lock();
-            if let Some(ids) = forgetting.get_mut(device) {
-                ids.remove(app);
-                if ids.is_empty() {
-                    forgetting.remove(device);
-                }
+            };
+            if let Err(error) = manager.wifi_forget(device) {
+                eprintln!("Companion: couldn't forget the Pairing with {device} here: {error}");
+                return;
             }
         }
-        Ok(())
+        let mut forgetting = self.wifi.forgetting.lock();
+        if let Some(ids) = forgetting.get_mut(device) {
+            ids.remove(app);
+            if ids.is_empty() {
+                forgetting.remove(device);
+            }
+        }
     }
 
     /// Whether this Companion's own Pairing with `device` is being removed.
@@ -88,7 +81,7 @@ impl Inner {
         let result = pairings::net_forget(session, forget);
         if result.is_ok() {
             for app in apps {
-                self.settled(device, app)?;
+                self.settled(device, app);
             }
         }
         result.map(|_| ())
@@ -118,7 +111,7 @@ impl Inner {
         let listed = pairings::net_list(session)?;
         for app in self.marked(device) {
             if !listed.pairings.iter().any(|p| p.app_id == app) {
-                self.settled(device, &app)?;
+                self.settled(device, &app);
             }
         }
         Ok(listed)

@@ -234,11 +234,20 @@ async fn removing_this_companion_retries_a_failed_local_key_deletion() {
     tokio::task::spawn_blocking(move || devices.wifi_pair_code(&attempt.attempt, &code).unwrap())
         .await
         .unwrap();
-    td.ports.plug("020000000001", BoardKind::DeviceRadio);
     let id = DeviceId::parse("020000000001").unwrap();
+    // The Wi-Fi link comes up first. Plugging USB in while it is still forming lets the fake Device's Wi-Fi session
+    // take over the mock deck's one link and close the USB stream.
     td.until(|td| {
         td.device(&id)
-            .is_some_and(|d| d.carrier == Some(Carrier::Usb))
+            .is_some_and(|d| d.carrier == Some(Carrier::Wifi))
+    })
+    .await;
+    td.ports.plug("020000000001", BoardKind::DeviceRadio);
+    // Ready for Pairings once USB is the link and the Wi-Fi session is gone.
+    td.until(|td| {
+        td.device(&id).is_some_and(|d| {
+            d.carrier == Some(Carrier::Usb) && matches!(d.link, LinkState::Connected { .. })
+        }) && fake.session().is_none()
     })
     .await;
     let operations = td.handle.device_operations();
@@ -252,14 +261,22 @@ async fn removing_this_companion_retries_a_failed_local_key_deletion() {
         .clone();
     let keys = td.handle.devices().wifi_mock().unwrap().0.clone();
     keys.set_unavailable(true);
-    assert!(matches!(
-        operations.pairings_forget(&id, &own).await,
-        Err(DevicePairingsError::Storage)
-    ));
+    // The Device erases the Pairing, so the forget succeeds and the list works while the key store is away.
+    let left = operations.pairings_forget(&id, &own).await.unwrap();
+    assert!(left.pairings.is_empty());
+    assert!(
+        operations
+            .pairings_get(&id)
+            .await
+            .unwrap()
+            .pairings
+            .is_empty()
+    );
     assert!(keys.has(&id));
     let state = operations.pairing_snapshot(&id);
     assert_eq!(state.removing, [own]);
     assert!(state.local_pairing.unwrap().removing);
+    assert_eq!(state.phase, PairingPhase::Ready);
     assert!(td.deck("020000000001").net_pairings().is_empty());
     keys.set_unavailable(false);
     operations.pairings_get(&id).await.unwrap();
