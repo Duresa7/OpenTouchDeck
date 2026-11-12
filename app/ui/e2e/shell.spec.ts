@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { openSettings, settingsPage } from './layout-helpers.ts';
+import { importText, openSettings, settingsPage, waitEvent } from './layout-helpers.ts';
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
 const navButton = (page: Page, name: string) => nav(page).getByRole('button', { name, exact: true });
@@ -34,7 +36,7 @@ test('the shell runs without console errors or warnings', async ({ page }) => {
   expect(problems).toEqual([]);
 });
 
-test('each destination is one click from the cluster', async ({ page }) => {
+test('each destination is one click from the rail', async ({ page }) => {
   await navButton(page, 'Layout').click();
   await expect(page.getByRole('heading', { level: 1, name: 'Layout' })).toBeVisible();
   await expect(navButton(page, 'Layout')).toHaveAttribute('aria-current', 'page');
@@ -52,11 +54,79 @@ test('each destination is one click from the cluster', async ({ page }) => {
   await expect(navButton(page, 'Home')).not.toHaveAttribute('aria-current');
 });
 
-test('a tooltip names each button on hover', async ({ page }) => {
+test('a tooltip to the right of each button names it on hover', async ({ page }) => {
   for (const name of ['Home', 'Layout', 'Integrations', 'Settings']) {
     await navButton(page, name).hover();
     await expect(page.locator('.tooltip')).toHaveText(name);
+    const button = (await navButton(page, name).boundingBox())!;
+    await expect
+      .poll(async () => {
+        const tip = (await page.locator('.tooltip').boundingBox())!;
+        return { gap: Math.round(tip.x - (button.x + button.width)), middle: Math.abs(tip.y + tip.height / 2 - (button.y + button.height / 2)) < 1 };
+      })
+      .toEqual({ gap: 8, middle: true });
   }
+});
+
+const rail = (page: Page) => page.locator('.nav-rail');
+
+test('the rail runs down the left edge for the full height, and no screen moves it or lays out under it', async ({ page }) => {
+  for (const size of [{ width: 800, height: 600 }, { width: 1280, height: 800 }]) {
+    await page.setViewportSize(size);
+    const look = await rail(page).evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { background: style.backgroundColor, edge: style.boxShadow };
+    });
+    const tokens = await page.evaluate(() => {
+      const probe = document.createElement('span');
+      probe.style.backgroundColor = 'var(--surface)';
+      probe.style.color = 'var(--line)';
+      document.body.append(probe);
+      const style = getComputedStyle(probe);
+      const colors = { surface: style.backgroundColor, line: style.color };
+      probe.remove();
+      return colors;
+    });
+    // The edge is drawn inside the rail's 64px, so nothing to its right sits under it.
+    expect(look).toEqual({ background: tokens.surface, edge: `${tokens.line} -1px 0px 0px 0px inset` });
+    const where = { x: 0, y: 0, width: 64, height: size.height };
+    for (const name of ['Home', 'Layout', 'Integrations', 'Settings']) {
+      await navButton(page, name).click();
+      await expect(navButton(page, name)).toHaveAttribute('aria-current', 'page');
+      await expect.poll(() => rail(page).boundingBox(), { message: `the rail on ${name}` }).toEqual(where);
+      const screen = await page.locator('.shell-screen > *').first().boundingBox();
+      expect(screen!.x, `${name} starts right of the rail`).toBeGreaterThanOrEqual(64);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${name} scrolls sideways`).toBe(0);
+    }
+  }
+});
+
+test('the rail keeps its place in the Layout editor as the Details panel hides and comes back', async ({ page }) => {
+  await navButton(page, 'Layout').click();
+  await expect(page.getByTestId('editor')).toBeVisible();
+  await importText(page, readFileSync(join(import.meta.dirname, '..', '..', '..', 'schema', 'examples', 'dev.json'), 'utf8'), 'dev.json');
+  await waitEvent(page, 'opened');
+  const where = await rail(page).boundingBox();
+  const home = await navButton(page, 'Home').boundingBox();
+  const toggle = page.getByTestId('details-toggle');
+  for (const expanded of ['false', 'true']) {
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', expanded);
+    // Sample through the panel's slide, not only once it settles.
+    for (let i = 0; i < 6; i++) {
+      expect(await rail(page).boundingBox()).toEqual(where);
+      expect(await navButton(page, 'Home').boundingBox()).toEqual(home);
+      await page.waitForTimeout(50);
+    }
+  }
+});
+
+test('Settings lays out its category column to the right of the rail', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await navButton(page, 'Settings').click();
+  const categories = (await page.locator('.settings-nav').boundingBox())!;
+  expect(categories.x).toBe(64);
+  expect(categories.width).toBe(232);
 });
 
 test('Settings is a page of its own: it takes the place of the current screen, Escape leaves it open, and a change is still there on return', async ({ page }) => {
@@ -122,9 +192,9 @@ test('forcing a theme with Appearance sets data-theme over the Windows setting',
   await expect.poll(() => background(page)).toBe(DARK_MAT);
 });
 
-test('Tab reaches every nav button with the visible focus ring', async ({ page }) => {
+test('Tab reaches the rail before the screen, and every nav button with the visible focus ring', async ({ page }) => {
   const reached = new Map<string, { visible: boolean; outline: string }>();
-  for (let i = 0; i < 12 && reached.size < 4; i++) {
+  for (let i = 0; i < 4; i++) {
     await page.keyboard.press('Tab');
     const focused = await page.evaluate(() => {
       const el = document.activeElement;
@@ -143,4 +213,6 @@ test('Tab reaches every nav button with the visible focus ring', async ({ page }
     expect(focus.visible).toBe(true);
     expect(focus.outline).toBe('solid 2px');
   }
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Edit Desk' })).toBeFocused();
 });

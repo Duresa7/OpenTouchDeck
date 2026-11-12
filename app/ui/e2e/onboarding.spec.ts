@@ -103,6 +103,19 @@ test('Skip leaves the Device usable, does not reopen, and the Device panel can s
   await expect(page.getByTestId('device-name')).toHaveText('Shelf');
 });
 
+test('onboarding hides the nav rail but keeps its column, and closing it brings the rail back', async ({ page }) => {
+  await home(page);
+  const rail = page.locator('.nav-rail');
+  await expect(rail).toBeVisible();
+  await plugIn(page);
+  await expect(rail).toBeHidden();
+  expect((await page.locator('.shell-screen').boundingBox())!.x, 'Home stays right of the rail’s column').toBe(64);
+  await page.keyboard.press('Escape');
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(rail).toBeVisible();
+  await expect(rail.getByRole('button', { name: 'Home', exact: true })).toHaveAttribute('aria-current', 'page');
+});
+
 test('the Close button skips the same way', async ({ page }) => {
   await home(page);
   await plugIn(page);

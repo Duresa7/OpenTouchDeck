@@ -33,7 +33,8 @@
   .device-hit:hover .device-bezel::before { opacity: 0; }
   .device-hit:hover .device-bezel::after { opacity: 1; }
 }
-@media (max-width: 600px) { .home { padding-inline: var(--space-6); } }
+/* Beside the rail, a narrow window still fits two Devices in a row */
+@media (max-width: 900px) { .home { padding-inline: var(--space-6); } }
 .board-ghost { opacity: 0.55; transition: opacity var(--duration-screen-light) var(--ease-out); }
 .board-figure[data-step='done'] .board-ghost { opacity: 1; }
 .board-caption { gap: var(--space-3); }

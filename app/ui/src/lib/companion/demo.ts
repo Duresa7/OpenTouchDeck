@@ -117,8 +117,8 @@ const DATA_SETS: { label: string; params: DataParams }[] = [
 ];
 
 /**
- * A small chip in the bottom-left corner, clear of the centred nav dock. It opens upward into the data sets; picking
- * one reloads the page with it.
+ * A small chip in the bottom-left corner of the screen, clear of the nav rail and its Update slot. It opens upward into
+ * the data sets; picking one reloads the page with it.
  */
 function mountDataToggle(target: Window, params: URLSearchParams) {
   if (params.get('toggle') === '0') return;
@@ -126,7 +126,7 @@ function mountDataToggle(target: Window, params: URLSearchParams) {
   const isChosen = (set: (typeof DATA_SETS)[number]) => DATA_KEYS.every((name) => (params.get(name) ?? undefined) === set.params[name]);
   const box = doc.createElement('details');
   box.dataset.demoToggle = '';
-  box.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:2147483647;font:12px system-ui,sans-serif;color:var(--ink)';
+  box.style.cssText = 'position:fixed;left:calc(var(--rail-width, 0px) + 12px);bottom:12px;z-index:2147483647;font:12px system-ui,sans-serif;color:var(--ink)';
   const summary = doc.createElement('summary');
   summary.textContent = DATA_SETS.find(isChosen)?.label ?? 'Demo data';
   summary.title = 'Demo data';

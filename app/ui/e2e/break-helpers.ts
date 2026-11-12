@@ -96,11 +96,11 @@ export function spills(page: Page, allowed: readonly string[] = []): Promise<Spi
   );
 }
 
-export function underDock(page: Page, selector: string): Promise<string[]> {
+export function underRail(page: Page, selector: string): Promise<string[]> {
   return page.evaluate((selector) => {
-    const dock = document.querySelector('.nav-dock')?.getBoundingClientRect();
-    if (!dock) return [];
-    const covered = (box: DOMRect) => box.width > 1 && box.height > 1 && box.left < dock.right && box.right > dock.left && box.top < dock.bottom && box.bottom > dock.top;
+    const rail = document.querySelector('.nav-rail')?.getBoundingClientRect();
+    if (!rail) return [];
+    const covered = (box: DOMRect) => box.width > 1 && box.height > 1 && box.left < rail.right && box.right > rail.left && box.top < rail.bottom && box.bottom > rail.top;
     return [...document.querySelectorAll(selector)].filter((el) => covered(el.getBoundingClientRect())).map((el) => `${el.getAttribute('data-testid') ?? el.tagName.toLowerCase()} “${(el.textContent ?? '').trim().slice(0, 40)}”`);
   }, selector);
 }

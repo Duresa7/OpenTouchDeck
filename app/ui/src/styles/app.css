@@ -82,7 +82,7 @@ button {
 
 .screen {
   max-width: 1040px;
-  padding: var(--space-10) var(--space-12) 120px;
+  padding: var(--space-10) var(--space-12);
 }
 
 .page-head {
@@ -141,7 +141,7 @@ button {
   min-height: var(--app-height);
   display: grid;
   place-items: center;
-  padding: var(--space-12) var(--space-12) 120px;
+  padding: var(--space-12);
 }
 
 .device-name {
@@ -303,58 +303,57 @@ button {
   }
 }
 
-/* ---------- Nav cluster (bottom centre) ---------- */
+/* ---------- Shell: the nav rail on the left, the screen to its right ---------- */
 
-/*
- * Centred under the content. The Layout editor sets --dock-inset to the Details panel's width, so there the dock
- * centres over the canvas and follows the panel as it opens and closes.
- */
-.nav-dock {
-  position: fixed;
-  left: calc((100% - var(--dock-inset, 0px)) / 2);
-  bottom: var(--space-3);
-  translate: -50% 0;
+:root {
+  --rail-width: 64px;
+}
+
+.shell {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.shell-screen {
+  grid-column: 2;
+  min-width: 0;
+}
+
+/* Docked to the window's left edge for its full height. Nothing on a screen moves it. */
+.nav-rail {
+  grid-column: 1;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  z-index: var(--layer-rail);
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  column-gap: var(--space-2);
-  width: max-content;
-  z-index: var(--layer-dock);
-  pointer-events: none;
-  transition: left var(--duration-expand) var(--ease-drawer);
+  justify-content: space-between;
+  height: 100vh;
+  padding: var(--space-3) 0;
+  background: var(--surface);
+  /* The right edge, drawn inside the rail so the screen beside it starts clear of it */
+  box-shadow: inset -1px 0 0 var(--line);
 }
 
-/* An empty column as wide as the Update slot keeps the puck in the middle; only the controls take clicks */
-.nav-dock::before {
-  content: '';
+/* Onboarding hides the rail but keeps its column, so the screen behind doesn't shift */
+.nav-rail.is-hidden {
+  visibility: hidden;
 }
 
-.nav-dock > * {
-  pointer-events: auto;
+.nav-rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-body.is-resizing .nav-dock,
-:root[data-dock-snap] .nav-dock,
-:root[data-dock-snap] [data-sonner-toaster][data-x-position='center'] {
-  transition: none;
-}
-
-/* Toasts centre on the same line as the dock and rise above it */
+/* Toasts centre on the content to the right of the rail */
 @media (min-width: 601px) {
   :root [data-sonner-toaster][data-x-position='center'] {
-    left: calc((100% - var(--dock-inset, 0px)) / 2);
-    transition: left var(--duration-expand) var(--ease-drawer);
+    left: calc(var(--rail-width) + (100% - var(--rail-width)) / 2);
   }
-}
-
-.nav-puck {
-  grid-column: 2;
-  display: flex;
-  gap: 2px;
-  padding: 4px;
-  border-radius: var(--radius-group);
-  background: var(--surface-raised);
-  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
 }
 
 .nav-button {
@@ -390,16 +389,13 @@ body.is-resizing .nav-dock,
   background: var(--fill-active);
 }
 
-/* The clip would cut a box-shadow, so the wrapper casts a drop-shadow. Only the button takes clicks: its clip-path
+/* The clip would cut a box-shadow, so the wrapper casts a drop-shadow. The slot is as wide as the closed icon, so the
+   rail centres it; open, the button runs on to the right over the screen. Only the button takes clicks: its clip-path
    keeps them to the part that shows. */
 .update-slot {
-  grid-column: 3;
-  justify-self: start;
   display: flex;
+  width: 44px;
   filter: var(--shadow-float-filter);
-}
-
-.nav-dock > .update-slot {
   pointer-events: none;
 }
 
@@ -610,7 +606,7 @@ body.is-resizing .nav-dock,
   transform: scale(var(--enter-scale-tooltip));
 }
 
-/* Later tooltips in the cluster open at once */
+/* Later tooltips in the rail open at once */
 .tooltip[data-instant] {
   transition-duration: 0ms;
 }
@@ -745,10 +741,12 @@ body.is-resizing .nav-dock,
   border-top: 1px solid var(--line);
 }
 
+/* A long name with no spaces wraps rather than running past the row */
 .row-text {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .row-title {

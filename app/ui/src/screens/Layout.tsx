@@ -98,31 +98,6 @@ function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }:
   return long;
 }
 
-/** Sets the dock's inset without the slide, as screens never animate when you switch between them. */
-function snapDock(set: (root: HTMLElement) => void) {
-  const root = document.documentElement;
-  root.setAttribute('data-dock-snap', '');
-  set(root);
-  const dock = document.querySelector('.nav-dock');
-  if (dock) getComputedStyle(dock).left;
-  root.removeAttribute('data-dock-snap');
-}
-
-/**
- * Tells the nav dock how much of the window's right side the Details panel takes, so it centres over the canvas. The
- * dock slides with the panel as it opens and closes, and jumps when the editor opens or leaves.
- */
-function useDockInset(width: number) {
-  useLayoutEffect(() => {
-    snapDock((root) => root.style.setProperty('--dock-inset', `${width}px`));
-    return () => snapDock((root) => root.style.removeProperty('--dock-inset'));
-    // Only on mount and unmount: the width it starts with, then the effect below keeps it current.
-  }, []);
-  useLayoutEffect(() => {
-    document.documentElement.style.setProperty('--dock-inset', `${width}px`);
-  }, [width]);
-}
-
 function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }) {
   const name = device.name ?? 'Unnamed Device';
   const connected = statusOf(device.link.state).live;
@@ -145,7 +120,6 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   });
   const offered = useOfferedFirmware(device);
   useEditorKeys(store);
-  useDockInset(layout !== null && detailsOpen ? inspector.width : 0);
 
   const current = layout?.pages.find((p) => p.id === page) ?? layout?.pages[0];
   const preview = mode === 'preview';

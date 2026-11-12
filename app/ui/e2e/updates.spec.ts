@@ -39,16 +39,16 @@ test.describe('the Update icon', () => {
     await expect(settings(page)).toContainText('Up to date');
   });
 
-  test('shows a dot when an update exists, opens on mouse hover without moving the nav, and closes on leave', async ({ page }) => {
+  test('shows a dot when an update exists at the bottom of the rail, opens on mouse hover without moving the nav, and closes on leave', async ({ page }) => {
     await start(page);
     const button = nav(page).getByRole('button', { name: 'Update available' });
     await expect(button).toBeVisible();
     await expect(page.locator('.update-dot')).toBeVisible();
     await expect(label(page)).toHaveCSS('opacity', '0');
 
-    const puck = (await page.locator('.nav-puck').boundingBox())!;
-    const slotBox = (await slot(page).boundingBox())!;
-    expect(Math.round(slotBox.x - (puck.x + puck.width))).toBe(8);
+    const rail = (await nav(page).boundingBox())!;
+    const icon = (await page.locator('.update-icon').boundingBox())!;
+    expect({ left: icon.x - rail.x, right: rail.x + rail.width - icon.x - icon.width, bottom: Math.round(rail.y + rail.height - icon.y - icon.height) }).toEqual({ left: 10, right: 10, bottom: 12 });
     const home = await nav(page).getByRole('button', { name: 'Home' }).boundingBox();
 
     await button.hover(AT_VISIBLE_ICON);
