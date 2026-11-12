@@ -708,14 +708,20 @@ impl Inner {
         let tag: [u8; wire::OPEN_TAG_LEN] = fields[..16].try_into().expect("checked length");
         let client_share: [u8; 32] = fields[16..48].try_into().expect("checked length");
         let device_id = self.device_id;
-        // Every Pairing's tag is computed before deciding, as the Device does.
+        // Compute every slot, including empty ones, as the Device does.
         let mut found = None;
-        for (id, pairing) in &self.state().pairings {
-            let matches = wire::same(&wire::open_tag(&pairing.ltk, &client_share), &tag);
+        let state = self.state();
+        let mut entries = state.pairings.iter();
+        for _ in 0..MAX_PAIRINGS {
+            let entry = entries.next();
+            let key = entry.map_or(&[0; 32], |(_, pairing)| &pairing.ltk);
+            let matches = wire::same(&wire::open_tag(key, &client_share), &tag);
+            let Some((id, pairing)) = entry else { continue };
             if matches && found.is_none() {
                 found = Some((*id, pairing.name.clone(), pairing.ltk));
             }
         }
+        drop(state);
         let Some((companion_id, name, ltk)) = found else {
             return refuse(&mut items, Refusal::Auth);
         };

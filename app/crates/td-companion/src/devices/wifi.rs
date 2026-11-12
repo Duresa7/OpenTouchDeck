@@ -29,6 +29,8 @@ const HELLO: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_secs(1);
 /// The longest wait between tries for a paired Device that isn't answering.
 const MAX_RETRY: Duration = Duration::from_secs(10);
+/// Maximum unauthenticated busy replies accepted at a discovered trial address.
+const TRIAL_BUSY_LIMIT: u8 = 2;
 /// A Device that is busy with USB is tried again at most this far apart.
 const BUSY_RETRY: Duration = Duration::from_secs(2);
 /// A started pairing that nobody finishes is dropped after this.
@@ -284,8 +286,9 @@ pub(super) struct WifiRecord {
     pub stopped: bool,
     /// Where discovery last saw this Pairing's hint, when that isn't `address`. The Wi-Fi
     /// thread tries it next, and it replaces `address` only once a session there works, so a
-    /// replayed record only costs one failed try.
+    /// replayed record only costs a bounded number of failed tries.
     pub trial: Option<Address>,
+    pub trial_busy: u8,
     /// `derive(LTK, "discovery")`, read from the keychain once and kept in memory only. It
     /// recognises this Pairing's hints and can't open a session.
     pub discovery: Option<[u8; 32]>,
@@ -496,6 +499,7 @@ impl Inner {
                     problem: None,
                     stopped: false,
                     trial: None,
+                    trial_busy: 0,
                     discovery: None,
                 },
             );
@@ -610,8 +614,15 @@ impl Inner {
         }
         let record = reg.wifi.get_mut(id).expect("checked above");
         // A discovered address that didn't answer as this Device is dropped, and the Pairing
-        // goes back to the address that last worked, at once. `busy` is tried again there.
-        if record.trial.is_some() && !matches!(probed, WifiProbed::Device(_) | WifiProbed::Busy) {
+        // goes back to the address that last worked, at once. Unauthenticated `busy`
+        // answers get only a bounded retry at a trial address.
+        if record.trial.is_some() && matches!(probed, WifiProbed::Busy) {
+            record.trial_busy += 1;
+        }
+        if record.trial.is_some()
+            && (!matches!(probed, WifiProbed::Device(_) | WifiProbed::Busy)
+                || record.trial_busy >= TRIAL_BUSY_LIMIT)
+        {
             record.trial = None;
             record.due = Instant::now();
             drop(reg);
@@ -708,6 +719,7 @@ impl Inner {
                 problem: None,
                 stopped: false,
                 trial: None,
+                trial_busy: 0,
                 discovery,
             },
         );
@@ -908,6 +920,7 @@ impl super::DeviceManager {
                     && record.trial.as_ref() != Some(&advert.address)
                 {
                     record.trial = Some(advert.address.clone());
+                    record.trial_busy = 0;
                     record.due = Instant::now();
                     record.backoff = scan::FIRST_RETRY;
                     moved = true;

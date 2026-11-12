@@ -179,12 +179,13 @@ export const OPEN_TAG_LEN = 16;
 export const openTag = (ltk, clientShare) =>
   mac(derive(fixed(ltk, 32, 'LTK'), 'session/open'), ascii('open'), fixed(clientShare, 32)).subarray(0, OPEN_TAG_LEN);
 
-// The Pairing whose tag matches, or null. Every stored Pairing's tag is
-// computed before deciding, so timing doesn't say which one matched.
+// Compute all four slots before deciding, including dummy work for empty slots.
 export function findPairing(pairings, tag, clientShare) {
   let found = null;
-  for (const [companionId, ltk] of pairings) {
-    if (equal(openTag(ltk, clientShare), tag) && found === null) found = { companionId: Buffer.from(companionId, 'hex'), ltk };
+  const entries = [...pairings];
+  for (let i = 0; i < MAX_PAIRINGS; i++) {
+    const [companionId, ltk] = entries[i] ?? [null, Buffer.alloc(32)];
+    if (equal(openTag(ltk, clientShare), tag) && companionId !== null && found === null) found = { companionId: Buffer.from(companionId, 'hex'), ltk };
   }
   return found;
 }

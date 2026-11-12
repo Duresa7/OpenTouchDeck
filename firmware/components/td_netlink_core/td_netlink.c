@@ -258,6 +258,10 @@ static int find_pairing(const td_netlink_pairings_t *pairings, const uint8_t id[
 bool td_netlink_open_tag(const uint8_t ltk[TD_NETLINK_KEY_LEN], const uint8_t share[TD_NETLINK_SHARE_LEN],
                          uint8_t tag[TD_NETLINK_OPEN_TAG_LEN])
 {
+#ifdef TD_NETLINK_TEST
+    extern void td_netlink_test_tag_computed(void);
+    td_netlink_test_tag_computed();
+#endif
     uint8_t key[TD_NETLINK_KEY_LEN], mac[TD_NETLINK_H_LEN];
     const td_netlink_part_t parts[] = { { "open", 4 }, { share, TD_NETLINK_SHARE_LEN } };
     const bool ok = td_netlink_derive(ltk, "session/open", key) && td_netlink_hmac(key, sizeof key, parts, 2, mac);
@@ -267,17 +271,19 @@ bool td_netlink_open_tag(const uint8_t ltk[TD_NETLINK_KEY_LEN], const uint8_t sh
     return ok;
 }
 
-/* The stored Pairing whose open_tag for this share is tag, or -1. Every stored Pairing's tag is computed before
- * deciding, so the time taken doesn't say which one matched. */
+/* Compute all four slots before deciding, hiding both the matching slot and the Pairing count. */
 static int find_tagged(const td_netlink_pairings_t *pairings, const uint8_t tag[TD_NETLINK_OPEN_TAG_LEN],
                        const uint8_t share[TD_NETLINK_SHARE_LEN])
 {
+    static const uint8_t dummy[TD_NETLINK_KEY_LEN] = { 0 };
     int found = -1;
-    for (int i = 0; i < pairings->count; i++) {
+    for (int i = 0; i < TD_NETLINK_PAIRINGS_MAX; i++) {
         uint8_t mine[TD_NETLINK_OPEN_TAG_LEN];
-        const bool match = td_netlink_open_tag(pairings->entries[i].ltk, share, mine)
+        const bool occupied = i < pairings->count;
+        const uint8_t *key = occupied ? pairings->entries[i].ltk : dummy;
+        const bool match = td_netlink_open_tag(key, share, mine)
                            && td_netlink_equal(mine, tag, TD_NETLINK_OPEN_TAG_LEN);
-        if (match && found < 0) {
+        if (match && occupied && found < 0) {
             found = i;
         }
     }

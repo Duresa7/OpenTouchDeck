@@ -153,11 +153,19 @@ for each of its Pairings with that record's `n`, and compares it with each of
 the four hints in `h` in constant time. A match means that Pairing's Device
 answered at the record's address. The Companion tries a session there, and
 keeps the address that last worked until a session at the new one succeeds.
-Replaying an old record from another address therefore only costs a failed
-session. A record that matches no Pairing and has no `id` is someone else's
+Replaying an old record from another address therefore only costs a bounded
+number of failed tries: after two consecutive `busy` replies there, the
+Companion drops the trial and immediately tries the address that last worked.
+A later discovery may set a new trial. A record that matches no Pairing and has no `id` is someone else's
 Device, and the Companion drops it. A record with `id` is a Device in pairing
 mode, which the Companion may list for pairing. A record without `n` and `h`
 is malformed and dropped.
+
+**Passive privacy only.** Someone who records a valid `session.open` can
+send it to a Device later: the paired Device answers with a challenge, while
+other Devices answer `auth`. This distinguishes that Device even across
+advertisement nonce rotations. Preventing this active probe would require
+binding the tag to fresh Device context, which this protocol does not do.
 
 **What stays visible.** The Device's Wi-Fi station address is its factory MAC,
 which is `device_id` itself on the ESP32-S3. Anyone in radio range sees it in
@@ -680,11 +688,11 @@ client_proof = MAC(kc, T_session || device_proof)
 ready_proof = MAC(kr, T_session || client_proof)
 ```
 
-The Device finds the Pairing by computing `open_tag` for each stored Pairing
-and comparing it with the received tag in constant time. It computes every
-stored Pairing's tag before it decides, so the time taken doesn't say which
-one matched. The
-matching Pairing gives `companion_id` and the LTK, and its own `device_id`
+The Device finds the Pairing by computing `open_tag` for all four slots,
+using a fixed dummy key for empty slots, and comparing each with the received
+tag in constant time. Empty slots never match. It computes all four tags
+before it decides, so the work reveals neither the Pairing count nor which
+one matched. The matching Pairing gives `companion_id` and the LTK, and its own `device_id`
 completes `T_session`. A tag that matches no Pairing gets `auth` before any
 X25519 work. A Companion sends `session.open` only to the Device of the
 Pairing whose key made the tag, and the selected `hello`'s `id` check below

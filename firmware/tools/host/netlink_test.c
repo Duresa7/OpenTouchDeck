@@ -12,6 +12,9 @@
 #include "td_netlink.h"
 #include "td_netlink_ble.h"
 
+static int g_tag_computations;
+void td_netlink_test_tag_computed(void) { g_tag_computations++; }
+
 static int g_failures;
 static int g_checks;
 
@@ -1205,6 +1208,31 @@ static void test_open_tags(void)
     CHECK(!td_netlink_names_stored(&g_deck, open + 2, open_len - 2));
 }
 
+static void test_open_tag_work_is_fixed(void)
+{
+    VEC(open, "session.wire.open");
+    VEC(device_id, "inputs.deviceId");
+    const uint8_t dummy[32] = { 0 };
+    /* Even a valid tag for the public dummy key must never match an empty slot. */
+    CHECK(td_netlink_open_tag(dummy, open + 20, open + 4));
+    const int counts[] = { 0, 1, 4 };
+    for (size_t n = 0; n < sizeof counts / sizeof counts[0]; n++) {
+        td_netlink_pairings_t stored = { 0 };
+        stored.count = counts[n];
+        for (int i = 0; i < stored.count; i++) stored.entries[i] = other_pairing(0x30 + i);
+        reset_env();
+        td_netlink_deck_init(&g_deck, device_id, &stored, 0, 0, &g_env);
+        g_tag_computations = 0;
+        CHECK(!td_netlink_names_stored(&g_deck, open + 2, open_len - 2));
+        CHECK(g_tag_computations == TD_NETLINK_PAIRINGS_MAX);
+        connect_from(&g_conn, PEER_A);
+        g_tag_computations = 0;
+        CHECK(feed(&g_conn, open, open_len) == TD_NETLINK_SEND_CLOSE);
+        CHECK(out_is_error(TD_NETLINK_AUTH));
+        CHECK(g_tag_computations == TD_NETLINK_PAIRINGS_MAX);
+    }
+}
+
 static bool txt_is(const td_netlink_txt_t *txt, size_t count, const cJSON *want)
 {
     if ((size_t)cJSON_GetArraySize(want) != count) {
@@ -1336,6 +1364,7 @@ int main(int argc, char **argv)
         { test_session_liveness, "session liveness" },
         { test_forget, "forget" },
         { test_open_tags, "open tags" },
+        { test_open_tag_work_is_fixed, "fixed open tag work" },
         { test_advert, "discovery advertisement" },
     };
     const size_t count = sizeof tests / sizeof tests[0];

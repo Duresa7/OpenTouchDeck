@@ -722,3 +722,42 @@ async fn a_replayed_record_elsewhere_costs_one_failed_try() {
     let pairings = td.call::<PairingsList>((), NoQuery, ()).await.unwrap();
     assert_eq!(pairings[0].address, fake.addr().to_string());
 }
+
+#[tokio::test]
+async fn a_busy_replayed_trial_returns_to_the_working_address() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let td = TestCompanion::start().await;
+    let fake = td.wifi_device(SERIAL, false);
+    let id = td.pair_wifi(&fake).await;
+    td.call::<Disconnect>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let elsewhere = listener.local_addr().unwrap();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counted = attempts.clone();
+    let server = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut open = [0; 52];
+            stream.read_exact(&mut open).await.unwrap();
+            counted.fetch_add(1, Ordering::SeqCst);
+            stream.write_all(&[0, 3, 0x7f, 2, 1]).await.unwrap();
+        }
+    });
+    td.wifi_network().announce_at(&fake, elsewhere);
+    td.call::<Discover>((), NoQuery, ()).await.unwrap();
+    td.call::<Connect>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    td.until(|td| on_wifi(td, &id)).await;
+    server.abort();
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    let pairings = td.call::<PairingsList>((), NoQuery, ()).await.unwrap();
+    assert_eq!(pairings[0].address, fake.addr().to_string());
+}
