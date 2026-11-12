@@ -39,7 +39,8 @@ The Companion embeds `ui/dist` at compile time: run `pnpm build:ui` before build
 ## Build the desktop app
 
 Use Node.js **24**, pnpm **12.12.1** as pinned in [package.json](package.json),
-and stable Rust meeting the minimum in [Cargo.toml](Cargo.toml). Follow the
+and the Rust version pinned in [rust-toolchain.toml](rust-toolchain.toml), which
+rustup installs for you. Follow the
 [desktop setup guide](../docs/setup.md) for platform dependencies.
 
 On Windows, from the checkout root, the setup command is:

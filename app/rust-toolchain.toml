@@ -1,0 +1,7 @@
+# The Rust toolchain for every build of the workspace: local, pull request checks and releases.
+# rustup reads this file for any cargo command run under app/ and installs the toolchain if it is missing.
+# Bump the version in its own pull request, so a new compiler's lints and fixes are reviewed apart from other work.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
