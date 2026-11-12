@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LinkCarrierTest(unittest.TestCase):
-    """The link's replies and events leave on the carrier they should, and Device names follow the shared vectors:
+    """The link's replies and events leave on the carrier they should, Device names follow the shared vectors, and a
+    transfer is owned by its carrier connection and releases what it holds when it ends, is replaced or goes idle:
     tools/host/link_carrier_test.c."""
 
     def build_and_run(self, defines):
@@ -21,10 +22,12 @@ class LinkCarrierTest(unittest.TestCase):
             includes = [host / "link", host / "include", cjson, components / "td_link"]
             includes += [components / c / "include" for c in
                          ["td_link", "td_link_core", "td_console", "td_layout", "td_ui_core", "keys", "ui",
-                          "td_store", "td_idle"]]
-            sources = [host / "link_carrier_test.c", components / "td_link/td_link_msgs.c", cjson / "cJSON.c",
+                          "td_store", "td_idle", "td_update"]]
+            sources = [host / "link_carrier_test.c", components / "td_link/td_link_msgs.c",
+                       components / "td_link/td_link_transfer.c", cjson / "cJSON.c",
                        components / "td_store/td_device_name.c"]
-            sources += [components / "td_link_core" / f for f in ["td_frame.c", "td_crc16.c", "td_v2_json.c", "td_input.c"]]
+            sources += [components / "td_link_core" / f for f in ["td_frame.c", "td_crc16.c", "td_v2_json.c",
+                                                                  "td_input.c", "td_xfer.c", "td_transfer.c"]]
             exe = out / ("test.exe" if os.name == "nt" else "test")
             if os.name == "nt":
                 # C4244: the dispatcher hands cJSON an int64_t time, which GCC takes without a warning. The forced
