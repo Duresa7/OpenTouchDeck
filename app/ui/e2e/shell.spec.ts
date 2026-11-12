@@ -121,6 +121,23 @@ test('the rail keeps its place in the Layout editor as the Details panel hides a
   }
 });
 
+test('under the window’s drag strip, the rail runs the full height below it and stays there as the screen scrolls', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  // A browser tab has no title bar overlay, so stand in for the Electron window's 32px strip.
+  await page.addStyleTag({ content: ':root[data-window-overlay] { --window-top: 32px; }' });
+  await page.evaluate(() => document.documentElement.setAttribute('data-window-overlay', ''));
+  const below = { x: 0, y: 32, width: 64, height: 568 };
+  for (const name of ['Home', 'Layout', 'Settings', 'Integrations']) {
+    await navButton(page, name).click();
+    await expect.poll(() => rail(page).boundingBox(), { message: `the rail on ${name}` }).toEqual(below);
+  }
+  await expect(page.getByRole('heading', { level: 1, name: 'Integrations' })).toBeVisible();
+  await page.mouse.move(400, 300);
+  await page.mouse.wheel(0, 400);
+  await expect.poll(() => page.evaluate(() => scrollY), { message: 'Integrations scrolls' }).toBeGreaterThan(0);
+  expect(await rail(page).boundingBox()).toEqual(below);
+});
+
 test('Settings lays out its category column to the right of the rail', async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 600 });
   await navButton(page, 'Settings').click();

@@ -190,7 +190,7 @@ Each part below is in the reference prototype; [Reference prototype](#reference-
 
 The rail isn't in the reference prototype. It's variant C of the Layout editor prototype on the `prototype/layout-editor-variants` branch.
 
-- Docked to the window's left edge for its full height: 64 wide, `--surface`, with a 1px `--line` right edge. Every screen lays out to its right, from 800 × 600 up. Nothing on a screen moves it: not switching screens, not scrolling, not the Details panel opening or closing.
+- Docked to the window's left edge for its full height, below the drag strip in the Electron window (see [Window frame](#window-frame)): 64 wide, `--surface`, with a 1px `--line` right edge. Every screen lays out to its right, from 800 × 600 up. Nothing on a screen moves it: not switching screens, not scrolling, not the Details panel opening or closing.
 - Home, Layout, Integrations and Settings sit at the top, 12px down with 2px gaps, centred in the rail. The Update icon sits at the bottom, 12px up.
 - Buttons are 36 × 36, radius 8, with a 20px Lucide icon at stroke 1.9 in `--ink-2`. Hover: `--fill-hover` and `--ink`. Current: `--fill-active` and `--ink`, with `aria-current="page"`. Settings is current while its page is open.
 - A tooltip to the right of each button names it after a 500ms delay. Later tooltips open instantly while the pointer stays in the rail.

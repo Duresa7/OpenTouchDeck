@@ -312,7 +312,7 @@ button {
 .shell {
   display: grid;
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
-  min-height: 100vh;
+  min-height: var(--app-height);
 }
 
 .shell-screen {
@@ -320,18 +320,19 @@ button {
   min-width: 0;
 }
 
-/* Docked to the window's left edge for its full height. Nothing on a screen moves it. */
+/* Docked to the window's left edge for its full height, below the window's drag strip when it has one. Nothing on a
+   screen moves it. */
 .nav-rail {
   grid-column: 1;
   position: sticky;
-  top: 0;
+  top: var(--window-top);
   align-self: start;
   z-index: var(--layer-rail);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  height: 100vh;
+  height: var(--app-height);
   padding: var(--space-3) 0;
   background: var(--surface);
   /* The right edge, drawn inside the rail so the screen beside it starts clear of it */
