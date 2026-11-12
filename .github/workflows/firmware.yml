@@ -48,7 +48,7 @@ jobs:
           set -euo pipefail
           npm ci --prefix schema
           node schema/check-layouts.mjs
-          node --test schema/
+          node --test "schema/*.test.mjs"
 
       # The ESP-IDF image compiles through ccache (IDF_CCACHE_ENABLE=1). Its folder is kept between runs under
       # build/, which is git-ignored, so most of a build is cache hits. Pull requests restore what main saved.
