@@ -14,6 +14,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the run of the push before it.
+concurrency:
+  group: upgrade-from-02-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   upgrade-from-02:
     runs-on: windows-latest
