@@ -9,6 +9,7 @@ pub mod companion;
 pub(crate) mod controls;
 pub mod devices;
 mod dialog_text;
+pub mod editor;
 mod events;
 pub mod features;
 pub mod integrations;

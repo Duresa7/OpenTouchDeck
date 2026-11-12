@@ -1,4 +1,5 @@
 pub mod app_dirs;
+pub mod editing;
 pub mod frame;
 pub mod layout;
 pub mod live;
