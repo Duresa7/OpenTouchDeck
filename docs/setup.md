@@ -50,7 +50,7 @@ Ubuntu **24.04** is the Linux CI target. Its build packages are:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential libudev-dev
+sudo apt-get install -y build-essential libudev-dev libfontconfig-dev
 ```
 
 This matches [the workflow](../.github/workflows/app.yml), with `libudev-dev` for serial discovery. Other distributions need their equivalent packages. Install Node 24, the pinned pnpm, and stable Rust separately using their upstream instructions.
@@ -64,7 +64,7 @@ cargo build -p td-companion
 pnpm --filter @touchdeck/electron build
 ```
 
-Use `pnpm dev:electron` to run the Electron window with a mock Device. Use `pnpm dev:ui:demo` from `app/` (or `pnpm dev:demo` from `app/ui/`) for the React UI with demo data and no hardware. Use `pnpm lint`, `pnpm test`, `pnpm e2e:ui` and `cargo test --workspace` to check changes.
+`libfontconfig-dev` is for the native app's Slint UI (`td-app`), which `cargo test --workspace` builds. Use `pnpm dev:electron` to run the Electron window with a mock Device. Use `pnpm dev:ui:demo` from `app/` (or `pnpm dev:demo` from `app/ui/`) for the React UI with demo data and no hardware. Use `pnpm lint`, `pnpm test`, `pnpm e2e:ui` and `cargo test --workspace` to check changes.
 
 Do not enable `test-hooks` for a distributed app. To build the Windows installer, follow [Build the installer](packaging.md#build-the-installer).
 

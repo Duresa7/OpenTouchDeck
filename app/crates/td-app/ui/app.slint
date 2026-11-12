@@ -1,0 +1,98 @@
+// The Open TouchDeck window: a navigation pane, the current page, and the one-time close notice.
+import { Theme, ContrastColors } from "theme.slint";
+import { NavItem } from "controls.slint";
+import { HomePage, DeviceRow, Tone } from "home.slint";
+import { AboutPage, Component } from "about.slint";
+import { CloseNotice } from "close-notice.slint";
+
+export { Theme, ContrastColors, DeviceRow, Tone, Component }
+
+export enum Page { home, about }
+
+export component AppWindow inherits Window {
+    title: "Open TouchDeck";
+    // About 500 effective pixels: the largest minimum Windows recommends, so Snap keeps the halves.
+    min-width: 500px;
+    min-height: 360px;
+    preferred-width: 960px;
+    preferred-height: 640px;
+    background: Theme.window-background;
+    default-font-size: Theme.body;
+    default-font-family: Theme.text-font;
+
+    in-out property <Page> page: Page.home;
+    in property <[DeviceRow]> devices;
+    in property <string> version;
+    in property <[Component]> components;
+    in-out property <bool> close-notice-open;
+
+    callback open-url(string);
+    callback keep-running();
+    callback quit();
+    // The light or dark scheme changed, so Windows can draw Mica to match.
+    callback dark-changed(bool);
+
+    property <bool> dark: Theme.dark;
+    changed dark => {
+        root.dark-changed(self.dark);
+    }
+
+    HorizontalLayout {
+        Rectangle {
+            accessible-role: tab-list;
+            accessible-label: "Pages";
+            horizontal-stretch: 0;
+            VerticalLayout {
+                alignment: start;
+                padding: 8px;
+                padding-top: 16px;
+                spacing: 4px;
+                min-width: 148px;
+                NavItem {
+                    text: "Home";
+                    selected: root.page == Page.home;
+                    activated => {
+                        root.page = Page.home;
+                    }
+                }
+
+                NavItem {
+                    text: "About";
+                    selected: root.page == Page.about;
+                    activated => {
+                        root.page = Page.about;
+                    }
+                }
+            }
+        }
+
+        // The content layer, as Windows 11 draws it over Mica.
+        Rectangle {
+            horizontal-stretch: 1;
+            background: Theme.high-contrast ? transparent : Theme.dark ? #3a3a3a4d : #ffffff80;
+            border-top-left-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.high-contrast ? Theme.contrast.window-text : Theme.card-stroke;
+
+            if root.page == Page.home: HomePage {
+                devices: root.devices;
+            }
+            if root.page == Page.about: AboutPage {
+                version: root.version;
+                components: root.components;
+                open-url(url) => {
+                    root.open-url(url);
+                }
+            }
+        }
+    }
+
+    if root.close-notice-open: CloseNotice {
+        keep-running => {
+            root.keep-running();
+        }
+        quit => {
+            root.quit();
+        }
+    }
+}

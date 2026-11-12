@@ -1,0 +1,94 @@
+// Home: the Devices this Companion knows and how each one is connected.
+import { Theme } from "theme.slint";
+import { Body, Card, PageTitle, SectionTitle } from "controls.slint";
+import { ScrollingPage } from "page.slint";
+
+// Connected, on its way, or not connected.
+export enum Tone { good, caution, critical }
+
+export struct DeviceRow {
+    id: string,
+    name: string,
+    status: string,
+    tone: Tone,
+}
+
+component DeviceCard inherits Card {
+    in property <DeviceRow> device;
+
+    accessible-role: list-item;
+    accessible-label: self.device.name;
+    accessible-description: self.device.status;
+
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 12px;
+        // The dot sits on the name's first line, however many lines it wraps to.
+        VerticalLayout {
+            alignment: start;
+            padding-top: max(0, (name.font-metrics.ascent - name.font-metrics.descent - 10px) / 2);
+            Rectangle {
+                width: 10px;
+                height: 10px;
+                border-radius: 5px;
+                background: root.device.tone == Tone.good ? Theme.good : root.device.tone == Tone.caution ? Theme.caution : Theme.critical;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            name := Text {
+                accessible-role: none;
+                text: root.device.name;
+                font-size: Theme.body;
+                font-weight: Theme.semibold;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+
+            Text {
+                accessible-role: none;
+                text: root.device.status;
+                font-size: Theme.body;
+                color: Theme.secondary-text;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+export component HomePage inherits ScrollingPage {
+    in property <[DeviceRow]> devices;
+    title: "Home";
+
+    PageTitle {
+        text: "Home";
+    }
+
+    if root.devices.length == 0: empty := Card {
+        VerticalLayout {
+            padding: 24px;
+            spacing: 8px;
+            SectionTitle {
+                text: "Plug in your Device";
+            }
+
+            Body {
+                text: "Connect an Open TouchDeck to this computer with a USB data cable.";
+                color: Theme.secondary-text;
+            }
+        }
+    }
+
+    if root.devices.length > 0: Rectangle {
+        accessible-role: list;
+        accessible-label: "Devices";
+        accessible-item-count: root.devices.length;
+        VerticalLayout {
+            spacing: 8px;
+            for device in root.devices: DeviceCard {
+                device: device;
+            }
+        }
+    }
+}

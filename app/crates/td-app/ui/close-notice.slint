@@ -1,0 +1,97 @@
+// Shown the first time the window closes while the tray keeps the app running.
+import { Theme } from "theme.slint";
+import { ActionButton, Body, SectionTitle } from "controls.slint";
+
+export component CloseNotice inherits Rectangle {
+    callback keep-running();
+    callback quit();
+
+    background: Theme.smoke;
+
+    // Clicks behind the notice don't reach the page.
+    TouchArea { }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.keep-running();
+                return accept;
+            }
+            return reject;
+        }
+
+        dialog := Rectangle {
+            accessible-role: groupbox;
+            accessible-label: title.text;
+            width: min(root.width - 32px, max(440px, 320px * Theme.text-scale));
+            height: content.preferred-height;
+            x: (root.width - self.width) / 2;
+            y: max(16px, (root.height - self.height) / 2);
+            background: Theme.dialog;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.high-contrast ? Theme.contrast.window-text : Theme.card-stroke;
+            drop-shadow-blur: Theme.high-contrast ? 0 : 32px;
+            drop-shadow-offset-y: 8px;
+            drop-shadow-color: #00000040;
+
+            content := VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                title := SectionTitle {
+                    text: "Open TouchDeck keeps running";
+                }
+
+                Body {
+                    text: "Closing the window leaves Open TouchDeck running in the system tray, so your Devices keep working. To stop it, choose Quit from the tray icon's menu.";
+                }
+
+                // Side by side when they fit, stacked at large text sizes.
+                if dialog.width >= 300px * Theme.text-scale: HorizontalLayout {
+                    padding-top: 12px;
+                    spacing: 8px;
+                    ActionButton {
+                        text: "Quit";
+                        horizontal-stretch: 1;
+                        clicked => {
+                            root.quit();
+                        }
+                    }
+
+                    keep := ActionButton {
+                        text: "Keep running";
+                        primary: true;
+                        horizontal-stretch: 1;
+                        clicked => {
+                            root.keep-running();
+                        }
+                        init => {
+                            self.focus();
+                        }
+                    }
+                }
+                if dialog.width < 300px * Theme.text-scale: VerticalLayout {
+                    padding-top: 12px;
+                    spacing: 8px;
+                    ActionButton {
+                        text: "Keep running";
+                        primary: true;
+                        clicked => {
+                            root.keep-running();
+                        }
+                        init => {
+                            self.focus();
+                        }
+                    }
+
+                    ActionButton {
+                        text: "Quit";
+                        clicked => {
+                            root.quit();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

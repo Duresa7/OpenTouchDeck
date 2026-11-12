@@ -1,0 +1,224 @@
+// Small controls drawn from `Theme`, so a contrast theme reaches every one of them. Fluent's own
+// Button doesn't follow contrast themes.
+import { Theme } from "theme.slint";
+import { Focus } from "page.slint";
+
+// The keyboard focus outline: 2px in the text colour, as Windows 11 draws it. Give it the
+// focused control's size plus 6px.
+component FocusRing inherits Rectangle {
+    in property <length> radius: 4px;
+    x: -3px;
+    y: -3px;
+    border-width: 2px;
+    border-radius: self.radius + 3px;
+    border-color: Theme.focus;
+}
+
+// One page in the navigation pane. Enter or Space opens it, like a click.
+export component NavItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback activated();
+
+    accessible-role: tab;
+    accessible-label: self.text;
+    accessible-item-selectable: true;
+    accessible-item-selected: self.selected;
+    accessible-action-default => {
+        self.activated();
+    }
+    forward-focus: keys;
+    min-height: max(36px, label.preferred-height + 12px);
+    border-radius: 4px;
+    background: self.selected ? Theme.subtle-selected : touch.has-hover ? Theme.subtle-hover : transparent;
+    border-width: Theme.high-contrast && self.selected ? 1px : 0;
+    border-color: Theme.contrast.highlight;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 12px;
+        label := Text {
+            accessible-role: none;
+            text: root.text;
+            font-size: Theme.body;
+            font-weight: root.selected ? Theme.semibold : 400;
+            color: Theme.text;
+            vertical-alignment: center;
+        }
+    }
+
+    if root.selected: Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: 3px;
+        height: 16px;
+        border-radius: 1.5px;
+        background: Theme.accent;
+    }
+
+    // Keyboard first and the pointer on top, so a click acts at once without taking focus.
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " {
+                root.activated();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.activated();
+        }
+    }
+
+    if keys.has-focus: FocusRing {
+        width: root.width + 6px;
+        height: root.height + 6px;
+    }
+}
+
+// A push button. `primary` uses the accent colour.
+export component ActionButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    callback clicked();
+
+    accessible-role: button;
+    accessible-label: self.text;
+    accessible-action-default => {
+        self.clicked();
+    }
+    forward-focus: keys;
+    min-height: max(32px, label.preferred-height + 12px);
+    min-width: max(96px, label.preferred-width + 24px);
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.high-contrast && self.primary ? Theme.contrast.highlight : Theme.control-stroke;
+    background: self.primary
+        ? (touch.pressed ? Theme.accent.darker(0.15) : touch.has-hover ? Theme.accent.darker(0.08) : Theme.accent)
+        : (touch.has-hover || touch.pressed ? Theme.control-hover : Theme.control);
+
+    label := Text {
+        accessible-role: none;
+        text: root.text;
+        font-size: Theme.body;
+        color: root.primary ? Theme.accent-text : Theme.control-text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    // Keyboard first and the pointer on top, so a click acts at once without taking focus.
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    if keys.has-focus: FocusRing {
+        width: root.width + 6px;
+        height: root.height + 6px;
+    }
+}
+
+// A text link that opens a web page. Screen readers hear a button named by its text.
+export component Link inherits Rectangle {
+    in property <string> text;
+    in property <string> url;
+    callback open(string);
+
+    forward-focus: keys;
+
+    HorizontalLayout {
+        alignment: start;
+        // Only the words take clicks, as in a browser, and screen readers see the same bounds.
+        target := Rectangle {
+            accessible-role: button;
+            accessible-label: root.text;
+            accessible-description: root.url;
+            accessible-action-default => {
+                root.open(root.url);
+            }
+            label := Text {
+                accessible-role: none;
+                text: root.text;
+                font-size: Theme.body;
+                color: Theme.link;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+
+            keys := FocusScope {
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == " " {
+                        root.open(root.url);
+                        return accept;
+                    }
+                    return reject;
+                }
+                changed has-focus => {
+                    if self.has-focus {
+                        Focus.show(target.absolute-position.y, target.height);
+                    }
+                }
+            }
+
+            touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.open(root.url);
+                }
+            }
+
+            if keys.has-focus: FocusRing {
+                width: target.width + 6px;
+                height: target.height + 6px;
+                radius: 2px;
+            }
+        }
+    }
+}
+
+// A page heading in the display face.
+export component PageTitle inherits Text {
+    font-size: Theme.title;
+    font-weight: Theme.semibold;
+    font-family: Theme.display-font;
+    color: Theme.text;
+    wrap: word-wrap;
+}
+
+// A section heading.
+export component SectionTitle inherits Text {
+    font-size: Theme.subtitle;
+    font-weight: Theme.semibold;
+    font-family: Theme.display-font;
+    color: Theme.text;
+    wrap: word-wrap;
+}
+
+// Running text that wraps.
+export component Body inherits Text {
+    font-size: Theme.body;
+    color: Theme.text;
+    wrap: word-wrap;
+}
+
+// A panel that groups content, like a Windows 11 settings card.
+export component Card inherits Rectangle {
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.card-stroke;
+    border-radius: 8px;
+}
