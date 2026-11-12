@@ -3,10 +3,7 @@ use crate::devices::Config;
 use crate::{api::Ctx, runtime::Runtime};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 fn root() -> std::io::Result<PathBuf> {
-    std::env::var_os("TOUCHDECK_APP_DATA_DIR")
-        .map(PathBuf::from)
-        .or_else(|| dirs::data_local_dir().map(|p| p.join(td_core::app_dirs::APP_ID)))
-        .ok_or_else(|| std::io::Error::other("No app data directory."))
+    td_core::app_dirs::data_dir().ok_or_else(|| std::io::Error::other("No app data directory."))
 }
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
