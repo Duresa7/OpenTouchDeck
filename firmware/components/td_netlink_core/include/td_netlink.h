@@ -269,11 +269,11 @@ uint32_t td_netlink_lock_left(const td_netlink_deck_t *deck);
 /* Milliseconds left in the open window, 0 when none is open. */
 uint32_t td_netlink_window_left(const td_netlink_deck_t *deck);
 /* net.forget: cancels any window, erases every Pairing, and resets pair_failures and the lockout. False when a store
- * failed; the RAM state is cleared either way. */
+ * failed; when the Pairings couldn't be erased, the RAM table, pair_failures and the lockout stay as they were. */
 bool td_netlink_forget(td_netlink_deck_t *deck);
 /* net.forget with app_id: erases that one Pairing and keeps the others in order. *removed is 1, or 0 when the id isn't
  * stored, which writes nothing. The window, pair_failures and the lockout stay. False when the store failed; the RAM
- * entry is gone either way. */
+ * entry stays then, so a retry erases it. */
 bool td_netlink_forget_one(td_netlink_deck_t *deck, const uint8_t companion_id[TD_NETLINK_COMPANION_ID_LEN],
                            uint8_t *removed);
 /* Milliseconds left in this peer's backoff, 0 when there is none. */
