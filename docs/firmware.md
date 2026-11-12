@@ -981,6 +981,23 @@ rules. It runs the `management` vector's USB steps through `net.list`,
 one app among four, the `args` refusals and a failed erase. It needs `IDF_PATH` and a C compiler, `cl`
 from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere.
 
+The TCP lifecycle lives in `td_netlink_core/td_netlink_tcp.c`. The Device's
+`td_netlink_service.c` supplies nonblocking socket read/write/close, writable
+waiting, and link receive/session callbacks; the core's environment supplies
+time. Accepted descriptors belong to the lifecycle through owner, waiter and
+terminal-drain states until one final close. The service keeps the listener,
+FreeRTOS outgoing queue and link generation checks. The same host command
+exercises fragmented reads and writes, takeover, refusal with a peer reset,
+exhausted closer slots, write deadlines, record delivery and record-limit closing.
+The 100 ms refusal and drain deadlines and four closer slots stay unchanged.
+
+Three boundaries were considered: extracting just the closer table would leave
+admission and core resets outside host coverage; a per-socket object would
+still need a separate coordinator for takeover; moving the existing TCP
+coordinator into the portable component keeps those decisions behind one
+interface with the smallest change to the poll loop. QEMU remains necessary:
+a scripted host socket cannot reproduce lwIP's close behaviour.
+
 ## Protocol v2 identity
 
 USB discovery retains the v1 hello and advertises protocols 1 and 2. Selecting
