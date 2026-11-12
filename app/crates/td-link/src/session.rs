@@ -449,8 +449,8 @@ impl Shared {
 
 /// The one transfer a session runs at a time. Chunks and acks reach [`Transfer::frames`]
 /// until it drops. `begin` and `finish` wrap the protocol-specific requests; a guard
-/// dropped between them closes the Carrier to abort the Device's transfer. A refused
-/// begin or an already-present Asset needs no cancellation.
+/// dropped between them closes the Carrier. USB Device state expires after its idle timeout.
+/// A refused begin or an already-present Asset needs no cancellation.
 pub struct Transfer<'a> {
     session: &'a Session,
     pub frames: Receiver<XferFrame>,
@@ -460,10 +460,20 @@ pub struct Transfer<'a> {
 
 impl Transfer<'_> {
     /// Runs the begin request under this operation's admission. If its outcome is
-    /// unknown or the caller abandons it, closing the session aborts Device state.
-    pub fn begin<E>(&mut self, request: impl FnOnce() -> Result<Reply, E>) -> Result<Reply, E> {
+    /// unknown or the caller abandons it, closing the session prevents further use.
+    /// USB close does not clear Device transfer state: a reconnect can still find it busy.
+    /// For update admission, wait just beyond its 2 s idle expiry and retry once,
+    /// holding admission throughout. Other operations retain their own busy backoff.
+    pub fn begin<E>(&mut self, mut request: impl FnMut() -> Result<Reply, E>) -> Result<Reply, E> {
         self.unfinished = true;
-        let reply = request()?;
+        let mut reply = request()?;
+        if !reply.ok
+            && reply.m == "update.begin"
+            && reply.fields.get("reason").and_then(Value::as_str) == Some("busy")
+        {
+            thread::sleep(Duration::from_millis(2200));
+            reply = request()?;
+        }
         self.unfinished =
             reply.ok && reply.fields.get("present").and_then(Value::as_bool) != Some(true);
         Ok(reply)

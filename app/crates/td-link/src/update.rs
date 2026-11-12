@@ -119,7 +119,9 @@ pub fn begin(
     approval: Approval,
     prompted: &mut dyn FnMut(),
 ) -> Result<Value, String> {
-    begin_reply(session, bytes, sha256, approval, prompted).map(|reply| reply.to_value())
+    begin_reply(session, bytes, sha256, approval, prompted)
+        .and_then(opened_reply)
+        .map(|reply| reply.to_value())
 }
 
 fn begin_reply(
@@ -151,9 +153,19 @@ fn begin_reply(
                 }
                 std::thread::sleep(approval.repeat.saturating_sub(asked.elapsed()));
             }
-            Some("declined") => return Err("the update was declined on the Device".into()),
-            _ => return Err(reply.to_value().to_string()),
+            _ => return Ok(reply),
         }
+    }
+}
+
+// Interpret refusals only after the transfer guard has seen that nothing opened.
+fn opened_reply(reply: td_core::Reply) -> Result<td_core::Reply, String> {
+    if reply.ok {
+        Ok(reply)
+    } else if reply.fields.get("reason").and_then(Value::as_str) == Some("declined") {
+        Err("the update was declined on the Device".into())
+    } else {
+        Err(reply.to_value().to_string())
     }
 }
 
@@ -172,7 +184,7 @@ fn send(
             &mut || {},
         )
     })?;
-    let opened = opened.to_value();
+    let opened = opened_reply(opened)?.to_value();
     let id = opened["xfer"]
         .as_u64()
         .and_then(|n| u8::try_from(n).ok())
@@ -370,6 +382,19 @@ mod tests {
             tick: Duration::from_millis(1),
         }
     }
+    #[test]
+    fn a_refused_update_keeps_the_shared_session_open() {
+        let mut mock = crate::MockDeck::new();
+        let (session, _) = Connector::connect(&mut mock).unwrap();
+        let mut invalid = bundle();
+        invalid.images.last_mut().unwrap().data.clear();
+        let error = send(&session, &invalid, &mut |_| {}, session.transfer().unwrap()).unwrap_err();
+        assert!(error.contains("invalid update bytes"), "{error}");
+        assert!(session.is_open(), "a refused begin opened no transfer");
+        session.hello(REQUEST).unwrap();
+        assert!(session.transfer().is_ok());
+    }
+
     #[test]
     fn update_transfers_reboots_and_confirms() {
         let mut mock = crate::MockDeck::new();

@@ -56,7 +56,9 @@ impl Write for Writer {
                     (self.reply)(req.clone())
                 };
                 reply["m"] = req["m"].clone();
-                reply["ok"] = json!(true);
+                if reply.get("ok").is_none() {
+                    reply["ok"] = json!(true);
+                }
                 self.tx
                     .send(
                         Frame::message(Role::Response(seq), serde_json::to_vec(&reply).unwrap())
@@ -307,4 +309,96 @@ fn duplicate_acks_do_not_keep_a_put_alive() {
     );
     assert!(session.transfer().is_err());
     session.close();
+}
+
+#[test]
+fn reconnecting_after_an_abandoned_usb_update_waits_for_device_expiry() {
+    use std::sync::{Arc, Mutex};
+
+    // USB close and hello leave the Device's update alive until its 2 s idle expiry.
+    for expires in [true, false] {
+        let active = Arc::new(Mutex::new(None::<Instant>));
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let connect = || {
+            let active = active.clone();
+            let attempts = attempts.clone();
+            open(vec![], None, move |request| {
+                if request["m"] != "update.begin" {
+                    return json!({});
+                }
+                attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut active = active.lock().unwrap();
+                if active.is_some_and(|at| !expires || at.elapsed() < Duration::from_secs(2)) {
+                    return json!({"ok":false,"reason":"busy"});
+                }
+                *active = Some(Instant::now());
+                json!({"xfer":1,"slot":"ota_1"})
+            })
+            .0
+        };
+        let begin = |session: &Session| {
+            session.call(
+                &json!({"m":"update.begin","bytes":100,"sha256":"00"}),
+                Duration::from_secs(1),
+            )
+        };
+        let session = connect();
+        let mut abandoned = session.transfer().unwrap();
+        assert!(abandoned.begin(|| begin(&session)).unwrap().ok);
+        drop(abandoned);
+        assert!(!session.is_open());
+        drop(session);
+
+        let session = connect();
+        session
+            .call(&json!({"m":"hello"}), Duration::from_secs(1))
+            .unwrap();
+        let started = Instant::now();
+        let mut retry = session.transfer().unwrap();
+        let reply = retry.begin(|| begin(&session)).unwrap();
+        assert_eq!(
+            reply.ok, expires,
+            "retry after the abandoned update expires"
+        );
+        assert!(started.elapsed() >= Duration::from_secs(2));
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "bounded admission wait"
+        );
+        assert_eq!(
+            attempts.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "retry once"
+        );
+        if reply.ok {
+            retry.finish(|| Ok::<_, td_link::LinkError>(())).unwrap();
+        }
+        drop(retry);
+        assert!(session.is_open());
+    }
+}
+
+#[test]
+fn non_update_busy_replies_do_not_retry_in_the_transfer_guard() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    for method in ["v2.asset.put", "layout.get"] {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = attempts.clone();
+        let (session, _) = open(vec![], None, move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            json!({"ok": false, "reason": "busy"})
+        });
+        let mut transfer = session.transfer().unwrap();
+        let reply = transfer
+            .begin(|| session.call(&json!({"m": method}), Duration::from_secs(1)))
+            .unwrap();
+        assert!(!reply.ok);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        drop(transfer);
+        assert!(session.is_open());
+    }
 }
