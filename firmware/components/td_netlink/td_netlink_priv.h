@@ -11,19 +11,10 @@ bool td_netlink_nvs_load(td_netlink_pairings_t *pairings, uint32_t *pair_failure
 bool td_netlink_nvs_save_pairings(const td_netlink_pairings_t *pairings);
 bool td_netlink_nvs_save_failures(uint32_t pair_failures, uint32_t lock_left_ms);
 
-/* Commands the net task runs for USB and the console. Each waits for the net task. */
-typedef enum {
-    TD_NETLINK_CMD_OK,
-    /* The service isn't running or didn't answer in time. */
-    TD_NETLINK_CMD_DOWN,
-    TD_NETLINK_CMD_LOCKED,
-    TD_NETLINK_CMD_FULL,
-    TD_NETLINK_CMD_STORAGE,
-} td_netlink_cmd_result_t;
-
-td_netlink_cmd_result_t td_netlink_pair(void);
-/* Erases every Pairing; removed receives how many there were. */
-td_netlink_cmd_result_t td_netlink_forget_all(uint8_t *removed);
+/* net.pair, net.list or net.forget (td_netlink_manage.h), run on the net task, which owns the Pairings. The reply holds
+ * `ok` already and gets the answer. Waits for the net task; false when the service isn't running or didn't take the
+ * request in time, and then the reply is untouched. */
+bool td_netlink_manage_request(const cJSON *request, cJSON *reply);
 
 /* The net.state fields (schema/protocol/net-v2.md). Any task. */
 void td_netlink_state_fields(cJSON *reply);

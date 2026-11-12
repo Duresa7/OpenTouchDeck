@@ -18,9 +18,10 @@ static const char *TAG = "td_wifi";
 #define GLYPH_FAILED 0xffb020
 #define GLYPH_POLL_MS 500
 #define LOCK_TIMEOUT_MS 3000
-/* The title band's right inset and the glyph's top (ui_geometry.c's TITLE_X, and the band's middle for 32 px). In
- * recovery mode the `Recovery` caption takes the right end, so the glyph sits to its left. */
-#define GLYPH_INSET 36
+/* The glyph's right inset and top (the band's middle for 32 px). The Settings gear (ui_settings.c) takes the right end
+ * of the title band, inside ui_geometry.c's TITLE_X, so the glyph sits 24 px to its left. In recovery mode the
+ * `Recovery` caption takes the right end instead, and the glyph sits to its left. */
+#define GLYPH_INSET (36 + 32 + 24)
 #define GLYPH_TOP 22
 #define GLYPH_RECOVERY_INSET 196
 

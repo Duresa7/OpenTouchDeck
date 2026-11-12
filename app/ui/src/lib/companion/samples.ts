@@ -53,6 +53,12 @@ export const DEMO_BONDS: BluetoothBond[] = [
   { address: '00:00:5e:00:53:02', random: false, connected: false },
 ];
 
+/** The other apps the demo's radio Device keeps Pairings with, oldest first. */
+export const DEMO_APPS = [
+  { app: '1a'.repeat(16), name: 'Open TouchDeck on Laptop' },
+  { app: '2b'.repeat(16), name: 'Open TouchDeck on Studio PC' },
+];
+
 export function sampleDevice(id: string, name: string | null, link: LinkState = { state: 'offline' }): DeviceSummary {
   return {
     id,

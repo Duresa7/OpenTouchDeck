@@ -1,31 +1,11 @@
 #include "td_netlink_service.h"
 #include "td_netlink_priv.h"
+#include "td_netlink_manage.h"
 #include "td_link.h"
 #include "td_console.h"
 #include <string.h>
 
-#define USAGE "usage: net state | pair | forget all"
-
-typedef struct {
-    const char *reason;
-    const char *error;
-} refusal_t;
-
-static refusal_t refusal(td_netlink_cmd_result_t result)
-{
-    switch (result) {
-    case TD_NETLINK_CMD_OK:
-        return (refusal_t){ NULL, NULL };
-    case TD_NETLINK_CMD_LOCKED:
-        return (refusal_t){ "locked", "Pairing is locked after failed codes; try again later" };
-    case TD_NETLINK_CMD_FULL:
-        return (refusal_t){ "full", "Four apps are paired. Forget one first." };
-    case TD_NETLINK_CMD_STORAGE:
-        return (refusal_t){ "storage", "The pairings could not be erased" };
-    default:
-        return (refusal_t){ "storage", "The network service is not running" };
-    }
-}
+#define USAGE "usage: net state | list | pair | forget <app_id> | forget all"
 
 /* ---- Link messages ---- */
 
@@ -35,57 +15,21 @@ static void net_state(const cJSON *request, cJSON *reply)
     td_netlink_state_fields(reply);
 }
 
-static void answer(cJSON *reply, td_netlink_cmd_result_t result)
+/* net.pair, net.list and net.forget, all USB-only: the link refuses them on a network carrier. */
+static void net_manage(const cJSON *request, cJSON *reply)
 {
-    const refusal_t r = refusal(result);
-    if (r.reason) {
+    if (!td_netlink_manage_request(request, reply)) {
         cJSON_ReplaceItemInObjectCaseSensitive(reply, "ok", cJSON_CreateBool(false));
-        cJSON_AddStringToObject(reply, "reason", r.reason);
-        cJSON_AddStringToObject(reply, "error", r.error);
-    }
-    td_netlink_state_fields(reply);
-}
-
-static void net_pair(const cJSON *request, cJSON *reply)
-{
-    (void)request;
-    answer(reply, td_netlink_pair());
-}
-
-static void refuse_args(cJSON *reply, const char *error)
-{
-    cJSON_ReplaceItemInObjectCaseSensitive(reply, "ok", cJSON_CreateBool(false));
-    cJSON_AddStringToObject(reply, "reason", "args");
-    cJSON_AddStringToObject(reply, "error", error);
-    td_netlink_state_fields(reply);
-}
-
-/* Only wipe-all, `{"m":"net.forget","all":true}`, for now. A bare net.forget is refused, so a request that lost its
- * app_id can't wipe the Device. */
-static void net_forget(const cJSON *request, cJSON *reply)
-{
-    const cJSON *all = cJSON_GetObjectItemCaseSensitive(request, "all");
-    const cJSON *app_id = cJSON_GetObjectItemCaseSensitive(request, "app_id");
-    if (app_id) {
-        refuse_args(reply, all ? "Send app_id or all, not both" : "Forgetting one app is not supported yet");
-        return;
-    }
-    if (!cJSON_IsTrue(all)) {
-        refuse_args(reply, "Send all:true to forget every app");
-        return;
-    }
-    uint8_t removed = 0;
-    const td_netlink_cmd_result_t result = td_netlink_forget_all(&removed);
-    answer(reply, result);
-    if (result == TD_NETLINK_CMD_OK) {
-        cJSON_AddNumberToObject(reply, "removed", removed);
+        cJSON_AddStringToObject(reply, "reason", "storage");
+        cJSON_AddStringToObject(reply, "error", "The network service is not running");
     }
 }
 
 static const td_link_message_t s_messages[] = {
     { "net.state", net_state, false },
-    { "net.pair", net_pair, true },
-    { "net.forget", net_forget, true },
+    { "net.pair", net_manage, true },
+    { "net.list", net_manage, true },
+    { "net.forget", net_manage, true },
 };
 
 /* ---- Console ---- */
@@ -99,16 +43,41 @@ static void write_reply(cJSON *reply)
     td_console_write_line(line);
 }
 
+/* The console's `net` takes the link messages' words: `net forget <app_id>` is net.forget with that app_id. */
+static cJSON *console_request(int argc, char **argv, const char **op)
+{
+    cJSON *request = cJSON_CreateObject();
+    if (!request) {
+        return NULL;
+    }
+    *op = argc >= 2 ? argv[1] : "";
+    const char *m = NULL;
+    if (argc == 2 && !strcmp(*op, "pair")) {
+        m = "net.pair";
+    } else if (argc == 2 && !strcmp(*op, "list")) {
+        m = "net.list";
+    } else if (argc == 3 && !strcmp(*op, "forget")) {
+        m = "net.forget";
+        if (!strcmp(argv[2], "all")) {
+            cJSON_AddBoolToObject(request, "all", true);
+        } else {
+            cJSON_AddStringToObject(request, "app_id", argv[2]);
+        }
+    }
+    if (!m) {
+        cJSON_Delete(request);
+        return NULL;
+    }
+    cJSON_AddStringToObject(request, "m", m);
+    return request;
+}
+
 static int cmd_net(int argc, char **argv)
 {
-    const char *op = argc == 2 ? argv[1] : "";
-    td_netlink_cmd_result_t result = TD_NETLINK_CMD_OK;
-    if (strcmp(op, "pair") == 0) {
-        result = td_netlink_pair();
-    } else if (argc == 3 && strcmp(argv[1], "forget") == 0 && strcmp(argv[2], "all") == 0) {
-        op = "forget";
-        result = td_netlink_forget_all(NULL);
-    } else if (strcmp(op, "state") != 0) {
+    const char *op = "";
+    cJSON *request = NULL;
+    const bool state = argc == 2 && !strcmp(argv[1], "state");
+    if (!state && !(request = console_request(argc, argv, &op))) {
         char line[TD_REPLY_MAX];
         td_reply_error(line, sizeof line, "net", USAGE);
         td_console_write_line(line);
@@ -116,27 +85,44 @@ static int cmd_net(int argc, char **argv)
     }
     cJSON *reply = cJSON_CreateObject();
     if (!reply) {
+        cJSON_Delete(request);
         return 1;
     }
-    const refusal_t r = refusal(result);
     cJSON_AddStringToObject(reply, "cmd", "net");
-    cJSON_AddBoolToObject(reply, "ok", r.reason == NULL);
-    cJSON_AddStringToObject(reply, "op", op);
-    if (r.reason) {
-        cJSON_AddStringToObject(reply, "reason", r.reason);
-        cJSON_AddStringToObject(reply, "error", r.error);
+    cJSON_AddBoolToObject(reply, "ok", true);
+    cJSON_AddStringToObject(reply, "op", state ? "state" : op);
+    if (state) {
+        td_netlink_state_fields(reply);
+    } else {
+        net_manage(request, reply);
     }
-    td_netlink_state_fields(reply);
+    const bool ok = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply, "ok"));
+    /* Four names can outgrow one console line, so each Pairing gets its own `app` line before the reply. */
+    cJSON *pairings = cJSON_DetachItemFromObjectCaseSensitive(reply, "pairings");
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, pairings)
+    {
+        cJSON *line = cJSON_Duplicate(entry, true);
+        if (line) {
+            cJSON_AddItemToObject(line, "cmd", cJSON_CreateString("net"));
+            cJSON_AddItemToObject(line, "op", cJSON_CreateString("app"));
+            write_reply(line);
+            cJSON_Delete(line);
+        }
+    }
+    cJSON_Delete(pairings);
     write_reply(reply);
     cJSON_Delete(reply);
-    return r.reason ? 1 : 0;
+    cJSON_Delete(request);
+    return ok ? 0 : 1;
 }
 
 const esp_console_cmd_t *td_netlink_console_commands(size_t *count)
 {
     static const esp_console_cmd_t commands[] = {
-        { .command = "net", .help = "net state | pair | forget all: the network app link and its Pairings", .hint = "state",
-          .func = cmd_net },
+        { .command = "net", .help = "net state | list | pair | forget <app_id> | forget all: the network app link and "
+                                    "its Pairings",
+          .hint = "state", .func = cmd_net },
     };
     /* The link messages go with the commands, before the console and the link take requests. */
     static bool added;

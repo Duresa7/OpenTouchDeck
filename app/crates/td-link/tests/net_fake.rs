@@ -340,6 +340,29 @@ fn usb_only_requests_are_refused_over_the_network() {
     );
 }
 
+/// The Pairings a Companion made over Wi-Fi are the ones `net.list` shows over USB, oldest
+/// first, and `net.forget` over USB removes them from the fake Device.
+#[test]
+fn usb_lists_and_forgets_the_wifi_pairings() {
+    use td_link::pairings::{Forget, net_forget, net_list};
+    let deck = MockDeck::v2();
+    deck.set_wifi_capability(true);
+    let device = FakeNetDevice::start(deck);
+    let second = [0x20; 16];
+    pair_with(&device, COMPANION);
+    pair_with(&device, second);
+    let (usb, _usb_incoming) = Session::open(Box::new(device.deck().connect()), quiet()).unwrap();
+    usb.hello(TIMEOUT).unwrap();
+    let listed = net_list(&usb).unwrap();
+    let ids: Vec<[u8; 16]> = listed.pairings.iter().map(|p| p.app_id).collect();
+    assert_eq!(ids, vec![COMPANION, second]);
+    assert_eq!(listed.free, 2);
+    assert_eq!(net_forget(&usb, Forget::One(COMPANION)).unwrap(), 1);
+    assert_eq!(device.paired(), 1);
+    assert_eq!(net_forget(&usb, Forget::All).unwrap(), 1);
+    assert_eq!(device.paired(), 0);
+}
+
 fn image() -> (usize, String) {
     (4096, "ab".repeat(32))
 }

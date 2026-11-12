@@ -353,7 +353,23 @@ impl TestCompanion {
     /// discovery, with the record a real Device sends: its id only while it is pairing. Mock
     /// Devices report the id `020000000001`, so use that serial for USB and Wi-Fi to merge.
     pub fn wifi_device(&self, serial: &str, announce: bool) -> td_link::net::fake::FakeNetDevice {
-        let deck = self.ports.board(serial, BoardKind::Device);
+        self.wifi_board(serial, BoardKind::Device, announce)
+    }
+    /// [`wifi_device`](Self::wifi_device) with the radio build behind it, as `plug_radio_device` plugs it in.
+    pub fn wifi_radio_device(
+        &self,
+        serial: &str,
+        announce: bool,
+    ) -> td_link::net::fake::FakeNetDevice {
+        self.wifi_board(serial, BoardKind::DeviceRadio, announce)
+    }
+    fn wifi_board(
+        &self,
+        serial: &str,
+        kind: BoardKind,
+        announce: bool,
+    ) -> td_link::net::fake::FakeNetDevice {
+        let deck = self.ports.board(serial, kind);
         let fake = td_link::net::fake::FakeNetDevice::start(deck);
         if announce {
             self.wifi_network().announce(&fake);

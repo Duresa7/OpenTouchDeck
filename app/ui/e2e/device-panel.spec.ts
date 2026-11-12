@@ -348,7 +348,8 @@ test('every control in the panel is reachable with Tab and shows the focus ring'
   await page.getByTestId('device-panel-name').focus();
   const reached: string[] = [];
   await expect(page.getByTestId('device-panel-bluetooth-forget')).toHaveCount(2);
-  for (let i = 0; i < 14; i++) {
+  await expect(page.getByTestId('device-panel-pairing-forget')).toHaveCount(2);
+  for (let i = 0; i < 17; i++) {
     const focused = await page.evaluate(() => {
       const el = document.activeElement;
       if (!(el instanceof HTMLElement)) return null;
@@ -370,6 +371,9 @@ test('every control in the panel is reachable with Tab and shows the focus ring'
     'device-panel-wifi-setup-password',
     'device-panel-wifi-setup-join',
     'device-panel-wifi-begin',
+    'device-panel-pairing-forget',
+    'device-panel-pairing-forget',
+    'device-panel-pairings-forget-all',
     'device-panel-bluetooth-switch',
     'device-panel-bluetooth-add',
     'device-panel-bluetooth-forget',

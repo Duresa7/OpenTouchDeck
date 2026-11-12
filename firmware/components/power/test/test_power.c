@@ -1419,3 +1419,50 @@ TEST_CASE("a dark screen in photo idle mode shows no face, and a touch lights it
     TEST_ASSERT_TRUE(power_idle_face(NULL));
     expect_write_count(0);
 }
+
+TEST_CASE("a wake lights a dark screen on the next read, eats nothing and starts the idle clock over", "[power]")
+{
+    fresh();
+    const int64_t t = go_dark(T0, 5);
+    TEST_ASSERT_EQUAL(ESP_OK, power_wake());
+    expect_passes(sample(false), t + SEC);
+    expect_write_count(1);
+    expect_write(0, LIT, true);
+    power_info_t info = info_at(t + SEC);
+    TEST_ASSERT_EQUAL(POWER_ACTIVE, info.state);
+    expect_counters(&info, 0, 1, 1, 0);
+
+    /* The wake was a touch for the idle clock: the screen stays lit for the whole timeout from it. */
+    writes_clear();
+    expect_goes_dark_at(t + SEC + 10 * MS, t + 6 * SEC);
+
+    /* A wake that lands on the same read as a tap on the dark screen leaves the tap to wake it, eaten, with one write.
+     * A wake on a lit screen writes nothing, and a tap after it passes. */
+    writes_clear();
+    expect_passes(sample(false), t + 7 * SEC);
+    writes_clear();
+    TEST_ASSERT_EQUAL(ESP_OK, power_wake());
+    expect_eaten(sample(true), t + 8 * SEC);
+    expect_eaten(sample(false), t + 8 * SEC + 10 * MS);
+    expect_write_count(1);
+    writes_clear();
+    TEST_ASSERT_EQUAL(ESP_OK, power_wake());
+    expect_passes(sample(false), t + 9 * SEC);
+    expect_write_count(0);
+    expect_passes(sample(true), t + 9 * SEC + 10 * MS);
+    expect_passes(sample(false), t + 9 * SEC + 20 * MS);
+}
+
+TEST_CASE("a wake takes the idle face down without eating the next touch", "[power]")
+{
+    fresh();
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_photo_idle(true, 10, T0));
+    expect_passes(sample(false), T0 + 10 * SEC);
+    TEST_ASSERT_TRUE(power_idle_face(NULL));
+    TEST_ASSERT_EQUAL(ESP_OK, power_wake());
+    expect_passes(sample(false), T0 + 11 * SEC);
+    TEST_ASSERT_FALSE(power_idle_face(NULL));
+    expect_write_count(0);
+    expect_passes(sample(true), T0 + 12 * SEC);
+    expect_passes(sample(false), T0 + 12 * SEC + 10 * MS);
+}

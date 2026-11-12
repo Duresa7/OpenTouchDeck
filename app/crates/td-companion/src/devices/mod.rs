@@ -4,6 +4,7 @@
 //! probes run on the scan thread and requests on each Device's actor thread.
 mod actor;
 pub mod console;
+mod pairings;
 mod ports;
 mod scan;
 mod store;

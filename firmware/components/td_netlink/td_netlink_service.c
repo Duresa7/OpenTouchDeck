@@ -1,15 +1,18 @@
 #include "td_netlink_service.h"
 #include "td_netlink_priv.h"
 #include "td_netlink.h"
+#include "td_netlink_manage.h"
 #include "td_link.h"
 #include "td_link_carrier.h"
 #include "td_frame.h"
+#include "power.h"
 #include "ui.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdatomic.h>
 #include <string.h>
 #include "sdkconfig.h"
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -51,9 +54,17 @@ static const char *TAG = "netlink";
 
 typedef enum {
     CMD_NONE,
-    CMD_PAIR,
-    CMD_FORGET,
+    /* net.pair, net.list or net.forget from USB or the console, answered into s_cmd_reply. */
+    CMD_MANAGE,
 } cmd_t;
+
+/* What the Settings panel on the Device asks for. It never waits for the answer. */
+typedef enum {
+    UI_NONE,
+    UI_PAIR,
+    UI_FORGET_ONE,
+    UI_FORGET_ALL,
+} ui_cmd_t;
 
 /* What net.state reports, published by the net task. */
 typedef struct {
@@ -117,10 +128,15 @@ static SemaphoreHandle_t s_cmd_lock;
 static SemaphoreHandle_t s_cmd_done;
 static SemaphoreHandle_t s_save_done;
 static _Atomic cmd_t s_cmd;
-static td_netlink_cmd_result_t s_cmd_result;
-static uint8_t s_cmd_removed;
+static const cJSON *s_cmd_request;
+static cJSON *s_cmd_reply;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static snapshot_t s_snap;
+/* The Pairings as the Settings panel lists them, without keys, and its requests. In PSRAM with the rest of the radio
+ * build's .bss, under s_lock. */
+static EXT_RAM_BSS_ATTR ui_paired_apps_t s_apps;
+static _Atomic ui_cmd_t s_ui_cmd;
+static EXT_RAM_BSS_ATTR char s_ui_app_id[TD_NETLINK_APP_ID_LEN + 1];
 static atomic_bool s_ready;
 static atomic_bool s_cancel;
 static atomic_bool s_running;
@@ -678,6 +694,9 @@ static void show_window(void)
         memcpy(code, w->code, TD_NETLINK_CODE_LEN);
         code[TD_NETLINK_CODE_LEN] = '\0';
         ui_pairing_show(w->bound ? code : NULL, name, left, on_cancel);
+        /* The window is for a person at the Device: the screen lights, the idle face goes down, and the idle clock
+         * starts over each second, so the screen stays lit until the window ends. */
+        power_wake();
 #if CONFIG_TD_QEMU_TEST
         if (w->bound && !s_shown_bound) {
             /* The QEMU test image only: its client reads the code here, since QEMU has no screen. */
@@ -693,6 +712,30 @@ static void show_window(void)
         s_shown_left = left;
     }
     s_screen_ms = now;
+}
+
+/* The panel's copy of the Pairings: ids and names only. Its version moves when the list does. */
+static void publish_apps(void)
+{
+    static EXT_RAM_BSS_ATTR ui_paired_apps_t apps;
+    memset(&apps, 0, sizeof apps);
+    const td_netlink_pairings_t *p = &n->deck.pairings;
+    apps.count = p->count;
+    for (uint8_t i = 0; i < p->count && i < UI_PAIRED_APPS_MAX; i++) {
+        td_netlink_app_id(p->entries[i].companion_id, apps.apps[i].app_id);
+        const size_t len = p->entries[i].name_len > UI_PAIRED_APP_NAME_MAX ? UI_PAIRED_APP_NAME_MAX
+                                                                            : p->entries[i].name_len;
+        memcpy(apps.apps[i].name, p->entries[i].name, len);
+    }
+    portENTER_CRITICAL(&s_lock);
+    if (apps.count != s_apps.count || memcmp(apps.apps, s_apps.apps, sizeof apps.apps) != 0) {
+        memcpy(s_apps.apps, apps.apps, sizeof apps.apps);
+        s_apps.count = apps.count;
+        s_apps.version++;
+    }
+    s_apps.pairing = n->deck.window.open;
+    s_apps.locked_s = (td_netlink_lock_left(&n->deck) + 999) / 1000;
+    portEXIT_CRITICAL(&s_lock);
 }
 
 static void publish(void)
@@ -713,37 +756,141 @@ static void publish(void)
     portENTER_CRITICAL(&s_lock);
     s_snap = snap;
     portEXIT_CRITICAL(&s_lock);
+    publish_apps();
 }
+
+/* ---- Removing Pairings and opening windows ---- */
+
+static void add_base_fields(cJSON *reply, const snapshot_t *snap);
+static snapshot_t snapshot(void);
+
+static void manage_base_fields(void *ctx, cJSON *reply)
+{
+    (void)ctx;
+    publish();
+    const snapshot_t snap = snapshot();
+    add_base_fields(reply, &snap);
+}
+
+/* Before a forget erases anything. A session that ends this way gets no error item, only a close. */
+static void end_sessions(void *ctx, const uint8_t *companion_id)
+{
+    (void)ctx;
+    const bool session = n->conn.state == TD_NETLINK_CONN_SESSION_PROOF || n->conn.state == TD_NETLINK_CONN_READY;
+    if (n->owner.fd >= 0
+        && (!companion_id || (session && !memcmp(n->conn.companion_id, companion_id, TD_NETLINK_COMPANION_ID_LEN)))) {
+        td_netlink_conn_end(&n->conn, &n->deck, TD_NETLINK_END_LOCAL);
+        drop_owner(false, TD_NETLINK_GONE_DEVICE);
+    }
+    if (!companion_id) {
+        drop_waiters();
+    }
+}
+
+static const td_netlink_manage_env_t s_manage_env = {
+    .base_fields = manage_base_fields,
+    .end_sessions = end_sessions,
+};
 
 static void run_command(void)
 {
-    const cmd_t cmd = atomic_exchange(&s_cmd, CMD_NONE);
-    if (cmd == CMD_NONE) {
+    if (atomic_exchange(&s_cmd, CMD_NONE) != CMD_MANAGE) {
         return;
     }
-    td_netlink_cmd_result_t result = TD_NETLINK_CMD_OK;
-    if (cmd == CMD_PAIR) {
-        switch (td_netlink_window_open(&n->deck)) {
-        case TD_NETLINK_REASON_NONE: result = TD_NETLINK_CMD_OK; break;
-        case TD_NETLINK_FULL: result = TD_NETLINK_CMD_FULL; break;
-        default: result = TD_NETLINK_CMD_LOCKED; break;
-        }
-    } else {
-        /* net.forget ends any network session, and a failed erase still ends it. */
-        if (n->owner.fd >= 0) {
-            td_netlink_conn_end(&n->conn, &n->deck, TD_NETLINK_END_LOCAL);
-            drop_owner(false, TD_NETLINK_GONE_DEVICE);
-        }
-        drop_waiters();
-        s_cmd_removed = (uint8_t)n->deck.pairings.count;
-        result = td_netlink_forget(&n->deck) ? TD_NETLINK_CMD_OK : TD_NETLINK_CMD_STORAGE;
-        ESP_LOGI(TAG, "pairings erased%s", result == TD_NETLINK_CMD_OK ? "" : ", but the erase failed");
-    }
-    s_cmd_result = result;
+    td_netlink_manage(&n->deck, s_cmd_request, s_cmd_reply, &s_manage_env);
+    const char *m = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(s_cmd_request, "m"));
+    const bool ok = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(s_cmd_reply, "ok"));
+    ESP_LOGI(TAG, "%s %s", m ? m : "net", ok ? "done" : "refused");
     show_window();
     publish();
     xSemaphoreGive(s_cmd_done);
 }
+
+/* What the Settings panel asked for: the same work as the USB messages. Its outcome shows in the panel's next read. */
+static void run_ui_command(void)
+{
+    const ui_cmd_t cmd = atomic_load(&s_ui_cmd);
+    if (cmd == UI_NONE) {
+        return;
+    }
+    const char *problem = NULL;
+    if (cmd == UI_PAIR) {
+        switch (td_netlink_window_open(&n->deck)) {
+        case TD_NETLINK_REASON_NONE: break;
+        case TD_NETLINK_FULL: problem = UI_PAIRED_APPS_FULL; break;
+        default: problem = "Too many wrong codes. Wait, then pair again."; break;
+        }
+        ESP_LOGI(TAG, "pair new app from the screen%s", problem ? ": refused" : "");
+    } else {
+        uint8_t id[TD_NETLINK_COMPANION_ID_LEN];
+        bool stored = true;
+        if (cmd == UI_FORGET_ALL) {
+            end_sessions(NULL, NULL);
+            stored = td_netlink_forget(&n->deck);
+        } else if (td_netlink_parse_app_id(s_ui_app_id, id)) {
+            uint8_t removed;
+            end_sessions(NULL, id);
+            stored = td_netlink_forget_one(&n->deck, id, &removed);
+        }
+        problem = stored ? NULL : "This Device couldn't save that. Try again.";
+        ESP_LOGI(TAG, "%s from the screen%s", cmd == UI_FORGET_ALL ? "pairings erased" : "pairing erased",
+                 stored ? "" : ", but the erase failed");
+    }
+    portENTER_CRITICAL(&s_lock);
+    s_apps.problem = problem;
+    s_apps.busy = false;
+    portEXIT_CRITICAL(&s_lock);
+    atomic_store(&s_ui_cmd, UI_NONE);
+    show_window();
+    publish();
+}
+
+static void ui_read(ui_paired_apps_t *out)
+{
+    portENTER_CRITICAL(&s_lock);
+    *out = s_apps;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+/* The panel asks one thing at a time: a request while one runs is dropped. */
+static void ui_request(ui_cmd_t cmd, const char *app_id)
+{
+    portENTER_CRITICAL(&s_lock);
+    const bool idle = !s_apps.busy;
+    if (idle) {
+        s_apps.busy = true;
+        s_apps.problem = NULL;
+        if (app_id) {
+            strlcpy(s_ui_app_id, app_id, sizeof s_ui_app_id);
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (idle) {
+        atomic_store(&s_ui_cmd, cmd);
+    }
+}
+
+static void ui_pair(void)
+{
+    ui_request(UI_PAIR, NULL);
+}
+
+static void ui_forget(const char *app_id)
+{
+    ui_request(UI_FORGET_ONE, app_id);
+}
+
+static void ui_forget_all(void)
+{
+    ui_request(UI_FORGET_ALL, NULL);
+}
+
+static const ui_settings_hooks_t s_ui_hooks = {
+    .read = ui_read,
+    .pair = ui_pair,
+    .forget = ui_forget,
+    .forget_all = ui_forget_all,
+};
 
 static void net_task(void *arg)
 {
@@ -755,6 +902,7 @@ static void net_task(void *arg)
     for (;;) {
         write_records();
         run_command();
+        run_ui_command();
         if (atomic_exchange(&s_cancel, false)) {
             td_netlink_window_cancel(&n->deck);
         }
@@ -897,6 +1045,7 @@ esp_err_t td_netlink_start(void)
         return ESP_ERR_NO_MEM;
     }
     atomic_store(&s_running, true);
+    ui_settings_set_hooks(&s_ui_hooks);
     ESP_LOGI(TAG, "listening on %d, %u paired", TD_NETLINK_PORT, (unsigned)n->deck.pairings.count);
     return ESP_OK;
 }
@@ -911,60 +1060,52 @@ static snapshot_t snapshot(void)
     return snap;
 }
 
-void td_netlink_state_fields(cJSON *reply)
+/* listening, port, ble and session: the net.state fields the deck doesn't hold. */
+static void add_base_fields(cJSON *reply, const snapshot_t *snap)
 {
-    const snapshot_t snap = snapshot();
-    cJSON_AddBoolToObject(reply, "listening", snap.listening);
+    cJSON_AddBoolToObject(reply, "listening", snap->listening);
     cJSON_AddNumberToObject(reply, "port", TD_NETLINK_PORT);
     cJSON_AddBoolToObject(reply, "ble", false);
-    if (snap.session) {
-        static const char digits[] = "0123456789abcdef";
-        char app_id[2 * TD_NETLINK_COMPANION_ID_LEN + 1];
-        for (size_t i = 0; i < TD_NETLINK_COMPANION_ID_LEN; i++) {
-            app_id[2 * i] = digits[snap.companion_id[i] >> 4];
-            app_id[2 * i + 1] = digits[snap.companion_id[i] & 15];
-        }
-        app_id[sizeof app_id - 1] = '\0';
+    if (snap->session) {
+        char app_id[TD_NETLINK_APP_ID_LEN + 1];
+        td_netlink_app_id(snap->companion_id, app_id);
         cJSON *session = cJSON_AddObjectToObject(reply, "session");
         cJSON_AddStringToObject(session, "app_id", app_id);
-        cJSON_AddStringToObject(session, "app_name", snap.name);
+        cJSON_AddStringToObject(session, "app_name", snap->name);
         cJSON_AddStringToObject(session, "carrier", "wifi");
-        cJSON_AddNumberToObject(session, "since_ms", snap.since_ms);
+        cJSON_AddNumberToObject(session, "since_ms", snap->since_ms);
     } else {
         cJSON_AddNullToObject(reply, "session");
     }
+}
+
+void td_netlink_state_fields(cJSON *reply)
+{
+    const snapshot_t snap = snapshot();
+    add_base_fields(reply, &snap);
     cJSON_AddNumberToObject(reply, "paired", snap.paired);
     cJSON_AddBoolToObject(reply, "pairing", snap.pairing);
     cJSON_AddNumberToObject(reply, "pair_failures", snap.pair_failures);
     cJSON_AddNumberToObject(reply, "locked_ms", snap.locked_ms);
 }
 
-/* Hands the net task one command and waits for it. Callers take turns on the lock. */
-static td_netlink_cmd_result_t command(cmd_t cmd, uint8_t *removed)
+bool td_netlink_manage_request(const cJSON *request, cJSON *reply)
 {
     if (!atomic_load(&s_running) || xSemaphoreTake(s_cmd_lock, pdMS_TO_TICKS(COMMAND_WAIT_MS)) != pdTRUE) {
-        return TD_NETLINK_CMD_DOWN;
+        return false;
     }
     xSemaphoreTake(s_cmd_done, 0);
-    atomic_store(&s_cmd, cmd);
-    const bool done = xSemaphoreTake(s_cmd_done, pdMS_TO_TICKS(COMMAND_WAIT_MS)) == pdTRUE;
+    s_cmd_request = request;
+    s_cmd_reply = reply;
+    atomic_store(&s_cmd, CMD_MANAGE);
+    bool done = xSemaphoreTake(s_cmd_done, pdMS_TO_TICKS(COMMAND_WAIT_MS)) == pdTRUE;
     if (!done) {
-        atomic_store(&s_cmd, CMD_NONE);
-    }
-    const td_netlink_cmd_result_t result = done ? s_cmd_result : TD_NETLINK_CMD_DOWN;
-    if (removed) {
-        *removed = result == TD_NETLINK_CMD_OK ? s_cmd_removed : 0;
+        /* Take the command back. If the net task already has it, it is writing the reply: wait for it to finish. */
+        cmd_t expected = CMD_MANAGE;
+        if (!atomic_compare_exchange_strong(&s_cmd, &expected, CMD_NONE)) {
+            done = xSemaphoreTake(s_cmd_done, portMAX_DELAY) == pdTRUE;
+        }
     }
     xSemaphoreGive(s_cmd_lock);
-    return result;
-}
-
-td_netlink_cmd_result_t td_netlink_pair(void)
-{
-    return command(CMD_PAIR, NULL);
-}
-
-td_netlink_cmd_result_t td_netlink_forget_all(uint8_t *removed)
-{
-    return command(CMD_FORGET, removed);
+    return done;
 }

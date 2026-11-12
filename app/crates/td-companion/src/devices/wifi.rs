@@ -9,7 +9,7 @@ use super::{
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
@@ -306,6 +306,9 @@ pub struct WifiPairing {
     pub paired_ms: u64,
     /// Why the last Wi-Fi connection failed, or `null`.
     pub problem: Option<String>,
+    /// This Companion asked the Device to forget it and hasn't heard back. The key stays until the Device answers
+    /// or no longer lists this Companion.
+    pub removing: bool,
 }
 
 /// A Device found on the LAN.
@@ -337,6 +340,8 @@ pub(super) struct WifiState {
     attempts: Mutex<BTreeMap<String, Arc<Mutex<Attempt>>>>,
     /// The `paired` count the last discovery saw at each address.
     advertised: Mutex<BTreeMap<String, Option<u8>>>,
+    /// Per Device, the apps whose `net.forget` went unanswered (`pairings.rs`).
+    pub(super) forgetting: Mutex<BTreeMap<DeviceId, BTreeSet<CompanionId>>>,
     pub(super) wake: super::Wake,
 }
 
@@ -506,7 +511,7 @@ impl Inner {
         }
     }
 
-    fn companion_id(&self) -> CompanionId {
+    pub(super) fn companion_id(&self) -> CompanionId {
         let mut companion = self.wifi.companion.lock();
         *companion.get_or_insert_with(|| {
             let mut id = [0u8; 16];
@@ -979,6 +984,7 @@ impl super::DeviceManager {
                 confirmed: r.confirmed,
                 paired_ms: r.paired_ms,
                 problem: r.problem.clone(),
+                removing: self.inner.removing_here(device),
             })
             .collect()
     }

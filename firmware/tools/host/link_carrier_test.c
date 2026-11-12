@@ -739,8 +739,8 @@ static void test_network_allowlist(void)
     CHECK(td_link_messages_add(net, 1) == ESP_ERR_NO_MEM);
 
     static const char *const refused[] = {
-        "update.begin", "update.end", "net.pair", "net.forget", "wifi.set", "wifi.forget", "store.wipe", "reboot",
-        "v2.unknown",
+        "update.begin", "update.end", "net.pair", "net.list", "net.forget", "wifi.set", "wifi.forget", "store.wipe",
+        "reboot", "v2.unknown",
     };
     for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
         char json[64];
