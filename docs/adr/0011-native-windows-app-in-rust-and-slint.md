@@ -29,6 +29,8 @@ Native CI, a signing-ready release pipeline and faster PR checks accompany the r
 
 ## Milestones
 
+Tracked in #359.
+
 - **M0:** groundwork.
 - **M1:** vertical slice: tray, window inside the Companion, Home, About, Mica, accent, typography, contrast, text scaling, minimum size, Windows CI screenshots and RAM.
 - **M2:** first-run setup and Settings.
