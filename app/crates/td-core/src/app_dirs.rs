@@ -56,6 +56,10 @@ impl Dirs {
     pub fn sources_config(&self) -> PathBuf {
         self.config.join("sources.json")
     }
+
+    pub fn app_settings(&self) -> PathBuf {
+        self.config.join("app-settings.json")
+    }
 }
 
 #[cfg(test)]

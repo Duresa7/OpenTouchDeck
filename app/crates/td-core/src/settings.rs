@@ -3,6 +3,38 @@ use serde_json::Value;
 
 use crate::layout::Orientation;
 
+/// Preferences for the app on this PC, separate from a Device's [`Settings`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppSettings {
+    pub automatic_update_checks: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            automatic_update_checks: true,
+        }
+    }
+}
+
+impl AppSettings {
+    /// Only a missing file uses defaults. An unreadable or corrupt preference must
+    /// not silently re-enable network requests. Callers should surface the error.
+    pub fn load(dirs: &crate::app_dirs::Dirs) -> std::io::Result<Self> {
+        match std::fs::read(dirs.app_settings()) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(std::io::Error::other),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn save(&self, dirs: &crate::app_dirs::Dirs) -> std::io::Result<()> {
+        let bytes = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
+        crate::app_dirs::write_atomic(&dirs.app_settings(), &bytes)
+    }
+}
+
 pub const IDLE_TIMEOUT_MIN_S: u32 = 1;
 pub const IDLE_TIMEOUT_MAX_S: u32 = 86400;
 

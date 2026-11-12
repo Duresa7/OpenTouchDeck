@@ -4,7 +4,7 @@
     python app/scripts/release_version.py check [--tag vX.Y.Z]
     python app/scripts/release_version.py bump X.Y.Z
 
-check verifies the version of the three package.json files, the four crate Cargo.toml files and the
+check verifies the version of the three package.json files, the workspace crate Cargo.toml files and the
 workspace crates in app/Cargo.lock, plus an optional release tag.
 bump changes only those version strings, preserving all other bytes.
 """
@@ -21,7 +21,7 @@ VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 JSON_VERSION = re.compile(r'(\A\{\s*(?:"[^"]*"\s*:\s*(?:"[^"]*"|true|false|null|-?[0-9][0-9.eE+-]*)\s*,\s*)*?'
                           r'"version"\s*:\s*")([^"]*)(")')
 TOML_VERSION = re.compile(r'(^\[package\]\r?\n(?:(?!\[)[^\n]*\n)*?version\s*=\s*")([^"]*)(")', re.MULTILINE)
-CRATES = ("td-companion", "td-core", "td-host", "td-link")
+CRATES = ("td-companion", "td-core", "td-host", "td-link", "td-updater")
 LOCK = "app/Cargo.lock"
 PATTERNS = {
     "app/package.json": JSON_VERSION,
