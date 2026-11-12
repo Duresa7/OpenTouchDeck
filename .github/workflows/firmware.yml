@@ -2,14 +2,12 @@ name: firmware
 
 # Pull requests run these checks when Firmware, the schema or the release audit changes. Main reruns them after
 # such a merge, which saves the compiler cache the next pull request restores.
-# The windows release workflow calls this again on the exact commit it releases, with the cache off.
+# The windows release workflow calls this again on the tag it releases, with the cache off.
+# It always checks the commit that started the run and takes no ref from its caller, so no caller can point it
+# at other code (ADR 0007).
 on:
   workflow_call:
     inputs:
-      ref:
-        description: Commit or tag to check (empty means the triggering ref)
-        type: string
-        default: ""
       cache:
         description: Keep the ESP-IDF compiler cache between runs. Pull request and main checks only, never a release
         type: boolean
@@ -32,7 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       # The ESP-IDF image compiles through ccache (IDF_CCACHE_ENABLE=1). Its folder is kept between runs under
@@ -156,7 +153,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       # The ESP-IDF image compiles through ccache (IDF_CCACHE_ENABLE=1). Its folder is kept between runs under
@@ -257,7 +253,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -332,7 +327,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

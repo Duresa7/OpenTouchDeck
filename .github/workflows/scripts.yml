@@ -1,13 +1,9 @@
 name: scripts
 
 # The release and data scripts under app/scripts, and the release signer they call.
+# It always checks the commit that started the run and takes no ref from its caller (ADR 0007).
 on:
   workflow_call:
-    inputs:
-      ref:
-        description: Commit or tag to check (empty means the triggering ref)
-        type: string
-        default: ""
 
 permissions:
   contents: read
@@ -30,7 +26,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:

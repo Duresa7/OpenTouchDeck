@@ -23,20 +23,16 @@ jobs:
     with:
       ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
+  # The Rust, script and Firmware checks take no ref: they check the commit this run started on. For a release
+  # that is the tag. A rehearsal checks the branch it was started from, so start it from the ref it rehearses.
   rust:
     uses: ./.github/workflows/rust.yml
-    with:
-      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
   scripts:
     uses: ./.github/workflows/scripts.yml
-    with:
-      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
   firmware:
     uses: ./.github/workflows/firmware.yml
-    with:
-      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
   installer-lifecycle:
     uses: ./.github/workflows/installer-lifecycle.yml

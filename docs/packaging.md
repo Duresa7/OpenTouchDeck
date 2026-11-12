@@ -102,6 +102,8 @@ To rehearse without publishing, run **windows release** by hand on a commit on `
 gh workflow run release-windows.yml --ref main -f ref=main
 ```
 
+The build, the app checks and the installer lifecycle check use the `ref` input. The Rust, script and Firmware checks take no ref and check the branch the run was started from (`--ref`), so start a rehearsal from the ref it rehearses, as the command above does.
+
 If a tag's run fails for a transient reason, re-run it; the draft job reuses its own draft. If the source needs a fix, ship the next patch version instead of moving the tag.
 
 ## Installer lifecycle check
