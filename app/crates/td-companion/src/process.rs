@@ -6,6 +6,8 @@ fn root() -> std::io::Result<PathBuf> {
     td_core::app_dirs::data_dir().ok_or_else(|| std::io::Error::other("No app data directory."))
 }
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    crate::tray::set_app_identity()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let packaged = args == ["--packaged"];
@@ -92,9 +94,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         initial.runtime.as_ref().unwrap().repair(&value)
     })
     .await?;
-    if !ctx.mock || args.contains(&"--native-desktop") {
-        crate::tray::start(ctx.clone(), packaged);
-    }
+    // Own the tray until shutdown, including early returns during startup.
+    let tray = (!ctx.mock || args.contains(&"--native-desktop"))
+        .then(|| crate::tray::start(ctx.clone(), packaged));
     if written.is_err() {
         ctx.desktop
             .notify("The runtime file failed its check. Restart Open TouchDeck.");
@@ -108,7 +110,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let marker = root.join("startup-initialized");
         if !marker.exists() {
             let startup = ctx.desktop.startup.clone();
-            tokio::task::spawn_blocking(move || startup.set(true)).await??;
+            tokio::task::spawn_blocking(move || startup.initialize_default()).await??;
             std::fs::write(marker, b"1")?;
         }
     }
@@ -143,6 +145,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     crate::serve::serve(listener, crate::api::router(ctx), limits, stop).await;
     companion.shutdown().await;
     maintenance.abort();
+    drop(tray);
     runtime.remove();
     Ok(())
 }

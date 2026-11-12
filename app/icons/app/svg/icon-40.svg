@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+  <!-- Open TouchDeck app icon, 40 px. Fitted to the 40 px grid: body 38 x 26 at y 6, 1 px clear each side, 1 px rim, case edge 2 px, Tiles 10 x 8 with 1 px gaps, 3 px in from the body edge, pager 2 px high. -->
+  <defs>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7d889b"/>
+      <stop offset="0.4" stop-color="#4e5766"/>
+      <stop offset="1" stop-color="#454d5a"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#272c34"/>
+      <stop offset="1" stop-color="#15171a"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0c1826"/>
+      <stop offset="1" stop-color="#081018"/>
+    </linearGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b5889"/>
+      <stop offset="1" stop-color="#2f4975"/>
+    </linearGradient>
+    <linearGradient id="lit" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a4d6ff"/>
+      <stop offset="1" stop-color="#4c9df6"/>
+    </linearGradient>
+  </defs>
+  <!-- case edge -->
+  <rect x="1" y="8" width="38" height="26" rx="5" fill="#5f6b80"/>
+  <!-- rim: the lighter edge that keeps the outline on a dark taskbar -->
+  <rect x="1" y="6" width="38" height="26" rx="5" fill="url(#rim)"/>
+  <!-- black glass -->
+  <rect x="2" y="7" width="36" height="24" rx="4" fill="url(#glass)"/>
+  <!-- screen -->
+  <rect x="3" y="8" width="34" height="22" rx="3" fill="url(#screen)"/>
+  <!-- glow of the lit Tile, one pixel wide -->
+  <rect x="3" y="8" width="12" height="10" rx="2.5" fill="#58a8ff" opacity="0.32"/>
+  <!-- Tiles: 3 x 2, the first one lit -->
+  <rect x="4" y="9" width="10" height="8" rx="1.5" fill="url(#lit)"/>
+  <rect x="15" y="9" width="10" height="8" rx="1.5" fill="url(#tile)"/>
+  <rect x="26" y="9" width="10" height="8" rx="1.5" fill="url(#tile)"/>
+  <rect x="4" y="18" width="10" height="8" rx="1.5" fill="url(#tile)"/>
+  <rect x="15" y="18" width="10" height="8" rx="1.5" fill="url(#tile)"/>
+  <rect x="26" y="18" width="10" height="8" rx="1.5" fill="url(#tile)"/>
+  <!-- pager: an idle dot and the current Page pill -->
+  <rect x="15" y="27" width="2" height="2" rx="1" fill="#606470"/>
+  <rect x="19" y="27" width="6" height="2" rx="1" fill="#58a8ff"/>
+</svg>

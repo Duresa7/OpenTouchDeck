@@ -1,8 +1,51 @@
 use crate::api::{CommonError, Ctx};
 use parking_lot::Mutex;
 use std::sync::Arc;
+#[cfg(any(windows, test))]
+mod routing;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+pub(crate) use windows::Tray;
+#[cfg(not(windows))]
+pub(crate) struct Tray;
+#[cfg(not(windows))]
+impl Drop for Tray {
+    fn drop(&mut self) {}
+}
+
+#[cfg(windows)]
+pub(crate) fn set_app_identity() -> std::io::Result<()> {
+    windows::set_app_identity()
+}
+
+/// The single entry point for opening/restoring the app from the Windows shell.
+/// Both tray activation and the Open menu item call this hook. At native UI
+/// cutover, replace its body with dispatch to the Slint event loop; callers must
+/// not create their own window or launch a second UI implementation.
+/// Until then, launch Electron with the existing packaged/dev override rules.
+#[cfg(windows)]
+pub fn open_app(packaged: bool) -> std::io::Result<()> {
+    let companion = std::env::current_exe()?;
+    let exe = window_exe(
+        packaged,
+        std::env::var_os("TOUCHDECK_WINDOW_BIN"),
+        &companion,
+    );
+    std::process::Command::new(exe).spawn().map(|_| ())
+}
+
+#[cfg(any(windows, test))]
+fn window_exe(
+    packaged: bool,
+    dev_override: Option<std::ffi::OsString>,
+    companion: &std::path::Path,
+) -> std::path::PathBuf {
+    match dev_override {
+        Some(path) if !packaged => path.into(),
+        _ => companion.with_file_name("Open TouchDeck.exe"),
+    }
+}
 
 pub trait BrowserOpener: Send + Sync {
     fn open(&self, url: &str) -> Result<(), CommonError>;
@@ -88,13 +131,16 @@ impl TrayNotifier for NativeNotifier {
         }
     }
 }
-pub(crate) fn start(ctx: Ctx, packaged: bool) {
+pub(crate) fn start(ctx: Ctx, packaged: bool) -> Tray {
     #[cfg(windows)]
-    windows::start(ctx, packaged);
+    {
+        windows::start(ctx, packaged)
+    }
     #[cfg(not(windows))]
     {
         let _ = (ctx, packaged);
         eprintln!("Native tray unavailable on this platform.");
+        Tray
     }
 }
 

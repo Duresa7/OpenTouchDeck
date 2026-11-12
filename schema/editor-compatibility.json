@@ -1,0 +1,13 @@
+[
+  {"name":"unknown diagnostics preserves Bluetooth choice", "sinks":null, "action":{"type":"key","usage":4,"mods":[],"sink":"bluetooth"}, "compatibility":"unknown"},
+  {"name":"offline without diagnostics preserves Bluetooth choice", "sinks":null, "action":{"type":"consumer","usage":205,"sink":"bluetooth"}, "compatibility":"unknown"},
+  {"name":"offline with cached radio diagnostics", "sinks":["link","bluetooth"], "action":{"type":"consumer","usage":205,"sink":"bluetooth"}, "compatibility":"supported"},
+  {"name":"older Firmware uses omitted Companion sink", "sinks":["log"], "action":{"type":"key","usage":4,"mods":[]}, "compatibility":"supported"},
+  {"name":"explicit Companion choice becomes legacy wire default", "sinks":[], "action":{"type":"key","usage":4,"mods":[],"sink":"link"}, "compatibility":"supported"},
+  {"name":"known normal Firmware cannot send Bluetooth", "sinks":["link"], "action":{"type":"key","usage":4,"mods":[],"sink":"bluetooth"}, "compatibility":"unsupported"},
+  {"name":"empty reported sinks is known unsupported", "sinks":[], "action":{"type":"consumer","usage":205,"sink":"bluetooth"}, "compatibility":"unsupported"},
+  {"name":"Bluetooth consumer usage upper boundary", "sinks":["bluetooth"], "action":{"type":"consumer","usage":1023,"sink":"bluetooth"}, "compatibility":"supported"},
+  {"name":"Bluetooth consumer usage exceeds report map", "sinks":["bluetooth"], "action":{"type":"consumer","usage":1024,"sink":"bluetooth"}, "compatibility":"unsupported"},
+  {"name":"unknown diagnostics cannot widen report map", "sinks":null, "action":{"type":"consumer","usage":1024,"sink":"bluetooth"}, "compatibility":"unsupported"},
+  {"name":"Companion media supports wider consumer usages", "sinks":[], "action":{"type":"consumer","usage":1024}, "compatibility":"supported"}
+]

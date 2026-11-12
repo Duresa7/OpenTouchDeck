@@ -673,7 +673,7 @@ async fn an_orientation_change_that_fails_after_the_put_still_reads_the_layout_a
 }
 
 #[tokio::test]
-async fn control_layout_reports_unsupported_firmware_and_a_failed_read() {
+async fn control_layout_reports_unsupported_firmware_and_recovers_after_an_abandoned_read() {
     use td_companion::devices::{ControlLayout, ControlLayoutUnavailable};
     let unavailable = |reason| ControlLayout::Unavailable { reason };
     let td = TestCompanion::start().await;
@@ -685,24 +685,30 @@ async fn control_layout_reports_unsupported_firmware_and_a_failed_read() {
     .await;
     let id = td.plug_media_device("mock0001").await;
     let layout = Layout::parse(include_bytes!("../../../../schema/examples/media.json")).unwrap();
+    let hellos = || {
+        td.deck(id.as_str())
+            .received()
+            .iter()
+            .filter(|r| r["m"] == "hello")
+            .count()
+    };
+    let before = hellos();
     td.deck(id.as_str()).lose_sent_chunks([0; 5]);
     assert_eq!(
         td.wait(&push(&td, &id, &layout).await).await.state,
         JobState::Succeeded
     );
+    // An abandoned read closes its session; reconnect reads the committed Layout again.
     td.until(|td| {
-        td.device(&id).unwrap().control_layout == unavailable(ControlLayoutUnavailable::ReadFailed)
+        hellos() > before
+            && matches!(
+                td.device(&id).unwrap().control_layout,
+                ControlLayout::Matches { .. }
+            )
     })
     .await;
-    assert_eq!(
-        td.wait(&push(&td, &id, &layout).await).await.state,
-        JobState::Succeeded
+    assert!(
+        hellos() > before,
+        "the abandoned read required a fresh session"
     );
-    td.until(|td| {
-        matches!(
-            td.device(&id).unwrap().control_layout,
-            ControlLayout::Matches { .. }
-        )
-    })
-    .await;
 }

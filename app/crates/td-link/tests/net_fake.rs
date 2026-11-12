@@ -576,3 +576,87 @@ fn the_bluetooth_keyboard_refuses_every_request_over_wifi() {
     assert!(!deck.ble_enabled());
     assert_eq!(deck.ble_bonds().len(), 1);
 }
+
+#[test]
+fn a_layout_read_finishes_below_the_record_reserve_and_next_transfer_is_refused() {
+    use td_link::net::wire::{COUNTER_LIMIT, RECORD_RESERVE};
+    let device = fake();
+    let paired = pair_with(&device, COMPANION);
+    let layout = Layout::parse(include_bytes!("../../../../schema/examples/dev.json")).unwrap();
+    {
+        let (session, _) = session(&device, &paired.credential);
+        xfer::put_layout(&session, Orientation::Landscape, &layout).unwrap();
+    }
+    let start = COUNTER_LIMIT - RECORD_RESERVE;
+    device.skip_next_session(start);
+    let mut carrier = connect_when_free(&device, &paired.credential);
+    carrier.skip_records(start);
+    let (session, _) = Session::over(Box::new(carrier), quiet()).unwrap();
+    assert_eq!(
+        xfer::get_layout(&session, Orientation::Landscape)
+            .unwrap()
+            .data,
+        layout.to_canonical_json()
+    );
+    assert!(
+        session.transfer().is_err(),
+        "a new operation needs the reserve"
+    );
+}
+
+#[test]
+fn abandoning_a_transfer_releases_the_real_network_carrier() {
+    let device = fake();
+    let paired = pair_with(&device, COMPANION);
+    let (session, _) = session(&device, &paired.credential);
+    let mut transfer = session.transfer().unwrap();
+    transfer
+        .begin(|| {
+            session.call(
+                &json!({"m":"icon.put", "id":"0000000000000001",
+        "bytes": xfer::ICON_BYTES, "crc32": 0}),
+                TIMEOUT,
+            )
+        })
+        .unwrap();
+    drop(transfer);
+    assert!(!session.is_open());
+    let end = Instant::now() + TIMEOUT;
+    while device.session().is_some() && Instant::now() < end {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(device.session(), None);
+    let (next, _) = self::session(&device, &paired.credential);
+    assert!(next.hello(TIMEOUT).unwrap().is_deck());
+    assert!(device.deck().icons().is_empty());
+}
+
+#[test]
+fn an_admitted_transfer_cannot_cross_the_hard_record_limit() {
+    use td_link::net::wire::{COUNTER_LIMIT, RECORD_RESERVE};
+    let device = fake();
+    let paired = pair_with(&device, COMPANION);
+    let start = COUNTER_LIMIT - RECORD_RESERVE;
+    device.skip_next_session(start);
+    let mut carrier = connect_when_free(&device, &paired.credential);
+    carrier.skip_records(start);
+    let (session, _) = Session::over(Box::new(carrier), quiet()).unwrap();
+    let mut transfer = session.transfer().unwrap();
+    let opened = transfer
+        .begin(|| {
+            session.call(
+                &json!({"m":"icon.put",
+        "id":"0000000000000001", "bytes":xfer::ICON_BYTES, "crc32":0}),
+                TIMEOUT,
+            )
+        })
+        .unwrap();
+    assert!(opened.ok);
+    // Heartbeats share admission, but never extend either key's hard limit.
+    for _ in 1..RECORD_RESERVE {
+        session.call(&json!({"m":"ping"}), TIMEOUT).unwrap();
+    }
+    assert!(session.call(&json!({"m":"ping"}), TIMEOUT).is_err());
+    drop(transfer);
+    assert!(!session.is_open());
+}

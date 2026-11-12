@@ -150,6 +150,40 @@ for each key report the engine emits, so the app can type the keys on the PC.
 `dashboard.set` fills a dashboard page with up to 8 rows. The deck draws them on
 its next 100 ms redraw.
 
+### Transfers
+
+A transfer is the one open bulk move on the link: a Layout or icon put, a
+Layout get, a firmware update, a v2 Asset put or an idle picture put. Chunk
+sizes, windows, retransmissions and the CRC stay in `td_xfer`. One module,
+`td_link_core/include/td_transfer.h`, owns everything else about it:
+
+- **The Carrier session.** The transfer records the carrier connection whose
+  request opened it, the carrier and its generation, which `td_link.c` supplies.
+  Chunk and ack frames from any other connection are dropped. When that
+  connection ends, the next link turn cuts the transfer.
+- **What it holds.** A put's or get's PSRAM buffer, a running firmware update
+  and an Asset upload in flight are released together, by one `td_transfer_drop`
+  or `td_transfer_close`: when the transfer finishes, is replaced by a new
+  open, goes 2 seconds without a chunk (5 for a get), or its connection ends.
+  A selection of a protocol drops a v2 Asset or picture upload.
+- **Effects.** The heap, the update and Asset writers, the carrier session, the
+  idle face, the clock and the wire sit behind `td_transfer_ports_t`.
+  `td_link_transfer.c` wires the Device's.
+
+The message handlers in `td_link_files.c` still check a request and decide
+whether to open one, then call `td_transfer_begin_buffered` or
+`td_transfer_begin_streamed` and `td_transfer_arm`. They keep what they remember
+about the request (the file path, the icon id, the picture's hash) in their own
+state. `test_link_carrier.py` runs the production link, `td_link_transfer.c` and
+`td_transfer.c` against counting fakes of those effects.
+
+Three boundaries were considered. Moving only the origin bookkeeping from
+`td_link.c` would still leave the release of buffers, updates and Assets in
+`td_link_files.c` unobserved. A transfer object per kind would repeat the cut,
+idle and replace rules six times. One module that owns the session and the
+resources, with the handlers outside it, puts every release path behind one
+interface and changes no handler's reply.
+
 The local verification harness provides `link hello`, `link ping --count 100`,
 `link state`, `link raw --hex <frame>`, and `link selftest`. `link scenario <file>`
 sends timed console lines and binary frames through one port handle. Console
@@ -611,7 +645,8 @@ What the radio build does:
 - Each carrier counts its ended connections. A request that waited in the link
   while its session ended is not handled, a reply or event for an ended session
   is dropped, and a transfer moves only on the connection that opened it: other
-  carriers' chunks are dropped, and the transfer is cut when its session ends.
+  carriers' chunks are dropped, and the transfer is cut when its session ends
+  (see [Transfers](#transfers)).
 - 30 seconds after the station starts, the log reports the steady-state
   internal heap against the 24 KB floor (`CONFIG_TD_RADIO_INTERNAL_FLOOR`):
   `radio: steady free_internal=N largest_internal=N floor=24576`. Below the
@@ -944,13 +979,17 @@ and one firmware build first, which fetches cJSON into
 build, with the other host tests.
 
 `python -B firmware/tools/test_link_carrier.py` compiles the production
-`td_link.c` and message dispatcher with host stand-ins for FreeRTOS, the console
-and the rest of the Device, from `firmware/tools/host/link/`. It sends link
+`td_link.c`, message dispatcher and transfer (`td_link_transfer.c`,
+`td_transfer.c`) with host stand-ins for FreeRTOS, the console and the rest of
+the Device, from `firmware/tools/host/link/`. It sends link
 messages through the USB console's frame handler and through a fake carrier, and
 checks which carrier each reply and event leaves on, the USB wire bytes, and the
-online state per carrier, that an ended session's queued request and reply go
-nowhere, and that a transfer takes chunks only from the connection that opened
-it. It also runs the production Device name check against
+online state per carrier, and that an ended session's queued request and reply go
+nowhere. It also drives chunk and ack frames through the production link into
+the transfer, with counting fakes for the heap, the firmware update, the Asset
+upload and the idle face: a transfer takes chunks only from the connection that
+opened it, and its buffer, update or Asset upload is released when it ends,
+is replaced, goes idle or its connection is cut. It also runs the production Device name check against
 [name-vectors-v2.json](../schema/protocol/name-vectors-v2.json) and sends each
 refused name in `v2.name.set`, which must answer `args`. It needs a C compiler,
 `cl` from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere, and one firmware build first,
@@ -980,6 +1019,23 @@ rules. It runs the `management` vector's USB steps through `net.list`,
 `net.pair` and `net.forget` and checks each answer exactly, then forgetting
 one app among four, the `args` refusals and a failed erase. It needs `IDF_PATH` and a C compiler, `cl`
 from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere.
+
+The TCP lifecycle lives in `td_netlink_core/td_netlink_tcp.c`. The Device's
+`td_netlink_service.c` supplies nonblocking socket read/write/close, writable
+waiting, and link receive/session callbacks; the core's environment supplies
+time. Accepted descriptors belong to the lifecycle through owner, waiter and
+terminal-drain states until one final close. The service keeps the listener,
+FreeRTOS outgoing queue and link generation checks. The same host command
+exercises fragmented reads and writes, takeover, refusal with a peer reset,
+exhausted closer slots, write deadlines, record delivery and record-limit closing.
+The 100 ms refusal and drain deadlines and four closer slots stay unchanged.
+
+Three boundaries were considered: extracting just the closer table would leave
+admission and core resets outside host coverage; a per-socket object would
+still need a separate coordinator for takeover; moving the existing TCP
+coordinator into the portable component keeps those decisions behind one
+interface with the smallest change to the poll loop. QEMU remains necessary:
+a scripted host socket cannot reproduce lwIP's close behaviour.
 
 ## Protocol v2 identity
 

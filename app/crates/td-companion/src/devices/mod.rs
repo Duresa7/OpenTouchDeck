@@ -3,6 +3,18 @@
 //! thread that owns its link session. Blocking `td-link` work never runs on the async runtime:
 //! probes run on the scan thread and requests on each Device's actor thread.
 mod actor;
+mod error;
+mod operations;
+mod settings;
+pub use error::DeviceError;
+pub use operations::Operations;
+pub use pairings::{
+    DevicePairing, DevicePairings, DevicePairingsError, PairingPhase, PairingSnapshot,
+};
+pub use settings::{
+    DeviceSettings, DeviceSettingsPatch, PhotoFramePatch, PhotoFrameSettings, SettingsField,
+    SettingsOutcome, SettingsPatched,
+};
 pub mod console;
 mod pairings;
 mod ports;
@@ -602,6 +614,7 @@ struct Inner {
     actions: OnceLock<ActionHandler>,
     controls: OnceLock<std::sync::Weak<crate::controls::DeviceControls>>,
     wifi: wifi::WifiState,
+    pairing_progress: tokio::sync::watch::Sender<BTreeMap<DeviceId, PairingSnapshot>>,
 }
 impl Inner {
     fn track(&self, thread: std::thread::JoinHandle<()>) {
@@ -620,6 +633,14 @@ impl Inner {
         let mut next = entry.summary.clone();
         change(&mut next);
         if next.link != entry.summary.link {
+            self.pairing_progress.send_if_modified(|all| {
+                if let Some(state) = all.get_mut(id) {
+                    state.stale = true;
+                    true
+                } else {
+                    false
+                }
+            });
             next.control_layout = ControlLayout::default();
             entry.shown = None;
             entry.reported_page = None;
@@ -708,6 +729,7 @@ impl DeviceManager {
                 actions: OnceLock::new(),
                 controls: OnceLock::new(),
                 wifi: wifi::WifiState::default(),
+                pairing_progress: tokio::sync::watch::channel(BTreeMap::new()).0,
             }),
         }
     }
@@ -928,6 +950,9 @@ impl DeviceManager {
             return Err(Forget::Connected);
         }
         reg.devices.remove(id);
+        self.inner.pairing_progress.send_modify(|all| {
+            all.remove(id);
+        });
         self.inner.events.publish(&DeviceRemoved { id: id.clone() });
         self.inner.save(&reg);
         let paired = reg.wifi.contains_key(id);
@@ -1164,3 +1189,6 @@ mod wait_stopped_tests {
         drop(stuck);
     }
 }
+
+#[cfg(test)]
+mod operations_tests;

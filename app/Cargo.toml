@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/td-app", "crates/td-companion", "crates/td-core", "crates/td-host", "crates/td-link"]
+members = ["crates/td-app", "crates/td-companion", "crates/td-core", "crates/td-host", "crates/td-link", "crates/td-updater"]
 
 [workspace.package]
 edition = "2024"

@@ -31,6 +31,12 @@ pub trait FrameReader: Send {
 
 /// The sending half of a [`Carrier`].
 pub trait FrameWriter: Send {
+    /// Checks whether a new operation may start. A transfer calls this once before its
+    /// begin request; its chunks, heartbeat and completion share that admission.
+    fn start_operation(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
     /// Sends one frame or console line, or fails within `window`. A carrier that sends in
     /// pieces checks the window between them, so a closed Session stops the send at once.
     /// A carrier without a console refuses [`Outbound::Line`] with `Unsupported`.

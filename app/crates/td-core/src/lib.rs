@@ -1,4 +1,5 @@
 pub mod app_dirs;
+pub mod editing;
 pub mod frame;
 pub mod layout;
 pub mod live;
@@ -9,7 +10,7 @@ use serde_json::{Map, Value};
 
 pub use frame::{Body, Frame, FrameError, Item, Role, StreamDecoder};
 pub use layout::{Layout, LayoutError, Orientation, Rule};
-pub use settings::Settings;
+pub use settings::{AppSettings, Settings};
 
 pub const PROTOCOL: u32 = 1;
 pub const ICON_PAGE: usize = 32;

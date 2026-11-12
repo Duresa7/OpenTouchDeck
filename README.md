@@ -50,10 +50,15 @@ The packaged app is Windows x64. Linux source builds need a desktop session and 
 - [Firmware](docs/firmware.md)
 - [Layout format](schema/README.md)
 - [Packaging and releases](docs/packaging.md)
+- [Privacy and update checks](docs/PRIVACY.md)
 
 ## License
 
 Open TouchDeck is licensed under the [Apache License 2.0](LICENSE).
+
+## Code signing policy
+
+The Windows programs and installers are not Authenticode-signed yet. The [code signing policy](docs/code-signing.md) says what will be signed, who approves it, where signed builds come from and what the app sends over the network.
 
 ## Icon sources
 

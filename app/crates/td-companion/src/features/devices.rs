@@ -3,50 +3,16 @@ use crate::{
     api::{ApiError, CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req},
     devices::{
         DeviceAdded, DeviceConsole, DeviceEvent, DeviceId, DeviceKeyMirror, DeviceRemoved,
-        DeviceSummary, DeviceUpdated, Forget as Forgotten, LinkState, NewBoard, NewBoardAdded,
-        NewBoardRemoved, PortProbe, Reach, console,
+        DeviceSummary, DeviceUpdated, Forget as Forgotten, NewBoard, NewBoardAdded,
+        NewBoardRemoved, PortProbe, console,
     },
 };
 use axum::http::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use td_core::{Request, Settings};
-use td_link::{
-    LinkError,
-    photo::{self, IdleSettings, PhotoError},
-    wifi::{self, WifiError, WifiPassword},
-};
+use td_link::wifi::{self, WifiError, WifiPassword};
 use ts_rs::TS;
 
-/// How long a settings or name request may take on the link.
-const SETTINGS_TIMEOUT: Duration = Duration::from_secs(2);
-const BRIGHTNESS_MAX: u8 = 100;
-
-#[derive(Debug, thiserror::Error)]
-pub enum DeviceError {
-    #[error("The Device does not exist.")]
-    NotFound,
-    #[error("The Device is not connected.")]
-    NotConnected { link: LinkState },
-    #[error("The Device is connected. Disconnect it first.")]
-    Connected,
-    #[error("The Device didn't reply in time.")]
-    Timeout,
-    #[error("The link to the Device failed: {reason}")]
-    Link { reason: String },
-    #[error(
-        "The link closed before the Device answered, so it isn't known whether it did this. Check the Device, then try again if it didn't: {reason}"
-    )]
-    UnknownOutcome { reason: String },
-    #[error("This needs newer Firmware on the Device.")]
-    NeedsFirmware { field: &'static str },
-    #[error("The Device takes this only over USB. Plug it in with a USB cable.")]
-    UsbOnly,
-    #[error("The console line isn't on the read-only allowlist.")]
-    ConsoleForbidden,
-    #[error(transparent)]
-    Common(#[from] CommonError),
-}
+pub use crate::devices::DeviceError;
 impl ApiError for DeviceError {
     const CODES: &'static [&'static str] = &[
         "device.not_found",
@@ -100,37 +66,6 @@ impl ApiError for DeviceError {
         }
     }
 }
-impl From<Reach> for DeviceError {
-    fn from(reach: Reach) -> Self {
-        match reach {
-            Reach::NotFound => Self::NotFound,
-            Reach::NotConnected(link) => Self::NotConnected { link },
-        }
-    }
-}
-impl From<LinkError> for DeviceError {
-    fn from(error: LinkError) -> Self {
-        match error {
-            LinkError::Timeout(_) => Self::Timeout,
-            LinkError::Unanswered(reason) => Self::UnknownOutcome { reason },
-            error => Self::Link {
-                reason: error.to_string(),
-            },
-        }
-    }
-}
-impl From<PhotoError> for DeviceError {
-    fn from(error: PhotoError) -> Self {
-        match error {
-            PhotoError::Link(error) => error.into(),
-            PhotoError::Invalid(reason) => CommonError::invalid("body", reason).into(),
-            error => Self::Link {
-                reason: error.to_string(),
-            },
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, TS)]
 pub struct DevicePath {
     pub device: DeviceId,
@@ -235,93 +170,9 @@ impl Endpoint for Restart {
     }
 }
 
-/// The Device's settings. v2 fields are `null` on v1 Firmware.
-#[derive(Debug, Serialize, Deserialize, TS)]
-pub struct DeviceSettings {
-    pub idle_timeout_s: u32,
-    /// `landscape` or `portrait`.
-    pub orientation: String,
-    pub name: Option<String>,
-    /// A percentage, 0 to 100.
-    pub brightness: Option<u8>,
-    /// `null` when the Firmware has no photo frame.
-    pub photo_frame: Option<PhotoFrameSettings>,
-}
-/// What the Device shows after `timeout_s` with no touch: pictures from `folder` on this PC, a
-/// new one every `interval_s`, or its clock when no picture comes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct PhotoFrameSettings {
-    pub enabled: bool,
-    /// 10 to 86400.
-    pub timeout_s: u32,
-    /// 5 to 3600.
-    pub interval_s: u32,
-    /// An absolute path to a folder on this PC, `null` until one is chosen.
-    pub folder: Option<String>,
-}
-#[derive(Debug, Default, Clone, Serialize, Deserialize, TS)]
-pub struct PhotoFramePatch {
-    #[serde(default)]
-    pub enabled: Option<bool>,
-    #[serde(default)]
-    pub timeout_s: Option<u32>,
-    #[serde(default)]
-    pub interval_s: Option<u32>,
-    /// An absolute path to an existing folder; `""` clears it.
-    #[serde(default)]
-    pub folder: Option<String>,
-}
-#[derive(Debug, Default, Serialize, Deserialize, TS)]
-pub struct DeviceSettingsPatch {
-    #[serde(default)]
-    pub idle_timeout_s: Option<u32>,
-    #[serde(default)]
-    pub orientation: Option<String>,
-    #[serde(default)]
-    pub name: Option<String>,
-    /// A percentage, 0 to 100.
-    #[serde(default)]
-    pub brightness: Option<u8>,
-    #[serde(default)]
-    pub photo_frame: Option<PhotoFramePatch>,
-}
-#[derive(Debug, Serialize, Deserialize, TS)]
-pub struct SettingsPatched {
-    pub settings: DeviceSettings,
-    /// The Device must restart before an orientation change shows.
-    pub restart_required: bool,
-}
-fn orientation_name(settings: &Settings) -> String {
-    serde_json::to_value(settings.orientation)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .unwrap_or_default()
-}
-/// The v2 fields the Device's Firmware supports: its name, if it speaks protocol 2.
-fn name_if_v2(summary: &DeviceSummary) -> Option<String> {
-    let v2 = summary.firmware.as_ref().is_some_and(|f| f.protocol >= 2);
-    v2.then(|| summary.name.clone()).flatten()
-}
-fn has_photo_frame(summary: &DeviceSummary) -> bool {
-    crate::photos::supports(summary.capabilities.as_ref()).0
-}
-fn photo_frame(ctx: &Ctx, id: &DeviceId, idle: Option<IdleSettings>) -> Option<PhotoFrameSettings> {
-    let idle = idle?;
-    ctx.photos.idle_changed(id, idle);
-    Some(PhotoFrameSettings {
-        enabled: idle.enabled,
-        timeout_s: idle.timeout_s,
-        interval_s: idle.interval_s,
-        folder: ctx.photos.folder(id),
-    })
-}
-fn idle_patch(current: IdleSettings, patch: &PhotoFramePatch) -> IdleSettings {
-    IdleSettings {
-        enabled: patch.enabled.unwrap_or(current.enabled),
-        timeout_s: patch.timeout_s.unwrap_or(current.timeout_s),
-        interval_s: patch.interval_s.unwrap_or(current.interval_s),
-    }
-}
+pub use crate::devices::{
+    DeviceSettings, DeviceSettingsPatch, PhotoFramePatch, PhotoFrameSettings, SettingsPatched,
+};
 pub struct SettingsGet;
 impl Endpoint for SettingsGet {
     const NAME: &'static str = "devices.settings_get";
@@ -333,28 +184,7 @@ impl Endpoint for SettingsGet {
     type Ok = DeviceSettings;
     type Error = DeviceError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        let id = req.path.device;
-        let summary = ctx.devices.get(&id).ok_or(DeviceError::NotFound)?;
-        let photos = has_photo_frame(&summary);
-        let (settings, idle) = ctx
-            .devices
-            .call(&id, move |s| -> Result<_, DeviceError> {
-                let settings: Settings = s
-                    .request(&Request::SettingsGet, SETTINGS_TIMEOUT)?
-                    .fields()
-                    .map_err(LinkError::Reply)?;
-                let idle = photos.then(|| photo::idle_get(s)).transpose()?;
-                Ok((settings, idle))
-            })
-            .await??;
-        let summary = ctx.devices.get(&id).ok_or(DeviceError::NotFound)?;
-        Ok(DeviceSettings {
-            idle_timeout_s: settings.idle_timeout_s,
-            orientation: orientation_name(&settings),
-            name: name_if_v2(&summary),
-            brightness: None,
-            photo_frame: photo_frame(&ctx, &id, idle),
-        })
+        ctx.device_operations().settings_get(&req.path.device).await
     }
 }
 pub struct SettingsPatch;
@@ -368,161 +198,16 @@ impl Endpoint for SettingsPatch {
     type Ok = SettingsPatched;
     type Error = DeviceError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        let id = req.path.device;
-        let patch = req.body;
-        let invalid = |reason| DeviceError::from(CommonError::invalid("body", reason));
-        let orientation = match patch.orientation.as_deref() {
-            None => None,
-            Some("landscape") => Some(td_core::Orientation::Landscape),
-            Some("portrait") => Some(td_core::Orientation::Portrait),
-            Some(_) => return Err(invalid("orientation is landscape or portrait")),
-        };
-        if patch.idle_timeout_s.is_some_and(|t| {
-            !(td_core::settings::IDLE_TIMEOUT_MIN_S..=td_core::settings::IDLE_TIMEOUT_MAX_S)
-                .contains(&t)
-        }) {
-            return Err(invalid("idle_timeout_s is out of range"));
+        let outcome = ctx
+            .device_operations()
+            .settings_patch(&req.path.device, req.body)
+            .await?;
+        if let Some(error) = outcome.error {
+            return Err(error);
         }
-        if patch
-            .name
-            .as_deref()
-            .is_some_and(|n| !td_link::identity::valid_name(n))
-        {
-            return Err(invalid(
-                "name is empty, too long or has control, format or filler characters",
-            ));
-        }
-        if patch.brightness.is_some_and(|b| b > BRIGHTNESS_MAX) {
-            return Err(invalid("brightness is a percentage from 0 to 100"));
-        }
-        // No Firmware reports brightness yet.
-        if patch.brightness.is_some() {
-            return Err(DeviceError::NeedsFirmware {
-                field: "brightness",
-            });
-        }
-        let frame = patch.photo_frame.clone();
-        if let Some(frame) = &frame {
-            if frame
-                .timeout_s
-                .is_some_and(|t| !photo::IDLE_TIMEOUT_S.contains(&t))
-            {
-                return Err(invalid("photo_frame.timeout_s is 10 to 86400"));
-            }
-            if frame
-                .interval_s
-                .is_some_and(|t| !photo::IDLE_INTERVAL_S.contains(&t))
-            {
-                return Err(invalid("photo_frame.interval_s is 5 to 3600"));
-            }
-            if frame
-                .folder
-                .as_deref()
-                .is_some_and(|f| !f.is_empty() && !crate::photos::folder::valid(f))
-            {
-                return Err(invalid(
-                    "photo_frame.folder is not the full path of a folder on this computer",
-                ));
-            }
-        }
-        let summary = ctx.devices.get(&id).ok_or(DeviceError::NotFound)?;
-        if patch.name.is_some() && summary.firmware.as_ref().is_some_and(|f| f.protocol < 2) {
-            return Err(DeviceError::NeedsFirmware { field: "name" });
-        }
-        let photos = has_photo_frame(&summary);
-        if frame.is_some() && !photos {
-            return Err(DeviceError::NeedsFirmware {
-                field: "photo_frame",
-            });
-        }
-        let devices = ctx.devices.clone();
-        let device = id.clone();
-        let idle_frame = frame.clone();
-        let authority = ctx.authority.clone();
-        #[cfg(any(test, feature = "test-hooks"))]
-        let checkpoints = ctx.checkpoints.clone();
-        let (settings, restart_required, idle) = ctx
-            .devices
-            .call(&id, move |s| -> Result<_, DeviceError> {
-                let mut settings: Settings = s
-                    .request(&Request::SettingsGet, SETTINGS_TIMEOUT)?
-                    .fields()
-                    .map_err(LinkError::Reply)?;
-                let mut restart = false;
-                if patch.idle_timeout_s.is_some() || orientation.is_some() {
-                    settings.idle_timeout_s =
-                        patch.idle_timeout_s.unwrap_or(settings.idle_timeout_s);
-                    settings.orientation = orientation.unwrap_or(settings.orientation);
-                    let mut reply = None;
-                    let mut write = || {
-                        #[cfg(any(test, feature = "test-hooks"))]
-                        if orientation.is_some() {
-                            let _ = checkpoints
-                                .pass(crate::checkpoints::Checkpoint::BeforeOrientationPut);
-                        }
-                        reply = Some(s.request(&Request::SettingsPut(settings), SETTINGS_TIMEOUT));
-                        Ok::<_, LinkError>(None)
-                    };
-                    if orientation.is_some() {
-                        authority
-                            .replace(device.as_str(), write)
-                            .map_err(|error| match error {
-                                crate::layouts::authority::ReplaceError::Write(error) => {
-                                    DeviceError::from(error)
-                                }
-                                crate::layouts::authority::ReplaceError::Save(_) => {
-                                    DeviceError::from(CommonError::Internal)
-                                }
-                            })?;
-                    } else {
-                        write()?;
-                    }
-                    let reply = reply.unwrap()?;
-                    let fields = serde_json::Value::Object(reply.fields.clone());
-                    restart = fields["reboot_required"].as_bool().unwrap_or(false);
-                    settings = Settings::from_value(&fields);
-                    #[cfg(any(test, feature = "test-hooks"))]
-                    if orientation.is_some() {
-                        checkpoints
-                            .pass(crate::checkpoints::Checkpoint::AfterOrientationPut)
-                            .map_err(|()| LinkError::Timeout(SETTINGS_TIMEOUT))?;
-                    }
-                }
-                if let Some(name) = patch.name {
-                    let name = s.set_name(&name, SETTINGS_TIMEOUT)?;
-                    devices.named(&device, name);
-                }
-                let idle = match (photos, idle_frame) {
-                    (false, _) => None,
-                    (true, None) => Some(photo::idle_get(s)?),
-                    (true, Some(frame)) => {
-                        let idle = idle_patch(photo::idle_get(s)?, &frame);
-                        Some(photo::idle_set(s, idle)?)
-                    }
-                };
-                Ok((settings, restart, idle))
-            })
-            .await??;
-        if let Some(folder) = frame.and_then(|f| f.folder) {
-            let photos = ctx.photos.clone();
-            let device = id.clone();
-            tokio::task::spawn_blocking(move || {
-                photos.set_folder(&device, (!folder.is_empty()).then_some(folder))
-            })
-            .await
-            .map_err(|_| CommonError::Internal)?
-            .map_err(|_| CommonError::Internal)?;
-        }
-        let summary = ctx.devices.get(&id).ok_or(DeviceError::NotFound)?;
         Ok(SettingsPatched {
-            settings: DeviceSettings {
-                idle_timeout_s: settings.idle_timeout_s,
-                orientation: orientation_name(&settings),
-                name: name_if_v2(&summary),
-                brightness: None,
-                photo_frame: photo_frame(&ctx, &id, idle),
-            },
-            restart_required,
+            settings: outcome.settings,
+            restart_required: outcome.restart_required,
         })
     }
 }

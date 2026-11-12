@@ -1,8 +1,11 @@
 /*
- * The link's carrier seam on the host. The production td_link.c, its message dispatcher td_link_msgs.c, the frame codec
- * and cJSON run unchanged. Frames arrive through the USB console's frame handler, as the console task delivers them,
- * and through a fake carrier. The test plays the link task's turns and checks which carrier each reply and event
- * leaves on, and what `link.state` reports. td_link.c is included so the test can take those turns one at a time.
+ * The link's carrier seam on the host. The production td_link.c, its message dispatcher td_link_msgs.c, the transfer
+ * (td_link_transfer.c and td_transfer.c over td_xfer.c), the frame codec and cJSON run unchanged. Frames arrive
+ * through the USB console's frame handler, as the console task delivers them, and through a fake carrier. The test
+ * plays the link task's turns and checks which carrier each reply and event leaves on, what `link.state` reports,
+ * and what a transfer holds and releases while its connection lasts, replaces it or ends. The heap, the firmware
+ * update, the Asset upload and the idle face are counting fakes (see `fx`). td_link.c is included so the test can take
+ * those turns one at a time.
  */
 #include "td_link.c"
 
@@ -14,6 +17,8 @@
 #include "td_asset.h"
 #include "td_device.h"
 #include "td_recovery.h"
+#include "td_update.h"
+#include "td_xfer.h"
 
 /* test_link_carrier.py builds this test a second time with -DCONFIG_TD_RADIO_BUILD=1, as the radio build sets it. */
 #ifndef CONFIG_TD_RADIO_BUILD
@@ -238,13 +243,68 @@ const char *ui_dashboard_update(const char *page, const ui_dash_row_t *rows, siz
 size_t key_sink_link_next(char *buf, size_t cap) { (void)buf; (void)cap; return 0; }
 void key_sink_link_discard(void) {}
 
-/* The chunk and ack frames the link let through to the transfer. */
-static int g_chunks;
-static int g_acks;
-void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len) { (void)seq; (void)payload; (void)len; g_chunks++; }
-void td_link_files_ack(const uint8_t *payload, size_t len) { (void)payload; (void)len; g_acks++; }
-void td_link_files_service(uint32_t now_ms) { (void)now_ms; }
-void td_link_files_select(void) {}
+/* ---- What a transfer holds, as counting fakes of the Device's heap, update, Asset upload and idle face ---- */
+
+static struct {
+    int allocs, frees;
+    bool fail_alloc;
+    int update_cancels;
+    size_t update_bytes;
+    bool update_refuse;
+    int asset_aborts;
+    size_t asset_bytes;
+    const char *asset_refuse;
+    bool idle_face;
+    uint32_t idle_entry;
+} fx;
+
+void *heap_caps_malloc(size_t size, unsigned caps)
+{
+    (void)caps;
+    if (fx.fail_alloc) {
+        return NULL;
+    }
+    fx.allocs++;
+    return malloc(size);
+}
+
+void heap_caps_free(void *ptr)
+{
+    if (ptr) {
+        fx.frees++;
+    }
+    free(ptr);
+}
+
+void td_update_cancel(void) { fx.update_cancels++; }
+bool td_update_write(const uint8_t *data, size_t len)
+{
+    (void)data;
+    if (fx.update_refuse) {
+        return false;
+    }
+    fx.update_bytes += len;
+    return true;
+}
+void td_asset_upload_abort(void) { fx.asset_aborts++; }
+td_asset_result_t td_asset_upload_write(const uint8_t *data, size_t len)
+{
+    (void)data;
+    if (fx.asset_refuse) {
+        return TD_ASSET_STORAGE;
+    }
+    fx.asset_bytes += len;
+    return TD_ASSET_OK;
+}
+const char *td_asset_result_reason(td_asset_result_t result)
+{
+    return result == TD_ASSET_OK ? "ok" : "storage";
+}
+bool power_idle_face(uint32_t *entry)
+{
+    *entry = fx.idle_entry;
+    return fx.idle_face;
+}
 
 #define HANDLER(name) \
     void name(const cJSON *request, cJSON *reply) { (void)request; td_link_fail(reply, "not on the host"); }
@@ -306,7 +366,7 @@ bool td_recovery_mode(void) { return false; }
 typedef struct {
     td_link_carrier_t carrier;
     bool refuse;
-    int frames;
+    int frames, chunks, acks;
     /* td_link_send_generation for the last frame. */
     uint32_t generation;
     td_frame_t last;
@@ -320,6 +380,8 @@ static bool fake_send(const td_link_carrier_t *carrier, const td_frame_t *frame)
         return false;
     }
     fake->frames++;
+    fake->chunks += frame->type == TD_FRAME_CHUNK;
+    fake->acks += frame->type == TD_FRAME_ACK;
     fake->generation = td_link_send_generation();
     fake->last = *frame;
     memcpy(fake->payload, frame->payload, frame->len);
@@ -362,9 +424,10 @@ static void reset(void)
     s_current = 0;
     s_current_generation = 0;
     s_send_generation = 0;
-    s_transfer = 0;
-    g_chunks = 0;
-    g_acks = 0;
+    /* Whatever the last test left open goes, and the fakes start from nothing. */
+    td_transfer_close(td_link_transfer());
+    td_transfer_init(td_link_transfer(), td_link_transfer()->ports);
+    memset(&fx, 0, sizeof fx);
     g_usb_len = 0;
     g_usb_handler = NULL;
     g_usb_context = NULL;
@@ -415,18 +478,16 @@ static void deliver(void *carrier, const char *json, uint8_t seq)
     send_events();
 }
 
-/* Delivers one chunk (or ack) frame of transfer 1 on a carrier and plays one link task turn. */
-static void deliver_transfer_frame(void *carrier, uint8_t type, uint8_t flags)
+/* Delivers one chunk or ack frame on a carrier and plays one link task turn. */
+static void deliver_frame(void *carrier, uint8_t type, uint8_t flags, const uint8_t *payload, size_t len)
 {
-    static const uint8_t payload[TD_FRAME_CHUNK_HEADER + 1] = { 1, 0, 0, 0x42 };
     uint8_t wire[TD_FRAME_WIRE_MAX];
     uint8_t body[TD_FRAME_BODY_MAX];
-    td_frame_t frame = { .type = type, .seq = 9, .flags = flags,
-                         .len = type == TD_FRAME_ACK ? 3 : (uint16_t)sizeof payload, .payload = payload };
-    const size_t len = td_frame_encode(&frame, wire, sizeof wire);
+    td_frame_t frame = { .type = type, .seq = 9, .flags = flags, .len = (uint16_t)len, .payload = payload };
+    const size_t wire_len = td_frame_encode(&frame, wire, sizeof wire);
     td_frame_t decoded = { 0 };
-    td_frame_result_t result = td_frame_decode_slip(wire, len, body, sizeof body, &decoded);
-    assert(len && result == TD_FRAME_OK);
+    td_frame_result_t result = td_frame_decode_slip(wire, wire_len, body, sizeof body, &decoded);
+    assert(wire_len && result == TD_FRAME_OK);
     (void)result;
     if (carrier == g_usb_context) {
         g_usb_handler(body, 8 + (size_t)decoded.len, g_usb_context);
@@ -670,45 +731,500 @@ static void test_ended_session_gets_nothing(void)
     CHECK(g_usb_len == 0);
 }
 
-static void open_transfer(const cJSON *request, cJSON *reply)
+/* ---- Transfers ---- */
+
+#define CHUNK TD_FRAME_CHUNK_DATA_MAX
+
+static uint32_t number_arg(const cJSON *request, const char *name)
 {
-    (void)request;
-    td_link_transfer_claim();
-    cJSON_AddNumberToObject(reply, "xfer", 1);
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(request, name);
+    return cJSON_IsNumber(item) ? (uint32_t)item->valuedouble : 0;
+}
+
+/* The file handlers (td_link_files.c) open a transfer with these calls after they check a request. These handlers
+ * take the same steps without the Layout, store, update and Asset checks, which need the store and the OTA slots. */
+static void t_put(const cJSON *request, cJSON *reply)
+{
+    td_transfer_t *t = td_link_transfer();
+    const uint32_t bytes = number_arg(request, "bytes");
+    if (!td_transfer_begin_buffered(t, TD_TRANSFER_LAYOUT_PUT, bytes)) {
+        td_link_fail(reply, "no memory");
+        return;
+    }
+    td_transfer_arm(t, false, bytes, number_arg(request, "crc32"));
+    cJSON_AddNumberToObject(reply, "xfer", t->x.id);
+}
+
+static void t_get(const cJSON *request, cJSON *reply)
+{
+    td_transfer_t *t = td_link_transfer();
+    const uint32_t bytes = number_arg(request, "bytes");
+    if (!td_transfer_begin_buffered(t, TD_TRANSFER_GET, bytes)) {
+        td_link_fail(reply, "no memory");
+        return;
+    }
+    for (uint32_t i = 0; i < bytes; i++) {
+        t->buf[i] = (uint8_t)(i * 7);
+    }
+    td_transfer_arm(t, true, bytes, td_xfer_crc32(t->buf, bytes));
+    cJSON_AddNumberToObject(reply, "xfer", t->x.id);
+}
+
+static void t_update(const cJSON *request, cJSON *reply)
+{
+    td_transfer_t *t = td_link_transfer();
+    td_transfer_begin_streamed(t, TD_TRANSFER_UPDATE);
+    td_transfer_arm(t, false, number_arg(request, "bytes"), 0);
+    cJSON_AddNumberToObject(reply, "xfer", t->x.id);
+}
+
+static void t_asset(const cJSON *request, cJSON *reply)
+{
+    td_transfer_t *t = td_link_transfer();
+    if (t->kind != TD_TRANSFER_NONE) {
+        td_link_fail(reply, "busy");
+        return;
+    }
+    td_transfer_begin_streamed(t, TD_TRANSFER_ASSET_PUT);
+    td_transfer_arm(t, false, number_arg(request, "bytes"), 0);
+    cJSON_AddNumberToObject(reply, "xfer", t->x.id);
+}
+
+static void t_photo(const cJSON *request, cJSON *reply)
+{
+    td_transfer_t *t = td_link_transfer();
+    const uint32_t bytes = number_arg(request, "bytes");
+    if (!td_transfer_begin_buffered(t, TD_TRANSFER_PHOTO_PUT, bytes)) {
+        td_link_fail(reply, "no memory");
+        return;
+    }
+    td_transfer_arm(t, false, bytes, 0);
+    t->photo_entry = fx.idle_entry;
+    cJSON_AddNumberToObject(reply, "xfer", t->x.id);
+}
+
+/* xfer.end's front half: another connection's transfer and a wrong id find nothing, and the rest closes. */
+static void t_end(const cJSON *request, cJSON *reply)
+{
+    td_transfer_t *t = td_link_transfer();
+    if (td_transfer_other_origin(t) || t->kind == TD_TRANSFER_NONE || number_arg(request, "xfer") != t->x.id) {
+        td_link_fail(reply, "no transfer with that xfer");
+        return;
+    }
+    td_transfer_close(t);
+}
+
+static const td_link_message_t k_transfer_messages[] = {
+    { "t.put", t_put, false },       { "t.get", t_get, false },     { "t.update", t_update, false },
+    { "t.asset", t_asset, false },   { "t.photo", t_photo, false }, { "t.end", t_end, false },
+};
+
+static void start_transfers(void)
+{
+    start(true);
+    CHECK(td_link_messages_add(k_transfer_messages, sizeof k_transfer_messages / sizeof k_transfer_messages[0])
+          == ESP_OK);
+}
+
+/* Opens a transfer with `message` over a carrier, for `bytes`, and returns its xfer id. */
+static uint8_t open_transfer(void *carrier, const char *message, uint32_t bytes, uint32_t crc32)
+{
+    char json[96];
+    snprintf(json, sizeof json, "{\"m\":\"%s\",\"bytes\":%u,\"crc32\":%u}", message, (unsigned)bytes,
+             (unsigned)crc32);
+    deliver(carrier, json, 1);
+    return td_link_transfer()->x.id;
+}
+
+static void end_transfer(void *carrier, uint8_t xfer)
+{
+    char json[64];
+    snprintf(json, sizeof json, "{\"m\":\"t.end\",\"xfer\":%u}", (unsigned)xfer);
+    deliver(carrier, json, 2);
+}
+
+static void send_chunk_frame(void *carrier, uint8_t xfer, uint16_t idx, const uint8_t *data, size_t len)
+{
+    uint8_t payload[TD_FRAME_PAYLOAD_MAX];
+    payload[0] = xfer;
+    payload[1] = idx & 0xff;
+    payload[2] = idx >> 8;
+    memcpy(payload + TD_FRAME_CHUNK_HEADER, data, len);
+    deliver_frame(carrier, TD_FRAME_CHUNK, 0, payload, TD_FRAME_CHUNK_HEADER + len);
+}
+
+static void send_ack_frame(void *carrier, uint8_t xfer, uint16_t next)
+{
+    const uint8_t payload[3] = { xfer, next & 0xff, next >> 8 };
+    deliver_frame(carrier, TD_FRAME_ACK, TD_FRAME_RESPONSE, payload, sizeof payload);
+}
+
+/* The service half of a link task turn, as link_task runs it after the frame it handled. */
+static void link_turn(void)
+{
+    td_link_files_service((uint32_t)g_now_ms);
+}
+
+/* The next index the last ACK on the fake carrier asked for. */
+static unsigned last_ack_next(void)
+{
+    return g_fake.last.payload[1] | (g_fake.last.payload[2] << 8);
+}
+
+static uint8_t g_data[3 * CHUNK];
+
+static void fill_data(void)
+{
+    for (size_t i = 0; i < sizeof g_data; i++) {
+        g_data[i] = (uint8_t)(i * 31 + 5);
+    }
 }
 
 /* A transfer moves only on the carrier connection that opened it: chunks and acks from another carrier, or from a
- * later session on the same carrier, never reach it, and it stops being live when its session ends. */
+ * later session on the same carrier, never reach it, and it is cut when its session ends. */
 static void test_transfer_belongs_to_its_session(void)
 {
-    static const td_link_message_t open[] = { { "t.open", open_transfer, false } };
-    start(true);
-    CHECK(td_link_messages_add(open, 1) == ESP_OK);
-    deliver_transfer_frame(g_usb_context, TD_FRAME_CHUNK, 0);
-    CHECK(g_chunks == 0 && !td_link_transfer_live());
+    td_transfer_t *t;
+    start_transfers();
+    fill_data();
+    t = td_link_transfer();
+    uint32_t dropped = td_link_state().dropped;
+    send_chunk_frame(g_usb_context, 1, 0, g_data, 1);
+    CHECK(t->kind == TD_TRANSFER_NONE && td_link_state().dropped == dropped + 1 && g_usb_len == 0);
 
     /* Opened over USB: the network session's chunks and acks are dropped, USB's go through. */
-    over_usb("{\"m\":\"t.open\"}", 1);
-    CHECK(td_link_transfer_live());
-    const uint32_t dropped = td_link_state().dropped;
-    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_CHUNK, 0);
-    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_ACK, TD_FRAME_RESPONSE);
-    CHECK(g_chunks == 0 && g_acks == 0 && td_link_state().dropped == dropped + 2);
-    deliver_transfer_frame(g_usb_context, TD_FRAME_CHUNK, 0);
-    CHECK(g_chunks == 1);
+    uint8_t xfer = open_transfer(g_usb_context, "t.put", CHUNK + 1, 0);
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT);
+    g_usb_len = 0;
+    dropped = td_link_state().dropped;
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    send_ack_frame(&g_fake.carrier, xfer, 1);
+    CHECK(t->x.received == 0 && g_fake.frames == 0 && td_link_state().dropped == dropped + 2);
+    send_chunk_frame(g_usb_context, xfer, 0, g_data, CHUNK);
+    CHECK(t->x.received == CHUNK && g_usb_len > 0);
+    g_usb_len = 0;
 
-    /* Opened over the network: USB's chunks are dropped, and once the session ends the transfer is no longer live
-     * and the next session's chunks are dropped too. */
-    over_fake("{\"m\":\"t.open\"}", 2);
-    deliver_transfer_frame(g_usb_context, TD_FRAME_CHUNK, 0);
-    CHECK(g_chunks == 1);
-    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_CHUNK, 0);
-    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_ACK, TD_FRAME_RESPONSE);
-    CHECK(g_chunks == 2 && g_acks == 1 && td_link_transfer_live());
+    /* Opened over the network: USB's chunks and acks are dropped, and once the session ends the transfer is cut and
+     * the next session's frames are dropped too. */
+    xfer = open_transfer(&g_fake.carrier, "t.get", CHUNK / 2, 0);
+    CHECK(t->kind == TD_TRANSFER_GET && fx.frees == 1);
+    link_turn();
+    CHECK(g_fake.chunks == 1);
+    send_ack_frame(g_usb_context, xfer, 1);
+    CHECK(t->x.next == 0);
+    send_ack_frame(&g_fake.carrier, xfer, 1);
+    CHECK(t->x.next == 1);
     td_link_carrier_offline(&g_fake.carrier);
-    CHECK(!td_link_transfer_live());
-    deliver_transfer_frame(&g_fake.carrier, TD_FRAME_CHUNK, 0);
-    CHECK(g_chunks == 2);
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.frees == fx.allocs);
+    dropped = td_link_state().dropped;
+    send_ack_frame(&g_fake.carrier, xfer, 1);
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, 1);
+    CHECK(td_link_state().dropped == dropped + 2);
+}
+
+/* A put takes its chunks in order, answers a duplicate and a gap with the next index it wants, and gives its buffer
+ * back when it ends. */
+static void test_put_chunks_and_end(void)
+{
+    start_transfers();
+    fill_data();
+    td_transfer_t *t = td_link_transfer();
+    const uint32_t bytes = 2 * CHUNK + 10;
+    const uint8_t xfer = open_transfer(&g_fake.carrier, "t.put", bytes, td_xfer_crc32(g_data, bytes));
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT && fx.allocs == 1 && fx.frees == 0 && xfer != 0);
+    CHECK(has(g_fake.payload, "\"ok\":true"));
+
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(g_fake.acks == 1 && g_fake.last.type == TD_FRAME_ACK && g_fake.last.flags == TD_FRAME_RESPONSE);
+    CHECK(g_fake.last.payload[0] == xfer && last_ack_next() == 1);
+    /* A gap and a duplicate. */
+    send_chunk_frame(&g_fake.carrier, xfer, 2, g_data + 2 * CHUNK, 10);
+    CHECK(g_fake.acks == 2 && last_ack_next() == 1);
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(g_fake.acks == 3 && last_ack_next() == 1);
+    send_chunk_frame(&g_fake.carrier, xfer, 1, g_data + CHUNK, CHUNK);
+    send_chunk_frame(&g_fake.carrier, xfer, 2, g_data + 2 * CHUNK, 10);
+    CHECK(g_fake.acks == 5 && last_ack_next() == 3);
+    CHECK(t->x.received == bytes && td_xfer_complete(&t->x) && memcmp(t->buf, g_data, bytes) == 0);
+    /* The wrong xfer id gets no ack. */
+    const uint32_t dropped = td_link_state().dropped;
+    send_chunk_frame(&g_fake.carrier, (uint8_t)(xfer + 1), 0, g_data, 1);
+    CHECK(g_fake.acks == 5 && td_link_state().dropped == dropped + 1);
+
+    end_transfer(&g_fake.carrier, xfer);
+    CHECK(has(g_fake.payload, "\"ok\":true"));
+    CHECK(t->kind == TD_TRANSFER_NONE && t->buf == NULL && fx.allocs == 1 && fx.frees == 1);
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(g_fake.acks == 5);
+}
+
+/* The connection that opened a put ends: the next link turn gives the buffer back, and nothing reaches the next
+ * session. A transfer a USB request opened outlives a network session. */
+static void test_cut_connection_releases_a_put(void)
+{
+    start_transfers();
+    fill_data();
+    td_transfer_t *t = td_link_transfer();
+    const uint8_t xfer = open_transfer(&g_fake.carrier, "t.put", CHUNK + 5, 0);
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT && t->fill == CHUNK && fx.allocs == 1 && fx.frees == 0);
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT);
+
+    td_link_carrier_offline(&g_fake.carrier);
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && t->buf == NULL && t->fill == 0 && fx.frees == 1);
+    CHECK(fx.update_cancels == 0 && fx.asset_aborts == 0);
+    const int acks = g_fake.acks;
+    const uint32_t dropped = td_link_state().dropped;
+    send_chunk_frame(&g_fake.carrier, xfer, 1, g_data, 5);
+    CHECK(g_fake.acks == acks && td_link_state().dropped == dropped + 1);
+    link_turn();
+    CHECK(fx.frees == 1);
+
+    /* Opened over USB, it survives the network session ending. */
+    open_transfer(g_usb_context, "t.put", CHUNK + 5, 0);
+    g_usb_len = 0;
+    td_link_carrier_offline(&g_fake.carrier);
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT && fx.allocs == 2 && fx.frees == 1);
+}
+
+/* A firmware update that was still receiving is cancelled when its connection ends, and is not when it finished. */
+static void test_cut_connection_cancels_an_update(void)
+{
+    start_transfers();
+    fill_data();
+    td_transfer_t *t = td_link_transfer();
+    uint8_t xfer = open_transfer(&g_fake.carrier, "t.update", CHUNK + 3, 0);
+    CHECK(t->kind == TD_TRANSFER_UPDATE && fx.allocs == 0 && t->buf == NULL);
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(fx.update_bytes == CHUNK && last_ack_next() == 1);
+    td_link_carrier_offline(&g_fake.carrier);
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.update_cancels == 1 && fx.frees == 0);
+    link_turn();
+    CHECK(fx.update_cancels == 1);
+
+    /* A refused chunk is not taken, and not acked past. */
+    fx.update_refuse = true;
+    xfer = open_transfer(&g_fake.carrier, "t.update", CHUNK, 0);
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(fx.update_bytes == CHUNK && last_ack_next() == 0 && t->x.received == 0);
+    fx.update_refuse = false;
+
+    /* The image arrived and update.end took it: dropping the transfer is not a cancel. */
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(td_xfer_complete(&t->x) || t->x.received == CHUNK);
+    td_transfer_drop(t);
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.update_cancels == 1);
+}
+
+/* An Asset upload is aborted when its connection ends, and when its sink refuses a chunk, which records why. */
+static void test_asset_upload_is_aborted(void)
+{
+    start_transfers();
+    fill_data();
+    td_transfer_t *t = td_link_transfer();
+    uint8_t xfer = open_transfer(&g_fake.carrier, "t.asset", CHUNK + 1, 0);
+    CHECK(t->kind == TD_TRANSFER_ASSET_PUT && fx.allocs == 0);
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(fx.asset_bytes == CHUNK && last_ack_next() == 1);
+    td_link_carrier_offline(&g_fake.carrier);
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.asset_aborts == 1);
+
+    fx.asset_refuse = "storage";
+    xfer = open_transfer(&g_fake.carrier, "t.asset", CHUNK, 0);
+    const int acks = g_fake.acks;
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(g_fake.acks == acks && t->kind == TD_TRANSFER_NONE && fx.asset_aborts == 2);
+    CHECK(t->asset_end.xfer == xfer && t->asset_end.reason != NULL && strcmp(t->asset_end.reason, "storage") == 0);
+    fx.asset_refuse = NULL;
+
+    /* The next bulk open ends the replay of that end. */
+    open_transfer(&g_fake.carrier, "t.put", CHUNK, 0);
+    CHECK(t->asset_end.xfer == 0 && t->photo_end.xfer == 0);
+}
+
+/* A transfer that stops moving is cut after two seconds, and an update cancelled with it. */
+static void test_idle_transfer_is_cut(void)
+{
+    start_transfers();
+    fill_data();
+    td_transfer_t *t = td_link_transfer();
+    uint8_t xfer = open_transfer(&g_fake.carrier, "t.put", CHUNK + 5, 0);
+    g_now_ms += TD_XFER_IDLE_MS;
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT);
+    /* A chunk is activity. */
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    g_now_ms += TD_XFER_IDLE_MS;
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT);
+    g_now_ms += 1;
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.frees == 1 && fx.update_cancels == 0);
+
+    open_transfer(&g_fake.carrier, "t.update", CHUNK, 0);
+    g_now_ms += TD_XFER_IDLE_MS + 1;
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.update_cancels == 1);
+}
+
+/* A get sends its chunks from the link task, resends the ones nobody acked, and is cut when its connection ends,
+ * it is abandoned, or it ran out of retransmissions. */
+static void test_get_sends_and_is_cut(void)
+{
+    start_transfers();
+    td_transfer_t *t = td_link_transfer();
+    const uint32_t bytes = 2 * CHUNK + 7;
+    uint8_t xfer = open_transfer(&g_fake.carrier, "t.get", bytes, 0);
+    CHECK(t->kind == TD_TRANSFER_GET && t->x.sending && fx.allocs == 1);
+    const int sent = g_fake.frames;
+    link_turn();
+    CHECK(g_fake.chunks == 3 && g_fake.frames == sent + 3);
+    CHECK(g_fake.last.type == TD_FRAME_CHUNK && g_fake.last.payload[0] == xfer && g_fake.last.payload[1] == 2);
+    CHECK(g_fake.last.len == TD_FRAME_CHUNK_HEADER + 7);
+    CHECK(g_fake.last.payload[TD_FRAME_CHUNK_HEADER] == (uint8_t)(2 * CHUNK * 7));
+
+    /* Nothing acked: all three go again after the retry time. */
+    g_now_ms += TD_XFER_RETRY_MS;
+    link_turn();
+    CHECK(g_fake.chunks == 6);
+    send_ack_frame(&g_fake.carrier, xfer, 3);
+    CHECK(t->x.next == 3 && td_xfer_complete(&t->x));
+    g_now_ms += TD_XFER_RETRY_MS;
+    link_turn();
+    CHECK(g_fake.chunks == 6 && t->kind == TD_TRANSFER_GET);
+    /* The Companion that stops talking leaves the buffer open for 5 seconds after its last ack. */
+    g_now_ms += 5000 - TD_XFER_RETRY_MS;
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_GET);
+    g_now_ms += 1;
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.frees == 1);
+
+    /* Its connection ends before it sends: nothing goes out, and the buffer is freed. */
+    open_transfer(&g_fake.carrier, "t.get", bytes, 0);
+    const int chunks = g_fake.chunks;
+    td_link_carrier_offline(&g_fake.carrier);
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && g_fake.chunks == chunks && fx.frees == 2);
+
+    /* Never acked, it stops after five transmissions of each chunk. */
+    open_transfer(&g_fake.carrier, "t.get", CHUNK, 0);
+    for (int i = 0; i < 6 && t->kind == TD_TRANSFER_GET; i++) {
+        link_turn();
+        g_now_ms += TD_XFER_RETRY_MS;
+    }
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.frees == 3 && g_fake.chunks == chunks + TD_XFER_TRANSMISSIONS);
+}
+
+/* Opening a transfer cuts the one that was open and gives back what it held. A refused update begin is the
+ * handler's to check first, so an update that is receiving is never cancelled by it. */
+static void test_a_new_transfer_replaces_the_open_one(void)
+{
+    start_transfers();
+    td_transfer_t *t = td_link_transfer();
+    const uint8_t first = open_transfer(&g_fake.carrier, "t.put", CHUNK, 0);
+    CHECK(fx.allocs == 1 && fx.frees == 0);
+    const uint8_t second = open_transfer(&g_fake.carrier, "t.put", CHUNK, 0);
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT && fx.allocs == 2 && fx.frees == 1 && second != first);
+
+    /* An update begin frees the buffer and does not cancel anything. */
+    open_transfer(&g_fake.carrier, "t.update", CHUNK, 0);
+    CHECK(t->kind == TD_TRANSFER_UPDATE && fx.frees == 2 && fx.update_cancels == 0);
+    /* A put replaces the update, which returns to idle. */
+    open_transfer(&g_fake.carrier, "t.put", CHUNK, 0);
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT && fx.update_cancels == 1 && fx.allocs == 3);
+
+    /* No memory: the transfer that was open is gone all the same, and the failure is the handler's reply. */
+    fx.fail_alloc = true;
+    open_transfer(&g_fake.carrier, "t.put", CHUNK, 0);
+    CHECK(has(g_fake.payload, "\"ok\":false") && t->kind == TD_TRANSFER_NONE && fx.frees == 3);
+    fx.fail_alloc = false;
+
+    /* Xfer ids run from 1 to 255 and wrap. */
+    uint8_t xfer = t->last_id;
+    for (int i = 0; i < 300; i++) {
+        const uint8_t next = open_transfer(&g_fake.carrier, "t.put", 1, 0);
+        CHECK(next == (xfer % 255) + 1 && next != 0);
+        xfer = next;
+    }
+}
+
+/* An end request from another connection finds no transfer, and its chunks are dropped. */
+static void test_end_belongs_to_its_connection(void)
+{
+    start_transfers();
+    fill_data();
+    td_transfer_t *t = td_link_transfer();
+    const uint8_t xfer = open_transfer(g_usb_context, "t.put", CHUNK, 0);
+    g_usb_len = 0;
+    end_transfer(&g_fake.carrier, xfer);
+    CHECK(has(g_fake.payload, "\"ok\":false") && t->kind == TD_TRANSFER_LAYOUT_PUT && fx.frees == 0);
+    const uint32_t dropped = td_link_state().dropped;
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(t->x.received == 0 && td_link_state().dropped == dropped + 1);
+    end_transfer(g_usb_context, xfer);
+    g_usb_len = 0;
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.frees == 1);
+}
+
+/* Selecting a protocol discards an open v2 Asset or picture upload, and leaves a put and an update alone. */
+static void test_protocol_selection_drops_only_v2_uploads(void)
+{
+    start_transfers();
+    td_transfer_t *t = td_link_transfer();
+    open_transfer(&g_fake.carrier, "t.put", CHUNK, 0);
+    td_link_session_reset();
+    CHECK(t->kind == TD_TRANSFER_LAYOUT_PUT && fx.frees == 0);
+    open_transfer(&g_fake.carrier, "t.update", CHUNK, 0);
+    td_link_session_reset();
+    CHECK(t->kind == TD_TRANSFER_UPDATE && fx.update_cancels == 0);
+    td_transfer_close(t);
+    fx.update_cancels = 0;
+
+    open_transfer(&g_fake.carrier, "t.asset", CHUNK, 0);
+    td_link_session_reset();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.asset_aborts == 1);
+    fx.idle_face = true;
+    open_transfer(&g_fake.carrier, "t.photo", CHUNK, 0);
+    const int frees = fx.frees;
+    td_link_session_reset();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.frees == frees + 1);
+}
+
+/* A picture put lasts while the idle face it was admitted under does: the next chunk, or the next link turn, cuts
+ * it and records that it was cut for "idle". */
+static void test_picture_put_follows_the_idle_face(void)
+{
+    start_transfers();
+    fill_data();
+    td_transfer_t *t = td_link_transfer();
+    fx.idle_face = true;
+    fx.idle_entry = 7;
+    uint8_t xfer = open_transfer(&g_fake.carrier, "t.photo", CHUNK + 1, 0);
+    send_chunk_frame(&g_fake.carrier, xfer, 0, g_data, CHUNK);
+    CHECK(t->kind == TD_TRANSFER_PHOTO_PUT && last_ack_next() == 1);
+
+    /* The face came up again: a different entry. */
+    fx.idle_entry = 8;
+    const int acks = g_fake.acks;
+    send_chunk_frame(&g_fake.carrier, xfer, 1, g_data, 1);
+    CHECK(g_fake.acks == acks && t->kind == TD_TRANSFER_NONE && fx.frees == 1);
+    CHECK(t->photo_end.xfer == xfer && strcmp(t->photo_end.failure, "idle") == 0);
+
+    /* The Device woke up between chunks. */
+    xfer = open_transfer(&g_fake.carrier, "t.photo", CHUNK + 1, 0);
+    CHECK(t->kind == TD_TRANSFER_PHOTO_PUT && t->photo_end.xfer == 0);
+    fx.idle_face = false;
+    link_turn();
+    CHECK(t->kind == TD_TRANSFER_NONE && fx.frees == 2);
+    CHECK(t->photo_end.xfer == xfer && strcmp(t->photo_end.failure, "idle") == 0);
 }
 
 static void net_state(const cJSON *request, cJSON *reply)
@@ -1191,6 +1707,16 @@ int main(int argc, char **argv)
     test_carrier_offline();
     test_ended_session_gets_nothing();
     test_transfer_belongs_to_its_session();
+    test_put_chunks_and_end();
+    test_cut_connection_releases_a_put();
+    test_cut_connection_cancels_an_update();
+    test_asset_upload_is_aborted();
+    test_idle_transfer_is_cut();
+    test_get_sends_and_is_cut();
+    test_a_new_transfer_replaces_the_open_one();
+    test_end_belongs_to_its_connection();
+    test_protocol_selection_drops_only_v2_uploads();
+    test_picture_put_follows_the_idle_face();
     test_network_allowlist();
     test_frame_body_encoder();
     test_name_vectors_in_the_validator();
@@ -1207,6 +1733,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "%d checks failed\n", g_failures);
         return 1;
     }
-    printf("link carrier%s: 21 tests passed\n", CONFIG_TD_RADIO_BUILD ? " (radio build)" : "");
+    printf("link carrier%s: 31 tests passed\n", CONFIG_TD_RADIO_BUILD ? " (radio build)" : "");
     return 0;
 }

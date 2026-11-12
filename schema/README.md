@@ -46,6 +46,14 @@ UTF-8, duplicate-member, or integer-form rules. Both return an array of
 `checkLayouts(paths, write)` checks the example files and extra paths, writes
 status lines, and returns the exit code. `ruleKeys` is the set of rule keys.
 
+`editor-compatibility.json` holds shared editor decision cases, consumed by both
+the `td-core` Document tests and the `td-companion` editor sequence tests. A null
+`sinks` means unknown diagnostics; an empty array means known lack of Bluetooth
+support. Offline callers may supply cached diagnostics. These cases also cover
+older Firmware's omitted Companion sink and Bluetooth consumer usage limits.
+They describe app-side compatibility decisions; the Layout conformance examples
+and Firmware's independent validation remain the cross-language format evidence.
+
 ## Reading a layout file
 
 Every reader of a layout, which means this validator, the firmware parser in M2-04,

@@ -3,7 +3,7 @@ mod input;
 use crate::actions::{ActionSpec, ApprovalRequest};
 use crate::api::Events;
 use crate::devices::{DeviceConsole, DeviceId};
-use crate::features::integrations::Controls;
+use crate::integrations::Controls;
 use crate::layouts::LayoutAuthority;
 use crate::live::{StreamKey, stream_source};
 use input::{Input, InputHub, PressGate};
