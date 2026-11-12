@@ -38,8 +38,13 @@ jobs:
         if: inputs.cache
         shell: bash
         run: |
-          echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache" >> "$GITHUB_ENV"
-          echo "CCACHE_MAXSIZE=400M" >> "$GITHUB_ENV"
+          {
+            echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache"
+            echo "CCACHE_MAXSIZE=400M"
+            # ESP-IDF writes a specs file into every new build folder, and ccache would key on that file's time.
+            # Keying on the content of the compiler and its specs files lets one run's cache serve the next.
+            echo "CCACHE_COMPILERCHECK=content"
+          } >> "$GITHUB_ENV"
       - name: Restore the compiler cache
         if: inputs.cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -161,8 +166,13 @@ jobs:
         if: inputs.cache
         shell: bash
         run: |
-          echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache" >> "$GITHUB_ENV"
-          echo "CCACHE_MAXSIZE=400M" >> "$GITHUB_ENV"
+          {
+            echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache"
+            echo "CCACHE_MAXSIZE=400M"
+            # ESP-IDF writes a specs file into every new build folder, and ccache would key on that file's time.
+            # Keying on the content of the compiler and its specs files lets one run's cache serve the next.
+            echo "CCACHE_COMPILERCHECK=content"
+          } >> "$GITHUB_ENV"
       - name: Restore the compiler cache
         if: inputs.cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -264,8 +274,13 @@ jobs:
         if: inputs.cache
         shell: bash
         run: |
-          echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache" >> "$GITHUB_ENV"
-          echo "CCACHE_MAXSIZE=400M" >> "$GITHUB_ENV"
+          {
+            echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache"
+            echo "CCACHE_MAXSIZE=400M"
+            # ESP-IDF writes a specs file into every new build folder, and ccache would key on that file's time.
+            # Keying on the content of the compiler and its specs files lets one run's cache serve the next.
+            echo "CCACHE_COMPILERCHECK=content"
+          } >> "$GITHUB_ENV"
       - name: Restore the compiler cache
         if: inputs.cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
