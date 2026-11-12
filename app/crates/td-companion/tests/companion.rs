@@ -140,7 +140,7 @@ async fn changes_arrive_in_order_and_operations_need_no_session() {
 }
 
 #[tokio::test]
-async fn closing_windows_and_observations_keeps_background_work_running() {
+async fn shutdown_releases_held_keys_before_returning() {
     let mut td = InProcessCompanion::start().await;
     let window = td.handle.clone();
     let observation = window.observe();
@@ -156,10 +156,9 @@ async fn closing_windows_and_observations_keeps_background_work_running() {
         .emit_key(&json!({"type":"kbd","mods":0,"keys":[4]}));
     td.until(|td| td.input_log().iter().any(|entry| entry == "down A"))
         .await;
-    td.drop_owner();
+    td.shutdown().await;
     assert!(td.handle.shutdown_requested());
-    td.until(|td| td.input_log().iter().any(|entry| entry == "up A"))
-        .await;
+    assert!(td.input_log().iter().any(|entry| entry == "up A"));
 }
 
 #[tokio::test]

@@ -595,6 +595,7 @@ struct Inner {
     reg: Mutex<Registry>,
     wake: Wake,
     stop: AtomicBool,
+    threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
     dialogs: AtomicUsize,
     input_gate: Mutex<()>,
     config: OnceLock<Config>,
@@ -603,6 +604,11 @@ struct Inner {
     wifi: wifi::WifiState,
 }
 impl Inner {
+    fn track(&self, thread: std::thread::JoinHandle<()>) {
+        let mut threads = self.threads.lock();
+        threads.retain(|thread| !thread.is_finished());
+        threads.push(thread);
+    }
     fn config(&self) -> &Config {
         self.config.get().expect("the Device manager has started")
     }
@@ -694,6 +700,7 @@ impl DeviceManager {
                 reg: Mutex::new(Registry::default()),
                 wake: Wake::default(),
                 stop: AtomicBool::new(false),
+                threads: Mutex::new(Vec::new()),
                 dialogs: AtomicUsize::new(0),
                 input_gate: Mutex::new(()),
                 config: OnceLock::new(),
@@ -745,21 +752,38 @@ impl DeviceManager {
         }
         self.inner.load_wifi(&mut self.inner.reg.lock());
         let inner = self.inner.clone();
-        std::thread::Builder::new()
-            .name("td-device-scan".into())
-            .spawn(move || scan::run(inner))
-            .expect("the scan thread starts");
+        self.inner.track(
+            std::thread::Builder::new()
+                .name("td-device-scan".into())
+                .spawn(move || scan::run(inner))
+                .expect("the scan thread starts"),
+        );
         let inner = self.inner.clone();
-        std::thread::Builder::new()
-            .name("td-device-wifi".into())
-            .spawn(move || wifi::run(inner))
-            .expect("the Wi-Fi thread starts");
+        self.inner.track(
+            std::thread::Builder::new()
+                .name("td-device-wifi".into())
+                .spawn(move || wifi::run(inner))
+                .expect("the Wi-Fi thread starts"),
+        );
     }
     /// Stops the scan and Wi-Fi threads, which then close every link.
     pub fn stop(&self) {
         self.inner.stop.store(true, Ordering::SeqCst);
         self.inner.wake.kick();
         self.inner.wifi.wake.kick();
+    }
+    /// Blocking: after `stop`, waits for discovery, actors and forwarders, including key release.
+    pub(crate) fn wait_stopped(&self) {
+        loop {
+            // Discovery may register actor threads while its final probe is completing.
+            let threads = std::mem::take(&mut *self.inner.threads.lock());
+            if threads.is_empty() {
+                break;
+            }
+            for thread in threads {
+                let _ = thread.join();
+            }
+        }
     }
     pub(crate) fn control_layout(&self, device: &str, session: Option<u64>, status: ControlLayout) {
         let Some(id) = DeviceId::parse(device) else {

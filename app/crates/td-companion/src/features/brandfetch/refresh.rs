@@ -120,12 +120,20 @@ fn sha(bytes: &[u8]) -> String {
 
 /// Refreshes due logos at start and then every `tick`, by the Companion's wall clock.
 pub(crate) async fn run(ctx: Handle, tick: Duration) {
-    loop {
+    while !ctx.shutdown_requested() {
         let now = ctx.clock.unix_s();
         let work = ctx.clone();
-        let _ =
-            tokio::task::spawn_blocking(move || work.brandfetch.refresh(&work.assets, now)).await;
-        tokio::time::sleep(tick).await;
+        let _ = tokio::task::spawn_blocking(move || {
+            // A queued blocking task can first run after shutdown was requested.
+            if !work.shutdown_requested() {
+                work.brandfetch.refresh(&work.assets, now);
+            }
+        })
+        .await;
+        tokio::select! {
+            _ = ctx.stopping() => break,
+            _ = tokio::time::sleep(tick) => {},
+        }
     }
 }
 
@@ -420,6 +428,12 @@ mod tests {
         status: Mutex<u16>,
         down: Mutex<bool>,
         calls: Mutex<u32>,
+        pause: Mutex<
+            Option<(
+                tokio::sync::oneshot::Sender<()>,
+                std::sync::mpsc::Receiver<()>,
+            )>,
+        >,
     }
     impl client::Http for Arc<Fake> {
         fn get(&self, url: &str, _: Option<&client::ApiKey>) -> Result<client::Response, String> {
@@ -433,6 +447,10 @@ mod tests {
             };
             if let Some(brand) = url.split("/v2/brands/").nth(1) {
                 *self.calls.lock() += 1;
+                if let Some((entered, release)) = self.pause.lock().take() {
+                    let _ = entered.send(());
+                    release.recv().unwrap();
+                }
                 let status = *self.status.lock();
                 if status != 200 {
                     return Ok(client::Response {
@@ -475,6 +493,7 @@ mod tests {
             status: Mutex::new(200),
             down: Mutex::new(false),
             calls: Mutex::new(0),
+            pause: Mutex::new(None),
         });
         bf.0.net.write().http = Arc::new(fake.clone());
         bf.save_key("test-api-key".into()).unwrap();
@@ -519,6 +538,66 @@ mod tests {
     fn counts(r: &Rig, now: u64) -> (u32, u32, Vec<String>) {
         let s = r.bf.summary(now);
         (s.logos, s.need_refresh, s.expired)
+    }
+
+    #[tokio::test]
+    async fn shutdown_waits_for_in_flight_refresh_and_starts_no_more() {
+        use crate::companion::{Companion, Config};
+        let r = rig();
+        let first = pick(&r, "example.com");
+        *r.fake.color.lock() = "#0000ff".into();
+        let config = Config::mock(r.dir.path().to_owned());
+        let mut handle = Handle::new(
+            true,
+            r.dir.path(),
+            crate::store::ASSET_STORE_BYTES,
+            Arc::new(crate::actions::FileGrants::new(
+                r.dir.path().join("allowed.json"),
+            )),
+        );
+        handle.brandfetch = r.bf.clone();
+        handle.clock.advance(Duration::from_secs(
+            (T0 + 26 * DAY).saturating_sub(handle.clock.unix_s()),
+        ));
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        *r.fake.pause.lock() = Some((entered, wait));
+        let companion = Companion::launch(handle.clone(), config.devices);
+        tokio::time::timeout(Duration::from_secs(3), started)
+            .await
+            .unwrap()
+            .unwrap();
+        let shutdown = companion.shutdown();
+        tokio::pin!(shutdown);
+        let waited = tokio::time::timeout(Duration::from_millis(100), &mut shutdown)
+            .await
+            .is_err();
+        release.send(()).unwrap();
+        if waited {
+            shutdown.await;
+        }
+        assert!(
+            waited,
+            "shutdown returned while the refresh was still fetching"
+        );
+        assert_eq!(
+            counts(&r, T0 + 26 * DAY).1,
+            0,
+            "provenance is saved before shutdown returns"
+        );
+        let summary = r.bf.summary(T0 + 26 * DAY);
+        let replacement = &summary.replaced_by[&first];
+        assert!(
+            r.assets.has(replacement),
+            "the replacement Asset is saved too"
+        );
+
+        // A request made before the worker gets its first poll must also prevent a refresh.
+        handle.clock.advance(Duration::from_secs(26 * DAY));
+        let before = calls(&r);
+        let companion = Companion::launch(handle, Config::mock(r.dir.path().to_owned()).devices);
+        companion.shutdown().await;
+        assert_eq!(calls(&r), before);
     }
 
     #[test]

@@ -16,7 +16,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -165,6 +165,9 @@ struct Inner {
     links: Links,
     grants: Arc<dyn GrantStore>,
     prompter: Arc<dyn ApprovalPrompter>,
+    stopped: AtomicBool,
+    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    starting: Mutex<()>,
     running: AtomicUsize,
     #[cfg(any(test, feature = "test-hooks"))]
     fake: Option<Arc<FakePrompter>>,
@@ -202,6 +205,9 @@ impl Actions {
             links,
             grants,
             prompter,
+            stopped: AtomicBool::new(false),
+            worker: Mutex::new(None),
+            starting: Mutex::new(()),
             running: AtomicUsize::new(0),
             #[cfg(any(test, feature = "test-hooks"))]
             fake,
@@ -213,16 +219,51 @@ impl Actions {
             }
         }));
         let weak = Arc::downgrade(&inner);
-        std::thread::spawn(move || {
+        *inner.worker.lock() = Some(std::thread::spawn(move || {
             loop {
                 let Some(inner) = weak.upgrade() else { break };
+                if inner.stopped.load(Ordering::SeqCst) {
+                    break;
+                }
                 let actions = Actions(inner);
                 actions.prompt_next();
                 drop(actions);
                 std::thread::sleep(Duration::from_millis(20));
             }
-        });
+        }));
         Self(inner)
+    }
+    pub(crate) fn stop(&self) {
+        self.0.stopped.store(true, Ordering::SeqCst);
+        let pending = {
+            let mut state = self.0.state.lock();
+            state.custom_answers.clear();
+            std::mem::take(&mut state.pending)
+        };
+        for pending in pending {
+            self.0.events.publish(&ApprovalResolved {
+                id: pending.request.id.clone(),
+                answer: Answer::Expired,
+            });
+            if pending.request.spec.kind != "custom" {
+                self.logged(
+                    &pending.request,
+                    "expired",
+                    "Approval expired.".into(),
+                    None,
+                    None,
+                );
+            }
+        }
+    }
+    /// Blocking: waits for the prompt to close and any process start already in progress.
+    /// Commands that have already started keep running.
+    pub(crate) fn wait_stopped(&self) {
+        let worker = self.0.worker.lock().take();
+        if let Some(worker) = worker {
+            let _ = worker.join();
+        }
+        let _starting = self.0.starting.lock();
     }
     pub fn pending(&self) -> Vec<ApprovalRequest> {
         self.0
@@ -408,6 +449,9 @@ impl Actions {
         let _ = self.0.controls.set(module);
     }
     fn press(&self, device: &DeviceId, event: &serde_json::Value) {
+        if self.0.stopped.load(Ordering::SeqCst) {
+            return;
+        }
         let page = event["page"].as_str().unwrap_or_default();
         let tile = event["tile"].as_str().unwrap_or_default();
         let mut request = ApprovalRequest {
@@ -488,6 +532,9 @@ impl Actions {
         request.hash = request.spec.hash();
         let text = prompt::dialog_text(&context, &request.spec);
         let mut state = self.0.state.lock();
+        if self.0.stopped.load(Ordering::SeqCst) {
+            return;
+        }
         if state.pending.iter().any(|p| {
             p.request.device == *device && p.request.page == page && p.request.tile == tile
         }) {
@@ -524,7 +571,11 @@ impl Actions {
         let Some((request, deadline, text)) = next else {
             return;
         };
-        let expired = || self.0.clock.now() >= deadline || Arc::strong_count(&self.0) == 1;
+        let expired = || {
+            self.0.stopped.load(Ordering::SeqCst)
+                || self.0.clock.now() >= deadline
+                || Arc::strong_count(&self.0) == 1
+        };
         let prompted = if expired() {
             Ok(Answer::Expired)
         } else {
@@ -560,6 +611,14 @@ impl Actions {
             ),
         };
         let mut state = self.0.state.lock();
+        // `stop` may have already expired this request while its dialog was closing.
+        if !state
+            .pending
+            .front()
+            .is_some_and(|p| p.request.id == request.id)
+        {
+            return;
+        }
         state.pending.pop_front();
         if request.spec.kind == "custom" {
             state
@@ -581,6 +640,9 @@ impl Actions {
         }
     }
     fn execute(&self, request: ApprovalRequest) {
+        if self.0.stopped.load(Ordering::SeqCst) {
+            return;
+        }
         if self.0.running.fetch_add(1, Ordering::SeqCst) >= 16 {
             self.0.running.fetch_sub(1, Ordering::SeqCst);
             self.logged(&request, "denied", "limits.exceeded".into(), None, None);
@@ -588,13 +650,23 @@ impl Actions {
         }
         let actions = self.clone();
         std::thread::spawn(move || {
+            let starting = actions.0.starting.lock();
+            if actions.0.stopped.load(Ordering::SeqCst) {
+                actions.0.running.fetch_sub(1, Ordering::SeqCst);
+                return;
+            }
             let spec = &request.spec;
             let result = match spec.kind.as_str() {
                 "launch" => td_host::actions::launch(&spec.program, &spec.args, &spec.cwd)
                     .map(|pid| ("started", Some(pid), None)),
                 "open" => td_host::actions::open(&spec.program).map(|()| ("opened", None, None)),
                 _ => {
-                    td_host::actions::run(&spec.command()).map(|exit| ("exited", None, exit.code()))
+                    let child = td_host::actions::command(&spec.command())
+                        .and_then(|mut command| command.spawn());
+                    drop(starting);
+                    child
+                        .and_then(|mut child| child.wait())
+                        .map(|exit| ("exited", None, exit.code()))
                 }
             };
             match result {
@@ -621,6 +693,9 @@ impl td_host::integrations::CommandApproval for Actions {
         };
         let hash = spec.hash();
         let mut state = self.0.state.lock();
+        if self.0.stopped.load(Ordering::SeqCst) {
+            return CommandDecision::Expired;
+        }
         if state.allowed.iter().any(|a| a.hash == hash) {
             return CommandDecision::Approved;
         }
@@ -709,6 +784,72 @@ mod custom_tests {
         while !actions.pending().is_empty() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
+        assert!(actions.pending().is_empty());
+    }
+    #[tokio::test]
+    async fn shutdown_expires_open_approvals_and_refuses_execution() {
+        use crate::companion::{Companion, Config};
+        let dir = tempfile::tempdir().unwrap();
+        let companion = Companion::start(Config::mock(dir.path().to_owned()))
+            .await
+            .unwrap();
+        let handle = companion.handle();
+        let actions = handle.actions();
+        let request = ApprovalRequest {
+            id: "p1".into(),
+            device: DeviceId::parse("mock0001").unwrap(),
+            page: "main".into(),
+            tile: "command".into(),
+            hash: String::new(),
+            spec: ActionSpec {
+                kind: "command".into(),
+                program: if cfg!(windows) { "cmd" } else { "sh" }.into(),
+                args: vec![
+                    if cfg!(windows) { "/C" } else { "-c" }.into(),
+                    "echo ran>runs".into(),
+                ],
+                cwd: dir.path().to_string_lossy().into_owned(),
+                shell: false,
+            },
+            created_ms: crate::now_ms(),
+        };
+        actions.0.state.lock().pending.push_back(Pending {
+            request: request.clone(),
+            deadline: Instant::now() + Duration::from_secs(300),
+            shown: None,
+            text: "Approve command".into(),
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while actions.prompted().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut changes = handle.observe();
+        companion.shutdown().await;
+        assert!(
+            actions.pending().is_empty(),
+            "shutdown must expire an open prompt"
+        );
+        assert!(
+            actions
+                .log(None)
+                .iter()
+                .any(|entry| entry.status == "expired")
+        );
+        assert!(std::iter::from_fn(|| changes.try_recv().ok()).any(|change| matches!(
+            change,
+            crate::companion::Change::ApprovalResolved(resolved) if resolved.id == "p1" && resolved.answer == Answer::Expired
+        )));
+        actions.script(vec![ScriptAnswer::Always]);
+        actions.execute(request);
+        assert_eq!(actions.0.running.load(Ordering::SeqCst), 0);
+        assert!(!dir.path().join("runs").exists());
+        assert_eq!(
+            actions.decision("example.exe", &[]),
+            td_host::approval::CommandDecision::Expired
+        );
         assert!(actions.pending().is_empty());
     }
     #[test]

@@ -611,6 +611,10 @@ impl Inner {
 
     fn apply_wifi(self: &Arc<Self>, id: &DeviceId, address: &Address, probed: WifiProbed) {
         let mut reg = self.reg.lock();
+        // The scan thread may already have removed the actors to close their links.
+        if self.stop.load(Ordering::SeqCst) {
+            return;
+        }
         let tried = |r: &WifiRecord| r.trial.as_ref().unwrap_or(&r.address) == address;
         if !wifi_wanted(&reg, id) || reg.wifi.get(id).is_none_or(|r| !tried(r)) {
             drop(reg);

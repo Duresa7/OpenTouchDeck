@@ -11,9 +11,9 @@
 //! On `RecvError::Lagged`, resubscribe and take a fresh snapshot. Observation is bounded
 //! (1024 changes), has no replay, and never waits for a UI to consume changes.
 //! Operations use typed area handles, with no listener, authentication or JSON frames.
-//! Start and shutdown require a Tokio runtime. Shutdown stops owned async work and signals
-//! the Device, Integration, Live tile and photo workers to finish; links close on their
-//! worker threads. Keep disk-writing or other blocking area operations off the UI thread.
+//! Start and shutdown require a Tokio runtime. Shutdown waits for owned async work, Actions
+//! approval cleanup, in-flight Brandfetch refreshes and Device cleanup. It signals Integration,
+//! Live tile and photo workers to finish. Keep blocking area operations off the UI thread.
 //!
 //! ```no_run
 //! # async fn native_host(data: std::path::PathBuf) -> std::io::Result<()> {
@@ -217,6 +217,7 @@ impl Handle {
     }
     fn stop_workers(&self) {
         if !self.stopped.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            self.actions.stop();
             self.devices.stop();
             self.live.stop();
             self.photos.stop();
@@ -265,12 +266,10 @@ impl Companion {
             work.stop_workers();
         });
         let work = handle.clone();
-        let brandfetch = tokio::spawn(async move {
-            tokio::select! {
-                _ = work.stopping() => {},
-                _ = crate::features::brandfetch::refresh_loop(work.clone(), crate::features::brandfetch::REFRESH_TICK) => {},
-            }
-        });
+        let brandfetch = tokio::spawn(crate::features::brandfetch::refresh_loop(
+            work,
+            crate::features::brandfetch::REFRESH_TICK,
+        ));
         Self {
             handle,
             maintenance,
@@ -280,11 +279,23 @@ impl Companion {
     pub fn handle(&self) -> Handle {
         self.handle.clone()
     }
-    /// Requests shutdown and waits for owned async work to stop. Device threads then close links.
+    /// Requests shutdown and waits for maintenance, any in-flight Brandfetch refresh (including
+    /// Asset and provenance writes), the Actions approval worker, and all Device threads.
+    /// On return, approvals are expired, no more actions can start, Device links are closed,
+    /// forwarders have finished and held keys are released. Already-started commands may keep
+    /// running. Integration, Live tile and photo workers are signalled but are not joined.
+    /// Blocking cleanup runs off the async runtime; `Drop` only requests and signals shutdown.
     pub async fn shutdown(mut self) {
         self.handle.request_shutdown();
+        self.handle.stop_workers();
         let _ = (&mut self.maintenance).await;
         let _ = (&mut self.brandfetch).await;
+        let handle = self.handle.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            handle.actions.wait_stopped();
+            handle.devices.wait_stopped();
+        })
+        .await;
     }
 }
 impl Drop for Companion {

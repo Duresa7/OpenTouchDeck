@@ -52,36 +52,41 @@ pub(super) fn spawn(
     let (presses, taps) = mpsc::sync_channel::<serde_json::Value>(16);
     let action_inner = inner.clone();
     let action_id = id.clone();
-    thread::spawn(move || {
+    inner.track(thread::spawn(move || {
         for event in taps {
             if let Some(handler) = action_inner.actions.get() {
                 handler(&action_id, &event);
             }
         }
-    });
-    thread::Builder::new()
-        .name(format!("td-device-{id}"))
-        .spawn(move || {
-            for job in jobs {
-                job(&session);
-            }
-            session.close();
-        })
-        .expect("the Device thread starts");
-    thread::Builder::new()
-        .name(format!("td-device-{id}-in"))
-        .spawn(move || {
-            forward(
-                &inner,
-                &id,
-                connection,
-                session_id,
-                incoming,
-                mirror,
-                Touches { presses },
-            )
-        })
-        .expect("the Device forwarder starts");
+    }));
+    inner.track(
+        thread::Builder::new()
+            .name(format!("td-device-{id}"))
+            .spawn(move || {
+                for job in jobs {
+                    job(&session);
+                }
+                session.close();
+            })
+            .expect("the Device thread starts"),
+    );
+    let forward_inner = inner.clone();
+    inner.track(
+        thread::Builder::new()
+            .name(format!("td-device-{id}-in"))
+            .spawn(move || {
+                forward(
+                    &forward_inner,
+                    &id,
+                    connection,
+                    session_id,
+                    incoming,
+                    mirror,
+                    Touches { presses },
+                )
+            })
+            .expect("the Device forwarder starts"),
+    );
     Handle {
         connection,
         carrier,
