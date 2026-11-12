@@ -2,6 +2,8 @@
 
 End users download the [Windows x64 installer](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the latest GitHub release and run it. It installs for the current user only and needs no administrator rights, Node, Rust, Python or ESP-IDF.
 
+This page describes the 1.x installer first. Open TouchDeck 2.0 ships as an MSI from a separate pipeline: see [The 2.0 release pipeline](#the-20-release-pipeline). No 1.x release is planned before 2.0, so the 1.x pipeline is frozen.
+
 ## What it installs
 
 The installer is built with [electron-builder](https://www.electron.build/nsis) (NSIS, assisted mode, per user). It always installs to `%LOCALAPPDATA%\Programs\Open TouchDeck`; the folder can't be changed, so the app never lands somewhere other users can write.
@@ -180,3 +182,111 @@ requirement; espflash 4.7.0 requires Rust 1.95. The Companion recovery path in
 decompression. espflash's CLI feature is disabled. The vulnerable zstd decoder is present
 transitively but no attacker-supplied zstd decoding path was found in td-link. Revisit on any
 ELF/debug-symbol support or compatible upstream update; the audit remains nonzero.
+
+## The 2.0 release pipeline
+
+Open TouchDeck 2.0 is one Rust program, installed on Windows 11 by an MSI. Its releases come from **release** (`.github/workflows/release.yml`), which runs beside the frozen 1.x workflow: `v2` tags start **release**, and **windows release** now answers `v1` tags only.
+
+**The MSI is a pipeline proof, not a product.** For now it installs `td-companion.exe` alone, with no shortcut and no start at sign-in. It exists so the build, signing, packaging and checks are proved end to end before the native app is ready. Don't publish a release from it yet; [Not done yet](#not-done-yet) lists what is missing.
+
+### Stages
+
+```text
+build -> sign hook (programs) -> package -> sign hook (installer) -> updater signature -> verify -> publish
+```
+
+| Stage | Job | What it does |
+|---|---|---|
+| 1. Build | `build`, windows-latest | For a tag: checks that the tag is annotated, is `v` plus the version of `td-companion`, and that its commit is on `main`. Installs the Rust toolchain `app/rust-toolchain.toml` pins, runs `cargo build --release --locked -p td-companion`, and checks the program's version resource and that it is a Windows GUI program (`app/scripts/check_exe.ps1`) |
+| 2. Upload | same job | Uploads the unsigned program as the workflow artifact `unsigned-binaries` |
+| 3. Sign the programs | `sign hook (programs)` | Has the selected provider sign every program, or passes them through. Uploads `binaries` |
+| 4. Package | `package`, windows-latest | Builds `OpenTouchDeck-X.Y.Z-windows-x64.msi` with WiX from `app/installer/OpenTouchDeck.wxs` and the programs in `binaries`. Uploads `unsigned-installer` |
+| 5. Sign the installer | `sign hook (installer)` | The same hook for the MSI. Uploads `installer` |
+| 6. Update signature | `updater signature`, ubuntu-24.04 | Signs the MSI with the updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)) through `.github/release-signer` |
+| 7. Verify | three jobs | See [What verify proves](#what-verify-proves) |
+| 8. Publish | `publish a draft release`, ubuntu-24.04 | For a tag only: uploads the MSI, its `.sig` and `SHA256SUMS` to a **draft** release with the tag's message as its notes, then checks the uploaded names and sizes. It never publishes the draft |
+
+Rules every job keeps, so a signing service can trust the result:
+
+- **GitHub-hosted runners only.** No job runs on anyone's own PC.
+- **No caches.** A release job restores no Rust, pnpm or tool cache, so nothing from an earlier run reaches a release. The pull request checks use caches; the release doesn't call them with caches on.
+- **Releases come only from tags on `main`.** `build` refuses any other tag.
+- **Third-party actions are pinned to a full commit SHA**, with the version in a comment. `build` uses none besides GitHub's own checkout and artifact actions.
+- **Each job has the least permissions it needs.** Only `publish` may write to the repository. Only the update signature job, and a sign hook with a provider selected, enter the `release` environment, which holds the secrets, allows only `main` and `v*` tags, and waits for the maintainer's approval.
+
+### A release and a dry run
+
+A **release** is a push of a `v2` tag:
+
+```sh
+git switch main
+git pull --ff-only
+git tag -a v2.0.0 -m "<notes>"
+git push origin v2.0.0
+```
+
+Approve the `release` environment when the run asks, then review the draft on the Releases page. If the source needs a fix, ship the next version instead of moving the tag.
+
+A **dry run** runs the same jobs and never publishes. Start one from the Actions tab or with:
+
+```sh
+gh workflow run release.yml --ref <branch>
+```
+
+A pull request that changes the pipeline's own files (the two workflows, `app/installer/`, `.github/release-signer/` and the two check scripts) starts a dry run too. A dry run differs from a release in three ways: it never signs with Authenticode, it makes the update signature with a throwaway key that is deleted in the same step, and it has no publish job. It needs no secret and no approval, and its artifacts expire after three days.
+
+### Sign hooks
+
+`.github/workflows/sign-hook.yml` is the Authenticode step. The pipeline calls it twice, for the programs and for the MSI, because Windows checks both: the installer when it runs, the programs each time they start.
+
+The repository variable `CODE_SIGNING_PROVIDER` selects the provider. It is unset today, so both hooks pass their files through unsigned and say so in the run summary: 2.0 is unsigned until a provider accepts the project. To turn signing on, set the variable and uncomment that provider's block in the hook. Nothing else in the pipeline changes.
+
+| `CODE_SIGNING_PROVIDER` | Provider | What the block needs |
+|---|---|---|
+| unset | none | Nothing. Files stay unsigned |
+| `signpath` | [SignPath Foundation](https://signpath.org), free for open-source projects | Secret `SIGNPATH_API_TOKEN` in the `release` environment. Variables `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_SIGNING_POLICY_SLUG`. Two artifact configurations in SignPath, `programs` and `installer`. SignPath fetches the unsigned artifact from GitHub by its id, so the upload in stage 2 comes before signing |
+| `azure` | [Azure Artifact Signing](https://learn.microsoft.com/azure/artifact-signing/) | Variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT_NAME`, `AZURE_CERTIFICATE_PROFILE_NAME`, and `id-token: write` on the job. It signs in with OpenID Connect, so there is no stored secret |
+
+With a provider selected, the hook fails unless every program and installer comes back with a valid signature. Setting the variable without uncommenting the block therefore stops the release instead of publishing unsigned files as signed. The [code signing policy](code-signing.md) says what may be signed and who approves it.
+
+### The MSI
+
+`app/installer/OpenTouchDeck.wxs` is the whole installer.
+
+- **For the current user.** The package has `Scope="perUser"`: it installs to `%LOCALAPPDATA%\Programs\Open TouchDeck`, registers under the user's own uninstall key, needs no administrator rights and shows no elevation prompt.
+- **Windows 11 only.** Windows 11 starts at build 22000. Windows Installer's own version properties report Windows 8.1 on every later Windows, so the package reads `CurrentBuildNumber` from the registry and refuses a lower build with "Open TouchDeck needs Windows 11, and this PC runs an older Windows. Open TouchDeck 1.x works on Windows 10: download it from the Releases page."
+- **Not beside 1.x.** Open TouchDeck 1.x installs to the same folder with its own installer. Until 2.0 can replace it, the package refuses to install when it finds the 1.x uninstaller there, and says to uninstall 1.x first.
+- **One name and version.** The product name is `Open TouchDeck`, the manufacturer `Duresa Kadi` and the version the version of `td-companion`: the same values as the program's version resource (`app/crates/td-companion/build.rs`). An MSI version is three numbers, so a version such as `2.0.0-rc.1` installs as `2.0.0`.
+- **Updates.** A newer package removes the older one first, and an older package refuses to install over a newer one. Windows finds the installed copy by the package's `UpgradeCode`. Never change it.
+
+### WiX version and licence
+
+The package job installs [WiX](https://wixtoolset.org) **7.0.1** as a .NET tool, pinned by version, and builds with `wix build -acceptEula wix7`.
+
+WiX's source is open (MS-RL). Since WiX 6 its official binaries come under the [Open Source Maintenance Fee](https://opensourcemaintenancefee.org) agreement, and WiX 7 refuses to build until that agreement is accepted, which is what `-acceptEula wix7` does. The fee applies only to users who use WiX as part of revenue-generating activities **and** have an annual gross revenue of US$10,000 or more. Open TouchDeck is a free, Apache-licensed project with no revenue, so it is exempt and owes no fee.
+
+- **If that changes.** If the project, or whoever builds its releases, starts earning US$10,000 or more a year from work that uses WiX, sponsor the WiX project as the agreement asks, or build WiX from its source, which the agreement leaves free.
+- **Why not an older WiX.** WiX 5.0.2 is the last version from before the fee and needs no acceptance, but it is no longer maintained. A free, current, maintained tool with one explicit switch is the better trade.
+- **Anyone else who builds the installer** accepts the agreement for themselves and must check their own position.
+
+### What verify proves
+
+Three jobs run on the signed installer, on runners that built none of it:
+
+- **`verify the update signature`** (ubuntu-24.04) checks the `.sig` with the `minisign` program from Ubuntu, a second implementation, so the repo's signer does not check itself. A release must verify against the committed public key, `.github/release-signer/updater.pub`, the key every installed copy trusts. A dry run must verify against its throwaway key, and the committed key must reject it. Either way the signature must name this file and this version, and a copy with one byte changed must fail.
+- **`verify install and uninstall (windows-latest)`** checks the Authenticode state (valid with a provider, unsigned without), then runs `app/scripts/msi_check.ps1`. It reads the package's name, version, `UpgradeCode` and per-user flags; expects the refusal beside a 1.x install; installs with `msiexec /qn` and a log; checks the installed program byte for byte and its version resource; checks the uninstall entry is under the user's key and not the machine's; then uninstalls and expects the folder, the entry and the registry key gone.
+- **`verify an older Windows refuses it (windows-2022)`** runs the installer on Windows Server 2022, build 20348, which is below 22000 as every Windows 10 is. It expects exit code 1603, the Windows 11 message in the log, and nothing installed.
+
+`msi_check.ps1` refuses to run outside GitHub Actions, because it writes the real per-user registry. It uploads a summary and logs with the runner's user and computer names removed.
+
+### The updater public key
+
+The public half of the updater key is committed at `.github/release-signer/updater.pub`, with the same value as the repository variable `TAURI_UPDATER_PUBLIC_KEY` that the 1.x build reads. It is public by design, and committing it lets anyone check a release's `.sig` from a clone. The private half stays a secret in the `release` environment. Never regenerate either: every installed copy trusts this key.
+
+### Not done yet
+
+- **The 1.x to 2.0 update.** A 2.0 release has no `latest.json`. Installed 1.x copies read that file and run what it names as the 1.x installer, so publishing one for an MSI would break their updates. The bridge from 1.x to 2.0 is its own piece of work.
+- **The real payload.** The native app, a Start menu shortcut, start at sign-in, and stopping a running copy before its files are replaced.
+- **Firmware.** The 1.x release builds the Firmware and ships `touchdeck.tdfw`. The 2.0 pipeline doesn't yet.
+- **Pre-release versions.** Two release candidates of one version get the same MSI version, so one does not replace the other.
+- **A signing provider.** Apply to one, then set `CODE_SIGNING_PROVIDER`. Once files are signed, remove the draft notice from the [code signing policy](code-signing.md) and link the policy from the release notes.
