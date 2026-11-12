@@ -216,6 +216,9 @@ impl Handle {
     pub fn devices(&self) -> &crate::devices::DeviceManager {
         &self.devices
     }
+    pub fn layout_operations(&self) -> crate::layouts::Operations {
+        crate::layouts::Operations::new(self.clone())
+    }
     pub fn device_operations(&self) -> &crate::devices::Operations {
         &self.device_operations
     }

@@ -727,7 +727,7 @@ pub(crate) fn too_large(field: &str, limit: usize, actual: usize, unit: &str) ->
     )
 }
 pub(crate) fn gif_caps(
-    ctx: &Ctx,
+    ctx: &crate::companion::Handle,
     device: &str,
 ) -> Result<crate::devices::Capabilities, AssetError> {
     let (summary, _) = ctx.links.connected(device)?;

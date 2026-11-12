@@ -479,6 +479,11 @@ impl TestCompanion {
         &self.ctx.brandfetch
     }
     /// This Companion's data directory, a fresh temporary one.
+    /// The same in-process interface used by the native app.
+    pub fn handle(&self) -> crate::companion::Handle {
+        self.ctx.companion_handle()
+    }
+
     pub fn data_dir(&self) -> &std::path::Path {
         self._data.path()
     }
