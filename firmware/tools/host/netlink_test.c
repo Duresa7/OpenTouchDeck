@@ -1153,8 +1153,12 @@ static void test_forget(void)
     CHECK(g_deck.pair_failures == 0 && g_saved_failures == 0 && !g_deck.window.open);
     fresh_deck(true, 4, 500000);
     CHECK(td_netlink_forget(&g_deck) && td_netlink_lock_left(&g_deck) == 0 && g_saved_lock == 0);
+    /* A failed erase keeps the live table, so it matches what storage still holds. */
+    fresh_deck(true, 0, 0);
     g_pairings_fail = true;
-    CHECK(!td_netlink_forget(&g_deck) && g_deck.pairings.count == 0);
+    CHECK(!td_netlink_forget(&g_deck) && g_deck.pairings.count == 1);
+    g_pairings_fail = false;
+    CHECK(td_netlink_forget(&g_deck) && g_deck.pairings.count == 0 && g_saved.count == 0);
 }
 
 /* ---- net.list, net.pair and net.forget ---- */
@@ -1319,11 +1323,21 @@ static void test_forget_one(void)
     CHECK(g_saved.entries[0].companion_id[0] == 0x20 && g_saved.entries[1].companion_id[0] == 0x40);
     cJSON_Delete(reply);
 
-    /* All ends every session first. */
+    /* A failed erase of all keeps the live table, so a Companion's retry for one app still removes and saves it. */
+    g_pairings_fail = true;
+    reply = manage_text("{\"m\":\"net.forget\",\"all\":true}");
+    CHECK(refused_with(reply, "storage") && g_deck.pairings.count == 2);
+    cJSON_Delete(reply);
     g_pairings_fail = false;
+    reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"202122232425262728292a2b2c2d2e2f\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1);
+    CHECK(g_deck.pairings.count == 1 && g_saved.count == 1);
+    cJSON_Delete(reply);
+
+    /* All ends every session first. */
     g_ended = 0;
     reply = manage_text("{\"m\":\"net.forget\",\"all\":true}");
-    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 2 && g_ended == 1 && g_ended_all);
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1 && g_ended == 1 && g_ended_all);
     cJSON_Delete(reply);
 }
 

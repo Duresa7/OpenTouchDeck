@@ -892,7 +892,8 @@ if it has one. `net.forget` with `all:true` cancels a window, erases every
 Pairing durably, resets `pair_failures` and the lockout, and ends any network
 session. A bare `net.forget` with neither field fails with `reason:"args"`, so
 a request that lost its `app_id` can't wipe the Device. A failed erase still
-ends the affected session and reports the failure. Over a network Carrier all
+ends the affected session and reports the failure, and keeps the Pairings it
+couldn't erase, so a list or a retry sees what storage still holds. Over a network Carrier all
 three messages get `usb-only`.
 
 Codes, verifiers, private exponents, X25519 private keys, `Z`, LTKs and

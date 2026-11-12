@@ -330,12 +330,15 @@ bool td_netlink_forget(td_netlink_deck_t *deck)
     window_end(deck, TD_NETLINK_CANCELLED);
     const td_netlink_pairings_t empty = { 0 };
     const bool erased = deck->env.save_pairings(deck->env.ctx, &empty);
+    if (!erased) {
+        /* The live table keeps what storage still holds, so a list or a retry sees the truth. */
+        return false;
+    }
     td_netlink_wipe(&deck->pairings, sizeof deck->pairings);
     deck->pair_failures = 0;
     deck->locked = false;
     deck->lock_until_ms = 0;
-    const bool reset = save_failures(deck);
-    return erased && reset;
+    return save_failures(deck);
 }
 
 bool td_netlink_forget_one(td_netlink_deck_t *deck, const uint8_t companion_id[TD_NETLINK_COMPANION_ID_LEN],
