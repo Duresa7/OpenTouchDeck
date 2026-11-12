@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useStore } from 'zustand';
 import type { DeviceSummary } from '../../lib/companion/api.ts';
-import { carrierText, CODE_DIGITS, type WifiStore } from '../../lib/device/wifi.ts';
+import { carrierText, CODE_DIGITS, physicalAccess, type WifiStore } from '../../lib/device/wifi.ts';
 import type { WifiSetupStore } from '../../lib/device/wifi-setup.ts';
 import { button } from '../../shell/button.ts';
 import { WifiSetupField } from './WifiSetupField.tsx';
@@ -85,6 +85,9 @@ function AddressForm({ name, wifi }: PairingProps) {
       <p className="field-hint" data-testid="device-panel-wifi-found">
         {found ? `Found ${name} on the network.` : `Type the address ${name} shows under Wi-Fi.`} On {name}, choose Pair new app first.
       </p>
+      <p className="field-hint" data-testid="device-panel-wifi-notice">
+        {physicalAccess(name)}
+      </p>
       <input
         id={id}
         className="input"
@@ -124,7 +127,9 @@ export function WifiField({ device, name, wifi, setup, live }: WifiFieldProps) {
   useEffect(() => void wifi.getState().load(), [wifi]);
 
   const sub = pairing
-    ? (pairing.problem ?? `Paired at ${pairing.address}.`)
+    ? pairing.removing
+      ? `Being removed from ${name}. Plug ${name} in to finish.`
+      : (pairing.problem ?? `Paired at ${pairing.address}.`)
     : view.step === 'finding'
       ? `Looking for ${name} on the network…`
       : 'Not paired. Pair to use it without the cable.';

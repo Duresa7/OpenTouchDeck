@@ -301,12 +301,14 @@ One section for the network the Device joins (radio build only, set over USB), i
 | Network error, read or change failed | Couldn't {read or change} {device}'s Wi-Fi. Check that it's plugged in, then retry. |
 | Pairing row title | Pairing |
 | Pairing, paired | Paired at {address}. |
+| Pairing, being removed (a forget on the Device went unanswered) | Being removed from {device}. Plug {device} in to finish. |
 | Pairing, looking | Looking for {device} on the network… |
 | Pairing, none | Not paired. Pair to use it without the cable. |
 | Pairing buttons | Pair over Wi-Fi, Forget |
 | Address form title | {device}'s address |
 | Address form hint, found | Found {device} on the network. On {device}, choose Pair new app first. |
 | Address form hint, not found | Type the address {device} shows under Wi-Fi. On {device}, choose Pair new app first. |
+| Pairing notice (net-v2: physical access to the Device is access to its Pairings) | Whoever can get to {device} can use every Pairing on it. If {device} is lost or passed on, forget its paired apps. |
 | Address placeholder | IP address or name |
 | Address form buttons | Cancel, Start pairing |
 | Code form title | Enter the code on {device} |
@@ -369,6 +371,48 @@ Shown only for a Device whose Firmware has the Bluetooth keyboard (the radio bui
 | Error, couldn't save | {device} couldn't save that. Try again. |
 | Error, over Wi-Fi | Plug in {device} with a USB cable to change its Bluetooth keyboard. |
 | Error, no answer (reading again by itself, waiting longer each time) | Couldn't reach {device}. Check that it's plugged in, then retry. |
+
+### Device panel, Paired apps
+
+Shown only for a Device whose Firmware keeps Pairings (the radio build). The list and the forgets work only over USB. The apps are named as they paired; no key ever shows.
+
+| Element | String |
+| --- | --- |
+| Section label | Paired apps |
+| Count | {n} of {max} |
+| Status, reading | Reading… |
+| Status, none | No apps are paired. Pair one over Wi-Fi to use {device} without the cable. |
+| Status, full | Four apps are paired. Forget one to pair another. |
+| Not connected | Plug in {device} to see its paired apps. |
+| Over Wi-Fi | Plug in {device} with a USB cable to see its paired apps. |
+| Older Firmware | {device}'s Firmware can't change this yet. |
+| App row | {app name}, with This app under this app's own |
+| Forget button | Forget, read as "Forget {app name}"; in progress Forgetting… |
+| Forget all button | Forget all |
+| Forget all confirm title | Forget every paired app? |
+| Forget all confirm body | None of them can reach {device} over Wi-Fi until it pairs again with a new code. |
+| Forget all confirm buttons | Cancel, Forget all; in progress Forgetting… |
+| Error, couldn't erase | {device} couldn't erase that. Try again. |
+| Error, over Wi-Fi | Plug in {device} with a USB cable to change its paired apps. |
+| Error, no answer to a forget | {device} didn't answer, so the app may still be paired. Plug {device} in again to finish. |
+| Error, no answer | Couldn't reach {device}. Check that it's plugged in, then retry. |
+
+### On the Device, Settings (radio build)
+
+The Firmware draws these on the Device's own screen. A gear at the right end of the title strip opens Settings; a Layout without a title strip shows no gear. The Firmware's font has no `…`, so in-progress text ends in three dots there.
+
+| Element | String |
+| --- | --- |
+| Panel title and its close button | Settings, Done |
+| Section | Paired apps, with "{n} of 4" |
+| Empty list | No apps are paired. Choose Pair new app, then type the code this Device shows into the app. |
+| Row button | Forget |
+| Buttons | Pair new app, Forget all |
+| Saving | Saving... |
+| Full | Four apps are paired. Forget one first. |
+| Locked | Too many wrong codes. Pair again in {m:ss}. |
+| Forget one confirm | Forget {app name}? It can't reach this Device over Wi-Fi until you pair it again. Cancel, Forget |
+| Forget all confirm | Forget every paired app? None of them can reach this Device over Wi-Fi until you pair it again. Cancel, Forget all |
 
 ### Integrations
 

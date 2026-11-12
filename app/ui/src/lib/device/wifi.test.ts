@@ -5,7 +5,7 @@ import { ApiError } from '../companion/errors.ts';
 import { createFakeCompanion, FAKE_WIFI_CODE, type FakeCompanion } from '../companion/fake.ts';
 import { sampleDevice } from '../companion/samples.ts';
 import { windowSession } from '../companion/session.ts';
-import { carrierText, createWifiPairing, wifiProblem, type WifiStore } from './wifi.ts';
+import { carrierText, createWifiPairing, physicalAccess, wifiProblem, type WifiStore } from './wifi.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const USB = { state: 'connected' as const, port: 'COM3', since_ms: 0, protocol: 2 };
@@ -194,5 +194,22 @@ describe('a Device with four Pairings', () => {
     await store.getState().start();
     expect(store.getState().view).toEqual({ step: 'address', found: false });
     expect(store.getState().problem).toBe(advice);
+  });
+
+  test('the count the Device gave over USB brings the advice even when the network says less', async () => {
+    const store = createWifiPairing({ companion, device: () => desk, paired: () => 4 });
+    await store.getState().load();
+    await store.getState().begin();
+    expect(store.getState().view).toEqual({ step: 'address', found: true });
+    expect(store.getState().problem).toBe('Four apps are paired. Forget one first: on Desk, use the paired apps screen, or plug it in with a USB cable.');
+    const fewer = createWifiPairing({ companion, device: () => desk, paired: () => 3 });
+    await fewer.getState().begin();
+    expect(fewer.getState().problem).toBeNull();
+  });
+});
+
+describe('the pairing notice', () => {
+  test('says that the Device in hand is every Pairing on it', () => {
+    expect(physicalAccess('Desk')).toBe('Whoever can get to Desk can use every Pairing on it. If Desk is lost or passed on, forget its paired apps.');
   });
 });

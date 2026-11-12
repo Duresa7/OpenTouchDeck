@@ -7,6 +7,7 @@ import { useCompanion } from '../../lib/companion/connection.ts';
 import { jobsStore } from '../../lib/companion/jobs.ts';
 import { createBluetooth, type BluetoothStore } from '../../lib/device/bluetooth.ts';
 import { createFirmwareUpdate, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
+import { createDevicePairings, type DevicePairingsStore } from '../../lib/device/pairings.ts';
 import { offeredFor } from '../../lib/device/radio-build.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { createWifiPairing, type WifiStore } from '../../lib/device/wifi.ts';
@@ -18,6 +19,7 @@ interface DeviceStores {
   wifi: WifiStore;
   wifiSetup: WifiSetupStore;
   bluetooth: BluetoothStore;
+  pairings: DevicePairingsStore;
   observe(summary: DeviceSummary): void;
 }
 
@@ -35,6 +37,13 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
     const settings = createDeviceSettings({ companion, device });
     const wifiSetup = createWifiSetup({ companion, device });
     const bluetooth = createBluetooth({ companion, device });
+    // Forgetting this app's own Pairing on the Device drops its key here too, so the Wi-Fi row reads again.
+    const pairings = createDevicePairings({ companion, device, changed: () => void wifi.getState().load() });
+    const wifi = createWifiPairing({ companion, device: () => latest, paired: () => pairings.count() });
+    // A new Pairing with this app shows in the Device's list.
+    wifi.subscribe((now, before) => {
+      if (now.pairing?.device !== before.pairing?.device && now.pairing) void pairings.load();
+    });
     const firmware = createFirmwareUpdate({
       companion,
       jobs: jobsStore,
@@ -43,14 +52,16 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
     found = {
       settings,
       firmware,
-      wifi: createWifiPairing({ companion, device: () => latest }),
+      wifi,
       wifiSetup,
       bluetooth,
+      pairings,
       observe(summary) {
         latest = summary;
         settings.observe(summary);
         wifiSetup.observe(summary);
         bluetooth.observe(summary);
+        pairings.observe(summary);
       },
     };
     byDevice.set(device.id, found);

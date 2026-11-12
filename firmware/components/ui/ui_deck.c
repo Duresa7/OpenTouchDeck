@@ -844,7 +844,13 @@ void ui_build(void)
     show_boot_brand();
     ui_idle_start();
     ui_passkey_start();
+    ui_settings_start();
     xSemaphoreGive(s.reload_lock);
+}
+
+bool ui_deck_title_shown(void)
+{
+    return s.title != NULL;
 }
 
 bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)

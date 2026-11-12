@@ -15,6 +15,7 @@ import { createFakeLive } from './fake/fake-live.ts';
 import { createFakeNewBoards } from './fake/fake-new-boards.ts';
 import { createFakeSessions, type FakeBrowser } from './fake/fake-sessions.ts';
 import { createFakeStartup } from './fake/fake-startup.ts';
+import { createFakeDevicePairings, type FakeDevicePairingsOptions } from './fake/fake-device-pairings.ts';
 import { createFakeWifi, type FakeWifiOptions } from './fake/fake-wifi.ts';
 import { createFakeWifiSetup, type FakeWifiSetupOptions } from './fake/fake-wifi-setup.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
@@ -49,7 +50,9 @@ export interface FakeCompanionOptions {
   integrations?: Omit<FakeIntegrationsOptions, 'publish'>;
   assets?: Omit<FakeAssetsOptions, 'publish' | 'brandfetch'>;
   /** Devices on the network and Pairings made before the start. */
-  wifi?: Omit<FakeWifiOptions, 'devices' | 'publish'>;
+  wifi?: Omit<FakeWifiOptions, 'devices' | 'publish' | 'paired'>;
+  /** The other apps each radio-build Device keeps Pairings with. */
+  devicePairings?: Omit<FakeDevicePairingsOptions, 'devices' | 'here'>;
   iconPacks?: Omit<FakeIconPacksOptions, 'publish'>;
   brandfetch?: FakeBrandfetchOptions;
 }
@@ -145,7 +148,9 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const iconPacks = createFakeIconPacks({ publish, ...options.iconPacks });
   const brandfetch = createFakeBrandfetch(options.brandfetch);
   const assets = createFakeAssets({ publish, packHits: iconPacks.hits, ...options.assets, brandfetch });
-  const wifi = createFakeWifi({ devices, publish, ...options.wifi });
+  // A Device on USB says how many apps it keeps, so pairing refuses `full` from that count.
+  const wifi = createFakeWifi({ devices, publish, ...options.wifi, paired: (id) => (devicePairings.count(id) > 0 ? devicePairings.count(id) : null) });
+  const devicePairings = createFakeDevicePairings({ devices, here: wifi.here, ...options.devicePairings });
 
   function mint() {
     minted += 1;
@@ -216,6 +221,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       (await settings.handle(request, path)) ??
       (await wifiSetup.handle(request, path)) ??
       (await bluetooth.handle(request, path)) ??
+      (await devicePairings.handle(request, path)) ??
       (await firmware.handle(request, path)) ??
       (await newBoards.handle(request, path)) ??
       (await layouts.handle(request, path)) ??
@@ -259,6 +265,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     assets,
     wifi,
     bluetooth,
+    devicePairings,
     iconPacks,
     brandfetch,
     /** Sessions minted so far through the bridge. */
@@ -337,5 +344,6 @@ export { createFakeSessions } from './fake/fake-sessions.ts';
 export { fakeThisPc } from './fake/fake-this-pc.ts';
 export { FAKE_NETWORKS } from './fake/fake-wifi-setup.ts';
 export { createFakeUpdates, sampleOffer, type FakeUpdatesScript } from './fake/fake-updates.ts';
+export { FAKE_APP_ID, FAKE_APP_NAME } from './fake/fake-device-pairings.ts';
 export { FAKE_WIFI_CODE } from './fake/fake-wifi.ts';
 export { LONG_WORD, WORST_DEVICE_NAMES, WORST_LABELS, worstDevices, worstLayout, worstLayouts } from './fake/fake-worst.ts';

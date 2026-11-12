@@ -7,7 +7,7 @@ import type { FakePick } from './fake/fake-firmware.ts';
 import { freshDevice, newBoard, type Answer, type BoardKind } from './fake/fake-new-boards.ts';
 import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake/fake-updates.ts';
 import { worstAccounts, worstBrowsers, worstCustom, worstDelivery, worstDevices, worstFolder, worstHubError, worstLayouts, worstNewBoards, worstOffer } from './fake/fake-worst.ts';
-import { DEMO_BONDS, demoLayout, demoScenario } from './samples.ts';
+import { DEMO_APPS, DEMO_BONDS, demoLayout, demoScenario } from './samples.ts';
 import { windowSession, type UpdateCheck } from './session.ts';
 
 const checks = {
@@ -33,7 +33,7 @@ function demoWifi(devices: DeviceSummary[]): { discovered: Omit<WifiDevice, 'pai
     if (!address) return;
     discovered.push({ device: device.id, name: device.name ?? 'TouchDeck', address, paired: i === 2 ? 1 : 0 });
     if (i !== 2) return;
-    pairings.push({ device: device.id, address, name: device.name, confirmed: true, paired_ms: Date.UTC(2026, 10, 2, 18, 12), problem: null });
+    pairings.push({ device: device.id, address, name: device.name, confirmed: true, paired_ms: Date.UTC(2026, 10, 2, 18, 12), problem: null, removing: false });
     if (device.link.state === 'connected') {
       device.link = { ...device.link, port: address };
       device.carrier = 'wifi';
@@ -99,6 +99,13 @@ declare global {
         pair(id: string, address: string): boolean;
         failStart(fail: boolean): void;
         state(id: string): { enabled: boolean; bonds: { address: string; connected: boolean }[] };
+      };
+      /** The apps a radio Device keeps Pairings with: a lost answer to the next forget, and storage that fails. */
+      pairings: {
+        add(id: string, app: { app: string; name: string }): void;
+        loseNextForget(id: string): void;
+        failStorage(fail: boolean): void;
+        list(id: string): { app: string; name: string; this_app: boolean }[];
       };
     };
   }
@@ -189,6 +196,8 @@ export function demoEnvironment(target: Window): Environment {
     wifi: worst ? undefined : demoWifi(devices),
     // The radio Device starts with Bluetooth on and two computers and phones bonded, so its section shows them.
     bluetooth: { startMs: 600, seed: worst ? {} : Object.fromEntries(devices.filter((d) => d.capabilities?.ble_hid).map((d) => [d.id, { enabled: true, bonds: DEMO_BONDS }])) },
+    // The radio Device keeps two other apps' Pairings, so its list shows them next to this app's.
+    devicePairings: { seed: worst ? {} : Object.fromEntries(devices.filter((d) => d.capabilities?.wifi).map((d) => [d.id, DEMO_APPS])) },
     // `?packs=logos,mdi` starts with those Icon packs installed.
     iconPacks: { installed: params.get('packs')?.split(',') ?? [] },
     // `?brandfetch=on` starts with fake keys set. Search still goes to Brandfetch, which e2e
@@ -247,6 +256,12 @@ export function demoEnvironment(target: Window): Environment {
       pair: (id, address) => fake.bluetooth.hostPairs(id, address),
       failStart: (fail) => fake.bluetooth.failStart(fail),
       state: (id) => fake.bluetooth.state(id),
+    },
+    pairings: {
+      add: (id, app) => fake.devicePairings.add(id, app),
+      loseNextForget: (id) => fake.devicePairings.loseNextForget(id),
+      failStorage: (fail) => fake.devicePairings.failStorage(fail),
+      list: (id) => fake.devicePairings.list(id),
     },
   };
   const network = target.fetch.bind(target);

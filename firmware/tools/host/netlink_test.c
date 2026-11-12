@@ -11,6 +11,7 @@
 #include "cJSON.h"
 #include "td_netlink.h"
 #include "td_netlink_ble.h"
+#include "td_netlink_manage.h"
 
 static int g_failures;
 static int g_checks;
@@ -1152,8 +1153,209 @@ static void test_forget(void)
     CHECK(g_deck.pair_failures == 0 && g_saved_failures == 0 && !g_deck.window.open);
     fresh_deck(true, 4, 500000);
     CHECK(td_netlink_forget(&g_deck) && td_netlink_lock_left(&g_deck) == 0 && g_saved_lock == 0);
+    /* A failed erase keeps the live table, so it matches what storage still holds. */
+    fresh_deck(true, 0, 0);
     g_pairings_fail = true;
-    CHECK(!td_netlink_forget(&g_deck) && g_deck.pairings.count == 0);
+    CHECK(!td_netlink_forget(&g_deck) && g_deck.pairings.count == 1);
+    g_pairings_fail = false;
+    CHECK(td_netlink_forget(&g_deck) && g_deck.pairings.count == 0 && g_saved.count == 0);
+}
+
+/* ---- net.list, net.pair and net.forget ---- */
+
+static const cJSON *g_base;
+static int g_ended;
+static bool g_ended_all;
+static uint8_t g_ended_id[TD_NETLINK_COMPANION_ID_LEN];
+
+/* The fields the service adds from outside the deck, as the vector's `base` has them. */
+static void vector_base_fields(void *ctx, cJSON *reply)
+{
+    (void)ctx;
+    static const char *const keys[] = { "listening", "port", "ble", "session" };
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        cJSON_AddItemToObject(reply, keys[i], cJSON_Duplicate(at(g_base, keys[i]), true));
+    }
+}
+
+static void record_end(void *ctx, const uint8_t *companion_id)
+{
+    (void)ctx;
+    g_ended++;
+    g_ended_all = companion_id == NULL;
+    if (companion_id) {
+        memcpy(g_ended_id, companion_id, sizeof g_ended_id);
+    }
+}
+
+static const td_netlink_manage_env_t g_manage_env = { .base_fields = vector_base_fields, .end_sessions = record_end };
+
+/* A Device holding the vector's four apps, oldest first, with pair_failures from its base. */
+static void management_deck(void)
+{
+    reset_env();
+    g_base = at(g_vectors, "management.base");
+    td_netlink_pairings_t stored = { 0 };
+    const cJSON *app;
+    cJSON_ArrayForEach(app, at(g_vectors, "management.apps"))
+    {
+        td_netlink_pairing_t *p = &stored.entries[stored.count++];
+        CHECK(td_netlink_parse_app_id(at(app, "app_id")->valuestring, p->companion_id));
+        const char *name = at(app, "app_name")->valuestring;
+        p->name_len = (uint8_t)strlen(name);
+        memcpy(p->name, name, p->name_len);
+        memset(p->ltk, stored.count, sizeof p->ltk);
+    }
+    uint8_t id[6];
+    vec("inputs.deviceId", id, sizeof id);
+    td_netlink_deck_init(&g_deck, id, &stored, (uint32_t)at(g_base, "pair_failures")->valueint, 0, &g_env);
+    g_ended = 0;
+}
+
+static cJSON *manage(const cJSON *request)
+{
+    cJSON *reply = cJSON_CreateObject();
+    cJSON_AddStringToObject(reply, "m", at(request, "m")->valuestring);
+    cJSON_AddBoolToObject(reply, "ok", true);
+    td_netlink_manage(&g_deck, request, reply, &g_manage_env);
+    return reply;
+}
+
+static cJSON *manage_text(const char *json)
+{
+    cJSON *request = cJSON_Parse(json);
+    assert(request);
+    cJSON *reply = manage(request);
+    cJSON_Delete(request);
+    return reply;
+}
+
+static bool refused_with(const cJSON *reply, const char *reason)
+{
+    return !cJSON_IsTrue(at(reply, "ok")) && !strcmp(at(reply, "reason")->valuestring, reason)
+           && cJSON_GetObjectItemCaseSensitive(reply, "paired") == NULL;
+}
+
+/* Every step of the shared `management` vector. USB steps run through td_netlink_manage and must answer exactly; the
+ * link refuses the others before they reach it (tools/host/link_carrier_test.c) with the words checked here. */
+static void test_management_vector(void)
+{
+    management_deck();
+    const cJSON *step;
+    int usb = 0;
+    cJSON_ArrayForEach(step, at(g_vectors, "management.steps"))
+    {
+        const cJSON *request = at(step, "request");
+        const cJSON *expected = at(step, "response");
+        if (strcmp(at(step, "carrier")->valuestring, "usb") != 0) {
+            CHECK(refused_with(expected, "usb-only") && !strcmp(at(expected, "error")->valuestring, "Only over USB"));
+            continue;
+        }
+        usb++;
+        const int saves = g_pairing_saves;
+        cJSON *reply = manage(request);
+        const bool same = cJSON_Compare(reply, expected, true);
+        if (!same) {
+            char *got = cJSON_PrintUnformatted(reply);
+            fprintf(stderr, "management step '%s' answered %s\n", at(step, "note")->valuestring, got);
+            free(got);
+        }
+        CHECK(same);
+        /* Forgetting writes the table once when something goes: a repeat, a refusal or a read writes nothing. */
+        const cJSON *removed = cJSON_GetObjectItemCaseSensitive(expected, "removed");
+        CHECK(g_pairing_saves - saves == (removed && removed->valueint > 0));
+        cJSON_Delete(reply);
+    }
+    CHECK(usb == 8);
+    CHECK(g_deck.pairings.count == 0 && g_saved.count == 0 && g_deck.pair_failures == 0 && g_saved_failures == 0);
+}
+
+/* Forgetting one app keeps the others in order and ends only that app's session; a refusal ends nothing. */
+static void test_forget_one(void)
+{
+    management_deck();
+    cJSON *reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"101112131415161718191a1b1c1d1e1f\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1);
+    CHECK(g_ended == 1 && !g_ended_all && g_ended_id[0] == 0x10 && g_ended_id[15] == 0x1f);
+    CHECK(g_deck.pairings.count == 3 && g_saved.count == 3);
+    CHECK(g_saved.entries[0].companion_id[0] == 0x20 && g_saved.entries[2].companion_id[0] == 0x40);
+    CHECK(g_deck.pair_failures == 1);
+    cJSON_Delete(reply);
+
+    /* The list follows: three apps, one free slot, oldest first, and no key. */
+    reply = manage_text("{\"m\":\"net.list\"}");
+    const cJSON *first = cJSON_GetArrayItem(at(reply, "pairings"), 0);
+    CHECK(at(reply, "free")->valueint == 1 && cJSON_GetArraySize(at(reply, "pairings")) == 3);
+    CHECK(!strcmp(at(first, "app_name")->valuestring, "Vector app 2") && cJSON_GetArraySize(first) == 2);
+    cJSON_Delete(reply);
+
+    /* Both fields, an app_id that isn't a string of 32 lowercase hex characters, or all:false: refused. */
+    static const char *const refused[] = {
+        "{\"m\":\"net.forget\",\"app_id\":\"202122232425262728292a2b2c2d2e2f\",\"all\":true}",
+        "{\"m\":\"net.forget\",\"app_id\":7}",
+        "{\"m\":\"net.forget\",\"app_id\":\"2021\"}",
+        "{\"m\":\"net.forget\",\"app_id\":\"g02122232425262728292a2b2c2d2e2f\"}",
+        "{\"m\":\"net.forget\",\"all\":false}",
+    };
+    for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
+        g_ended = 0;
+        reply = manage_text(refused[i]);
+        CHECK(refused_with(reply, "args"));
+        CHECK(g_ended == 0 && g_deck.pairings.count == 3);
+        cJSON_Delete(reply);
+    }
+
+    /* A failed erase ends the session but keeps the live table available for a retry. */
+    g_pairings_fail = true;
+    g_ended = 0;
+    reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"303132333435363738393a3b3c3d3e3f\"}");
+    CHECK(refused_with(reply, "storage"));
+    CHECK(g_ended == 1 && g_deck.pairings.count == 3);
+    cJSON_Delete(reply);
+    reply = manage_text("{\"m\":\"net.list\"}");
+    CHECK(cJSON_GetArraySize(at(reply, "pairings")) == 3);
+    cJSON_Delete(reply);
+
+    g_pairings_fail = false;
+    reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"303132333435363738393a3b3c3d3e3f\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1);
+    CHECK(g_deck.pairings.count == 2 && g_saved.count == 2);
+    CHECK(g_saved.entries[0].companion_id[0] == 0x20 && g_saved.entries[1].companion_id[0] == 0x40);
+    cJSON_Delete(reply);
+
+    /* A failed erase of all keeps the live table, so a Companion's retry for one app still removes and saves it. */
+    g_pairings_fail = true;
+    reply = manage_text("{\"m\":\"net.forget\",\"all\":true}");
+    CHECK(refused_with(reply, "storage") && g_deck.pairings.count == 2);
+    cJSON_Delete(reply);
+    g_pairings_fail = false;
+    reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"202122232425262728292a2b2c2d2e2f\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1);
+    CHECK(g_deck.pairings.count == 1 && g_saved.count == 1);
+    cJSON_Delete(reply);
+
+    /* All ends every session first. */
+    g_ended = 0;
+    reply = manage_text("{\"m\":\"net.forget\",\"all\":true}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1 && g_ended == 1 && g_ended_all);
+    cJSON_Delete(reply);
+}
+
+/* A lockout refuses net.pair with `locked` and opens no window; after it, the window opens. */
+static void test_pair_locked(void)
+{
+    management_deck();
+    uint8_t removed = 0;
+    CHECK(td_netlink_forget_one(&g_deck, g_deck.pairings.entries[0].companion_id, &removed) && removed == 1);
+    g_deck.locked = true;
+    g_deck.lock_until_ms = g_now + 30000;
+    cJSON *reply = manage_text("{\"m\":\"net.pair\"}");
+    CHECK(refused_with(reply, "locked") && !g_deck.window.open);
+    cJSON_Delete(reply);
+    g_now += 30000;
+    reply = manage_text("{\"m\":\"net.pair\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && cJSON_IsTrue(at(reply, "pairing")) && at(reply, "paired")->valueint == 3);
+    cJSON_Delete(reply);
 }
 
 int main(int argc, char **argv)
@@ -1207,6 +1409,9 @@ int main(int argc, char **argv)
         { test_usb_wins, "usb wins" },
         { test_session_liveness, "session liveness" },
         { test_forget, "forget" },
+        { test_management_vector, "management vector" },
+        { test_forget_one, "forget one" },
+        { test_pair_locked, "pair locked" },
     };
     const size_t count = sizeof tests / sizeof tests[0];
     for (size_t i = 0; i < count; i++) {

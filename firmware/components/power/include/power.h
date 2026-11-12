@@ -29,7 +29,7 @@ typedef struct {
     uint32_t idle_ms;        /* since the last touching sample, or since the timeout was set if that is later */
     uint32_t swallowed;      /* samples dropped since start, the wake contact's press and its closing release included */
     uint32_t off_count;      /* acknowledged backlight-off writes made here */
-    uint32_t wake_count;     /* acknowledged backlight-on writes made for a touch on a dark screen */
+    uint32_t wake_count;     /* acknowledged backlight-on writes made for a touch on a dark screen or a power_wake */
     uint32_t wake_us;        /* latest wake: from the wake sample reaching power_filter to the backlight write returning */
     uint32_t errors;         /* failed backlight writes made here, the lit write that follows a failed dark write included */
     uint8_t output;          /* the CH422G output byte the chip last acknowledged */
@@ -101,6 +101,11 @@ esp_err_t power_set_idle_timeout_s(uint32_t seconds, int64_t now_us);
  * restarts at now_us. Not stored here. ESP_ERR_INVALID_ARG for a timeout outside 10 to 86400 when turning it on,
  * ESP_ERR_INVALID_STATE before a successful power_start. Any task may call it. */
 esp_err_t power_set_photo_idle(bool on, uint32_t timeout_s, int64_t now_us);
+
+/* Asks for the screen for something the person must see now, such as a pairing code: on the LVGL read callback's next
+ * read, a dark screen lights, the idle face goes down and the idle clock starts over, as a touch would, with no contact
+ * to eat. ESP_ERR_INVALID_STATE before a successful power_start. Any task may call it. */
+esp_err_t power_wake(void);
 
 /* Whether the idle face covers the Page, and, through `entry` when it isn't NULL, the number of the latest idle period.
  * False before power_start. Any task may call it. */

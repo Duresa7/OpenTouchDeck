@@ -47,6 +47,8 @@ static struct {
     int64_t timeout_set_us;
     bool photo_on;
     bool idle_face;
+    /* power_wake asked for the screen: the read callback lights it on its next read. */
+    bool wake_wanted;
     int64_t photo_timeout_us;
     uint32_t face_count;
     uint32_t face_wakes;
@@ -105,6 +107,17 @@ static action_t step(bool lit, bool touching, bool finger_down, int64_t now_us, 
     s.prev_lit = lit;
 
     const bool dark = !lit || s.chip_in_doubt;
+    /* A wake counts as a touch for the idle clock and takes the idle face down, but has no contact to eat. A dark
+     * screen is lit here unless a contact is open, whose own samples light it. */
+    const bool wake = s.wake_wanted;
+    s.wake_wanted = false;
+    if (wake) {
+        s.last_touch_us = now_us;
+        s.idle_face = false;
+        if (dark && !touching && s.contact == CONTACT_NONE && now_us >= s.retry_light_us) {
+            act = ACT_LIGHT;
+        }
+    }
     if (touching && s.contact == CONTACT_NONE) {
         const bool wake_resumed = finger_down && now_us < s.guard_until_us;
         s.contact = dark || s.idle_face || wake_resumed ? CONTACT_EATEN : CONTACT_PASSED;
@@ -279,6 +292,17 @@ esp_err_t power_set_photo_idle(bool on, uint32_t timeout_s, int64_t now_us)
     if (was_face && !on) {
         ESP_LOGI(TAG, "idle face off: photo idle mode turned off");
     }
+    return ESP_OK;
+}
+
+esp_err_t power_wake(void)
+{
+    if (!atomic_load(&s_started)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    portENTER_CRITICAL(&s_lock);
+    s.wake_wanted = true;
+    portEXIT_CRITICAL(&s_lock);
     return ESP_OK;
 }
 

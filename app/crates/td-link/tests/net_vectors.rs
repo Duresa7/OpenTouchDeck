@@ -802,8 +802,8 @@ fn a_version_error_stops_the_companion_with_no_fallback() {
 }
 
 /// The `management` steps a network session can run against the fake Device: the USB-only
-/// refusal over Wi-Fi. The USB steps need `net.list`, `net.forget` and `net.pair` handlers
-/// that the mock Device doesn't have, and the BLE step needs a BLE carrier; both are skipped.
+/// refusal over Wi-Fi. `management_over_usb` runs the USB steps; the BLE step needs a BLE
+/// carrier and is skipped.
 #[test]
 fn management_over_wifi_is_usb_only() {
     let v = vectors();
@@ -851,4 +851,49 @@ fn management_over_wifi_is_usb_only() {
         .unwrap();
     assert!(!reply.ok);
     assert_eq!(reply.fields["reason"], "usb-only");
+}
+
+/// Every USB step of the shared `management` vector against the mock Device holding the
+/// vector's four apps: each answer must match exactly.
+#[test]
+fn management_over_usb() {
+    let v = vectors();
+    let management = &v["management"];
+    let deck = MockDeck::v2();
+    deck.set_wifi_capability(true);
+    for app in management["apps"].as_array().unwrap() {
+        deck.add_net_pairing(array(&app["app_id"]), app["app_name"].as_str().unwrap());
+    }
+    let failures = management["base"]["pair_failures"].as_u64().unwrap() as u32;
+    deck.set_net_failures(failures, Duration::ZERO);
+    let (session, _) = Session::open(
+        Box::new(deck.connect()),
+        SessionConfig {
+            ping_every: None,
+            ..SessionConfig::default()
+        },
+    )
+    .unwrap();
+    session.hello(Duration::from_secs(1)).unwrap();
+    let mut ran = 0;
+    for step in management["steps"].as_array().unwrap() {
+        if step["carrier"] != "usb" {
+            continue;
+        }
+        let reply = session
+            .call(&step["request"], Duration::from_secs(5))
+            .unwrap();
+        let mut got = reply.fields.clone();
+        got.insert("m".into(), Value::from(reply.m.clone()));
+        got.insert("ok".into(), Value::from(reply.ok));
+        assert_eq!(
+            Value::Object(got),
+            step["response"],
+            "{}",
+            step["note"].as_str().unwrap()
+        );
+        ran += 1;
+    }
+    assert_eq!(ran, 8, "eight steps run over USB");
+    assert!(deck.net_pairings().is_empty());
 }

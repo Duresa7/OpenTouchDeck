@@ -16,6 +16,7 @@ import { button } from '../../shell/button.ts';
 import { useBundledBuild, useDeviceStores, useOfferedFirmware } from './device.ts';
 import { Select } from './fields.tsx';
 import { BluetoothField } from './BluetoothField.tsx';
+import { PairingsField } from './PairingsField.tsx';
 import { WifiField } from './WifiField.tsx';
 
 const ORIENTATIONS: { value: Orientation; label: string }[] = [
@@ -483,7 +484,7 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
  * page shows them, one Device at a time.
  */
 export function DeviceSettings({ device }: { device: DeviceSummary }) {
-  const { settings, firmware, wifi, wifiSetup, bluetooth } = useDeviceStores(device);
+  const { settings, firmware, wifi, wifiSetup, bluetooth, pairings } = useDeviceStores(device);
   const name = device.name ?? 'Unnamed Device';
   const live = device.link.state === 'connected';
   const loaded = useStore(settings, (s) => s.load === 'ready');
@@ -511,6 +512,7 @@ export function DeviceSettings({ device }: { device: DeviceSummary }) {
       </Group>
       <Group title="Wireless">
         <WifiField device={device} name={name} wifi={wifi} setup={wifiSetup} live={live && !restarting} />
+        <PairingsField device={device} name={name} pairings={pairings} live={live && !restarting} />
         <BluetoothField device={device} name={name} bluetooth={bluetooth} live={live && !restarting} />
       </Group>
       <Group title="Firmware">

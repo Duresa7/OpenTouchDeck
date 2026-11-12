@@ -74,7 +74,7 @@ The way a Device and the Companion reach each other: USB, Wi-Fi or Bluetooth. A 
 _Avoid_: transport, connection type
 
 **Pairing**:
-A Device's approval of one Companion to reach it over Wi-Fi or Bluetooth, given once by entering the code the Device shows. It lasts until someone removes it.
+A Device's approval of one Companion to reach it over Wi-Fi or Bluetooth, given once by entering the code the Device shows. It lasts until someone removes it. A Device keeps at most four; the UI lists them as its paired apps.
 _Avoid_: bond (see Keyboard host), trust, registration
 
 **Bluetooth keyboard**:

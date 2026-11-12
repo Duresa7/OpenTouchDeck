@@ -15,6 +15,8 @@ export interface FakeWifiOptions {
   pairings?: readonly WifiPairing[];
   /** The code every Device shows. */
   code?: string;
+  /** How many apps a Device keeps now, when its Pairing list says; otherwise discovery's count stands. */
+  paired?: (device: string) => number | null;
 }
 
 const json = (status: number, body: unknown) =>
@@ -65,7 +67,7 @@ export function createFakeWifi(options: FakeWifiOptions) {
     const found = discovered.find((d) => d.address === target);
     if (!found) return failure(502, 'wifi.unreachable', `Nothing answered at ${target}.`, { reason: 'connection refused' });
     if (pairings.has(found.device)) return failure(409, 'wifi.already_paired', 'This Companion already has a Pairing with the Device.');
-    if (found.paired === FULL)
+    if ((options.paired?.(found.device) ?? found.paired) === FULL)
       return failure(409, 'wifi.full', 'This Device has four paired apps. Remove one on the Device (paired apps screen), or over USB, then pair again.', { paired: FULL });
     minted += 1;
     const started: PairingStarted = { attempt: `attempt_${minted}`, device: found.device, address: found.address, remaining_ms: WINDOW_MS, attempts_left: ATTEMPTS };
@@ -90,7 +92,7 @@ export function createFakeWifi(options: FakeWifiOptions) {
     if (!keychain) return failure(503, 'wifi.keychain', KEYCHAIN_MISSING);
     attempts.delete(attempt);
     const name = discovered.find((d) => d.device === started.device)?.name ?? null;
-    const pairing: WifiPairing = { device: started.device, address: started.address, name, confirmed: true, paired_ms: Date.now(), problem: null };
+    const pairing: WifiPairing = { device: started.device, address: started.address, name, confirmed: true, paired_ms: Date.now(), problem: null, removing: false };
     pairings.set(pairing.device, pairing);
     const device = devices.get(pairing.device);
     if (device && device.link.state !== 'connected' && device.link.state !== 'updating') {
@@ -141,6 +143,17 @@ export function createFakeWifi(options: FakeWifiOptions) {
       keychain = on;
     },
     pairings: () => [...pairings.values()].map((p) => ({ ...p })),
+    /** This app's side of a Pairing, as the fake Device's Pairing list sees it. */
+    here: {
+      paired: (device: string) => pairings.has(device),
+      forget(device: string) {
+        if (pairings.has(device)) forget(device);
+      },
+      removing(device: string, on: boolean) {
+        const found = pairings.get(device);
+        if (found) found.removing = on;
+      },
+    },
     /** Pairings started and not yet finished or cancelled. */
     attempts: () => [...attempts.keys()],
     get discoveries() {

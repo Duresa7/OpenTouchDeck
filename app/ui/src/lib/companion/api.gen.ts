@@ -8,6 +8,11 @@ export type AllowedPath = { hash: string, };
 export type AnimationCapabilities = { image: [number, number], min_delay_ms: number, page_tiles: number, page_pixels: number, };
 export type Answer = "once" | "always" | "deny" | "expired";
 export type ApiKeyBody = { value: string, };
+export type AppPath = { device: DeviceId, 
+/**
+ * The app's id, 32 lower-case hex characters.
+ */
+app: string, };
 export type ApprovalPath = { id: string, };
 export type ApprovalRequest = { id: string, device: DeviceId, page: string, tile: string, hash: string, created_ms: number, kind: string, program: string, args: Array<string>, cwd: string, shell: boolean, };
 export type ApprovalResolved = { id: string, answer: Answer, };
@@ -164,6 +169,32 @@ outcome: string,
  */
 gap: [number, number] | null, errors: Array<string>, arrived_ms: number, };
 export type DeviceLayoutState = { source: string, name: string, orientation: Orientation, pages: number, tiles: number, icons_loaded: number | null, icons_missing: number | null, bytes: number | null, load_ms: number | null, error: string | null, };
+export type DevicePairing = { 
+/**
+ * The app's id: 32 lower-case hex characters.
+ */
+app: string, 
+/**
+ * The name the app gave when it paired.
+ */
+name: string, 
+/**
+ * The app is this Companion.
+ */
+this_app: boolean, };
+export type DevicePairings = { pairings: Array<DevicePairing>, 
+/**
+ * The most Pairings a Device keeps, 4.
+ */
+max: number, 
+/**
+ * Whether the Device's pairing window is open.
+ */
+pairing: boolean, 
+/**
+ * Milliseconds left in a lockout after wrong codes, 0 when none.
+ */
+locked_ms: number, };
 export type DevicePath = { device: DeviceId, };
 export type DeviceRemoved = { id: DeviceId, };
 export type DeviceSettings = { idle_timeout_s: number, 
@@ -468,7 +499,12 @@ confirmed: boolean, paired_ms: number,
 /**
  * Why the last Wi-Fi connection failed, or `null`.
  */
-problem: string | null, };
+problem: string | null, 
+/**
+ * This Companion asked the Device to forget it and hasn't heard back. The key stays until the Device answers
+ * or no longer lists this Companion.
+ */
+removing: boolean, };
 export type WifiSecret = string;
 export type WifiSetBody = { ssid: string, password: WifiSecret, };
 export const endpoints = {
@@ -511,6 +547,9 @@ export const endpoints = {
   'devices.forget': { method: 'DELETE', path: '/devices/{device}', access: 'session' },
   'devices.get': { method: 'GET', path: '/devices/{device}', access: 'session' },
   'devices.list': { method: 'GET', path: '/devices', access: 'session' },
+  'devices.pairings_forget': { method: 'DELETE', path: '/devices/{device}/pairings/{app}', access: 'session' },
+  'devices.pairings_forget_all': { method: 'DELETE', path: '/devices/{device}/pairings', access: 'session' },
+  'devices.pairings_get': { method: 'GET', path: '/devices/{device}/pairings', access: 'session' },
   'devices.restart': { method: 'POST', path: '/devices/{device}/restart', access: 'session' },
   'devices.settings_get': { method: 'GET', path: '/devices/{device}/settings', access: 'session' },
   'devices.settings_patch': { method: 'PATCH', path: '/devices/{device}/settings', access: 'session' },
@@ -558,7 +597,7 @@ export const endpoints = {
   'wifi.pairings_forget': { method: 'DELETE', path: '/wifi/pairings/{device}', access: 'session' },
   'wifi.pairings_list': { method: 'GET', path: '/wifi/pairings', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'bluetooth.full' | 'bluetooth.off' | 'bluetooth.radio' | 'bluetooth.starting' | 'bluetooth.storage' | 'brandfetch.key_refused' | 'brandfetch.no_key' | 'brandfetch.no_keychain' | 'brandfetch.no_logo' | 'brandfetch.not_found' | 'brandfetch.quota' | 'brandfetch.store' | 'brandfetch.unavailable' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'device.unknown_outcome' | 'device.usb_only' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.channel_mismatch' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.version' | 'wifi.window_closed' | 'wifi.wrong_code';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.store_full' | 'asset.too_large' | 'asset.too_short' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'bluetooth.full' | 'bluetooth.off' | 'bluetooth.radio' | 'bluetooth.starting' | 'bluetooth.storage' | 'brandfetch.key_refused' | 'brandfetch.no_key' | 'brandfetch.no_keychain' | 'brandfetch.no_logo' | 'brandfetch.not_found' | 'brandfetch.quota' | 'brandfetch.store' | 'brandfetch.unavailable' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'device.unknown_outcome' | 'device.usb_only' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.channel_mismatch' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'firmware.usb_only' | 'icon_pack.busy' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.integrity' | 'icon_pack.invalid' | 'icon_pack.not_found' | 'icon_pack.too_many' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.live_image_limit' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'pairings.storage' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found' | 'wifi.already_paired' | 'wifi.attempt_not_found' | 'wifi.busy' | 'wifi.discovery' | 'wifi.expired' | 'wifi.failed' | 'wifi.full' | 'wifi.keychain' | 'wifi.locked' | 'wifi.not_paired' | 'wifi.unreachable' | 'wifi.version' | 'wifi.window_closed' | 'wifi.wrong_code';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
@@ -677,6 +716,13 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>, 
       forget: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('devices.forget', path, query, body, bearer, headers, signal),
       get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceSummary>('devices.get', path, query, body, bearer, headers, signal),
       list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<DeviceSummary>>('devices.list', path, query, body, bearer, headers, signal),
+      pairings_forget: (path: { device: DeviceId, 
+/**
+ * The app's id, 32 lower-case hex characters.
+ */
+app: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DevicePairings>('devices.pairings_forget', path, query, body, bearer, headers, signal),
+      pairings_forget_all: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DevicePairings>('devices.pairings_forget_all', path, query, body, bearer, headers, signal),
+      pairings_get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DevicePairings>('devices.pairings_get', path, query, body, bearer, headers, signal),
       restart: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('devices.restart', path, query, body, bearer, headers, signal),
       settings_get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceSettings>('devices.settings_get', path, query, body, bearer, headers, signal),
       settings_patch: (path: { device: DeviceId, }, query: null = null, body: { idle_timeout_s: number | null, orientation: string | null, name: string | null, 
