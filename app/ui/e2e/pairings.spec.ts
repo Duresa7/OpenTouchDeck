@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openLayout } from './layout-helpers.ts';
+import { openDeviceSettings, openLayout } from './layout-helpers.ts';
 
 // The demo data: Desk runs the radio build on USB and keeps Pairings with two other apps, Open TouchDeck on Laptop and
 // Open TouchDeck on Studio PC. It is on the network at 192.0.2.21, and this app isn't paired with it yet. Studio runs
@@ -11,7 +11,7 @@ const sectionStatus = (page: Page) => page.getByTestId('device-panel-pairings-st
 
 async function openDesk(page: Page) {
   await openLayout(page);
-  await page.getByTestId('device-name').click();
+  await openDeviceSettings(page);
   await expect(page.getByTestId('device-panel')).toBeVisible();
   await expect(apps(page)).toHaveCount(2);
 }
@@ -27,12 +27,12 @@ async function pairDesk(page: Page) {
   await expect(page.getByTestId('device-panel-wifi-forget')).toBeVisible();
 }
 
-/** Closes the Device panel and opens it again, which reads the list again. */
+/** Leaves Device settings and opens them again, which reads the list again. */
 async function reopen(page: Page) {
   const panel = page.getByTestId('device-panel');
-  await page.getByTestId('device-name').click();
+  await page.getByRole('button', { name: 'Layout', exact: true }).click();
   await expect(panel).toHaveCount(0);
-  await page.getByTestId('device-name').click();
+  await openDeviceSettings(page);
   await expect(panel).toBeVisible();
 }
 
@@ -122,7 +122,7 @@ test('a normal build shows no paired apps', async ({ page }) => {
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Edit Studio' }).click();
   await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0002');
-  await page.getByTestId('device-name').click();
+  await openDeviceSettings(page);
   await expect(page.getByTestId('device-panel-update')).toBeVisible();
   await expect(section(page)).toHaveCount(0);
 });
