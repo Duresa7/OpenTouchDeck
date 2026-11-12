@@ -505,7 +505,12 @@ impl MockDeck {
     /// `caps.ble_hid` and the Device answers `ble.*`. `None`, the default, is the normal build, which doesn't know
     /// those messages. Bluetooth starts off, as on a fresh Device.
     pub fn set_ble_capability(&self, bonds: Option<u32>) {
-        self.state().ble.bonds_max = bonds;
+        let mut state = self.state();
+        state.ble.bonds_max = bonds;
+        state.hello.sinks.retain(|s| s != "hid");
+        if bonds.is_some() {
+            state.hello.sinks.push("hid".into());
+        }
     }
 
     /// Puts a bond in the Device's bond store, as a host that paired earlier.

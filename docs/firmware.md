@@ -754,9 +754,9 @@ or the console:
   it.
 - `ble forget [aa:bb:cc:dd:ee:ff]`: forgets one bonded host, or all of them.
 
-Until Tiles choose their target (#277), every key report also goes to the
-bonded host that is connected and subscribed. With no host connected, BLE sends
-nothing.
+Tiles with `sink:"hid"` send their keys only to the bonded host that is
+connected and subscribed. Omitted sinks send to the Companion. With no host
+connected, BLE drops the press without rerouting it.
 
 What a host sees:
 
@@ -1287,3 +1287,9 @@ through the production validator and decoder, comparing all decoded frames and
 delays. Regenerate that corpus with
 `python -B firmware/tools/generate_gif_fixtures.py`; this invokes the repository's
 Rust normalizer in a temporary Cargo project using the app lockfile.
+
+Tile `key` and `consumer` actions with `sink:"hid"` bypass the Companion engine
+and send press/release reports through the Bluetooth sink. Their modifiers are
+independent of Companion modifier Tiles. Omitted sinks keep the Companion link;
+normal Firmware rejects `hid`. `test_ble.py` also drives Tile presses through
+`ui_tile_click` and checks the encoded shortcut, media and release reports.

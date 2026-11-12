@@ -299,6 +299,7 @@ keys. Rules whose key starts with `file.` or `json.` apply to the file's text, a
 | `tile.streams` | A schema 2 tile's `streams` do not match its `render`: a stream the renderer doesn't bind, a type it doesn't accept, or a required stream that is missing. Tiles without a Live tile renderer declare none. |
 | `tile.input` | A schema 2 tile's `input` is not `true`, or the tile is not a `bar` with a `widget` action. |
 | `icon.format` | `icon` is not `null`, a known `lv:` name, or `file:` and 16 lowercase hexadecimal digits. In schema 2 also an invalid `asset` or `render`, a `gif` without an Asset, or a `bar` or `now-playing` with one. |
+| `action.sink` | A key or consumer action has a sink other than `link` or `hid`, or target validation finds HID unsupported. |
 | `action.type` | An action `type` is missing, or is not one of the nine types. |
 | `action.page-missing` | A `page` action names a page that does not exist. |
 | `key.usage-range` | A `key` action `usage` is outside 1 to 255. |
@@ -347,3 +348,14 @@ IDs once per pair, even when the pair shares several cells.
 Assets, live values, and photo idle mode. Its [golden frames](protocol/golden-frames-v2.json)
 share the v1 codec format. Runtime support and the Layout schema 2 validator
 are separate implementation work; the schema 1 rules above remain unchanged.
+
+## Bluetooth Tile destination
+
+`key` and `consumer` actions accept an optional `sink`, either `link` (default,
+the Companion) or `hid` (the Bluetooth keyboard host). Other actions reject it.
+This is an additive optional field in schemas 1 and 2; their version numbers and
+all existing omitted-sink Layouts stay unchanged. Older readers reject the new
+field under their unknown-field rule. Target validation requires `hello.sinks`
+to contain `hid` for Bluetooth actions; normal Firmware rejects them. A Bluetooth
+consumer usage must fit the existing HID report map (1–1023). Invalid sink values
+report `action.sink`. See `examples/bluetooth.json` for keys and media keys.

@@ -820,8 +820,10 @@ static void test_hello_marks_the_radio_build(void)
     CHECK(usb_take(&frame, payload) && has(payload, "\"proto\":2"));
 #if CONFIG_TD_RADIO_BUILD
     CHECK(has(payload, "\"radio\":true"));
+    CHECK(has(payload, "\"hid\""));
 #else
     CHECK(!has(payload, "\"radio\""));
+    CHECK(!has(payload, "\"hid\""));
 #endif
 }
 

@@ -6,12 +6,14 @@ import {
   ACTION_GROUPS,
   KEYS,
   MEDIA,
+  offersHid,
   MOD_NAMES,
   PROXY_FIELDS,
   spellShortcut,
   splitArgs,
   switchKind,
 } from '../../lib/layout/actions.ts';
+import { useDevices } from '../../lib/companion/devices.ts';
 import { useIntegrations } from '../../lib/companion/integrations.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
 import { idWords, streamLabel } from '../../lib/integrations/model.ts';
@@ -114,7 +116,7 @@ function KeyFields({ action, commit, error }: KindProps<'key'>) {
           ))}
         </ToggleGroup>
         <p className="field-hint" data-testid="action-shortcut">
-          Presses <strong className="shortcut">{spellShortcut(action)}</strong> on this PC.
+          Presses <strong className="shortcut">{spellShortcut(action)}</strong> {action.sink === 'hid' ? 'on the Bluetooth computer or phone' : 'on this PC'}.
         </p>
       </div>
     </>
@@ -304,7 +306,9 @@ function KindFields({ action, commit, error, pages }: { action: Action; commit(n
   }
 }
 
-export function ActionForm({ store, page, tile, layout, device }: { store: EditorStore; page: GridPage; tile: Tile; layout: Layout; device: string }) {
+export function ActionForm({ store, page, tile, layout, device, deviceId }: { store: EditorStore; page: GridPage; tile: Tile; layout: Layout; device: string; deviceId: string }) {
+  const hid = useDevices((s) => offersHid(s.devices.find((d) => d.id === deviceId)));
+  const sinkIds = useFieldIds();
   const edit = useEffectiveTileEdit(store, device, tile.id);
   const ids = useFieldIds();
   if (!edit) return null;
@@ -336,6 +340,14 @@ export function ActionForm({ store, page, tile, layout, device }: { store: Edito
           {action.type === 'widget' && <option value="widget">Live tile</option>}
         </Select>
       </Field>
+      {hid && (action.type === 'key' || action.type === 'consumer') && (
+        <Field ids={sinkIds} label="Send to">
+          <Select id={sinkIds.control} value={action.sink ?? 'link'} onChange={(event) => commit({ ...action, sink: event.target.value === 'hid' ? 'hid' : 'link' })} data-testid="action-sink">
+            <option value="link">This PC (Companion)</option>
+            <option value="hid">Bluetooth computer or phone</option>
+          </Select>
+        </Field>
+      )}
       <KindFields key={action.type} action={action} commit={commit} error={error} pages={layout.pages} />
       {edit.unplacedError && <FieldError id={`${ids.error}-form`} error={edit.unplacedError} />}
     </div>

@@ -2,6 +2,7 @@
 export type AccountUsage = { provider: string, account: string, status: string, success: number, failed: number, recent_10m: number, plan: string | null, five_hour: UsageWindow | null, seven_day: UsageWindow | null, error: string | null, };
 export type ActionLog = { id: string, device: DeviceId, at_ms: number, page: string, tile: string, kind: string, status: string, detail: string, pid: number | null, exit_code: number | null, };
 export type ActionQuery = { device: DeviceId | null, };
+export type ActionSink = "link" | "hid";
 export type AllowedAction = { hash: string, granted_ms: number, kind: string, program: string, args: Array<string>, cwd: string, shell: boolean, };
 export type AllowedPath = { hash: string, };
 export type AnimationCapabilities = { image: [number, number], min_delay_ms: number, page_tiles: number, page_pixels: number, };
@@ -438,7 +439,7 @@ export type Tile = { id: string, label: string, row: number, col: number, rowSpa
  * A `bar` Tile the finger can drag to set its `value` stream. Written only when true.
  */
 input?: boolean, action: TileAction, };
-export type TileAction = { "type": "key", usage: number, mods: Array<Modifier>, } | { "type": "mod", mod: Modifier, } | { "type": "consumer", usage: number, } | { "type": "page", page: string, } | { "type": "none" } | { "type": "launch", path: string, args: Array<string>, cwd: string, } | { "type": "open", target: string, } | { "type": "command", program: string, args: Array<string>, cwd: string, shell: boolean, } | { "type": "widget", source: string, field: string, account: string, };
+export type TileAction = { "type": "key", sink?: ActionSink, usage: number, mods: Array<Modifier>, } | { "type": "mod", mod: Modifier, } | { "type": "consumer", sink?: ActionSink, usage: number, } | { "type": "page", page: string, } | { "type": "none" } | { "type": "launch", path: string, args: Array<string>, cwd: string, } | { "type": "open", target: string, } | { "type": "command", program: string, args: Array<string>, cwd: string, shell: boolean, } | { "type": "widget", source: string, field: string, account: string, };
 export type TileRender = "gif" | "graph" | "bar" | "now-playing";
 export type Topic = "state" | "console" | "key-mirror" | "device-events";
 export type UploadBody = Blob;

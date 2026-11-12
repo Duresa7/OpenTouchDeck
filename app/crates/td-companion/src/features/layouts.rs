@@ -405,6 +405,15 @@ fn push(
         if let Some(expected) = &expected {
             expected.check(read(session, layout.orientation)?.map(|(_, r)| r))?;
         }
+        let (summary, _) = ctx.links.connected(device)?;
+        let sinks = summary
+            .diagnostics
+            .as_ref()
+            .map(|d| d.sinks.as_slice())
+            .unwrap_or(&[]);
+        layout
+            .validate_sinks(sinks)
+            .map_err(|e| LayoutError::Invalid(issues(e)))?;
         check_animations(ctx, device, layout)?;
         let mut assets = send_missing_assets(ctx, session, layout, job)?;
         let wanted = td_host::icons::asset_ids(layout);

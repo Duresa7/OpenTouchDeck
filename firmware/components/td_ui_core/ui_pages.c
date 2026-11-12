@@ -113,6 +113,11 @@ bool ui_tile_click(const ui_tile_t *tile, const ui_action_ops_t *ops, void *ctx)
         return false;
     }
     const td_action_t *a = &tile->action;
+    if (a->hid && (a->type == TD_ACTION_KEY || a->type == TD_ACTION_CONSUMER)) {
+        if (!ops->hid) return false;
+        ops->hid(ctx, a);
+        return true;
+    }
     switch (a->type) {
     case TD_ACTION_KEY:
         if (ops->key == NULL) {
@@ -149,4 +154,19 @@ bool ui_tile_click(const ui_tile_t *tile, const ui_action_ops_t *ops, void *ctx)
         break;
     }
     return false;
+}
+
+void ui_action_hid(const td_action_t *action, key_sink_t sink)
+{
+    if (!action || !sink.report) return;
+    key_report_t down, up;
+    if (action->type == TD_ACTION_KEY) {
+        down = key_report_kbd(action->key.mods, action->key.usage);
+        up = key_report_kbd(0, 0);
+    } else if (action->type == TD_ACTION_CONSUMER) {
+        down = key_report_con(action->consumer.usage);
+        up = key_report_con(0);
+    } else return;
+    sink.report(sink.ctx, &down);
+    sink.report(sink.ctx, &up);
 }

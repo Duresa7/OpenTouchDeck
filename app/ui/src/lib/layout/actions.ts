@@ -16,3 +16,5 @@ export {
   splitArgs,
   switchKind,
 } from './lib/actions.ts';
+
+export { offersHid } from './lib/actions.ts';

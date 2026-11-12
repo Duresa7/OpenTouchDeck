@@ -144,7 +144,11 @@ static void hello(const cJSON *request, cJSON *reply)
     cJSON_AddStringToObject(reply, "version", app->version);
     cJSON_AddStringToObject(reply, "running", running ? running->label : "unknown");
     const char *sinks[] = { "log", "link" };
-    cJSON_AddItemToObject(reply, "sinks", cJSON_CreateStringArray(sinks, 2));
+    cJSON *sink_list = cJSON_CreateStringArray(sinks, 2);
+#if CONFIG_TD_RADIO_BUILD
+    cJSON_AddItemToArray(sink_list, cJSON_CreateString("hid"));
+#endif
+    cJSON_AddItemToObject(reply, "sinks", sink_list);
     cJSON_AddBoolToObject(reply, "recovery", td_recovery_mode());
     ui_layout_info_t layout = { 0 };
     if (ui_ready()) {

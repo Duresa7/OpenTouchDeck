@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_console.h"
+#include "key_sink.h"
 #include "td_layout.h"
 #include "ui_widget_state.h"
 #include "ui_live.h"
@@ -147,6 +148,9 @@ const esp_console_cmd_t *ui_console_commands(size_t *count);
  * name. Call it again to update the time left; ui_pairing_hide takes it down. Any task but the LVGL task. */
 void ui_pairing_show(const char *code, const char *name, uint32_t left_s, void (*on_cancel)(void));
 void ui_pairing_hide(void);
+
+/* Configure the Tile Bluetooth destination before UI start. */
+void ui_set_hid_sink(key_sink_t sink);
 
 #ifdef __cplusplus
 }

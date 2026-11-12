@@ -84,3 +84,8 @@ _Avoid_: BLE HID, Bluetooth mode
 **Keyboard host**:
 A computer or phone the Device's Bluetooth keyboard types on. A person adds one by typing on it the 6-digit code the Device shows, and it stays until someone forgets it. The UI says "computer or phone" and uses the verb "add".
 _Avoid_: bond, paired device, Pairing (that is a Companion's approval)
+
+**Action sink**:
+The destination of a Tile's keys or media keys: the Companion (`link`) or the
+Bluetooth keyboard's computer or phone (`hid`). The editor calls it “Send to”.
+Omitting the sink keeps the Companion destination.

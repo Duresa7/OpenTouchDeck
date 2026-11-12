@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "name": "Bluetooth keys",
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "keys",
+      "title": "Keys",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 3,
+      "tiles": [
+        {
+          "id": "copy",
+          "label": "Copy",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 6,
+            "mods": [
+              "ctrl"
+            ],
+            "sink": "hid"
+          }
+        },
+        {
+          "id": "play",
+          "label": "Play",
+          "row": 0,
+          "col": 1,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": "lv:play_pause",
+          "action": {
+            "type": "consumer",
+            "usage": 205,
+            "sink": "hid"
+          }
+        },
+        {
+          "id": "pc",
+          "label": "This PC",
+          "row": 0,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 58,
+            "mods": []
+          }
+        }
+      ]
+    }
+  ]
+}

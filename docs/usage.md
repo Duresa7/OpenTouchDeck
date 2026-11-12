@@ -292,3 +292,10 @@ App launches and file opens can now ask for command approval on this PC too.
 When something fails, a card pops up at the bottom of the window with what went wrong. Its **Details** opens **Settings > Errors**, which lists the errors since Open TouchDeck opened, newest first, with the full detail and a button to copy it.
 
 **Settings > Troubleshooting** includes Device details and a Firmware console. Overlong console lines are truncated and heavy output can drop lines so Device replies keep flowing. Logs can contain personal data; remove it before sharing. If the Device's Layout prevents normal use, its ten-second touch hold starts the built-in Layout without removing stored files. See [Firmware recovery](firmware.md#recovery) before using it.
+
+For shortcut and media-key Tiles on a Device that offers a Bluetooth keyboard,
+choose **Send to → Bluetooth computer or phone** in the Tile action form. Turn
+on the Bluetooth keyboard and add the computer or phone in Device settings first.
+These Tiles work without the Companion. **This PC (Companion)** keeps sending
+keys to the PC running the Companion. A disconnected Bluetooth destination drops
+the press; it does not send it to the Companion instead.
