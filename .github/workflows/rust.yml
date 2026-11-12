@@ -1,0 +1,114 @@
+name: rust
+
+# The Rust workspace under app/: the Companion today, the native app next.
+# Pull requests and main call this with the build cache on. A release calls it with the cache off.
+# It always checks the commit that started the run and takes no ref from its caller, so no caller can point it
+# at other code (ADR 0007).
+on:
+  workflow_call:
+    inputs:
+      cache:
+        description: Restore the Rust build cache. Pull request and main checks only, never a release
+        type: boolean
+        default: false
+      release-exe:
+        description: Also build the release program on Windows and check its version resource and subsystem
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  lint:
+    name: lint ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache: ${{ inputs.cache }}
+          cache-key: lint
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace -- -D warnings
+
+  test:
+    name: test ${{ matrix.tests.name }} ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+        # The tests run as two halves side by side: the Companion's are the slow half.
+        # A new crate lands in the second half with no change here.
+        tests:
+          - name: companion
+            packages: --package td-companion
+          - name: libraries
+            packages: --workspace --exclude td-companion
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache: ${{ inputs.cache }}
+          cache-key: test-${{ matrix.tests.name }}
+      # The UI is not built here, so the Companion embeds its "UI not built" page. The frozen app checks run the
+      # embedded UI test against the real build.
+      - run: cargo test ${{ matrix.tests.packages }}
+      # cargo test built the debug program next to the tests: a console program with the version resource.
+      - name: Check the debug program's version resource and subsystem
+        if: runner.os == 'Windows' && matrix.tests.name == 'companion'
+        shell: pwsh
+        run: ./scripts/check_exe.ps1 -Path target/debug/td-companion.exe -Subsystem console
+
+  release-exe:
+    name: windows release program
+    if: inputs.release-exe
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No cache: this is the build a release makes.
+      - uses: ./.github/actions/rust-setup
+      - name: Build the release program
+        run: cargo build --release --locked --package td-companion
+      - name: Check the release program's version resource and subsystem
+        shell: pwsh
+        run: ./scripts/check_exe.ps1 -Path target/release/td-companion.exe -Subsystem gui
+      # A GUI program has no console, but it still returns its exit code and writes to a redirected stderr.
+      - name: Check a GUI program still reports a failure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $errors = Join-Path $env:RUNNER_TEMP 'companion-stderr.txt'
+          $process = Start-Process -FilePath target/release/td-companion.exe -ArgumentList '--not-an-argument' `
+            -RedirectStandardError $errors -Wait -PassThru
+          $text = (Get-Content -LiteralPath $errors -Raw).Trim()
+          "exit code $($process.ExitCode), stderr: $text"
+          if ($process.ExitCode -ne 1) { throw "Expected exit code 1, got $($process.ExitCode)." }
+          if ($text -ne 'Companion: Unknown Companion argument.') { throw "Unexpected stderr: $text" }
