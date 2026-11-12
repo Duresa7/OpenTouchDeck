@@ -298,11 +298,7 @@ async fn render_png(td: &TestCompanion, rgb: [u8; 3]) -> td_companion::jobs::Job
 
 #[tokio::test]
 async fn a_running_layout_push_pins_its_assets_against_a_sweep() {
-    let td = TestCompanion::start_with(td_companion::Limits {
-        asset_store_bytes: td_host::icon_pack::FILE_BYTES as u64,
-        ..Default::default()
-    })
-    .await;
+    let td = TestCompanion::start_with_asset_quota(td_host::icon_pack::FILE_BYTES as u64).await;
     let _events = td.events().await;
     let device = td.plug_device("mock0001").await;
 

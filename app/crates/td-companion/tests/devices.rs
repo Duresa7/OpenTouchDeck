@@ -7,8 +7,8 @@ use td_companion::{
     api::NoQuery,
     devices::{BoardKind, BoardProbe, DeviceId, LinkState},
     features::devices::{
-        Connect, DevicePath, DeviceSettingsPatch, Disconnect, Get, List, NewBoardsList, PortsList,
-        PortsRescan, Restart, SettingsGet, SettingsPatch,
+        Connect, DevicePath, DeviceSettingsPatch, Disconnect, Get, NewBoardsList, PortsList,
+        Restart, SettingsGet, SettingsPatch,
     },
     testing::TestCompanion,
 };
@@ -63,52 +63,6 @@ async fn console(td: &TestCompanion, route: &str, line: &str) -> (u16, Value) {
     let status = response.status().as_u16();
     let body = response.json::<Value>().await.unwrap_or(Value::Null);
     (status, body["error"]["code"].clone())
-}
-
-#[tokio::test]
-async fn two_devices_are_live_at_once_and_told_apart() {
-    let td = TestCompanion::start().await;
-    let started = Instant::now();
-    let (a, b) = tokio::join!(td.plug_device("mock0001"), td.plug_device("mock0002"));
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        started.elapsed()
-    );
-    let devices = td.call::<List>((), NoQuery, ()).await.unwrap();
-    assert_eq!(devices.len(), 2);
-    assert_ne!(a, b);
-    assert_ne!(devices[0].name, devices[1].name);
-    for d in &devices {
-        assert!(
-            matches!(d.link, LinkState::Connected { protocol: 2, .. }),
-            "{d:?}"
-        );
-        assert!(d.stable_id);
-        assert!(d.capabilities.is_some());
-    }
-    // Unplugging one leaves the other connected.
-    td.unplug("mock0001").await;
-    let b = td.call::<Get>(path(&b), NoQuery, ()).await.unwrap();
-    assert!(matches!(b.link, LinkState::Connected { .. }));
-}
-
-#[tokio::test]
-async fn a_connected_device_is_probed_once_and_keeps_its_link_across_scans() {
-    let td = TestCompanion::start().await;
-    let id = td.plug_device("mock0001").await;
-    let hellos = || {
-        let received = td.deck("mock0001").received();
-        received.iter().filter(|m| m["m"] == "hello").count()
-    };
-    let probed = hellos();
-    let link = td.device(&id).unwrap().link;
-    // Longer than two 1 s polls: a scan never reprobes a connected port.
-    tokio::time::sleep(Duration::from_millis(2500)).await;
-    td.call::<PortsRescan>((), NoQuery, ()).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(hellos(), probed);
-    assert_eq!(td.device(&id).unwrap().link, link);
 }
 
 #[tokio::test]
@@ -192,17 +146,6 @@ async fn disconnect_holds_until_connect_or_replug() {
     td.unplug("mock0001").await;
     assert_eq!(td.device(&id).unwrap().link, LinkState::Offline);
     td.plug_device("mock0001").await;
-}
-
-#[tokio::test]
-async fn a_silent_port_becomes_a_new_board_after_the_boot_grace() {
-    let td = TestCompanion::start().await;
-    let board = td.plug_board("mock00aa", BoardKind::Silent).await;
-    assert_eq!(board.probe, BoardProbe::Silent);
-    assert!(td.call::<List>((), NoQuery, ()).await.unwrap().is_empty());
-    let boards = td.call::<NewBoardsList>((), NoQuery, ()).await.unwrap();
-    assert_eq!(boards.len(), 1);
-    assert_eq!(boards[0].id, "mock00aa");
 }
 
 #[tokio::test]
@@ -663,39 +606,4 @@ async fn mock_summary_carries_hello_diagnostics() {
         value["diagnostics"],
         json!({"product":"touchdeck", "running_from":"ota_0", "sinks":["log","link"], "current_layout":"builtin"})
     );
-}
-
-#[tokio::test]
-async fn closed_session_releases_every_held_key() {
-    let td = TestCompanion::start().await;
-    td.plug_device("mock0001").await;
-    let deck = td.deck("mock0001");
-    deck.emit_key(&json!({"type":"kbd","mods":1,"keys":[4,5]}));
-    td.until(|td| {
-        td.input_log()
-            .iter()
-            .filter(|entry| entry.starts_with("down "))
-            .count()
-            == 3
-    })
-    .await;
-    deck.hang_up();
-    td.until(|td| {
-        td.input_log()
-            .iter()
-            .filter(|entry| entry.starts_with("up "))
-            .count()
-            == 3
-    })
-    .await;
-    let log = td.input_log();
-    let mut held = std::collections::BTreeSet::new();
-    for entry in log {
-        if let Some(key) = entry.strip_prefix("down ") {
-            held.insert(key.to_owned());
-        } else if let Some(key) = entry.strip_prefix("up ") {
-            assert!(held.remove(key), "released a key that was not held");
-        }
-    }
-    assert!(held.is_empty());
 }

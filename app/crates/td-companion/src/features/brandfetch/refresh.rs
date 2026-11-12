@@ -22,7 +22,7 @@ use super::{
     Brandfetch, BrandfetchError, BrandfetchLogo,
     client::{FileFormat, Original, draw},
 };
-use crate::{api::Ctx, features::assets::Fit, store::AssetStore};
+use crate::{companion::Handle, features::assets::Fit, store::AssetStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
@@ -119,7 +119,7 @@ fn sha(bytes: &[u8]) -> String {
 }
 
 /// Refreshes due logos at start and then every `tick`, by the Companion's wall clock.
-pub(crate) async fn run(ctx: Ctx, tick: Duration) {
+pub(crate) async fn run(ctx: Handle, tick: Duration) {
     loop {
         let now = ctx.clock.unix_s();
         let work = ctx.clone();
@@ -481,7 +481,7 @@ mod tests {
         let assets = AssetStore::new(
             dir.path().join("assets"),
             crate::store::LayoutStore::new(dir.path().join("layouts")),
-            crate::api::Clock::default(),
+            crate::clock::Clock::default(),
             crate::store::ASSET_STORE_BYTES,
         );
         Rig {

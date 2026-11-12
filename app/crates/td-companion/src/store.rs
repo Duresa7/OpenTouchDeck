@@ -1,6 +1,6 @@
 //! What the Companion keeps on disk under its data folder: each Device's Layouts and the Asset
 //! files it prepared.
-use crate::api::Clock;
+use crate::clock::Clock;
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeSet, HashMap},

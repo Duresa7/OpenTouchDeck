@@ -75,6 +75,7 @@ struct State {
 }
 
 struct Inner {
+    stopped: std::sync::atomic::AtomicBool,
     file: Option<PathBuf>,
     devices: DeviceManager,
     links: Links,
@@ -98,6 +99,7 @@ impl PhotoFrames {
             .unwrap_or_default()
             .folders;
         let inner = Arc::new(Inner {
+            stopped: Default::default(),
             file,
             devices,
             links,
@@ -112,6 +114,12 @@ impl PhotoFrames {
             .spawn(move || supervise(&weak))
             .expect("the photo frame thread starts");
         Self { inner }
+    }
+
+    pub(crate) fn stop(&self) {
+        self.inner
+            .stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// The Device's picture folder on this PC.
@@ -177,6 +185,9 @@ fn supervise(weak: &Weak<Inner>) {
         let Some(inner) = weak.upgrade() else {
             return;
         };
+        if inner.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         tick(&inner, weak);
     }
 }
@@ -263,6 +274,7 @@ fn tick(inner: &Inner, weak: &Weak<Inner>) {
 fn work(weak: &Weak<Inner>, id: &DeviceId, since_ms: u64, generation: u64) {
     let current = || {
         weak.upgrade()
+            .filter(|inner| !inner.stopped.load(std::sync::atomic::Ordering::SeqCst))
             .and_then(|inner| inner.plan(id, since_ms, generation))
     };
     let mut streamer: Option<Streamer> = None;

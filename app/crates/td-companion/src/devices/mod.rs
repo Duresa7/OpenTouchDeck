@@ -394,7 +394,7 @@ pub enum PortStatus {
     },
 }
 
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceAdded(pub DeviceSummary);
 impl Event for DeviceAdded {
     const NAME: &'static str = "device.added";
@@ -402,7 +402,7 @@ impl Event for DeviceAdded {
         Some(self.0.id.as_str())
     }
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceUpdated(pub DeviceSummary);
 impl Event for DeviceUpdated {
     const NAME: &'static str = "device.updated";
@@ -410,7 +410,7 @@ impl Event for DeviceUpdated {
         Some(self.0.id.as_str())
     }
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceRemoved {
     pub id: DeviceId,
 }
@@ -420,7 +420,7 @@ impl Event for DeviceRemoved {
         Some(self.id.as_str())
     }
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct NewBoardAdded(pub NewBoard);
 impl Event for NewBoardAdded {
     const NAME: &'static str = "new-board.added";
@@ -428,7 +428,7 @@ impl Event for NewBoardAdded {
         Some(self.0.id.as_str())
     }
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct NewBoardRemoved {
     pub id: DeviceId,
 }
@@ -439,7 +439,7 @@ impl Event for NewBoardRemoved {
     }
 }
 /// One console line from a Device.
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceConsole {
     pub device: DeviceId,
     pub line: String,
@@ -452,7 +452,7 @@ impl Event for DeviceConsole {
     }
 }
 /// One mirrored key report and what the PC did with it.
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceKeyMirror {
     pub device: DeviceId,
     pub seq: u32,
@@ -472,7 +472,7 @@ impl Event for DeviceKeyMirror {
     }
 }
 /// A raw Device event, for diagnostics.
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceEvent {
     pub device: DeviceId,
     pub event: serde_json::Value,

@@ -402,11 +402,7 @@ async fn gif_target_must_be_a_real_canvas() {
 
 #[tokio::test]
 async fn a_full_asset_store_refuses_with_a_typed_error() {
-    let td = TestCompanion::start_with(td_companion::Limits {
-        asset_store_bytes: td_host::icon_pack::FILE_BYTES as u64,
-        ..Default::default()
-    })
-    .await;
+    let td = TestCompanion::start_with_asset_quota(td_host::icon_pack::FILE_BYTES as u64).await;
     let first = upload(&td).await;
     let done = render(&td, first["id"].as_str().unwrap(), "contain").await;
     assert_eq!(done.state, JobState::Succeeded, "{done:?}");

@@ -1,6 +1,7 @@
 //! Jobs: slow Device work that answers `202` at once and reports through `job.updated`.
 //! One Job holds a Device or New board at a time. Companion-scoped Jobs share a limit per kind.
-use crate::api::{ApiError, Clock, CommonError, ErrorBody, Event, Events};
+use crate::api::{ApiError, CommonError, ErrorBody, Event, Events};
+use crate::clock::Clock;
 use axum::http::StatusCode;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -8,7 +9,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     marker::PhantomData,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -69,7 +70,7 @@ pub trait JobKind: 'static {
     type Result: Serialize + DeserializeOwned + TS + 'static;
 }
 
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct JobUpdated(pub Job);
 impl Event for JobUpdated {
     const NAME: &'static str = "job.updated";
@@ -185,32 +186,34 @@ pub struct Jobs {
     slot_freed: Arc<parking_lot::Condvar>,
     events: Events,
     clock: Clock,
-    session_active: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    session_active: Arc<OnceLock<SessionCheck>>,
     #[cfg(any(test, feature = "test-hooks"))]
     gate: Arc<Gate>,
 }
+type SessionCheck = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 impl Jobs {
-    pub(crate) fn new(
-        events: Events,
-        clock: Clock,
-        session_active: Arc<dyn Fn(&str) -> bool + Send + Sync>,
-    ) -> Self {
+    pub(crate) fn new(events: Events, clock: Clock) -> Self {
         Self {
             table: Default::default(),
             slot_freed: Default::default(),
             events,
             clock,
-            session_active,
+            session_active: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             gate: Default::default(),
         }
     }
+    pub(crate) fn session_check(&self, check: SessionCheck) {
+        let _ = self.session_active.set(check);
+    }
     fn expire_lease(&self, table: &mut Table) {
-        if table
-            .lease
-            .as_ref()
-            .is_some_and(|l| self.clock.now() >= l.until || !(self.session_active)(&l.owner))
-        {
+        if table.lease.as_ref().is_some_and(|l| {
+            self.clock.now() >= l.until
+                || self
+                    .session_active
+                    .get()
+                    .is_some_and(|active| !active(&l.owner))
+        }) {
             table.lease = None;
         }
     }
@@ -600,7 +603,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_panicking_turn_holder_wakes_the_waiting_job() {
-        let jobs = Jobs::new(Events::default(), Clock::default(), Arc::new(|_| true));
+        let jobs = Jobs::new(Events::default(), Clock::default());
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (panic_tx, panic_rx) = std::sync::mpsc::channel();
 

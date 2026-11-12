@@ -1,6 +1,7 @@
 mod prompt;
 use crate::{
-    api::{Clock, Event, Events},
+    api::{Event, Events},
+    clock::Clock,
     devices::{DeviceId, DeviceManager},
     link::Links,
 };
@@ -74,7 +75,7 @@ pub enum Answer {
     Deny,
     Expired,
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct ApprovalResolved {
     pub id: String,
     pub answer: Answer,

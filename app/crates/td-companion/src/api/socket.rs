@@ -96,6 +96,32 @@ fn frame<E: Event>(event: &E) -> serde_json::Value {
     frame
 }
 
+/// JSON framing belongs to this adapter; the Companion only publishes typed changes.
+fn encode(change: &crate::companion::Change) -> (serde_json::Value, Topic, Option<String>) {
+    use crate::companion::Change;
+    fn event<E: Event>(value: &E) -> (serde_json::Value, Topic, Option<String>) {
+        (frame(value), E::TOPIC, value.device().map(str::to_owned))
+    }
+    match change {
+        Change::DeviceAdded(value) => event(value),
+        Change::DeviceUpdated(value) => event(value),
+        Change::DeviceRemoved(value) => event(value),
+        Change::NewBoardAdded(value) => event(value),
+        Change::NewBoardRemoved(value) => event(value),
+        Change::DeviceConsole(value) => event(value),
+        Change::DeviceKeyMirror(value) => event(value),
+        Change::DeviceEvent(value) => event(value),
+        Change::ApprovalRequested(value) => event(value),
+        Change::ApprovalResolved(value) => event(value),
+        Change::ActionLogged(value) => event(value),
+        Change::JobUpdated(value) => event(value),
+        Change::IntegrationStatus(value) => event(value),
+        Change::Stopping => event(&CompanionStopping {
+            reason: "shutdown".into(),
+        }),
+    }
+}
+
 #[derive(Default)]
 struct Queue {
     frames: VecDeque<(serde_json::Value, usize)>,
@@ -119,13 +145,32 @@ struct TopicRequest {
 }
 /// Fans `state` frames out to every open socket, each with its own bounded queue.
 #[derive(Default, Clone)]
-pub struct Events {
+pub(crate) struct WebEvents {
     subscribers: Arc<Mutex<Vec<Weak<Subscriber>>>>,
+    _observation: Option<Arc<crate::events::Observer>>,
 }
-impl Events {
-    pub fn publish<E: Event>(&self, event: &E) {
-        let device = event.device().map(str::to_owned);
-        self.publish_frame(frame(event), E::TOPIC, device);
+impl WebEvents {
+    pub(crate) fn new(events: &crate::events::Events) -> Self {
+        let web = Self::default();
+        let subscribers = Arc::downgrade(&web.subscribers);
+        let observation = events.observe(Arc::new(move |change| {
+            let Some(subscribers) = subscribers.upgrade() else {
+                return;
+            };
+            let web = Self {
+                subscribers,
+                _observation: None,
+            };
+            if matches!(change, crate::companion::Change::Stopping) {
+                return;
+            }
+            let (value, topic, device) = encode(change);
+            web.publish_frame(value, topic, device);
+        }));
+        Self {
+            _observation: Some(observation),
+            ..web
+        }
     }
     pub(crate) fn publish_frame(
         &self,
@@ -253,7 +298,7 @@ async fn send(sink: &mut Sink, message: Message) -> bool {
     )
 }
 async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
-    let subscriber = ctx.events.subscribe();
+    let subscriber = ctx.web_events.subscribe();
     let (mut sink, mut stream) = socket.split();
     let mut seq = 0u64;
     let mut hello = serde_json::to_value(Hello {
@@ -267,12 +312,12 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
         return;
     }
     if ctx.auth.lock().active(&client.id, ctx.clock.now()) {
-        let mut snapshot = serde_json::Map::new();
-        for feature in super::registry() {
-            for entry in feature.snapshots {
-                snapshot.insert(entry.key.into(), (entry.read)(&ctx));
-            }
-        }
+        let state = ctx.snapshot();
+        let snapshot = serde_json::to_value(state)
+            .expect("snapshot serializes")
+            .as_object()
+            .unwrap()
+            .clone();
         if !send(&mut sink, numbered(frame(&Sync(snapshot)), &mut seq)).await {
             return;
         }
@@ -376,8 +421,9 @@ mod delivery_review_tests {
     use super::*;
     #[test]
     fn review_delivery_error_reaches_event_stream() {
-        let events = Events::default();
-        let subscriber = events.subscribe();
+        let events = crate::events::Events::default();
+        let web = WebEvents::new(&events);
+        let subscriber = web.subscribe();
         let service = crate::features::integrations::Service::new(true, events);
         let message = "The Device is out of space for cover art. Remove unused Assets, then retry.";
         service.delivered(
