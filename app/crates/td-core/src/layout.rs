@@ -1367,6 +1367,35 @@ impl Check {
     }
 }
 
+impl Layout {
+    /// Check destination support against hello.sinks before transferring a Layout.
+    pub fn validate_sinks(&self, sinks: &[String]) -> Result<(), Vec<LayoutError>> {
+        let mut errors = Vec::new();
+        for (pi, page) in self.pages.iter().enumerate() {
+            if let Page::Grid { tiles, .. } = page {
+                for (ti, tile) in tiles.iter().enumerate() {
+                    let (sink, usage) = match &tile.action {
+                        Action::Key { sink, .. } => (sink, None),
+                        Action::Consumer { sink, usage } => (sink, Some(*usage)),
+                        _ => continue,
+                    };
+                    if sink.as_ref() == Some(&ActionSink::Bluetooth)
+                        && (!sinks.iter().any(|s| s == "bluetooth")
+                            || usage.is_some_and(|u| u > 1023))
+                    {
+                        errors.push(LayoutError { rule: Rule::ActionSink, path: format!("/pages/{pi}/tiles/{ti}/action/sink"), message: "Bluetooth destination is unsupported on this Device or for this media key.".into() });
+                    }
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1707,34 +1736,5 @@ mod tests {
             keys(&Layout::parse(text.as_bytes()).unwrap_err()),
             ["shape.unknown-field"]
         );
-    }
-}
-
-impl Layout {
-    /// Check destination support against hello.sinks before transferring a Layout.
-    pub fn validate_sinks(&self, sinks: &[String]) -> Result<(), Vec<LayoutError>> {
-        let mut errors = Vec::new();
-        for (pi, page) in self.pages.iter().enumerate() {
-            if let Page::Grid { tiles, .. } = page {
-                for (ti, tile) in tiles.iter().enumerate() {
-                    let (sink, usage) = match &tile.action {
-                        Action::Key { sink, .. } => (sink, None),
-                        Action::Consumer { sink, usage } => (sink, Some(*usage)),
-                        _ => continue,
-                    };
-                    if sink.as_ref() == Some(&ActionSink::Bluetooth)
-                        && (!sinks.iter().any(|s| s == "bluetooth")
-                            || usage.is_some_and(|u| u > 1023))
-                    {
-                        errors.push(LayoutError { rule: Rule::ActionSink, path: format!("/pages/{pi}/tiles/{ti}/action/sink"), message: "Bluetooth destination is unsupported on this Device or for this media key.".into() });
-                    }
-                }
-            }
-        }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
     }
 }
