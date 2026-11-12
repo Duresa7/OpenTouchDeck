@@ -1,0 +1,22 @@
+[package]
+name = "td-updater"
+version = "1.2.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+td-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64 = "0.22"
+minisign-verify = "0.3"
+semver = "1"
+tempfile = "3"
+thiserror = "2"
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
+
+[dev-dependencies]
+blake2 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }

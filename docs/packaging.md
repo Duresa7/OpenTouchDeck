@@ -1,5 +1,12 @@
 # Windows installer and app updates
 
+Native 2.0 updater groundwork lives in
+[`td-updater`](../app/crates/td-updater/README.md). It selects a stable 2.x GitHub
+release and downloads and verifies its MSI with the existing updater key, without
+installing it. Its opt-out preference and request details are described in
+[PRIVACY](PRIVACY.md). Startup/UI wiring, MSI execution and the 1.x bridge remain
+M5 work. The rest of this page describes the current 1.x packaging flow.
+
 End users download the [Windows x64 installer](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the latest GitHub release and run it. It installs for the current user only and needs no administrator rights, Node, Rust, Python or ESP-IDF.
 
 ## What it installs

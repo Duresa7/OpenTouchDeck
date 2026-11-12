@@ -50,6 +50,7 @@ The packaged app is Windows x64. Linux source builds need a desktop session and 
 - [Firmware](docs/firmware.md)
 - [Layout format](schema/README.md)
 - [Packaging and releases](docs/packaging.md)
+- [Privacy and update checks](docs/PRIVACY.md)
 
 ## License
 
