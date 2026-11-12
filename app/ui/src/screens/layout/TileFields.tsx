@@ -173,7 +173,7 @@ export function TileFields({ store, page, tile }: TileFieldsProps) {
       {gif && <GifField store={store} gifs={gifs} tile={tile} device={name} />}
       {!live && !gif && <IconField store={store} tile={tile} kind={action.type} />}
       <SizeField store={store} tile={tile} layout={layout} device={name} />
-      {!live && <ActionForm key={`action-${tile.id}`} store={store} page={page} tile={tile} layout={layout} device={name} />}
+      {!live && <ActionForm deviceId={device.id} key={`action-${tile.id}`} store={store} page={page} tile={tile} layout={layout} device={name} />}
       {needsApproval(action) && <ApprovalNote action={action} />}
       {processOf(action) && <AllowedActions action={action} />}
       <More key={`position-${tile.id}`} title="Position and size" testId="tile-position">

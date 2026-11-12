@@ -115,3 +115,11 @@ describe('asking on this PC first', () => {
     expect(sameProcess(command, { ...command, kind: 'launch' })).toBe(false);
   });
 });
+
+test('Bluetooth destination follows advertised sinks, including absent diagnostics', async () => {
+  const { offersBluetooth } = await import('../actions.ts');
+  expect(offersBluetooth(undefined)).toBeNull();
+  expect(offersBluetooth({ diagnostics: null })).toBeNull();
+  expect(offersBluetooth({ diagnostics: { sinks: ['log', 'link'] } })).toBe(false);
+  expect(offersBluetooth({ diagnostics: { sinks: ['log', 'link', 'bluetooth'] } })).toBe(true);
+});

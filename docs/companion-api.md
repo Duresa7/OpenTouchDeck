@@ -1705,3 +1705,12 @@ the target size capped at 128 by 128, eight frames at 10 fps, coloured by the
 upload, target and fit so a refit gets a new id. It does not implement the Rust
 normalizer or Device admission; integration tests run those paths against the
 Companion and mock Device.
+
+### Tile key destinations
+
+Key and consumer Tile actions accept optional `sink: "link" | "bluetooth"`. Omission
+means `link` (the Companion). Device diagnostics expose the Firmware's `sinks`;
+only Devices advertising `bluetooth` offer the Bluetooth destination. Layout push
+checks this before transferring Assets and fails with `layout.invalid`, issue
+`action.sink`, if the destination is unsupported. Bluetooth consumer usages are
+limited to 1–1023 by the existing report map. Other action types have no sink.

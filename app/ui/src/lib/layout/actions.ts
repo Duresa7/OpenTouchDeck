@@ -16,3 +16,5 @@ export {
   splitArgs,
   switchKind,
 } from './lib/actions.ts';
+
+export { offersBluetooth } from './lib/actions.ts';

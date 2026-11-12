@@ -6,12 +6,14 @@ import {
   ACTION_GROUPS,
   KEYS,
   MEDIA,
+  offersBluetooth,
   MOD_NAMES,
   PROXY_FIELDS,
   spellShortcut,
   splitArgs,
   switchKind,
 } from '../../lib/layout/actions.ts';
+import { useDevices } from '../../lib/companion/devices.ts';
 import { useIntegrations } from '../../lib/companion/integrations.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
 import { idWords, streamLabel } from '../../lib/integrations/model.ts';
@@ -114,7 +116,7 @@ function KeyFields({ action, commit, error }: KindProps<'key'>) {
           ))}
         </ToggleGroup>
         <p className="field-hint" data-testid="action-shortcut">
-          Presses <strong className="shortcut">{spellShortcut(action)}</strong> on this PC.
+          Presses <strong className="shortcut">{spellShortcut(action)}</strong> {action.sink === 'bluetooth' ? 'on the Bluetooth computer or phone' : 'on this PC'}.
         </p>
       </div>
     </>
@@ -304,7 +306,9 @@ function KindFields({ action, commit, error, pages }: { action: Action; commit(n
   }
 }
 
-export function ActionForm({ store, page, tile, layout, device }: { store: EditorStore; page: GridPage; tile: Tile; layout: Layout; device: string }) {
+export function ActionForm({ store, page, tile, layout, device, deviceId }: { store: EditorStore; page: GridPage; tile: Tile; layout: Layout; device: string; deviceId: string }) {
+  const bluetooth = useDevices((s) => offersBluetooth(s.devices.find((d) => d.id === deviceId)));
+  const sinkIds = useFieldIds();
   const edit = useEffectiveTileEdit(store, device, tile.id);
   const ids = useFieldIds();
   if (!edit) return null;
@@ -312,6 +316,9 @@ export function ActionForm({ store, page, tile, layout, device }: { store: Edito
   const pageIds = layout.pages.map((p) => p.id);
   const commit = (next: Action) => void store.editAction(tile.id, next);
   const error = (field: string) => (at === field ? message : null);
+  const sinkError = bluetooth === false && (action.type === 'key' || action.type === 'consumer') && action.sink === 'bluetooth'
+    ? "This Device can't send to Bluetooth. Choose This PC (Companion)."
+    : null;
   return (
     <div className="action-form" data-testid="action-form" data-type={action.type} data-invalid={message !== null ? 'true' : undefined}>
       <Field ids={ids} label="When tapped">
@@ -336,6 +343,18 @@ export function ActionForm({ store, page, tile, layout, device }: { store: Edito
           {action.type === 'widget' && <option value="widget">Live tile</option>}
         </Select>
       </Field>
+      {(action.type === 'key' || action.type === 'consumer') && (bluetooth || action.sink === 'bluetooth') && (
+        <Field ids={sinkIds} label="Send to" error={sinkError}>
+          <Select id={sinkIds.control} value={action.sink ?? 'link'} onChange={(event) => {
+            // The Companion is the default, so it is left out: older Firmware rejects a `sink` field.
+            const { sink: _sink, ...rest } = action;
+            commit(event.target.value === 'bluetooth' ? { ...rest, sink: 'bluetooth' } : rest);
+          }} data-testid="action-sink" {...described(sinkIds, null, sinkError)}>
+            <option value="link">This PC (Companion)</option>
+            <option value="bluetooth">Bluetooth computer or phone</option>
+          </Select>
+        </Field>
+      )}
       <KindFields key={action.type} action={action} commit={commit} error={error} pages={layout.pages} />
       {edit.unplacedError && <FieldError id={`${ids.error}-form`} error={edit.unplacedError} />}
     </div>

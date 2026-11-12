@@ -397,7 +397,12 @@ mod tests {
     }
 
     #[test]
-    fn a_hid_sink_turns_mirroring_off() {
+    fn bluetooth_keeps_mirroring_on_and_usb_hid_turns_it_off() {
+        assert!(Mirror::wanted(&[
+            "log".into(),
+            "link".into(),
+            "bluetooth".into()
+        ]));
         assert!(Mirror::wanted(&["log".into(), "link".into()]));
         assert!(!Mirror::wanted(&[
             "log".into(),

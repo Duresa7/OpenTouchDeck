@@ -2,9 +2,9 @@ export type Orientation = 'landscape' | 'portrait';
 export type Modifier = 'ctrl' | 'shift' | 'alt' | 'win';
 
 export type Action =
-  | { type: 'key'; usage: number; mods: Modifier[] }
+  | { type: 'key'; sink?: 'link' | 'bluetooth'; usage: number; mods: Modifier[] }
   | { type: 'mod'; mod: Modifier }
-  | { type: 'consumer'; usage: number }
+  | { type: 'consumer'; sink?: 'link' | 'bluetooth'; usage: number }
   | { type: 'page'; page: string }
   | { type: 'none' }
   | { type: 'launch'; path: string; args: string[]; cwd: string }
@@ -231,7 +231,8 @@ function structuralErrors(root: unknown): LayoutError[] {
     const kind = isActionType(value.type) ? value.type : undefined;
     if (!kind) return at('action.type', pointer, 'must match exactly one schema in oneOf (oneOf)');
     const fields = ACTION_FIELDS[kind];
-    object(value, pointer, fields);
+    object(value, pointer, fields, kind === 'key' || kind === 'consumer' ? ['sink'] : []);
+    if ((kind === 'key' || kind === 'consumer') && Object.hasOwn(value, 'sink') && value.sink !== 'link' && value.sink !== 'bluetooth') at('action.sink', `${pointer}/sink`, 'must be link or bluetooth');
     for (const name of fields.slice(1)) {
       if (!Object.hasOwn(value, name)) continue;
       const field = value[name];

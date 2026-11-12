@@ -645,3 +645,11 @@ normalization, delay or loop encoding uses `format`; allocation failure uses
 `memory`; insufficient storage uses `full`. GIF cadence never uses `rate`.
 Failures preserve the committed Asset and Layout. Asset link failures retain
 the typed reason through the API rather than becoming generic link text.
+
+The radio build includes `bluetooth` in `hello.sinks`, even while Bluetooth is off.
+It means Layout key and consumer actions can select `sink:"bluetooth"` to type on
+the Bluetooth keyboard host. Omitted sinks and `sink:"link"` go only to the
+Companion. The normal build advertises only `log` and `link`.
+
+The separate `hid` sink retains its USB HID meaning: the Companion turns its
+key mirror off when it is present. `bluetooth` leaves that mirror on.

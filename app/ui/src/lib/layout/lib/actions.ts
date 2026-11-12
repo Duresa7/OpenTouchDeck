@@ -155,3 +155,9 @@ const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
 export const escapeInvisible = (text: string) =>
   text.replace(INVISIBLE, (char) => `\\u{${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}}`);
+
+/** Whether the Device advertises the Bluetooth destination, or null while its sinks are unknown (not connected yet). */
+export function offersBluetooth(device: { diagnostics?: { sinks: readonly string[] } | null } | undefined): boolean | null {
+  const sinks = device?.diagnostics?.sinks;
+  return sinks ? sinks.includes('bluetooth') : null;
+}

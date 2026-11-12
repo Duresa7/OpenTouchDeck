@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "key_engine.h"
+#include "key_sink.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +36,7 @@ typedef enum {
  */
 typedef struct {
     td_action_type_t type;
+    bool bluetooth; /* key and consumer only; false keeps the Companion link */
     union {
         struct {
             uint8_t usage;
@@ -152,12 +154,16 @@ ui_rect_t ui_tile_rect(const ui_page_t *page, const ui_tile_t *tile, ui_rect_t a
 const ui_tile_t *ui_page_find_tile(const ui_page_t *page, const char *id);
 
 typedef struct {
+    void (*bluetooth)(void *ctx, const td_action_t *action);
     void (*key)(void *ctx, uint8_t usage, uint8_t mods);
     void (*mod)(void *ctx, key_mod_t mod);
     void (*consumer)(void *ctx, uint16_t usage);
     void (*page)(void *ctx, uint8_t index);
     void (*press)(void *ctx, const ui_tile_t *tile);
 } ui_action_ops_t;
+
+/* Emit a shortcut or media press and release without sharing Companion modifier latches. */
+void ui_action_bluetooth(const td_action_t *action, key_sink_t sink);
 
 /*
  * Runs the tile's action through ops. True when it called one. A key, mod, consumer or page action calls its own op.

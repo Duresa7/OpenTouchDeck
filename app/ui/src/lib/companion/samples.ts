@@ -81,6 +81,7 @@ export const demoDevices: DeviceSummary[] = [
 ];
 // Desk runs the radio build, so its Device settings show Wi-Fi and the Bluetooth keyboard.
 demoDevices[0].capabilities = RADIO_CAPS;
+demoDevices[0].diagnostics!.sinks.push('bluetooth');
 if (demoDevices[1].firmware) demoDevices[1].firmware = { ...demoDevices[1].firmware, version: '1.4.0', update_available: '1.5.0' };
 // Desk and Stream deck by the window run the opt-in radio build: Desk shows the switch back, and Stream deck by the
 // window links over Wi-Fi, which only the radio build has. Studio stays on the normal build.

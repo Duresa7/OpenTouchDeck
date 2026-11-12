@@ -114,7 +114,7 @@ since boot. Counters reset at boot.
 
 | Request | Successful response fields |
 |---|---|
-| `{"m":"hello"}` | `product:"touchdeck"`, `proto:1`, `elf_sha256`, `version`, `running`, `sinks:["log","link"]`, `recovery:false`, `layout:"builtin"` or `"storage"`, `carrier` |
+| `{"m":"hello"}` | `product:"touchdeck"`, `proto:1`, `elf_sha256`, `version`, `running`, `sinks:["log","link"]` (the radio build adds `"bluetooth"`), `recovery:false`, `layout:"builtin"` or `"storage"`, `carrier` |
 | `{"m":"ping","n":N}` | `t`, and `n` echoed when it is a number, string, Boolean, or null |
 | `{"m":"link.state"}` | `online`, `frames_rx`, `frames_tx`, `crc_errors`, `dropped`, `last_rx_ms`, `carrier` |
 

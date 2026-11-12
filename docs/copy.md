@@ -1561,3 +1561,11 @@ Shown only while a client ID is saved.
 | Pick, too many at once (`limits.exceeded`) | Other icons are still being prepared. Wait a moment, then retry. |
 | Pick, any other failure | Couldn't get {name} from Brandfetch. Check the internet connection, then retry. |
 | Pick failure buttons | Retry, Details |
+
+The Tile action destination field is **Send to**, with **This PC (Companion)**
+and **Bluetooth computer or phone**. Offer it only for shortcuts and media keys
+when the Device advertises the `bluetooth` sink. A Bluetooth shortcut hint ends with
+“on the Bluetooth computer or phone”.
+
+Imported Bluetooth Tiles keep **Send to** visible on Devices without that destination.
+Show the inline error: “This Device can't send to Bluetooth. Choose This PC (Companion).”
