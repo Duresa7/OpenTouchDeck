@@ -1,6 +1,6 @@
 use crate::bundle::{Bundle, sha256};
 use crate::recover::Recovery;
-use crate::{Incoming, Session, SessionConfig, XferFrame};
+use crate::{Incoming, LinkError, Session, SessionConfig, XferFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -147,12 +147,30 @@ pub fn begin(
     }
 }
 
+/// How long an update waits for a transfer that is already running on the session.
+const TRANSFER_WAIT: Duration = Duration::from_secs(10);
+
+/// Takes the session's one transfer once it is free. The update shares the session with the rest of
+/// the app, so a transfer that started just before it, such as a Layout read, can still be running
+/// and has to end first.
+fn free_transfer(session: &Session) -> Result<crate::Transfer<'_>, String> {
+    let end = Instant::now() + TRANSFER_WAIT;
+    loop {
+        match session.transfer() {
+            Err(LinkError::TransferBusy) if Instant::now() < end => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            result => return result.map_err(|e| e.to_string()),
+        }
+    }
+}
+
 fn send(
     session: &Session,
     bundle: &Bundle,
     emit: &mut dyn FnMut(UpdateState),
 ) -> Result<String, String> {
-    let transfer = session.transfer().map_err(|e| e.to_string())?;
+    let transfer = free_transfer(session)?;
     let opened = begin(
         session,
         bundle.app().len(),
@@ -385,6 +403,32 @@ mod tests {
                 }
             ]
         );
+        assert_eq!(mock.reboots(), 1);
+    }
+    #[test]
+    fn an_update_waits_for_a_transfer_already_running_on_the_session() {
+        let mut mock = crate::MockDeck::new();
+        let (session, _incoming) = Connector::connect(&mut mock).unwrap();
+        // Another part of the app, such as a Layout read, holds the session's one transfer.
+        let reading = session.transfer().unwrap();
+        std::thread::scope(|scope| {
+            let mut connector = mock.clone();
+            let session = &session;
+            let update = scope.spawn(move || {
+                run_session(session, &mut connector, &bundle(), limits(), &mut |_| {})
+            });
+            // The update asks for the transfer right after its hello.
+            let end = Instant::now() + Duration::from_secs(5);
+            let greeted = || mock.received().iter().any(|r| r["m"] == "hello");
+            while !greeted() && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(greeted(), "the update started");
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(!update.is_finished(), "the update waits for the transfer");
+            drop(reading);
+            update.join().unwrap().unwrap();
+        });
         assert_eq!(mock.reboots(), 1);
     }
     #[test]

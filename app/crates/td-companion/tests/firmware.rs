@@ -49,6 +49,12 @@ impl Prompter for Prompt {
         a.take().unwrap()
     }
 }
+/// Waits for the Job to end, and says why when it didn't succeed.
+async fn succeeded(td: &TestCompanion, job: &td_companion::jobs::Job) {
+    let done = td.wait(job).await;
+    assert_eq!(done.state, JobState::Succeeded, "{:?}", done.error);
+}
+
 fn request() -> FirmwareRequest {
     FirmwareRequest {
         bundle: "bundled".into(),
@@ -200,7 +206,7 @@ async fn new_board_install_requires_consent_and_needs_setup() {
     td.until(|_| !prompt.seen.lock().unwrap().is_empty()).await;
     assert_eq!(td.deck("newboard").reboots(), 0);
     prompt.answer(true);
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     td.until(|td| {
         td.device(&board.id)
             .is_some_and(|d| d.setup == SetupState::NeedsSetup)
@@ -346,7 +352,7 @@ async fn confirmation_holds_only_its_target_and_reports_busy_job() {
         )
         .await
         .unwrap();
-    assert_eq!(td.wait(&push).await.state, JobState::Succeeded);
+    succeeded(&td, &push).await;
     prompt.answer(false);
     assert_eq!(td.wait(&job).await.error.unwrap().code, "firmware.declined");
 }
@@ -383,7 +389,7 @@ async fn same_or_newer_bundle_needs_no_prompt_and_emits_progress() {
         .call::<Update>(FirmwareTarget { device: id }, NoQuery, request())
         .await
         .unwrap();
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     assert!(prompt.seen.lock().unwrap().is_empty());
     let mut sending = false;
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -798,7 +804,7 @@ async fn downgrade_waits_for_exact_consent_and_suppresses_every_device() {
         prompt.0.answer(accept);
         let done = td.wait(&job).await;
         if accept {
-            assert_eq!(done.state, JobState::Succeeded);
+            assert_eq!(done.state, JobState::Succeeded, "{:?}", done.error);
             assert!(td.deck("mocka").reboots() > before);
         } else {
             assert_eq!(done.error.unwrap().code, "firmware.declined");
@@ -932,7 +938,7 @@ async fn repair_waits_then_flashes_only_after_acceptance() {
     );
     prompt.answer(true);
     let done = td.wait(&job).await;
-    assert_eq!(done.state, JobState::Succeeded);
+    assert_eq!(done.state, JobState::Succeeded, "{:?}", done.error);
     let result: FirmwareResult = serde_json::from_value(done.result.unwrap()).unwrap();
     assert_eq!(result.version, "test-only");
     assert_eq!(td.deck("mocka").reboots(), 1);
@@ -1251,7 +1257,7 @@ async fn scripted_consent_answers_new_board_installs_over_http() {
     script_consent(&td, serde_json::json!(["accept"])).await;
     let accepted = td.plug_board("accepted", BoardKind::OtherFirmware).await;
     let job = install(&td, &accepted.id).await;
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     td.until(|td| {
         td.device(&accepted.id)
             .is_some_and(|d| d.setup == SetupState::NeedsSetup)
@@ -1309,7 +1315,7 @@ async fn diagnostics_follow_the_hello_after_an_update() {
         .call::<Update>(FirmwareTarget { device: id.clone() }, NoQuery, request())
         .await
         .unwrap();
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     let running = |td: &TestCompanion| {
         td.device(&id)
             .and_then(|d| d.diagnostics)
@@ -1433,7 +1439,7 @@ async fn an_update_takes_the_build_the_device_runs() {
         )
         .await
         .unwrap();
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     td.until(|td| build_of(td, &normal).as_deref() == Some(NORMAL_BUILD))
         .await;
     assert_eq!(channel_of(&td, &normal), Some(FirmwareChannel::Normal));
@@ -1502,7 +1508,7 @@ async fn switching_builds_asks_first_and_works_both_ways() {
         )
         .await
         .unwrap();
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     td.until(|td| ready_on(td, &id, FirmwareChannel::Radio))
         .await;
     assert_eq!(build_of(&td, &id).as_deref(), Some(RADIO_BUILD));
@@ -1516,7 +1522,7 @@ async fn switching_builds_asks_first_and_works_both_ways() {
         )
         .await
         .unwrap();
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     td.until(|td| channel_of(td, &id) == Some(FirmwareChannel::Normal))
         .await;
     assert_eq!(build_of(&td, &id).as_deref(), Some(NORMAL_BUILD));
@@ -1666,7 +1672,7 @@ async fn a_bundle_of_the_other_build_is_refused_unless_asked_for() {
         )
         .await
         .unwrap();
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     assert!(
         prompt.seen.lock().unwrap()[0]
             .question
@@ -1683,7 +1689,7 @@ async fn a_new_board_gets_the_normal_build_unless_the_radio_build_is_asked_for()
     script_consent(&td, serde_json::json!(["accept", "accept"])).await;
     let plain = td.plug_board("plain", BoardKind::OtherFirmware).await;
     let job = install(&td, &plain.id).await;
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     td.until(|td| channel_of(td, &plain.id) == Some(FirmwareChannel::Normal))
         .await;
     assert!(!td.deck("plain").radio());
@@ -1699,7 +1705,7 @@ async fn a_new_board_gets_the_normal_build_unless_the_radio_build_is_asked_for()
         )
         .await
         .unwrap();
-    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    succeeded(&td, &job).await;
     td.until(|td| channel_of(td, &radio.id) == Some(FirmwareChannel::Radio))
         .await;
     assert!(td.deck("radio").radio());
