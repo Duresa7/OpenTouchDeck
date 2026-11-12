@@ -2,8 +2,7 @@
 """Checks a firmware build directory against the rules for its kind: the normal build or the radio build.
 
 The normal build is what every release ships. It must stay radio-free: no Wi-Fi or Bluetooth option on, and no radio
-or network component linked. The release recipe (app/scripts/package_windows.py) runs the same check before it packs
-the firmware, so a mistake here cannot ship radios to everyone.
+or network component linked. CI runs this check on every normal build, so a mistake cannot ship radios to everyone.
 
 The radio build is the opt-in build that `idf.py -DTD_RADIO_BUILD=1` makes (see docs/firmware.md). It must have Wi-Fi,
 lwIP and NimBLE, keep Wi-Fi and lwIP buffers in PSRAM and the BLE controller in flash, and keep BLE a peripheral that

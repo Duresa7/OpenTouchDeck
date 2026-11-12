@@ -9,7 +9,7 @@ inputs:
     required: false
     default: "false"
   cache-key:
-    description: Names the cache. Give each kind of build its own, such as lint or test-companion
+    description: Names the cache. Give a different kind of build its own
     required: false
     default: rust
 

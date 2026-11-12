@@ -31,47 +31,37 @@ check "rust" docs/companion-api.md
 check "rust scripts" app/Cargo.lock
 check "rust scripts" app/crates/td-companion/Cargo.toml
 check "rust scripts" app/crates/td-host/src/packs.json
-check "rust scripts" app/crates/td-link/tests/fixtures/touchdeck-test.tdfw
+check "rust" app/crates/td-link/tests/fixtures/touchdeck-test.tdfw
 check "rust scripts" app/scripts/check_exe.ps1
-check "rust frozen" app/ui/src/lib/companion/api.gen.ts
 check "rust" docs/usage.md app/crates/td-link/src/lib.rs
 
-# The frozen Electron shell and React UI.
-check "frozen" app/ui/src/App.tsx
-check "frozen" app/ui/e2e/editor.spec.ts
-check "frozen" app/electron/src/main.ts
-check "frozen" app/electron/installer/installer.nsh
-check "frozen" app/pnpm-lock.yaml app/pnpm-workspace.yaml
-check "frozen scripts" app/package.json
-check "frozen scripts" app/electron/package.json
-check "frozen scripts" app/ui/package.json
+# The Electron shell and React UI left main (ADR 0012), so a path there needs no check.
+check none app/ui/src/App.tsx app/electron/src/main.ts app/package.json app/pnpm-lock.yaml
 
 # The release and data scripts.
 check "scripts" app/scripts/release_version.py
 check "scripts" app/scripts/tests/test_release_workflow.py
-check "scripts" app/release-options.json
+check "scripts" app/scripts/setup-windows.ps1
 
-# Firmware, and the schema three areas read.
+# Firmware, and the schema two areas read.
 check "firmware" firmware/main/main.c
 check "firmware" firmware/sdkconfig.defaults
-check "scripts firmware" firmware/tools/make_bundle.py
-check "scripts firmware" app/scripts/package_windows.py
-check "rust frozen firmware" schema/layout.schema.json
-check "rust frozen firmware" schema/protocol/golden-frames-v2.json
+check "firmware" firmware/tools/make_bundle.py
+check "rust firmware" schema/layout.schema.json
+check "rust firmware" schema/protocol/golden-frames-v2.json
 
 # Workflow files run actionlint and the checks they define.
 check "rust actionlint" .github/workflows/rust.yml
-check "frozen actionlint" .github/workflows/app.yml
 check "firmware actionlint" .github/workflows/firmware.yml
-check "scripts actionlint" .github/workflows/release-windows.yml
-check "frozen scripts actionlint" .github/release-signer/cli.mjs
+check "scripts actionlint" .github/release-signer/cli.mjs
+check "scripts actionlint" .github/release-signer-test/signer.test.mjs
+check "rust scripts actionlint" .github/release-signer-test/fixtures/tauri-cli-2.12.4-test-only-key.json
 check "actionlint" .github/workflows/main.yml
 check "actionlint" .github/workflows/release.yml .github/workflows/sign-hook.yml
-check "actionlint" .github/actions/windows-release-build/action.yml
-check "rust frozen actionlint" .github/actions/rust-setup/action.yml
+check "rust actionlint" .github/actions/rust-setup/action.yml
 check "scripts actionlint" .github/workflows/scripts.yml
-check "rust frozen scripts firmware actionlint" .github/workflows/pr.yml
-check "rust frozen scripts firmware actionlint" .github/scripts/changed-areas.sh
+check "rust scripts firmware actionlint" .github/workflows/pr.yml
+check "rust scripts firmware actionlint" .github/scripts/changed-areas.sh
 
 # The 2.0 installer: release.yml starts its own dry run for these, so they need no area here.
 check none app/installer/OpenTouchDeck.wxs

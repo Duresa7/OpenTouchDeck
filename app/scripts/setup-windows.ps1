@@ -11,7 +11,7 @@ function Update-ProcessPath {
     # Preserve caller choices, then discover installer additions in this process.
     # Never persist PATH or discard process-only entries (for example a version manager).
     $paths = @($env:PATH) + @(Get-InstalledPaths) + @(
-        "$env:USERPROFILE\.cargo\bin", "$env:APPDATA\npm", "$env:ProgramFiles\nodejs"
+        "$env:USERPROFILE\.cargo\bin"
     )
     $env:PATH = (($paths -join ';') -split ';' | Where-Object { $_ } | Select-Object -Unique) -join ';'
 }
@@ -31,14 +31,6 @@ function Invoke-Checked($name, [string[]]$arguments, $helpText) {
         throw "$name $($arguments -join ' ') failed with exit code $code. $helpText"
     }
     $output
-}
-
-function Test-PnpmPlaceholderShim($command) {
-    if (-not $command -or [IO.Path]::GetExtension($command.Source) -ne '.cmd') { return $false }
-    # npm 12 can leave pnpm's extensionless shell placeholder when scripts are blocked.
-    # Read the selected shim instead of executing it: ShellExecute would open Pick an app.
-    $shim = Get-Content -LiteralPath $command.Source -Raw
-    $shim -match 'node_modules[\\/]pnpm[\\/]pnpm(?=["''\s]|$)'
 }
 
 function Install-WingetPackage($id, [string[]]$extra = @()) {
@@ -62,61 +54,7 @@ function Invoke-TouchDeckSetup {
     # Handle native exit codes ourselves, including when the caller enables PS7's preference.
     $PSNativeCommandUseErrorActionPreference = $false
     if (-not $IsWindows) { throw 'This setup script requires Windows and PowerShell 7. See docs/setup.md for Linux.' }
-    $nodeMajor = 24 # Matches .github/workflows/app.yml.
-    $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../package.json') -Raw | ConvertFrom-Json
-    if ($manifest.packageManager -notmatch '^pnpm@(\d+\.\d+\.\d+)$') {
-        throw 'app/package.json must declare an exact pnpm version in packageManager.'
-    }
-    $pnpmVersion = $Matches[1]
     Update-ProcessPath
-
-    # Validate Node before making unrelated changes. Do not replace a version-manager selection.
-    if (-not (Find-Tool 'node')) {
-        $versions = Invoke-Checked 'winget' @('show', '--id', 'OpenJS.NodeJS.LTS', '--exact', '--source', 'winget', '--versions', '--accept-source-agreements') `
-            'Install Node.js 24 from https://nodejs.org/en/download, open a new PowerShell, then rerun setup.'
-        $nodeVersion = $versions | ForEach-Object {
-            if ($_ -match "^\s*($nodeMajor\.\d+\.\d+)\s*$") { [version]$Matches[1] }
-        } | Sort-Object -Descending | Select-Object -First 1
-        if (-not $nodeVersion) {
-            throw 'winget offers no Node.js 24 LTS version. Install Node.js 24 from https://nodejs.org/en/download, open a new PowerShell, then rerun setup.'
-        }
-        Install-WingetPackage 'OpenJS.NodeJS.LTS' @('--version', "$nodeVersion")
-    }
-    $nodeHelp = 'Install/select Node.js 24, inspect Get-Command node -All for a stale PATH entry, open a new PowerShell, then rerun setup.'
-    $node = (Invoke-Checked 'node' @('--version') $nodeHelp) -join "`n"
-    if ($node.Trim() -notmatch "^v$nodeMajor\.\d+\.\d+$") {
-        throw "Expected Node.js 24; got '$($node.Trim())'. $nodeHelp"
-    }
-
-    $pnpmHelp = "Repair npm with Node.js 24, then run npm install --global pnpm@$pnpmVersion --allow-scripts=pnpm --foreground-scripts and rerun setup. On npm 11, omit --allow-scripts=pnpm."
-    $pnpm = ''
-    $pnpmCommand = Find-Tool 'pnpm'
-    if (Test-PnpmPlaceholderShim $pnpmCommand) {
-        Write-Host 'Repairing pnpm: its npm shim targets an extensionless shell placeholder.'
-    } elseif ($pnpmCommand) {
-        $pnpm = (Invoke-Checked 'pnpm' @('--version') $pnpmHelp) -join "`n"
-        if ([string]::IsNullOrWhiteSpace($pnpm)) {
-            throw "pnpm --version returned no version (a no-op shim). Inspect Get-Command pnpm -All; remove/repair the stale shim. $pnpmHelp"
-        }
-    }
-    if ($pnpm.Trim() -ne $pnpmVersion) {
-        $npm = (Invoke-Checked 'npm' @('--version') $pnpmHelp) -join "`n"
-        if ($npm.Trim() -notmatch '^(\d+)\.\d+\.\d+(?:-[\w.-]+)?$') {
-            throw "npm --version returned no valid version. $pnpmHelp"
-        }
-        $installArguments = @('install', '--global', "pnpm@$pnpmVersion", '--foreground-scripts')
-        # npm 12 defaults to blocking dependency scripts. Earlier npm may not know this flag.
-        if ([int]$Matches[1] -ge 12) { $installArguments += '--allow-scripts=pnpm' }
-        Invoke-Checked 'npm' $installArguments $pnpmHelp | Out-Host
-        Update-ProcessPath
-        if (Test-PnpmPlaceholderShim (Find-Tool 'pnpm')) {
-            throw "pnpm shim still targets the extensionless shell placeholder. Inspect Get-Command pnpm -All; repair PATH/shims. $pnpmHelp"
-        }
-        $pnpm = (Invoke-Checked 'pnpm' @('--version') $pnpmHelp) -join "`n"
-    }
-    if ($pnpm.Trim() -ne $pnpmVersion) {
-        throw "Expected pnpm $pnpmVersion; got '$($pnpm.Trim())' (possibly a stale/no-op shim). Inspect Get-Command pnpm -All; repair PATH/shims, open a new PowerShell, and rerun setup. $pnpmHelp"
-    }
 
     if (-not (Find-Tool 'rustup')) { Install-WingetPackage 'Rustlang.Rustup' }
     $rustHelp = 'Repair rustup (https://rustup.rs), check network access and the installer output, then rerun setup in a new PowerShell.'
@@ -131,7 +69,7 @@ function Invoke-TouchDeckSetup {
         $msvc = Get-MsvcInstallation
         if (-not $msvc) { throw 'MSVC tools still not detected. Complete/restart the Visual Studio Installer with Desktop development with C++ and a Windows SDK, then rerun setup.' }
     }
-    [pscustomobject]@{ rustc = $rustc.Trim(); node = $node.Trim(); pnpm = $pnpm.Trim(); msvc = $msvc } | ConvertTo-Json
+    [pscustomobject]@{ rustc = $rustc.Trim(); msvc = $msvc } | ConvertTo-Json
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

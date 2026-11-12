@@ -14,8 +14,9 @@ tests the same invariant-preserving seam, without making core rules depend on a
 Companion session. A separate Companion editor owns the stateful lifecycle.
 
 The Rust seam for the native editor is `td_core::editing::Document` and
-`td_companion::editor::Editor`. The frozen React editor and local web API keep
-their current interfaces until cutover (ADR 0011).
+`td_companion::editor::Editor`. The local web API keeps its current
+interface until cutover (ADR 0011). The React editor lives on `release/1.x`
+(ADR 0012).
 
 The core module admits files and typed Layouts through the existing Layout parser.
 Its `Edit` commands produce a new Document atomically. Callers cannot mutate the

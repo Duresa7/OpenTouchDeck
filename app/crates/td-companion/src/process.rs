@@ -17,16 +17,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(feature = "test-hooks")]
         ["--test-real-device-console"] => None,
         #[cfg(feature = "test-hooks")]
-        ["--emit-ts", path] => {
-            if let Some(parent) = std::path::Path::new(path).parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(path, crate::bindings::generate())?;
-            let test = std::path::Path::new(path).with_file_name("api.test.gen.ts");
-            std::fs::write(test, crate::bindings::generate_test())?;
-            return Ok(());
-        }
-        #[cfg(feature = "test-hooks")]
         ["--mock-devices", count] | ["--mock-devices", count, "--native-desktop"] => {
             Some(count.parse()?)
         }

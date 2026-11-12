@@ -27,7 +27,6 @@ def load(name, path):
 
 
 guard = load("radio_guard", ROOT / "firmware/tools/radio_guard.py")
-package = load("package_windows", ROOT / "app/scripts/package_windows.py")
 
 NORMAL_SETTINGS = {"IDF_TARGET": "esp32s3", "ESP_CONSOLE_USB_SERIAL_JTAG": True}
 NORMAL_COMPONENTS = ["main", "td_link", "td_console", "esp_system", "nvs_flash", "mbedtls", "esp_psram"]
@@ -74,30 +73,22 @@ class NormalBuildTests(unittest.TestCase):
         self.dirs = BuildDirs()
         self.addCleanup(self.dirs.tmp.cleanup)
 
-    def audits(self):
-        """The CI guard and the release recipe's audit, which must agree."""
-        return (("radio_guard", guard.check_normal), ("package_windows", package.audit_radio))
-
     def test_radio_free_build_passes(self):
         build = self.dirs.make(NORMAL_SETTINGS, NORMAL_COMPONENTS)
-        for name, audit in self.audits():
-            with self.subTest(audit=name):
-                self.assertTrue(audit(build)["usb_serial_jtag"])
+        self.assertTrue(guard.check_normal(build)["usb_serial_jtag"])
 
     def test_every_radio_option_fails(self):
         for key in FORBIDDEN_OPTIONS:
             build = self.dirs.make({**NORMAL_SETTINGS, key: True}, NORMAL_COMPONENTS)
-            for name, audit in self.audits():
-                with self.subTest(option=key, audit=name), self.assertRaisesRegex(ValueError, f"Radio enabled: {key}"):
-                    audit(build)
+            with self.subTest(option=key), self.assertRaisesRegex(ValueError, f"Radio enabled: {key}"):
+                guard.check_normal(build)
 
     def test_every_radio_component_fails(self):
         for component in FORBIDDEN_COMPONENTS:
             build = self.dirs.make(NORMAL_SETTINGS, NORMAL_COMPONENTS + [component])
-            for name, audit in self.audits():
-                with self.subTest(component=component, audit=name), \
-                        self.assertRaisesRegex(ValueError, f"Radio components linked: .*'{component}'"):
-                    audit(build)
+            with self.subTest(component=component), \
+                    self.assertRaisesRegex(ValueError, f"Radio components linked: .*'{component}'"):
+                guard.check_normal(build)
 
     def test_similar_names_pass(self):
         build = self.dirs.make(NORMAL_SETTINGS, NORMAL_COMPONENTS + ["espressif__mdns_extras_doc", "td_network_ui"])
@@ -105,9 +96,8 @@ class NormalBuildTests(unittest.TestCase):
 
     def test_the_radio_build_fails_the_normal_guard(self):
         build = self.dirs.make(RADIO_SETTINGS, RADIO_COMPONENTS)
-        for name, audit in self.audits():
-            with self.subTest(audit=name), self.assertRaisesRegex(ValueError, "Radio enabled"):
-                audit(build)
+        with self.assertRaisesRegex(ValueError, "Radio enabled"):
+            guard.check_normal(build)
 
     def test_lost_console_or_target_fails(self):
         for settings, message in (({**NORMAL_SETTINGS, "ESP_CONSOLE_USB_SERIAL_JTAG": False}, "USB-Serial/JTAG"),
@@ -317,7 +307,7 @@ def fake_image():
 
 
 class BundleMarkTests(unittest.TestCase):
-    """A radio bundle says so in its manifest, and the installer recipe refuses it as --firmware-bundle."""
+    """A radio bundle says so in its manifest, which is how the Companion's build tells the two builds apart."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -339,46 +329,23 @@ class BundleMarkTests(unittest.TestCase):
         bundle_tool.check_bundle(path)
         return path, manifest
 
-    def test_normal_bundle_has_no_mark_and_is_accepted(self):
-        path, manifest = self.bundle("normal", radio=False)
+    def test_normal_bundle_has_no_mark(self):
+        _, manifest = self.bundle("normal", radio=False)
         self.assertNotIn("radio", manifest)
-        out = Path(self.tmp.name) / "package-normal"
-        (out / "payload").mkdir(parents=True)
-        normal, radio = package.prebuilt_firmware(out, "rev", path)
-        self.assertEqual(normal["manifest"], manifest)
-        self.assertIsNone(radio)
 
-    def test_radio_bundle_is_marked_and_refused_as_the_normal_firmware(self):
-        path, manifest = self.bundle("radio", radio=True)
+    def test_radio_bundle_is_marked(self):
+        _, manifest = self.bundle("radio", radio=True)
         self.assertIs(manifest["radio"], True)
-        out = Path(self.tmp.name) / "package-radio"
-        (out / "payload").mkdir(parents=True)
-        with self.assertRaisesRegex(ValueError, "radio build"):
-            package.prebuilt_firmware(out, "rev", path)
-
-    def test_radio_bundle_ships_only_as_the_separate_radio_file(self):
-        normal_path, _ = self.bundle("normal", radio=False)
-        radio_path, manifest = self.bundle("radio", radio=True)
-        out = Path(self.tmp.name) / "package-both"
-        (out / "payload").mkdir(parents=True)
-        normal, radio = package.prebuilt_firmware(out, "rev", normal_path, radio_path)
-        self.assertNotIn("radio", normal["manifest"])
-        self.assertEqual((radio["bundle"], radio["manifest"]), ("touchdeck-radio.tdfw", manifest))
-        out = Path(self.tmp.name) / "package-swapped"
-        (out / "payload").mkdir(parents=True)
-        with self.assertRaisesRegex(ValueError, "normal build"):
-            package.prebuilt_firmware(out, "rev", normal_path, normal_path)
 
 
 @unittest.skipUnless(os.environ.get("TD_GUARD_NORMAL_BUILD"), "set TD_GUARD_NORMAL_BUILD to check a real normal build")
 class RealNormalBuildTests(unittest.TestCase):
-    """A real normal build, linked by ESP-IDF, passes the normal guard and the release audit and fails the radio one."""
+    """A real normal build, linked by ESP-IDF, passes the normal guard and fails the radio one."""
 
     build = Path(os.environ.get("TD_GUARD_NORMAL_BUILD", "."))
 
     def test_normal_build_is_radio_free(self):
         guard.check_normal(self.build)
-        package.audit_radio(self.build)
 
     def test_normal_build_fails_the_radio_guard(self):
         with self.assertRaisesRegex(ValueError, "Radio build needs"):
@@ -387,18 +354,17 @@ class RealNormalBuildTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("TD_GUARD_RADIO_BUILD"), "set TD_GUARD_RADIO_BUILD to check a real radio build")
 class RealRadioBuildTests(unittest.TestCase):
-    """A real radio build passes its own guard, image check included, and fails the normal guard and the release
-    audit, so it can never ship as the installer's Firmware."""
+    """A real radio build passes its own guard, image check included, and fails the normal guard, so it can never
+    ship as the normal Firmware."""
 
     build = Path(os.environ.get("TD_GUARD_RADIO_BUILD", "."))
 
     def test_radio_build_passes_its_own_guard(self):
         guard.check_radio(self.build)
 
-    def test_radio_build_fails_the_normal_guard_and_the_release_audit(self):
-        for audit in (guard.check_normal, package.audit_radio):
-            with self.subTest(audit=audit.__name__), self.assertRaisesRegex(ValueError, "Radio enabled"):
-                audit(self.build)
+    def test_radio_build_fails_the_normal_guard(self):
+        with self.assertRaisesRegex(ValueError, "Radio enabled"):
+            guard.check_normal(self.build)
 
 
 if __name__ == "__main__":

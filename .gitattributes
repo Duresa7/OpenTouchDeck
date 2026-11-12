@@ -1,2 +1,0 @@
-# Generated TypeScript must stay byte-identical to the generator output on every OS.
-app/ui/src/lib/companion/*.gen.ts text eol=lf

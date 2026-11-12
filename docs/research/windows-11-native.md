@@ -85,7 +85,7 @@ Verified in the checkout used for this note; these are source observations, not 
 
 - [app/crates/td-companion/src/tray/windows.rs](../../app/crates/td-companion/src/tray/windows.rs) loads `IDI_APPLICATION`, sets `uID = 1`, supplies no GUID, and opens the same menu for `WM_LBUTTONUP` and `WM_RBUTTONUP`. It does not set version 4 or handle `TaskbarCreated`.
 - [app/crates/td-companion/src/main.rs](../../app/crates/td-companion/src/main.rs) has no `windows_subsystem` attribute, so it does not request suppression of the console through that mechanism.
-- [app/electron/installer/icon.ico](../../app/electron/installer/icon.ico) contains 16/24/32/48/64/256 entries. Measured by reading the ICO directory, treating a zero width/height byte as 256; it lacks the other sizes in the coverage target.
+- [app/crates/td-companion/icon.ico](../../app/crates/td-companion/icon.ico) (then `app/electron/installer/icon.ico`) contains 16/24/32/48/64/256 entries. Measured by reading the ICO directory, treating a zero width/height byte as 256; it lacks the other sizes in the coverage target.
 - [app/crates/td-companion/src/startup.rs](../../app/crates/td-companion/src/startup.rs) returns true when the Run value exists and never consults `StartupApproved`; this is registration state only.
 - [app/crates/td-companion/src/process.rs](../../app/crates/td-companion/src/process.rs) calls `startup.set(true)` on packaged startup when the `startup-initialized` marker is absent, then writes the marker. The native setup must make the default visible and respect later user choices.
 
@@ -117,4 +117,4 @@ Each identifier is stable so later issues can link to `#implementation-checklist
 - [ ] W22: Prepare signing inside-out with SHA-256, RFC 3161 timestamps and verification of owned binaries and MSI.
 - [ ] W23: Keep the minisign key and prove the 1.x updater bridge, data migration and Windows 10 exclusion.
 - [ ] W24: Capture Windows screenshots and RAM on GitHub-hosted Windows runners with OS/build, workload, build mode and memory metric recorded.
-- [ ] W25: Complete M0–M5 before deleting Electron, React and the browser/local web API at M6; update GLOSSARY.md at that cutover.
+- [ ] W25: Complete M0–M5 before deleting Electron, React and the browser/local web API at M6; update GLOSSARY.md at that cutover. (ADR 0012 moved Electron and React to `release/1.x` early and updated GLOSSARY.md; the local web API still goes at M6.)

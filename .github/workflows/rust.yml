@@ -12,7 +12,7 @@ on:
         type: boolean
         default: false
       release-exe:
-        description: Also build the release program on Windows and check its version resource and subsystem
+        description: Also build the release program in the Windows job and check its version resource and subsystem
         type: boolean
         default: false
 
@@ -24,14 +24,15 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  lint:
-    name: lint ${{ matrix.os }}
+  # One job for each system: fmt, clippy and every test. They share one build, so nothing is compiled twice.
+  rust:
+    name: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: app
@@ -42,66 +43,26 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           cache: ${{ inputs.cache }}
-          cache-key: lint
       - run: cargo fmt --check
       - run: cargo clippy --workspace -- -D warnings
-
-  test:
-    name: test ${{ matrix.tests.name }} ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-24.04]
-        # The tests run as two halves side by side: the Companion's are the slow half.
-        # A new crate lands in the second half with no change here.
-        tests:
-          - name: companion
-            packages: --package td-companion
-          - name: libraries
-            packages: --workspace --exclude td-companion
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/rust-setup
-        with:
-          cache: ${{ inputs.cache }}
-          cache-key: test-${{ matrix.tests.name }}
-      # The UI is not built here, so the Companion embeds its "UI not built" page. The frozen app checks run the
-      # embedded UI test against the real build.
-      - run: cargo test ${{ matrix.tests.packages }}
+      - run: cargo test --workspace
       # cargo test built the debug program next to the tests: a console program with the version resource.
       - name: Check the debug program's version resource and subsystem
-        if: runner.os == 'Windows' && matrix.tests.name == 'companion'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/check_exe.ps1 -Path target/debug/td-companion.exe -Subsystem console
 
-  release-exe:
-    name: windows release program
-    if: inputs.release-exe
-    runs-on: windows-latest
-    timeout-minutes: 45
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # No cache: this is the build a release makes.
-      - uses: ./.github/actions/rust-setup
+      # Main only: the program a release ships, built with the release profile.
       - name: Build the release program
+        if: inputs.release-exe && runner.os == 'Windows'
         run: cargo build --release --locked --package td-companion
       - name: Check the release program's version resource and subsystem
+        if: inputs.release-exe && runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/check_exe.ps1 -Path target/release/td-companion.exe -Subsystem gui
       # A GUI program has no console, but it still returns its exit code and writes to a redirected stderr.
       - name: Check a GUI program still reports a failure
+        if: inputs.release-exe && runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
