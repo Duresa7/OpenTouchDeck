@@ -231,6 +231,9 @@ impl Handle {
     }
 }
 
+/// How long `Companion::shutdown` waits for Device threads to close links and release keys.
+const DEVICE_STOP_LIMIT: Duration = Duration::from_secs(5);
+
 /// Owns background work, independently of any UI or local web connection.
 pub struct Companion {
     handle: Handle,
@@ -280,9 +283,10 @@ impl Companion {
         self.handle.clone()
     }
     /// Requests shutdown and waits for maintenance, any in-flight Brandfetch refresh (including
-    /// Asset and provenance writes), the Actions approval worker, and all Device threads.
-    /// On return, approvals are expired, no more actions can start, Device links are closed,
-    /// forwarders have finished and held keys are released. Already-started commands may keep
+    /// Asset and provenance writes), the Actions approval worker, and the Device threads (for at
+    /// most `DEVICE_STOP_LIMIT`). On return, approvals are expired, no more actions can start, and,
+    /// unless a Device thread is stuck in kernel I/O, Device links are closed, forwarders have
+    /// finished and held keys are released. Already-started commands may keep
     /// running. Integration, Live tile and photo workers are signalled but are not joined.
     /// Blocking cleanup runs off the async runtime; `Drop` only requests and signals shutdown.
     pub async fn shutdown(mut self) {
@@ -293,7 +297,8 @@ impl Companion {
         let handle = self.handle.clone();
         let _ = tokio::task::spawn_blocking(move || {
             handle.actions.wait_stopped();
-            handle.devices.wait_stopped();
+            // Bounded: a Device thread stuck in kernel I/O must not keep the app from exiting.
+            handle.devices.wait_stopped(DEVICE_STOP_LIMIT);
         })
         .await;
     }

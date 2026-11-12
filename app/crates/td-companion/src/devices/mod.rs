@@ -772,15 +772,24 @@ impl DeviceManager {
         self.inner.wake.kick();
         self.inner.wifi.wake.kick();
     }
-    /// Blocking: after `stop`, waits for discovery, actors and forwarders, including key release.
-    pub(crate) fn wait_stopped(&self) {
+    /// Blocking: after `stop`, waits up to `limit` for discovery, actors and forwarders, including
+    /// key release. Returns false if a thread was still running at the deadline, for example one
+    /// stuck in a USB write the kernel won't finish; that thread is left to end with the process.
+    pub(crate) fn wait_stopped(&self, limit: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + limit;
         loop {
             // Discovery may register actor threads while its final probe is completing.
             let threads = std::mem::take(&mut *self.inner.threads.lock());
             if threads.is_empty() {
-                break;
+                return true;
             }
             for thread in threads {
+                while !thread.is_finished() {
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
                 let _ = thread.join();
             }
         }
@@ -1105,4 +1114,23 @@ pub struct AnimationCapabilities {
     pub min_delay_ms: u32,
     pub page_tiles: u32,
     pub page_pixels: u32,
+}
+
+#[cfg(test)]
+mod wait_stopped_tests {
+    use super::*;
+
+    #[test]
+    fn a_thread_stuck_in_io_cannot_hold_shutdown_forever() {
+        let devices = DeviceManager::new(Events::default());
+        // Stands in for a Device thread blocked in a serial flush that never returns.
+        let (_release, stuck) = std::sync::mpsc::channel::<()>();
+        devices.inner.track(std::thread::spawn(move || {
+            let _ = stuck.recv();
+        }));
+        devices.stop();
+        let started = std::time::Instant::now();
+        assert!(!devices.wait_stopped(std::time::Duration::from_millis(100)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
 }
