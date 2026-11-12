@@ -29,9 +29,15 @@ contextBridge.exposeInMainWorld('openTouchDeck', {
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-folder').catch(() => null),
 });
 
-// Observe the same attribute that drives CSS. No general-purpose IPC is exposed to the page.
+// Observe the same attribute and media query that drive CSS. No general-purpose IPC is exposed to the page.
 window.addEventListener('DOMContentLoaded', () => {
-  const update = () => ipcRenderer.send('window:appearance', document.documentElement.dataset.theme ?? 'system');
-  new MutationObserver(update).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  const root = document.documentElement;
+  const system = matchMedia('(prefers-color-scheme: dark)');
+  const update = () => {
+    const theme = root.dataset.theme;
+    ipcRenderer.send('window:appearance', theme ?? 'system', theme ? theme === 'dark' : system.matches);
+  };
+  new MutationObserver(update).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+  system.addEventListener('change', update);
   update();
 });

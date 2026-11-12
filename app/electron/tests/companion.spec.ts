@@ -230,6 +230,15 @@ test('native title bar reserves its reported geometry and follows Appearance', a
           return parseFloat(getComputedStyle(document.body).paddingTop) >= strip.bottom;
         })).toBe(true);
       }
+      // At the smallest size the icon picker flips above its button, and still keeps below the caption area.
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(800, 600));
+      await page.getByRole('button', { name: 'Layout', exact: true }).click();
+      await page.getByTestId('start-starter').click();
+      await page.locator('[data-testid="tile"]').last().click();
+      await page.getByTestId('icon-change').click();
+      const bottom = await strip.evaluate(el => el.getBoundingClientRect().bottom);
+      await expect.poll(() => page.getByTestId('icon-picker').evaluate(el => el.getBoundingClientRect().top))
+        .toBeGreaterThanOrEqual(bottom);
     } finally { await app.close(); }
   });
 });

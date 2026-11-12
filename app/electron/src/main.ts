@@ -90,21 +90,16 @@ ipcMain.handle('dialog:pick-folder', async event => {
   } catch { return null; }
 });
 
-// Only the window's top frame may select one of the three Appearance values.
-ipcMain.on('window:appearance', (event, appearance: unknown) => {
+// Only the window's top frame may select one of the three Appearance values. The caption colours follow the
+// scheme the page renders, because on Linux nativeTheme can disagree with the page's prefers-color-scheme.
+ipcMain.on('window:appearance', (event, appearance: unknown, dark: unknown) => {
   if (closing || !window || event.sender !== window.webContents ||
       event.senderFrame !== window.webContents.mainFrame || !current ||
       event.senderFrame.origin !== pageOrigin(current)) return;
   if (appearance !== 'light' && appearance !== 'dark' && appearance !== 'system') return;
+  if (typeof dark !== 'boolean') return;
   nativeTheme.themeSource = appearance;
-  if (process.platform === 'win32' || process.platform === 'linux') {
-    window.setTitleBarOverlay(overlayColors(nativeTheme.shouldUseDarkColors));
-  }
-});
-nativeTheme.on('updated', () => {
-  if (window && !window.isDestroyed() && (process.platform === 'win32' || process.platform === 'linux')) {
-    window.setTitleBarOverlay(overlayColors(nativeTheme.shouldUseDarkColors));
-  }
+  if (process.platform === 'win32' || process.platform === 'linux') window.setTitleBarOverlay(overlayColors(dark));
 });
 
 let updater: Updater | undefined;
