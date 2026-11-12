@@ -243,7 +243,7 @@ typedef struct {
 typedef enum {
     TD_NETLINK_NOTHING,
     TD_NETLINK_SEND,
-    /* Send out, then end the carrier connection: TCP shuts its write side and drains for at most 100 ms. */
+    /* Send out, then end the carrier connection: TCP drains input for at most 100 ms before closing. */
     TD_NETLINK_SEND_CLOSE,
     /* End the carrier connection at once with nothing sent. */
     TD_NETLINK_CLOSE,
