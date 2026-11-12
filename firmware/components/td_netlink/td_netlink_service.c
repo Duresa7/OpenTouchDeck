@@ -91,8 +91,8 @@ typedef struct {
     size_t got;
 } reader_t;
 
-/* A socket the Device is closing: it writes its last item within REFUSE_MS, shuts its write side, and reads whatever
- * still arrives for DRAIN_MS, so the peer reads that item instead of losing it to a reset. */
+/* A socket the Device is closing: it writes its last item within REFUSE_MS and reads whatever still arrives for
+ * DRAIN_MS, so the peer reads that item instead of losing it to a reset. */
 typedef struct {
     int fd;
     uint8_t item[CLOSER_ITEM_MAX];
@@ -108,7 +108,7 @@ typedef struct {
     td_netlink_conn_t conn;
     reader_t owner;
     /* Connections waiting for their first item while the owner is unproven, each in its deck.waiters slot: a
-     * session.open naming a stored companion_id takes over. */
+     * session.open with a stored Pairing's open_tag takes over. */
     reader_t waiters[TD_NETLINK_WAITERS];
     uint8_t waiter_body[TD_NETLINK_WAITERS][TD_NETLINK_HANDSHAKE_MAX];
     closer_t closers[CLOSERS];
@@ -292,7 +292,6 @@ static void closers_step(void)
             if (c->sent < c->len && (int32_t)(now - c->until_ms) < 0) {
                 continue;
             }
-            shutdown(c->fd, SHUT_WR);
             c->draining = true;
             c->until_ms = now + DRAIN_MS;
         }

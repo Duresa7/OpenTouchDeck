@@ -5,7 +5,7 @@
 #define CODE_DRAW_LIMIT 4294000000u
 #define REQUEST_MIN (TD_NETLINK_COMPANION_ID_LEN + 2)
 #define REQUEST_MAX (TD_NETLINK_COMPANION_ID_LEN + 1 + TD_NETLINK_NAME_MAX)
-#define OPEN_FIELDS (TD_NETLINK_DEVICE_ID_LEN + TD_NETLINK_COMPANION_ID_LEN + TD_NETLINK_SHARE_LEN)
+#define OPEN_FIELDS (TD_NETLINK_OPEN_TAG_LEN + TD_NETLINK_SHARE_LEN)
 #define PROOF_FIELDS TD_NETLINK_H_LEN
 #define START_FIELDS (TD_NETLINK_SRP_LEN + 32)
 
@@ -255,6 +255,41 @@ static int find_pairing(const td_netlink_pairings_t *pairings, const uint8_t id[
     return -1;
 }
 
+bool td_netlink_open_tag(const uint8_t ltk[TD_NETLINK_KEY_LEN], const uint8_t share[TD_NETLINK_SHARE_LEN],
+                         uint8_t tag[TD_NETLINK_OPEN_TAG_LEN])
+{
+#ifdef TD_NETLINK_TEST
+    extern void td_netlink_test_tag_computed(void);
+    td_netlink_test_tag_computed();
+#endif
+    uint8_t key[TD_NETLINK_KEY_LEN], mac[TD_NETLINK_H_LEN];
+    const td_netlink_part_t parts[] = { { "open", 4 }, { share, TD_NETLINK_SHARE_LEN } };
+    const bool ok = td_netlink_derive(ltk, "session/open", key) && td_netlink_hmac(key, sizeof key, parts, 2, mac);
+    memcpy(tag, mac, TD_NETLINK_OPEN_TAG_LEN);
+    td_netlink_wipe(key, sizeof key);
+    td_netlink_wipe(mac, sizeof mac);
+    return ok;
+}
+
+/* Compute all four slots before deciding, hiding both the matching slot and the Pairing count. */
+static int find_tagged(const td_netlink_pairings_t *pairings, const uint8_t tag[TD_NETLINK_OPEN_TAG_LEN],
+                       const uint8_t share[TD_NETLINK_SHARE_LEN])
+{
+    static const uint8_t dummy[TD_NETLINK_KEY_LEN] = { 0 };
+    int found = -1;
+    for (int i = 0; i < TD_NETLINK_PAIRINGS_MAX; i++) {
+        uint8_t mine[TD_NETLINK_OPEN_TAG_LEN];
+        const bool occupied = i < pairings->count;
+        const uint8_t *key = occupied ? pairings->entries[i].ltk : dummy;
+        const bool match = td_netlink_open_tag(key, share, mine)
+                           && td_netlink_equal(mine, tag, TD_NETLINK_OPEN_TAG_LEN);
+        if (match && occupied && found < 0) {
+            found = i;
+        }
+    }
+    return found;
+}
+
 void td_netlink_deck_init(td_netlink_deck_t *deck, const uint8_t device_id[TD_NETLINK_DEVICE_ID_LEN],
                           const td_netlink_pairings_t *stored, uint32_t pair_failures, uint32_t lock_left_ms,
                           const td_netlink_env_t *env)
@@ -366,7 +401,7 @@ bool td_netlink_forget_one(td_netlink_deck_t *deck, const uint8_t companion_id[T
 bool td_netlink_names_stored(const td_netlink_deck_t *deck, const uint8_t *body, size_t len)
 {
     return len == 2 + OPEN_FIELDS && body[0] == TD_NETLINK_SESSION_OPEN && body[1] == TD_NETLINK_VERSION
-           && find_pairing(&deck->pairings, body + 2 + TD_NETLINK_DEVICE_ID_LEN) >= 0;
+           && find_tagged(&deck->pairings, body + 2, body + 2 + TD_NETLINK_OPEN_TAG_LEN) >= 0;
 }
 
 /* ---- Connections ---- */
@@ -492,7 +527,7 @@ td_netlink_admit_t td_netlink_admit(td_netlink_deck_t *deck, const td_netlink_co
         return TD_NETLINK_ADMIT_BUSY;
     }
     /* Pushed out first: the oldest waiter that hasn't sent a byte, then the oldest from a peer in backoff, whose first
-     * item could only take over if it named a stored companion_id. */
+     * item could only take over if it carried a stored Pairing's open_tag. */
     int free_slot = -1, oldest = -1, oldest_backed_off = -1;
     for (int i = 0; i < TD_NETLINK_WAITERS; i++) {
         const td_netlink_waiter_t *w = &deck->waiters[i];
@@ -552,7 +587,7 @@ td_netlink_action_t td_netlink_waiter_item(td_netlink_deck_t *deck, const td_net
     }
     if (!owner_holds(owner, deck) && len >= 2 && body[0] == TD_NETLINK_SESSION_OPEN
         && td_netlink_backoff_left(deck, deck->waiters[slot].peer, deck->waiters[slot].peer_len) == 0) {
-        /* A session.open with an unknown companion_id gets `auth` and takes nothing over. */
+        /* A session.open whose tag matches no Pairing gets `auth` and takes nothing over. */
         error_out(out, TD_NETLINK_AUTH);
         waiter_free(deck, slot, TD_NETLINK_END_AUTH);
         return TD_NETLINK_SEND_CLOSE;
@@ -925,11 +960,10 @@ static td_netlink_action_t session_open(td_netlink_conn_t *conn, td_netlink_deck
     if (len != 2 + OPEN_FIELDS) {
         return malformed(conn, out);
     }
-    const uint8_t *fields = body + 2;
-    const uint8_t *companion_id = fields + TD_NETLINK_DEVICE_ID_LEN;
-    const uint8_t *client_share = companion_id + TD_NETLINK_COMPANION_ID_LEN;
-    const int index = find_pairing(&deck->pairings, companion_id);
-    if (memcmp(fields, deck->device_id, TD_NETLINK_DEVICE_ID_LEN) != 0 || index < 0) {
+    /* session.open names no id: its tag, made with one Pairing's LTK for this share, finds the Pairing. */
+    const uint8_t *client_share = body + 2 + TD_NETLINK_OPEN_TAG_LEN;
+    const int index = find_tagged(&deck->pairings, body + 2, client_share);
+    if (index < 0) {
         return fail(conn, out, TD_NETLINK_AUTH, TD_NETLINK_END_AUTH);
     }
     if (deck->env.usb_online && deck->env.usb_online(deck->env.ctx)) {
@@ -956,13 +990,14 @@ static td_netlink_action_t session_open(td_netlink_conn_t *conn, td_netlink_deck
     td_netlink_session_state_t *k = &conn->hs.session;
     static const char label[] = "touchdeck/net-v2/session";
     const td_netlink_part_t transcript[] = {
-        { label, sizeof label }, { fields, TD_NETLINK_DEVICE_ID_LEN + TD_NETLINK_COMPANION_ID_LEN },
+        { label, sizeof label }, { deck->device_id, TD_NETLINK_DEVICE_ID_LEN },
+        { pairing->companion_id, TD_NETLINK_COMPANION_ID_LEN },
         { client_share, TD_NETLINK_SHARE_LEN }, { device_share, TD_NETLINK_SHARE_LEN },
     };
     const td_netlink_part_t ikm[] = { { pairing->ltk, TD_NETLINK_KEY_LEN }, { z, sizeof z } };
     const td_netlink_part_t t[] = { { k->transcript, TD_NETLINK_H_LEN } };
     uint8_t prk[TD_NETLINK_H_LEN], deck_key[TD_NETLINK_KEY_LEN];
-    const bool ok = td_netlink_sha256(transcript, 4, k->transcript)
+    const bool ok = td_netlink_sha256(transcript, 5, k->transcript)
                     && td_netlink_hmac(k->transcript, TD_NETLINK_H_LEN, ikm, 2, prk)
                     && td_netlink_derive(prk, "session/deck", deck_key)
                     && td_netlink_derive(prk, "session/client", k->client_key)
@@ -1042,7 +1077,7 @@ td_netlink_action_t td_netlink_conn_item(td_netlink_conn_t *conn, td_netlink_dec
     }
     switch (conn->state) {
     case TD_NETLINK_CONN_FIRST:
-        /* Per-peer backoff applies to the first item. A session.open naming a stored companion_id skips it. */
+        /* Per-peer backoff applies to the first item. A session.open with a stored Pairing's tag skips it. */
         if (td_netlink_backoff_left(deck, conn->peer, conn->peer_len) > 0 && !td_netlink_names_stored(deck, body, len)) {
             return fail(conn, out, TD_NETLINK_BUSY, TD_NETLINK_END_BUSY);
         }

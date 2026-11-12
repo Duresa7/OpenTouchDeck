@@ -22,7 +22,8 @@ const checks = {
 const DEMO_FOLDER = 'D:\\Pictures\\Desk frame';
 
 // Documentation addresses (RFC 5737). The third demo Device is linked over Wi-Fi; the first
-// is on the network too, so its Device settings can pair.
+// is on the network with a pairing window open, so its Device settings can pair. Outside
+// pairing mode a record names nothing, so only the paired one shows then.
 const WIFI_ADDRESSES = ['192.0.2.21:47820', null, '192.0.2.23:47820'] as const;
 
 function demoWifi(devices: DeviceSummary[]): { discovered: Omit<WifiDevice, 'paired_here'>[]; pairings: WifiPairing[] } {
@@ -31,7 +32,8 @@ function demoWifi(devices: DeviceSummary[]): { discovered: Omit<WifiDevice, 'pai
   devices.slice(0, WIFI_ADDRESSES.length).forEach((device, i) => {
     const address = WIFI_ADDRESSES[i];
     if (!address) return;
-    discovered.push({ device: device.id, name: device.name ?? 'TouchDeck', address, paired: i === 2 ? 1 : 0 });
+    const pairing = i !== 2;
+    discovered.push({ device: device.id, name: device.name ?? 'TouchDeck', address, paired: pairing ? 0 : null, pairing });
     if (i !== 2) return;
     pairings.push({ device: device.id, address, name: device.name, confirmed: true, paired_ms: Date.UTC(2026, 10, 2, 18, 12), problem: null, removing: false });
     if (device.link.state === 'connected') {

@@ -27,6 +27,7 @@ extern "C" {
 #define TD_NETLINK_NAME_MAX 64
 #define TD_NETLINK_DEVICE_ID_LEN 6
 #define TD_NETLINK_COMPANION_ID_LEN 16
+#define TD_NETLINK_OPEN_TAG_LEN 16
 #define TD_NETLINK_PEER_LEN 16
 #define TD_NETLINK_PEERS 8
 /* Connections that wait for their first item while an owner exists, because one may take over an unproven owner. */
@@ -242,7 +243,7 @@ typedef struct {
 typedef enum {
     TD_NETLINK_NOTHING,
     TD_NETLINK_SEND,
-    /* Send out, then end the carrier connection: TCP shuts its write side and drains for at most 100 ms. */
+    /* Send out, then end the carrier connection: TCP drains input for at most 100 ms before closing. */
     TD_NETLINK_SEND_CLOSE,
     /* End the carrier connection at once with nothing sent. */
     TD_NETLINK_CLOSE,
@@ -278,9 +279,12 @@ bool td_netlink_forget_one(td_netlink_deck_t *deck, const uint8_t companion_id[T
                            uint8_t *removed);
 /* Milliseconds left in this peer's backoff, 0 when there is none. */
 uint32_t td_netlink_backoff_left(const td_netlink_deck_t *deck, const uint8_t *peer, size_t peer_len);
-/* True when a whole handshake item body is a well-formed session.open naming a stored companion_id: the item that may
- * take over from an unproven owner and that skips per-peer backoff. */
+/* True when a whole handshake item body is a well-formed session.open whose open_tag matches a stored Pairing: the item
+ * that may take over from an unproven owner and that skips per-peer backoff. */
 bool td_netlink_names_stored(const td_netlink_deck_t *deck, const uint8_t *body, size_t len);
+/* open_tag = the first 16 bytes of MAC(derive(LTK, "session/open"), "open" || client_share). */
+bool td_netlink_open_tag(const uint8_t ltk[TD_NETLINK_KEY_LEN], const uint8_t share[TD_NETLINK_SHARE_LEN],
+                         uint8_t tag[TD_NETLINK_OPEN_TAG_LEN]);
 /* net-v2's companion_name rule: 1 to 64 bytes of UTF-8 with no control or format character and no Hangul filler. */
 bool td_netlink_name_valid(const uint8_t *name, size_t len);
 
@@ -322,7 +326,7 @@ void td_netlink_conn_close(td_netlink_conn_t *conn, td_netlink_deck_t *deck, td_
  *
  * A carrier connection that starts with no owner becomes the owner. While the owner is proven or bound to a window,
  * every other one gets `busy` at once. While it is unproven, a new one waits in a slot for its first item, because a
- * session.open naming a stored companion_id takes over. With every slot taken, the newest connection pushes out the
+ * session.open with a stored Pairing's open_tag takes over. With every slot taken, the newest connection pushes out the
  * oldest waiter that hasn't sent a byte, or else the oldest from a peer in backoff (it gets `busy`, which doesn't
  * count), so idle connections can't keep a paired Companion out. A waiter that misses the 2000 ms first-item deadline, or closes before its first item, counts toward
  * its peer's backoff. */
@@ -343,7 +347,7 @@ td_netlink_admit_t td_netlink_admit(td_netlink_deck_t *deck, const td_netlink_co
 void td_netlink_waiter_started(td_netlink_deck_t *deck, int slot);
 /* A waiter's whole first item. TD_NETLINK_NOTHING: it takes over (or there is no owner any more), so end the owner as
  * TAKEOVER, start this connection with td_netlink_conn_init and feed it the item. TD_NETLINK_SEND_CLOSE: send out
- * (`busy`, or `auth` for a session.open with an unknown companion_id) and close. The slot is free afterwards. */
+ * (`busy`, or `auth` for a session.open whose tag matches no Pairing) and close. The slot is free afterwards. */
 td_netlink_action_t td_netlink_waiter_item(td_netlink_deck_t *deck, const td_netlink_conn_t *owner, int slot,
                                            const uint8_t *body, size_t len, td_netlink_out_t *out);
 /* Each poll, for each used slot: SEND_CLOSE with `expired` after 2000 ms without its first item (counted), or with
@@ -354,6 +358,52 @@ td_netlink_action_t td_netlink_waiter_tick(td_netlink_deck_t *deck, const td_net
 void td_netlink_waiter_gone(td_netlink_deck_t *deck, int slot);
 /* The Device closed it for its own reason: not counted. */
 void td_netlink_waiter_drop(td_netlink_deck_t *deck, int slot);
+
+/* ---- Discovery privacy ----
+ *
+ * The TXT record of `_touchdeck._tcp`. Outside pairing mode it carries only `proto`, a random nonce `n` and four
+ * 8-byte hints `h`: one per stored Pairing, MAC(derive(LTK, "discovery"), "hint" || nonce) cut to 8 bytes, and a
+ * random filler per free slot. In pairing mode it adds the Device id, name and Pairing count. The carrier draws a new
+ * nonce and fillers at boot, every TD_NETLINK_ADVERT_ROTATE_MS, and whenever the record's content changes. */
+#define TD_NETLINK_ADVERT_NONCE_LEN 16
+#define TD_NETLINK_HINT_LEN 8
+#define TD_NETLINK_HINT_SLOTS TD_NETLINK_PAIRINGS_MAX
+#define TD_NETLINK_ADVERT_ROTATE_MS 900000u
+#define TD_NETLINK_ADVERT_NAME_MAX 48
+#define TD_NETLINK_ADVERT_TXT_MAX 6
+
+typedef struct {
+    /* The first 4 bytes of the nonce in hex: the instance is "TouchDeck <label>" and the host "td-<label>". */
+    char label[9];
+    char instance[19];
+    char host[12];
+    char n[2 * TD_NETLINK_ADVERT_NONCE_LEN + 1];
+    char h[2 * TD_NETLINK_HINT_SLOTS * TD_NETLINK_HINT_LEN + 1];
+    /* Pairing mode: id, name and paired are set. */
+    bool pairing;
+    char id[2 * TD_NETLINK_DEVICE_ID_LEN + 1];
+    char name[TD_NETLINK_ADVERT_NAME_MAX + 1];
+    char paired[2];
+} td_netlink_advert_t;
+
+typedef struct {
+    const char *key;
+    const char *value;
+} td_netlink_txt_t;
+
+/* hint = the first 8 bytes of MAC(derive(LTK, "discovery"), "hint" || nonce). */
+bool td_netlink_hint(const uint8_t ltk[TD_NETLINK_KEY_LEN], const uint8_t nonce[TD_NETLINK_ADVERT_NONCE_LEN],
+                     uint8_t hint[TD_NETLINK_HINT_LEN]);
+/* Pairing mode: a pairing window is open, so the record may name the Device. */
+bool td_netlink_pairing_mode(const td_netlink_deck_t *deck);
+/* Builds the record from the stored Pairings and the window. fillers holds 8 random bytes per slot; the stored
+ * Pairings' slots are overwritten with their hints. name is the link-v2 Device name, used only in pairing mode, cut to
+ * 48 bytes, and replaced with "TouchDeck" when empty or invalid. False when a hint couldn't be computed. */
+bool td_netlink_advert_build(const td_netlink_deck_t *deck, const uint8_t nonce[TD_NETLINK_ADVERT_NONCE_LEN],
+                             const uint8_t fillers[TD_NETLINK_HINT_SLOTS * TD_NETLINK_HINT_LEN], const char *name,
+                             td_netlink_advert_t *out);
+/* The record's keys and values, pointing into advert. Returns how many: 3, or 6 in pairing mode. */
+size_t td_netlink_advert_txt(const td_netlink_advert_t *advert, td_netlink_txt_t txt[TD_NETLINK_ADVERT_TXT_MAX]);
 
 /* A complete `busy` error item, for a connection the Device refuses before it has any state. */
 extern const uint8_t td_netlink_busy_item[5];

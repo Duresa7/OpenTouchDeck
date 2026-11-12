@@ -189,12 +189,18 @@ fn session_matches_the_shares_keys_and_wire() {
         assert_eq!(hex(&got), session[name].as_str().unwrap(), "{name}");
     }
     let w = &session["wire"];
-    let open = wire::handshake(
-        SESSION_OPEN,
-        &[&device_id[..], &companion_id, &client_share].concat(),
-    )
-    .unwrap();
+    let ltk: [u8; 32] = array(&inputs["ltk"]);
+    assert_eq!(
+        hex(&wire::derive(&ltk, "session/open")),
+        session["K_open"].as_str().unwrap()
+    );
+    let tag = wire::open_tag(&ltk, &client_share);
+    assert_eq!(hex(&tag), session["open_tag"].as_str().unwrap());
+    // session.open carries the tag and the share, and neither id.
+    let open = wire::handshake(SESSION_OPEN, &[&tag[..], &client_share].concat()).unwrap();
     assert_eq!(hex(&open), w["open"].as_str().unwrap());
+    assert!(!open.windows(6).any(|w| w == device_id));
+    assert!(!open.windows(16).any(|w| w == companion_id));
     let challenge = wire::handshake(
         SESSION_CHALLENGE,
         &[&device_share[..], &keys.deck_proof].concat(),
@@ -321,7 +327,7 @@ fn a_non_contributory_share_closes_the_handshake() {
 
 // ---- The shared negative vectors (`negative` and `companion_names`). ----
 
-/// A scripted Device: it reads the 58-byte `session.open`, answers with `reply`, then
+/// A scripted Device: it reads the 52-byte `session.open`, answers with `reply`, then
 /// returns what else the client sent and how long it took to close.
 fn scripted_device(reply: Vec<u8>) -> (Address, thread::JoinHandle<(Vec<u8>, Duration)>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -331,7 +337,7 @@ fn scripted_device(reply: Vec<u8>) -> (Address, thread::JoinHandle<(Vec<u8>, Dur
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        let mut open = [0u8; 58];
+        let mut open = [0u8; 52];
         stream.read_exact(&mut open).unwrap();
         stream.write_all(&reply).unwrap();
         let started = Instant::now();
@@ -443,17 +449,17 @@ fn a_tampered_wrapped_key_closes_without_an_ltk() {
 }
 
 #[test]
-fn a_swapped_client_share_fails_the_devices_proof_check() {
+fn a_swapped_client_share_fails_the_open_tag() {
     let v = vectors();
     let (inputs, case) = (&v["inputs"], &v["negative"]["swapped_client_share"]);
     assert_eq!(
         (case["receiver"].as_str(), case["expected"].as_str()),
-        (Some("device"), Some("close"))
+        (Some("device"), Some("auth"))
     );
     let open = bytes(&case["open"]);
     let (kind, fields) = wire::parse_handshake(&open).unwrap();
     assert_eq!(kind, SESSION_OPEN);
-    let client_share: [u8; 32] = fields[22..54].try_into().unwrap();
+    let client_share: [u8; 32] = fields[16..48].try_into().unwrap();
     let other = x25519(
         array(&v["negative"]["inputs"]["other_ephemeral"]),
         X25519_BASEPOINT_BYTES,
@@ -462,31 +468,16 @@ fn a_swapped_client_share_fails_the_devices_proof_check() {
         client_share, other,
         "an honest share, just not the client's"
     );
-
-    // The Device answers as the vector says...
-    let device_secret: [u8; 32] = array(&inputs["deviceEphemeral"]);
-    let device_share = x25519(device_secret, X25519_BASEPOINT_BYTES);
-    let keys = SessionKeys::derive(
-        &array(&inputs["ltk"]),
-        &array(&inputs["deviceId"]),
-        &array(&inputs["companionId"]),
-        &client_share,
-        &device_share,
-        &x25519(device_secret, client_share),
-    )
-    .unwrap();
-    let challenge = wire::handshake(
-        SESSION_CHALLENGE,
-        &[&device_share[..], &keys.deck_proof].concat(),
-    )
-    .unwrap();
-    assert_eq!(hex(&challenge), case["challenge"].as_str().unwrap());
-    // ...and the original session.proof fails its check.
-    let (kind, proof) = wire::parse_handshake(&bytes(&case["proof"]))
-        .map(|(k, p)| (k, p.to_vec()))
-        .unwrap();
-    assert_eq!(kind, SESSION_PROOF);
-    assert!(!wire::same(&proof, &keys.client_proof));
+    // The tag is the fixture's, made for another share, so the Device finds no Pairing.
+    let ltk: [u8; 32] = array(&inputs["ltk"]);
+    assert_eq!(
+        hex(&fields[..16]),
+        v["session"]["open_tag"].as_str().unwrap()
+    );
+    assert!(!wire::same(
+        &wire::open_tag(&ltk, &client_share),
+        &fields[..16]
+    ));
 }
 
 #[test]
@@ -529,7 +520,7 @@ fn fake_answers(open: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn a_wrong_device_id_or_unknown_companion_id_gets_auth() {
+fn an_open_tag_that_matches_no_pairing_gets_auth() {
     let v = vectors();
     let negative = &v["negative"];
     assert_eq!(
@@ -537,7 +528,11 @@ fn a_wrong_device_id_or_unknown_companion_id_gets_auth() {
         array::<6>(&v["inputs"]["deviceId"]),
         "the fake Device is the fixture's Device"
     );
-    for name in ["wrong_device_id", "unknown_companion_id"] {
+    for name in [
+        "unknown_open_tag",
+        "tampered_open_tag",
+        "swapped_client_share",
+    ] {
         let case = &negative[name];
         assert_eq!(
             (case["receiver"].as_str(), case["expected"].as_str()),
@@ -815,8 +810,16 @@ fn management_over_wifi_is_usb_only() {
     let paired = pairing
         .submit(&device.code().unwrap(), &mut |_| Ok(()))
         .unwrap();
-    let carrier =
-        NetCarrier::connect(&address, &paired.credential, Duration::from_secs(5)).unwrap();
+    // The pairing connection can still own the fake Device until its handler exits.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let carrier = loop {
+        match NetCarrier::connect(&address, &paired.credential, Duration::from_secs(5)) {
+            Err(NetError::Refused(Refusal::Busy)) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            result => break result.unwrap(),
+        }
+    };
     let (session, _incoming) = Session::over(
         Box::new(carrier),
         SessionConfig {
@@ -851,6 +854,76 @@ fn management_over_wifi_is_usb_only() {
         .unwrap();
     assert!(!reply.ok);
     assert_eq!(reply.fields["reason"], "usb-only");
+}
+
+#[test]
+fn discovery_records_match_the_vectors() {
+    use std::collections::BTreeMap;
+    use td_link::net::mdns::{self, Resolved};
+    let v = vectors();
+    let d = &v["discovery"];
+    let ltk: [u8; 32] = array(&v["inputs"]["ltk"]);
+    let key = wire::discovery_key(&ltk);
+    assert_eq!(hex(&key), d["K_disc"].as_str().unwrap());
+    let nonce: [u8; 16] = array(&d["nonce"]);
+    assert_eq!(hex(&wire::hint(&key, &nonce)), d["hint"].as_str().unwrap());
+    let record = |txt: &Value| Resolved {
+        addresses: vec!["192.0.2.10".parse().unwrap()],
+        port: 47_820,
+        txt: txt
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+            .collect::<BTreeMap<_, _>>(),
+    };
+    let outside = mdns::read(&record(&d["txt"])).unwrap();
+    assert_eq!(outside.pairing, None);
+    assert!(outside.matches(&key));
+    assert!(!outside.matches(&wire::discovery_key(&[0x99; 32])));
+    let pairing = mdns::read(&record(&d["pairing_txt"])).unwrap();
+    let mode = pairing.pairing.as_ref().unwrap();
+    assert_eq!(mode.device_id, array::<6>(&v["inputs"]["deviceId"]));
+    assert_eq!(mode.name, v["inputs"]["deviceName"].as_str().unwrap());
+    assert_eq!(mode.paired, Some(1));
+    assert!(pairing.matches(&key));
+    let other = mdns::read(&record(&d["other_record"]["txt"])).unwrap();
+    assert!(!other.matches(&key));
+}
+
+#[test]
+fn the_fake_device_announces_hints_and_names_itself_only_in_pairing_mode() {
+    use td_link::net::mdns;
+    let device = FakeNetDevice::start(MockDeck::v2());
+    device.open_window().unwrap();
+    let address = Address::from(device.addr());
+    let mut pairing = pair(&address, &[0x42; 16], "Vector app", Duration::from_secs(5)).unwrap();
+    let code = device.code().unwrap();
+    let mut ltk = [0u8; 32];
+    pairing
+        .submit(&code, &mut |credential| {
+            ltk = credential.ltk;
+            Ok(())
+        })
+        .unwrap();
+    let key = wire::discovery_key(&ltk);
+    let first = mdns::read_loopback(&device.advert_at(device.addr())).unwrap();
+    assert_eq!(
+        first.pairing, None,
+        "the window closed when the Pairing committed"
+    );
+    assert!(first.matches(&key));
+    let second = mdns::read_loopback(&device.advert_at(device.addr())).unwrap();
+    assert_ne!(first.nonce, second.nonce);
+    assert_ne!(first.hints, second.hints);
+    assert!(second.matches(&key));
+    device.open_window().unwrap();
+    let open = mdns::read_loopback(&device.advert_at(device.addr())).unwrap();
+    let mode = open.pairing.unwrap();
+    assert_eq!(mode.device_id, device.device_id());
+    assert_eq!(mode.paired, Some(1));
+    // A real LAN read drops a loopback address.
+    assert_eq!(mdns::read(&device.advert_at(device.addr())), None);
 }
 
 /// Every USB step of the shared `management` vector against the mock Device holding the

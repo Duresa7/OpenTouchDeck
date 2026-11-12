@@ -480,13 +480,18 @@ export type Versions = { api: Array<string>, };
 export type WifiConnection = "off" | "connecting" | "connected" | "failed";
 export type WifiDevice = { device: DeviceId, name: string, address: string, 
 /**
- * Pairings the Device says it holds, when it said.
+ * Pairings the Device says it holds. Only a Device in pairing mode says.
  */
 paired: number | null, 
 /**
  * Whether this Companion has a Pairing with it.
  */
-paired_here: boolean, };
+paired_here: boolean, 
+/**
+ * Whether a pairing window is open on it, so it can pair now. Only then does its record
+ * name it; outside pairing mode only a paired Companion recognises it.
+ */
+pairing: boolean, };
 export type WifiPairing = { device: DeviceId, 
 /**
  * Where the Companion reaches the Device: `host:port`.

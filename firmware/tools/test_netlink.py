@@ -74,11 +74,11 @@ class NetlinkTest(unittest.TestCase):
             sources += [link_core / "td_frame.c", link_core / "td_crc16.c"]
             exe = out / ("netlink.exe" if WINDOWS else "netlink")
             if WINDOWS:
-                command = ["cl", "/nologo", "/std:clatest", "/W3", "/WX", "/D_CRT_SECURE_NO_WARNINGS", "/utf-8"]
+                command = ["cl", "/nologo", "/std:clatest", "/DTD_NETLINK_TEST", "/W3", "/WX", "/D_CRT_SECURE_NO_WARNINGS", "/utf-8"]
                 command += ["/I" + str(p) for p in includes] + [str(p) for p in sources] + [str(o) for o in objects]
                 command += ["/Fe:" + str(exe), "/link", "bcrypt.lib"]
             else:
-                command = [os.environ.get("CC", "cc"), "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra",
+                command = [os.environ.get("CC", "cc"), "-std=c11", "-DTD_NETLINK_TEST", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra",
                            "-Werror"]
                 command += ["-I" + str(p) for p in includes] + [str(p) for p in sources] + [str(o) for o in objects]
                 command += ["-lm", "-o", str(exe)]

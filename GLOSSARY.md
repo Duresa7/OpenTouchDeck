@@ -77,6 +77,10 @@ _Avoid_: transport, connection type
 A Device's approval of one Companion to reach it over Wi-Fi or Bluetooth, given once by entering the code the Device shows. It lasts until someone removes it. A Device keeps at most four; the UI lists them as its paired apps.
 _Avoid_: bond (see Keyboard host), trust, registration
 
+**Pairing mode**:
+The time a pairing window is open on a Device. Only then does the Device name itself on the network; at other times only the Companions it is paired with can recognise it.
+_Avoid_: discoverable, visible mode
+
 **Bluetooth keyboard**:
 The radio build's way for a Device to type keys and media keys on other computers and phones over Bluetooth, with no Companion involved. It is off until the person turns it on.
 _Avoid_: BLE HID, Bluetooth mode

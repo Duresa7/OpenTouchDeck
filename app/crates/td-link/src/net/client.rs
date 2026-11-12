@@ -261,9 +261,9 @@ impl NetCarrier {
     ) -> Result<(RecordSender, RecordReceiver), NetError> {
         let secret = EphemeralSecret::random();
         let client_share = PublicKey::from(&secret).to_bytes();
+        // No ids on the wire: the tag lets the Device find this Pairing.
         let open = [
-            &credential.device_id[..],
-            &credential.companion_id,
+            &wire::open_tag(&credential.ltk, &client_share)[..],
             &client_share,
         ]
         .concat();

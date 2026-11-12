@@ -22,7 +22,8 @@ function start(apps = DEMO_APPS, paired = false) {
     devices: [desk, studio],
     devicePairings: { seed: { mock0001: apps } },
     wifi: {
-      discovered: [{ device: 'mock0001', name: 'Desk', address: ADDRESS, paired: apps.length }],
+      // In pairing mode: outside it, a Device's record names no id, so discovery lists it only to its own apps.
+      discovered: [{ device: 'mock0001', name: 'Desk', address: ADDRESS, paired: apps.length, pairing: true }],
       pairings: paired ? [{ device: 'mock0001', address: ADDRESS, name: 'Desk', confirmed: true, paired_ms: 0, problem: null, removing: false }] : [],
     },
   });

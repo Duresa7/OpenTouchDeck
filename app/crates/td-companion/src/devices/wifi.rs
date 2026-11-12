@@ -16,9 +16,7 @@ use std::{
 };
 use td_link::{
     LinkError, Session, SessionConfig,
-    net::{
-        self, Address, CompanionId, Credential, NetCarrier, NetError, Refusal, mdns::Discovered,
-    },
+    net::{self, Address, CompanionId, Credential, NetCarrier, NetError, Refusal, mdns::Advert},
 };
 use ts_rs::TS;
 use zeroize::Zeroize;
@@ -31,6 +29,8 @@ const HELLO: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_secs(1);
 /// The longest wait between tries for a paired Device that isn't answering.
 const MAX_RETRY: Duration = Duration::from_secs(10);
+/// Maximum unauthenticated busy replies accepted at a discovered trial address.
+const TRIAL_BUSY_LIMIT: u8 = 2;
 /// A Device that is busy with USB is tried again at most this far apart.
 const BUSY_RETRY: Duration = Duration::from_secs(2);
 /// A started pairing that nobody finishes is dropped after this.
@@ -155,26 +155,35 @@ impl PairingKeys for MemoryKeys {
 // --- Discovery ------------------------------------------------------------------------------
 
 /// Browses the LAN for `_touchdeck._tcp` for at most the given time.
-pub type Browse = Arc<dyn Fn(Duration) -> Result<Vec<Discovered>, String> + Send + Sync>;
+pub type Browse = Arc<dyn Fn(Duration) -> Result<Vec<Advert>, String> + Send + Sync>;
 
-/// Fake net-v2 Devices on loopback that mock discovery finds.
+/// Mock discovery: fake net-v2 Devices on loopback announce through it, with the records a
+/// real Device sends, so tests discover them without real multicast.
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Default, Clone)]
 pub struct MockNetwork {
-    announced: Arc<Mutex<Vec<Discovered>>>,
+    announced: Arc<Mutex<Vec<net::fake::Announcer>>>,
     browsed: Arc<std::sync::atomic::AtomicUsize>,
 }
 #[cfg(any(test, feature = "test-hooks"))]
 impl MockNetwork {
-    /// Makes discovery find a Device at `address`.
-    pub fn announce(&self, device: Discovered) {
+    /// Makes discovery find `device` at its own address. Each browse sees the record it
+    /// announces then: hints for its Pairings, and its id only while it is pairing.
+    pub fn announce(&self, device: &net::fake::FakeNetDevice) {
+        self.announce_at(device, device.addr());
+    }
+    /// Makes discovery find `device`'s record at `at`, as a Device that moved, or someone
+    /// replaying its record elsewhere, would show.
+    pub fn announce_at(&self, device: &net::fake::FakeNetDevice, at: std::net::SocketAddr) {
         let mut announced = self.announced.lock();
-        announced.retain(|d| d.device_id != device.device_id);
-        announced.push(device);
+        announced.retain(|a| a.device_id() != device.device_id());
+        announced.push(device.announcer(at));
     }
     /// Takes it off the network, as a network that blocks multicast does.
     pub fn withdraw(&self, device_id: &net::DeviceId) {
-        self.announced.lock().retain(|d| &d.device_id != device_id);
+        self.announced
+            .lock()
+            .retain(|a| &a.device_id() != device_id);
     }
     /// How many browses ran.
     pub fn browses(&self) -> usize {
@@ -184,7 +193,15 @@ impl MockNetwork {
         let network = self.clone();
         Arc::new(move |_| {
             network.browsed.fetch_add(1, Ordering::SeqCst);
-            Ok(network.announced.lock().clone())
+            let records: Vec<_> = network
+                .announced
+                .lock()
+                .iter()
+                .filter_map(|a| a.record())
+                .collect();
+            Ok(net::mdns::merge(
+                records.iter().filter_map(net::mdns::read_loopback),
+            ))
         })
     }
 }
@@ -267,6 +284,14 @@ pub(super) struct WifiRecord {
     /// Wi-Fi stopped until the person connects again or plugs the Device in, because its
     /// Firmware can't take the session. Never retried on its own.
     pub stopped: bool,
+    /// Where discovery last saw this Pairing's hint, when that isn't `address`. The Wi-Fi
+    /// thread tries it next, and it replaces `address` only once a session there works, so a
+    /// replayed record only costs a bounded number of failed tries.
+    pub trial: Option<Address>,
+    pub trial_busy: u8,
+    /// `derive(LTK, "discovery")`, read from the keychain once and kept in memory only. It
+    /// recognises this Pairing's hints and can't open a session.
+    pub discovery: Option<[u8; 32]>,
 }
 
 /// A Pairing as the API lists it.
@@ -292,10 +317,13 @@ pub struct WifiDevice {
     pub device: DeviceId,
     pub name: String,
     pub address: String,
-    /// Pairings the Device says it holds, when it said.
+    /// Pairings the Device says it holds. Only a Device in pairing mode says.
     pub paired: Option<u8>,
     /// Whether this Companion has a Pairing with it.
     pub paired_here: bool,
+    /// Whether a pairing window is open on it, so it can pair now. Only then does its record
+    /// name it; outside pairing mode only a paired Companion recognises it.
+    pub pairing: bool,
 }
 
 /// One started pairing, waiting for the code shown on the Device.
@@ -475,6 +503,9 @@ impl Inner {
                     backoff: scan::FIRST_RETRY,
                     problem: None,
                     stopped: false,
+                    trial: None,
+                    trial_busy: 0,
+                    discovery: None,
                 },
             );
         }
@@ -487,6 +518,34 @@ impl Inner {
             getrandom::fill(&mut id).expect("the OS random source works");
             id
         })
+    }
+
+    /// Every Pairing's discovery key. A key missing from memory is derived from the LTK in the
+    /// keychain once; a Pairing whose key can't be read is left out of matching. Blocking.
+    fn discovery_keys(&self) -> Vec<(DeviceId, [u8; 32])> {
+        let missing: Vec<DeviceId> = {
+            let reg = self.reg.lock();
+            reg.wifi
+                .iter()
+                .filter(|(_, r)| r.discovery.is_none())
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for device in missing {
+            let Ok(Some(mut ltk)) = self.wifi_config().keys.load(&device) else {
+                continue;
+            };
+            let key = net::wire::discovery_key(&ltk);
+            ltk.zeroize();
+            if let Some(record) = self.reg.lock().wifi.get_mut(&device) {
+                record.discovery = Some(key);
+            }
+        }
+        let reg = self.reg.lock();
+        reg.wifi
+            .iter()
+            .filter_map(|(id, r)| r.discovery.map(|key| (id.clone(), key)))
+            .collect()
     }
 
     /// Writes `network.json`. Called off the async runtime.
@@ -530,7 +589,12 @@ impl Inner {
         reg.wifi
             .iter()
             .filter(|(id, r)| !r.stopped && r.due <= now && wifi_wanted(&reg, id))
-            .map(|(id, r)| (id.clone(), r.address.clone()))
+            .map(|(id, r)| {
+                (
+                    id.clone(),
+                    r.trial.clone().unwrap_or_else(|| r.address.clone()),
+                )
+            })
             .collect()
     }
 
@@ -547,12 +611,30 @@ impl Inner {
 
     fn apply_wifi(self: &Arc<Self>, id: &DeviceId, address: &Address, probed: WifiProbed) {
         let mut reg = self.reg.lock();
-        if !wifi_wanted(&reg, id) || reg.wifi.get(id).is_none_or(|r| &r.address != address) {
+        let tried = |r: &WifiRecord| r.trial.as_ref().unwrap_or(&r.address) == address;
+        if !wifi_wanted(&reg, id) || reg.wifi.get(id).is_none_or(|r| !tried(r)) {
             drop(reg);
             drop(probed);
             return;
         }
         let record = reg.wifi.get_mut(id).expect("checked above");
+        // A discovered address that didn't answer as this Device is dropped, and the Pairing
+        // goes back to the address that last worked, at once. Unauthenticated `busy`
+        // answers get only a bounded retry at a trial address.
+        if record.trial.is_some() && matches!(probed, WifiProbed::Busy) {
+            record.trial_busy += 1;
+        }
+        if record.trial.is_some()
+            && (!matches!(probed, WifiProbed::Device(_) | WifiProbed::Busy)
+                || record.trial_busy >= TRIAL_BUSY_LIMIT)
+        {
+            record.trial = None;
+            record.due = Instant::now();
+            drop(reg);
+            drop(probed);
+            self.wifi.wake.kick();
+            return;
+        }
         let found = match probed {
             WifiProbed::Device(found) => found,
             WifiProbed::Busy => {
@@ -595,6 +677,10 @@ impl Inner {
         };
         record.backoff = scan::FIRST_RETRY;
         record.problem = None;
+        let moved = record.trial.take().is_some();
+        if moved {
+            record.address = address.clone();
+        }
         let newly_confirmed = !record.confirmed;
         record.confirmed = true;
         if found.identity.name.is_some() {
@@ -608,7 +694,7 @@ impl Inner {
             true,
             *found,
         );
-        if newly_confirmed {
+        if newly_confirmed || moved {
             self.save_wifi(&reg);
         }
         drop(reg);
@@ -616,7 +702,13 @@ impl Inner {
     }
 
     /// Records a finished pairing and starts linking over Wi-Fi.
-    fn paired(&self, device: &DeviceId, address: &Address, confirmed: bool) {
+    fn paired(
+        &self,
+        device: &DeviceId,
+        address: &Address,
+        confirmed: bool,
+        discovery: Option<[u8; 32]>,
+    ) {
         let mut reg = self.reg.lock();
         let now = Instant::now();
         let name = reg.devices.get(device).and_then(|e| e.summary.name.clone());
@@ -631,6 +723,9 @@ impl Inner {
                 backoff: scan::FIRST_RETRY,
                 problem: None,
                 stopped: false,
+                trial: None,
+                trial_busy: 0,
+                discovery,
             },
         );
         if !reg.devices.contains_key(device) {
@@ -798,45 +893,80 @@ impl Inner {
 }
 
 impl super::DeviceManager {
-    /// Browses the LAN for up to `wait`. Blocking.
+    /// Browses the LAN for up to `wait`. Blocking. A record that carries one of this
+    /// Companion's hints is that paired Device; a record in pairing mode is a Device that can
+    /// pair now. Every other record is someone else's Device and is dropped.
     pub fn wifi_discover(&self, wait: Duration) -> Result<Vec<WifiDevice>, String> {
         let found = (self.inner.wifi_config().browse)(wait)?;
+        let keys = self.inner.discovery_keys();
         *self.inner.wifi.advertised.lock() = found
             .iter()
-            .map(|d| (d.address.to_string(), d.paired))
+            .map(|d| {
+                (
+                    d.address.to_string(),
+                    d.pairing.as_ref().and_then(|p| p.paired),
+                )
+            })
             .collect();
         let mut reg = self.inner.reg.lock();
-        // A paired Device that moved, as DHCP may move it, is tried at its new address. A
-        // session there still needs the Pairing's key, so a false answer only fails.
+        let mut by_device = BTreeMap::<DeviceId, WifiDevice>::new();
         let mut moved = false;
-        for d in &found {
-            let device = device_id_of(&d.device_id);
-            if let Some(record) = reg.wifi.get_mut(&device)
-                && record.address != d.address
-            {
-                record.address = d.address.clone();
-                record.due = Instant::now();
-                record.backoff = scan::FIRST_RETRY;
-                moved = true;
+        for advert in found {
+            let matched: Vec<&DeviceId> = keys
+                .iter()
+                .filter(|(_, key)| advert.matches(key))
+                .map(|(id, _)| id)
+                .collect();
+            for device in matched {
+                // A paired Device that moved, as DHCP may move it, is tried at its new
+                // address. The old one stays until a session there works.
+                if let Some(record) = reg.wifi.get_mut(device)
+                    && record.address != advert.address
+                    && record.trial.as_ref() != Some(&advert.address)
+                {
+                    record.trial = Some(advert.address.clone());
+                    record.trial_busy = 0;
+                    record.due = Instant::now();
+                    record.backoff = scan::FIRST_RETRY;
+                    moved = true;
+                }
+                let name = reg
+                    .wifi
+                    .get(device)
+                    .and_then(|r| r.name.clone())
+                    .or_else(|| reg.devices.get(device).and_then(|e| e.summary.name.clone()))
+                    .or_else(|| advert.pairing.as_ref().map(|p| p.name.clone()))
+                    .unwrap_or_else(|| "TouchDeck".to_owned());
+                by_device.insert(
+                    device.clone(),
+                    WifiDevice {
+                        device: device.clone(),
+                        name,
+                        address: advert.address.to_string(),
+                        paired: advert.pairing.as_ref().and_then(|p| p.paired),
+                        paired_here: true,
+                        pairing: advert.pairing.is_some(),
+                    },
+                );
+            }
+            if let Some(mode) = &advert.pairing {
+                let device = device_id_of(&mode.device_id);
+                by_device
+                    .entry(device.clone())
+                    .or_insert_with(|| WifiDevice {
+                        paired_here: reg.wifi.contains_key(&device),
+                        device,
+                        name: mode.name.clone(),
+                        address: advert.address.to_string(),
+                        paired: mode.paired,
+                        pairing: true,
+                    });
             }
         }
         if moved {
-            self.inner.save_wifi(&reg);
             self.inner.wifi.wake.kick();
         }
-        Ok(found
-            .into_iter()
-            .map(|d| {
-                let device = device_id_of(&d.device_id);
-                WifiDevice {
-                    paired_here: reg.wifi.contains_key(&device),
-                    device,
-                    name: d.name,
-                    address: d.address.to_string(),
-                    paired: d.paired,
-                }
-            })
-            .collect())
+        Ok(by_device.into_values().collect())
     }
 
     /// Every Pairing this Companion holds.
@@ -929,7 +1059,9 @@ impl super::DeviceManager {
         };
         let keys = self.inner.wifi_config().keys.clone();
         let target = device.clone();
+        let mut discovery = None;
         let result = pairing.submit(code, &mut |credential| {
+            discovery = Some(net::wire::discovery_key(&credential.ltk));
             keys.save(&target, &credential.ltk).map_err(|e| e.0)
         });
         let ended = !pairing.is_open();
@@ -942,7 +1074,8 @@ impl super::DeviceManager {
         }
         match result {
             Ok(paired) => {
-                self.inner.paired(&device, &address, paired.confirmed);
+                self.inner
+                    .paired(&device, &address, paired.confirmed, discovery);
                 Ok(self
                     .wifi_pairings()
                     .into_iter()
@@ -1010,6 +1143,16 @@ impl super::DeviceManager {
         drop(reg);
         drop(actor);
         Ok(())
+    }
+
+    /// Changes where this Companion thinks a paired Device is, as a DHCP move it hasn't seen
+    /// yet would. Tests only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn wifi_move(&self, device: &DeviceId, address: std::net::SocketAddr) {
+        if let Some(record) = self.inner.reg.lock().wifi.get_mut(device) {
+            record.address = address.into();
+            record.trial = None;
+        }
     }
 
     #[cfg(any(test, feature = "test-hooks"))]

@@ -349,7 +349,8 @@ impl TestCompanion {
         self.ports.deck(id).expect("a plugged mock")
     }
     /// A fake net-v2 Device on loopback in front of the mock with this USB serial, made if
-    /// needed but not plugged in. Mock discovery finds it while `announce` is on. Mock
+    /// needed but not plugged in. While `announce` is on it announces itself through mock
+    /// discovery, with the record a real Device sends: its id only while it is pairing. Mock
     /// Devices report the id `020000000001`, so use that serial for USB and Wi-Fi to merge.
     pub fn wifi_device(&self, serial: &str, announce: bool) -> td_link::net::fake::FakeNetDevice {
         self.wifi_board(serial, BoardKind::Device, announce)
@@ -371,19 +372,17 @@ impl TestCompanion {
         let deck = self.ports.board(serial, kind);
         let fake = td_link::net::fake::FakeNetDevice::start(deck);
         if announce {
-            self.wifi_network()
-                .announce(td_link::net::mdns::Discovered {
-                    device_id: fake.device_id(),
-                    name: format!("Mock Device {serial}"),
-                    address: fake.addr().into(),
-                    paired: Some(0),
-                });
+            self.wifi_network().announce(&fake);
         }
         fake
     }
     /// The in-memory keychain of Pairing keys.
     pub fn wifi_keys(&self) -> crate::devices::MemoryKeys {
         self.ctx.devices.wifi_mock().expect("mock Wi-Fi").0.clone()
+    }
+    /// Makes the Companion think a paired Device is at `address`, as an unseen DHCP move would.
+    pub fn wifi_move(&self, device: &DeviceId, address: std::net::SocketAddr) {
+        self.ctx.devices.wifi_move(device, address);
     }
     /// What mock discovery finds.
     pub fn wifi_network(&self) -> crate::devices::MockNetwork {
