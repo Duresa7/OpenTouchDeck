@@ -203,3 +203,33 @@ test('a saved Brandfetch client ID opens the window to Brandfetch after a reload
     } finally { await app.close(); }
   });
 });
+
+test('native title bar reserves its reported geometry and follows Appearance', async () => {
+  await withCompanion(async env => {
+    const app = await launch(env);
+    try {
+      const page = await app.firstWindow();
+      const strip = page.locator('.window-drag-strip');
+      await expect(strip).toBeVisible();
+      expect(await strip.evaluate(el => getComputedStyle(el).getPropertyValue('-webkit-app-region'))).toBe('drag');
+      expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarVisible())).toBe(false);
+      await strip.evaluate(el => { const button = document.createElement('button'); button.textContent = 'Test'; el.append(button); });
+      expect(await strip.locator('button').evaluate(el => getComputedStyle(el).getPropertyValue('-webkit-app-region'))).toBe('no-drag');
+      await strip.locator('button').evaluate(el => el.remove());
+      for (const theme of ['light', 'dark', 'system']) {
+        await page.evaluate(theme => {
+          if (theme === 'system') delete document.documentElement.dataset.theme;
+          else document.documentElement.dataset.theme = theme;
+        }, theme);
+        await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe(theme);
+      }
+      for (const size of [[800, 600], [1200, 800]]) {
+        await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size[0], size[1]), size);
+        await expect.poll(() => page.evaluate(() => {
+          const strip = document.querySelector('.window-drag-strip')!.getBoundingClientRect();
+          return parseFloat(getComputedStyle(document.body).paddingTop) >= strip.bottom;
+        })).toBe(true);
+      }
+    } finally { await app.close(); }
+  });
+});

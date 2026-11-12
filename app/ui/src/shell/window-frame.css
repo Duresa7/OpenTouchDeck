@@ -1,0 +1,40 @@
+:root {
+  --window-top: 0px;
+  --app-height: calc(100vh - var(--window-top));
+}
+
+:root[data-window-overlay] {
+  --window-top: calc(env(titlebar-area-y, 0px) + env(titlebar-area-height, 0px));
+}
+
+:root[data-window-overlay] body {
+  overflow: hidden;
+  padding-top: var(--window-top);
+}
+
+:root[data-window-overlay] #root {
+  height: var(--app-height);
+  overflow: auto;
+}
+
+.window-drag-strip {
+  display: none;
+}
+
+:root[data-window-overlay] .window-drag-strip {
+  display: block;
+  position: fixed;
+  top: env(titlebar-area-y, 0px);
+  left: env(titlebar-area-x, 0px);
+  width: env(titlebar-area-width, 100%);
+  height: env(titlebar-area-height, 0px);
+  z-index: 1000;
+  background: var(--mat);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+/* Future controls in the strip retain native pointer and keyboard interaction. */
+.window-drag-strip :is(button, input, select, textarea, a, [role='button'], [role='menu'], [contenteditable], .no-drag) {
+  -webkit-app-region: no-drag;
+}

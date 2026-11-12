@@ -138,7 +138,7 @@ button {
 /* ---------- Home ---------- */
 
 .home {
-  min-height: 100vh;
+  min-height: var(--app-height);
   display: grid;
   place-items: center;
   padding: var(--space-12) var(--space-12) 120px;
@@ -619,7 +619,7 @@ body.is-resizing .nav-dock,
 
 .scrim {
   position: fixed;
-  inset: 0;
+  inset: var(--window-top) 0 0;
   z-index: var(--layer-dialog);
   background: var(--scrim);
   transition: opacity var(--duration-dialog) var(--ease-out);
@@ -637,11 +637,11 @@ body.is-resizing .nav-dock,
 .dialog {
   position: fixed;
   z-index: var(--layer-dialog);
-  top: 50%;
+  top: calc(var(--window-top) + var(--app-height) / 2);
   left: 50%;
   translate: -50% -50%;
   max-width: calc(100vw - 48px);
-  max-height: calc(100vh - 48px);
+  max-height: calc(var(--app-height) - 48px);
   overflow: auto;
   padding: var(--space-6);
   border-radius: var(--radius-sheet);

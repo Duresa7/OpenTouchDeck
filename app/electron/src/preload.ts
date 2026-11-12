@@ -28,3 +28,10 @@ contextBridge.exposeInMainWorld('openTouchDeck', {
   },
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-folder').catch(() => null),
 });
+
+// Observe the same attribute that drives CSS. No general-purpose IPC is exposed to the page.
+window.addEventListener('DOMContentLoaded', () => {
+  const update = () => ipcRenderer.send('window:appearance', document.documentElement.dataset.theme ?? 'system');
+  new MutationObserver(update).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  update();
+});

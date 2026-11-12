@@ -4,6 +4,7 @@ import './styles/app.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Pair, takePairingCode } from './screens/Pair.tsx';
+import { WindowFrame } from './shell/WindowFrame.tsx';
 import { App } from './App.tsx';
 import { CompanionContext, connect, EventsContext, FolderPickerContext, pageEnvironment, type Environment } from './lib/companion/connection.ts';
 import { reopenSettings } from './state/ui.ts';
@@ -30,6 +31,7 @@ if (!isPair) reopenSettings();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <WindowFrame />
     <CompanionContext value={companion}>
       <EventsContext value={events}>
         <UpdatesContext value={updates}>
