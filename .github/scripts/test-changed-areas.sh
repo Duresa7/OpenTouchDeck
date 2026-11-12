@@ -67,6 +67,8 @@ check "scripts actionlint" .github/workflows/release-windows.yml
 check "frozen scripts actionlint" .github/release-signer/cli.mjs
 check "actionlint" .github/workflows/main.yml
 check "actionlint" .github/actions/windows-release-build/action.yml
+check "rust frozen actionlint" .github/actions/rust-setup/action.yml
+check "scripts actionlint" .github/workflows/scripts.yml
 check "rust frozen scripts firmware actionlint" .github/workflows/pr.yml
 check "rust frozen scripts firmware actionlint" .github/scripts/changed-areas.sh
 

@@ -32,6 +32,8 @@ while IFS= read -r -d '' path; do
     app/icons/*|schema/*|docs/companion-api.md) rust=true ;;
     app/ui/src/lib/companion/api.gen.ts|app/ui/src/lib/companion/api.test.gen.ts) rust=true ;;
     app/scripts/check_exe.ps1|.github/workflows/rust.yml) rust=true ;;
+    # The Rust setup action also prepares the frozen Electron job.
+    .github/actions/rust-setup/*) rust=true; frozen=true ;;
   esac
 
   # The frozen Electron shell and React UI. The UI validates Layouts against schema/, and the Electron tests
@@ -46,7 +48,7 @@ while IFS= read -r -d '' path; do
     app/scripts/*|app/release-options.json) scripts=true ;;
     app/package.json|app/electron/package.json|app/ui/package.json|app/crates/*/Cargo.toml|app/Cargo.lock) scripts=true ;;
     app/crates/td-host/src/catalog/*|app/crates/td-host/src/packs.json|app/crates/td-link/tests/fixtures/*) scripts=true ;;
-    firmware/tools/*|.github/release-signer/*|.github/workflows/release-windows.yml) scripts=true ;;
+    firmware/tools/*|.github/release-signer/*|.github/workflows/release-windows.yml|.github/workflows/scripts.yml) scripts=true ;;
   esac
 
   # The Firmware embeds schema/ files, and its radio-free check runs the release recipe's audit.

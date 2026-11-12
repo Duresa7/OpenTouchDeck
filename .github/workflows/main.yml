@@ -12,10 +12,8 @@ on:
 permissions:
   contents: read
 
-# A newer push replaces the run of the push before it.
-concurrency:
-  group: main-${{ github.ref }}
-  cancel-in-progress: true
+# No concurrency group: each run checks only its own push, so cancelling or replacing one would leave that
+# push's changes unchecked.
 
 jobs:
   changes:
