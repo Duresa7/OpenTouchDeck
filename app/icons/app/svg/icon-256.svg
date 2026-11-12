@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Open TouchDeck app icon, 256 px: the master. The Device seen front-on: black glass, a 3 x 2 Page of Tiles
+       with one Tile lit, and the pager under the grid. The 60 to 96 px drawings are this one redrawn on their
+       own grids; 48 px and smaller are simplified. -->
+  <defs>
+    <linearGradient id="case" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6b7789"/>
+      <stop offset="1" stop-color="#3a4350"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#30363f"/>
+      <stop offset="1" stop-color="#15171a"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.06"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0c1826"/>
+      <stop offset="1" stop-color="#081018"/>
+    </linearGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e4263"/>
+      <stop offset="1" stop-color="#20304a"/>
+    </linearGradient>
+    <linearGradient id="lit" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a4d6ff"/>
+      <stop offset="1" stop-color="#4c9df6"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-200%" width="160%" height="500%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <clipPath id="screenClip">
+      <rect x="28" y="60" width="200" height="126" rx="12"/>
+    </clipPath>
+  </defs>
+
+  <!-- contact shadow -->
+  <ellipse cx="128" cy="214" rx="98" ry="9" fill="#000000" opacity="0.30" filter="url(#soft)"/>
+
+  <!-- case: the edge of the body under the glass -->
+  <rect x="16" y="60" width="224" height="150" rx="26" fill="url(#case)"/>
+  <!-- black glass face -->
+  <rect x="16" y="48" width="224" height="150" rx="26" fill="url(#glass)"/>
+  <rect x="17" y="49" width="222" height="148" rx="25" fill="none" stroke="url(#rim)" stroke-width="2"/>
+
+  <!-- screen -->
+  <rect x="28" y="60" width="200" height="126" rx="12" fill="url(#screen)"/>
+  <g clip-path="url(#screenClip)">
+    <rect x="31" y="63" width="68" height="56" rx="14" fill="#58a8ff" opacity="0.55" filter="url(#glow)"/>
+  </g>
+
+  <!-- Tiles: 3 x 2 -->
+  <rect x="37" y="69" width="56" height="44" rx="9" fill="url(#lit)"/>
+  <rect x="38" y="70" width="54" height="42" rx="8" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2"/>
+  <rect x="100" y="69" width="56" height="44" rx="9" fill="url(#tile)"/>
+  <rect x="163" y="69" width="56" height="44" rx="9" fill="url(#tile)"/>
+  <rect x="37" y="120" width="56" height="44" rx="9" fill="url(#tile)"/>
+  <rect x="100" y="120" width="56" height="44" rx="9" fill="url(#tile)"/>
+  <rect x="163" y="120" width="56" height="44" rx="9" fill="url(#tile)"/>
+
+  <!-- pager: one idle dot and the current Page pill -->
+  <circle cx="117" cy="175" r="3" fill="#606470"/>
+  <rect x="124" y="172" width="16" height="6" rx="3" fill="#58a8ff"/>
+</svg>

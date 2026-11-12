@@ -65,7 +65,7 @@ impl Config {
 pub struct Snapshot {
     pub devices: Vec<crate::devices::DeviceSummary>,
     pub new_boards: Vec<crate::devices::NewBoard>,
-    pub integrations: Vec<crate::features::integrations::IntegrationSummary>,
+    pub integrations: Vec<crate::integrations::IntegrationSummary>,
     pub jobs: Vec<crate::jobs::Job>,
     pub approvals: Vec<crate::actions::ApprovalRequest>,
 }
@@ -74,7 +74,7 @@ pub struct Snapshot {
 #[derive(Clone)]
 pub struct Handle {
     pub(crate) actions: crate::actions::Actions,
-    pub(crate) integrations: crate::features::integrations::Service,
+    pub(crate) integrations: crate::integrations::Service,
     pub(crate) desktop: Arc<crate::tray::Desktop>,
     pub(crate) devices: crate::devices::DeviceManager,
     device_operations: crate::devices::Operations,
@@ -117,7 +117,7 @@ impl Handle {
             grants,
             mock,
         );
-        let integrations = crate::features::integrations::Service::new(mock, events.clone());
+        let integrations = crate::integrations::Service::new(mock, events.clone());
         integrations.command_approval(Arc::new(actions.clone()));
         let settable = integrations.clone();
         let settable: crate::controls::Settable = Arc::new(move |key| settable.settable(key));
@@ -139,6 +139,14 @@ impl Handle {
             settable,
             Arc::new(move |id| turned_on.enabled(id)),
         );
+        let jobs = crate::jobs::Jobs::new(events.clone(), clock.clone());
+        let firmware = crate::features::firmware::Firmware::new(
+            mock,
+            devices.clone(),
+            links.clone(),
+            jobs.clone(),
+            clock.clone(),
+        );
         let photos = crate::photos::PhotoFrames::new(
             Some(data.join("photo-frame.json")),
             devices.clone(),
@@ -158,9 +166,9 @@ impl Handle {
             integrations,
             live,
             authority,
-            firmware: crate::features::firmware::Firmware::new(mock),
+            firmware,
             desktop: Arc::new(crate::tray::Desktop::new(mock)),
-            jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
+            jobs,
             photos,
             device_operations,
             links,
@@ -211,11 +219,14 @@ impl Handle {
     pub fn device_operations(&self) -> &crate::devices::Operations {
         &self.device_operations
     }
-    pub fn integrations(&self) -> &crate::features::integrations::Service {
+    pub fn integrations(&self) -> &crate::integrations::Service {
         &self.integrations
     }
     pub fn actions(&self) -> &crate::actions::Actions {
         &self.actions
+    }
+    pub fn firmware(&self) -> &crate::features::firmware::Firmware {
+        &self.firmware
     }
     pub fn jobs(&self) -> &crate::jobs::Jobs {
         &self.jobs

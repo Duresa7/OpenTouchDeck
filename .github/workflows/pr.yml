@@ -1,25 +1,35 @@
 name: pull request
 
+# Runs only the checks a pull request's changed paths need; .github/scripts/changed-areas.sh maps paths to checks.
+# gate is the one required check: it passes when every check that ran passed.
 on:
   pull_request:
 
 permissions:
   contents: read
 
+# A new push to a pull request cancels the run of the push before it.
+concurrency:
+  group: pull-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      app: ${{ steps.paths.outputs.app }}
+      rust: ${{ steps.paths.outputs.rust }}
+      frozen: ${{ steps.paths.outputs.frozen }}
+      scripts: ${{ steps.paths.outputs.scripts }}
       firmware: ${{ steps.paths.outputs.firmware }}
-      e2e: ${{ steps.paths.outputs.e2e }}
       actionlint: ${{ steps.paths.outputs.actionlint }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Test the path filter
+        run: bash .github/scripts/test-changed-areas.sh
       - name: Find changed areas
         id: paths
         shell: bash
@@ -30,17 +40,31 @@ jobs:
           set -euo pipefail
           git diff --name-only -z "$BASE_SHA...$HEAD_SHA" | bash .github/scripts/changed-areas.sh | tee -a "$GITHUB_OUTPUT"
 
-  app:
+  rust:
     needs: changes
-    if: needs.changes.outputs.app == 'true'
+    if: needs.changes.outputs.rust == 'true'
+    uses: ./.github/workflows/rust.yml
+    with:
+      cache: true
+
+  frozen-app:
+    needs: changes
+    if: needs.changes.outputs.frozen == 'true'
     uses: ./.github/workflows/app.yml
     with:
-      e2e: ${{ needs.changes.outputs.e2e == 'true' }}
+      cache: true
+
+  scripts:
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    uses: ./.github/workflows/scripts.yml
 
   firmware:
     needs: changes
     if: needs.changes.outputs.firmware == 'true'
     uses: ./.github/workflows/firmware.yml
+    with:
+      cache: true
 
   actionlint:
     needs: changes
@@ -58,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive"             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
           echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum --strict -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
       - name: Lint workflows
@@ -66,7 +90,7 @@ jobs:
 
   gate:
     name: gate
-    needs: [changes, app, firmware, actionlint]
+    needs: [changes, rust, frozen-app, scripts, firmware, actionlint]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

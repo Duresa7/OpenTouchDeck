@@ -42,6 +42,10 @@ impl InProcessCompanion {
     pub fn deck(&self, id: &str) -> td_link::MockDeck {
         self.ports.deck(id).unwrap()
     }
+    /// Moves the same monotonic clock used by selections, consent and Jobs.
+    pub fn advance_clock(&self, by: Duration) {
+        self.handle.clock.advance(by);
+    }
     pub fn input_log(&self) -> Vec<String> {
         crate::features::test_hooks::input_log(&self.input)
     }

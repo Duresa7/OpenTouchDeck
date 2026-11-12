@@ -9,13 +9,14 @@
 #define ESP_OK 0
 typedef int esp_err_t;
 typedef struct { bool failed; const char *reason; } cJSON;
-enum { KIND_ICON_PUT = 1 };
-static struct {
+enum { TD_TRANSFER_ICON_PUT = 1 };
+typedef struct {
     struct { unsigned received, bytes; } x;
     unsigned kind, fill;
     uint8_t *buf;
-    const char *path, *orientation, *icon_id;
-} s;
+} td_transfer_t;
+static td_transfer_t s;
+static struct { const char *path, *orientation, *icon_id; } s_req;
 static ui_tile_t tiles[5];
 static ui_page_t pages[2];
 static td_layout_t layout;
@@ -55,7 +56,7 @@ bool td_asset_gif_canvas(const char *id, uint16_t *width, uint16_t *height)
     (void)id; *width = canvas_width; *height = canvas_height; return true;
 }
 static const char *ui_layout_slot(void) { return "portrait"; }
-static void close_xfer(void) {}
+static void td_transfer_close(td_transfer_t *t) { (void)t; }
 static void ui_leave_recovery(const char *why) { (void)why; }
 static bool ui_ready(void) { return false; }
 static bool ui_layout_reload(bool builtin, td_layout_error_t *err) { (void)builtin; (void)err; return true; }
@@ -70,37 +71,37 @@ int main(void)
     layout = (td_layout_t){.schema = 2, .pages = pages, .page_count = 2};
     uint8_t data[12] = {0};
     s.buf = data; s.fill = sizeof data; s.x.received = s.x.bytes = sizeof data;
-    s.orientation = "landscape";
+    s_req.orientation = "landscape";
     candidate = 1;
     cJSON reply = {0};
-    finish_put(&reply);
+    finish_put(&s, &reply);
     assert(!reply.failed && committed == 1);
     candidate = 2;
     pages[1].tile_count = 5;
     reply = (cJSON){0};
-    finish_put(&reply);
+    finish_put(&s, &reply);
     assert(reply.failed && reply.reason && !strcmp(reply.reason, "size") && committed == 1);
     pages[1].tile_count = 4;
     reply = (cJSON){0};
-    finish_put(&reply);
+    finish_put(&s, &reply);
     assert(!reply.failed && committed == 2);
     candidate = 3;
     pages[0].tile_count = pages[1].tile_count = 3;
     canvas_width = canvas_height = 160;
     reply = (cJSON){0};
-    finish_put(&reply);
+    finish_put(&s, &reply);
     assert(reply.failed && reply.reason && !strcmp(reply.reason, "size") && committed == 2);
     candidate = 4;
     pages[0].tile_count = pages[1].tile_count = 2;
     canvas_width = 256;
     canvas_height = 128;
     reply = (cJSON){0};
-    finish_put(&reply);
+    finish_put(&s, &reply);
     assert(!reply.failed && committed == 4);
     puts("Layout commit counts reused Assets per Tile, resets each Page, refuses size by Tiles or pixels and retains stored Layout: OK");
     selected = false; parse_budget_error = true;
     reply = (cJSON){0};
-    finish_put(&reply);
+    finish_put(&s, &reply);
     assert(reply.failed && !reply.reason && committed == 4);
     return 0;
 }

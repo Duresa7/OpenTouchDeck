@@ -17,7 +17,7 @@ use td_host::integrations::{Delivery, LiveSample};
 pub use router::{Binding, LiveCaps, Report, Router, StreamKey, bindings, stream_source};
 
 use crate::devices::{DeviceManager, LinkState};
-use crate::features::integrations::{Controls, Service};
+use crate::integrations::{Controls, Service};
 use crate::layouts::LayoutAuthority;
 use crate::link::Links;
 use covers::CoverCache;
