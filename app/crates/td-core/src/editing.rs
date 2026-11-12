@@ -124,7 +124,17 @@ pub enum Compatibility {
 }
 impl Document {
     pub fn parse(bytes: &[u8]) -> Result<Self, EditError> {
-        Layout::parse(bytes).map(Self).map_err(invalid)
+        let mut layout = Layout::parse(bytes).map_err(invalid)?;
+        // An explicit Companion sink means the same as none, and older Firmware refuses the field, so a Layout
+        // imported or read from a Device never carries it into a push.
+        for page in &mut layout.pages {
+            if let Page::Grid { tiles, .. } = page {
+                for tile in tiles {
+                    normalize_sink(&mut tile.action);
+                }
+            }
+        }
+        Ok(Self(layout))
     }
     /// Public Layout fields cannot bypass admission into the editor.
     pub fn admit(layout: Layout) -> Result<Self, EditError> {

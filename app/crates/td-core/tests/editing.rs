@@ -455,3 +455,35 @@ fn placing_and_adding_pages_omit_an_explicit_companion_sink() {
         Compatibility::Supported
     );
 }
+
+#[test]
+fn an_admitted_layout_drops_an_explicit_companion_sink() {
+    let text =
+        std::str::from_utf8(include_bytes!("../../../../schema/examples/bluetooth.json")).unwrap();
+    let explicit = text.replacen("\"sink\": \"bluetooth\"", "\"sink\": \"link\"", 1);
+    assert!(
+        Layout::parse(explicit.as_bytes()).is_ok(),
+        "the parser accepts an explicit link sink"
+    );
+    let doc = Document::parse(explicit.as_bytes()).unwrap();
+    let sinks: Vec<Option<ActionSink>> = doc
+        .layout()
+        .pages
+        .iter()
+        .flat_map(|page| match page {
+            Page::Grid { tiles, .. } => tiles.as_slice(),
+            _ => &[],
+        })
+        .filter_map(|tile| match &tile.action {
+            Action::Key { sink, .. } | Action::Consumer { sink, .. } => Some(sink.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(!sinks.contains(&Some(ActionSink::Link)), "{sinks:?}");
+    assert!(
+        sinks.contains(&Some(ActionSink::Bluetooth)),
+        "the other sink is kept: {sinks:?}"
+    );
+    let wire = String::from_utf8(doc.layout().to_canonical_json()).unwrap();
+    assert!(!wire.contains("\"sink\":\"link\""), "{wire}");
+}
