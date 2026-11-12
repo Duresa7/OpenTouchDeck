@@ -62,7 +62,7 @@ SHA256SUMS
 { "radio_build": false }
 ```
 
-With `false`, the recipe builds only the normal Firmware, the Companion carries no radio build, and Device settings shows no build switch to a Device on the normal build. A Device already on the radio build still sees its build and can switch back if the Companion carries the normal build. The sign job reads the file at the tagged commit and refuses assets that disagree with it. Set it to `true` once the radio build is ready to ship. Releases leave it out until the Wi-Fi link's open security work is done (#318).
+With `false`, the recipe builds only the normal Firmware, the Companion carries no radio build, and Device settings shows no build switch to a Device on the normal build. A Device already on the radio build still sees its build and can switch back if the Companion carries the normal build. The sign job reads the file at the tagged commit and refuses assets that disagree with it. Set it to `true` once the radio build is ready to ship. Releases leave it out until the radio link's open security work is done (#284).
 
 What protects each Firmware bundle:
 
