@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
 Records what this Windows machine is and what its desktop can show, so the screenshots and
-measurements beside it can be read correctly. Writes environment.json, a screenshot of the
-desktop and the taskbar's UI Automation tree.
+measurements beside it can be read correctly. Writes environment.json and a screenshot of the
+desktop as the runner starts.
 
 .DESCRIPTION
 GitHub's windows-latest runner is Windows Server, not Windows 11. This script records the facts
@@ -14,7 +14,7 @@ contrast themes are present.
 powershell -File .github/scripts/windows-evidence/environment.ps1 -Out evidence
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Out)
+param([string]$Exe, [Parameter(Mandatory)][string]$Out)
 . "$PSScriptRoot/lib.ps1"
 
 $Out = (New-Item -ItemType Directory -Force -Path $Out).FullName
@@ -44,10 +44,7 @@ $fonts = New-Object Drawing.Text.InstalledFontCollection
 $segoe = @($fonts.Families | ForEach-Object { $_.Name } | Where-Object { $_ -like 'Segoe UI*' })
 
 $explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue)
-$taskbar = [IntPtr]::Zero
-foreach ($hwnd in [TouchDeckEvidence.Native]::TopLevelWindows(0)) {
-    if ([TouchDeckEvidence.Native]::ClassName($hwnd) -eq 'Shell_TrayWnd') { $taskbar = $hwnd }
-}
+$taskbar = Get-WindowOfClass 0 'Shell_TrayWnd'
 $cursor = New-Object TouchDeckEvidence.Native+POINT
 $cursorRead = [TouchDeckEvidence.Native]::GetCursorPos([ref]$cursor)
 $screen = [Windows.Forms.Screen]::PrimaryScreen
@@ -70,8 +67,8 @@ $facts = [ordered]@{
         interactive     = [Environment]::UserInteractive
         explorerRunning = $explorer.Count -gt 0
         explorerSessions = @($explorer | ForEach-Object { $_.SessionId } | Sort-Object -Unique)
-        taskbarFound    = $taskbar -ne [IntPtr]::Zero
-        taskbar         = $(if ($taskbar -ne [IntPtr]::Zero) { Get-Rect $taskbar } else { $null })
+        taskbarFound    = $null -ne $taskbar
+        taskbar         = $(if ($null -ne $taskbar) { Get-Rect $taskbar } else { $null })
         cursorReadable  = $cursorRead
     }
     display  = [ordered]@{
@@ -107,7 +104,5 @@ $facts = [ordered]@{
 Write-Json (Join-Path $Out 'environment.json') $facts
 $facts | ConvertTo-Json -Depth 6 | Write-Host
 
-Save-Screen (Join-Path $Out 'desktop-before.png')
-if ($taskbar -ne [IntPtr]::Zero) {
-    Write-Utf8 (Join-Path $Out 'taskbar-uia-before.txt') (Format-UiaTree (Get-UiaTree (Get-UiaElement $taskbar)))
-}
+New-Item -ItemType Directory -Force -Path (Join-Path $Out 'screenshots') | Out-Null
+Save-Screen (Join-Path $Out 'screenshots/desktop-before.png')

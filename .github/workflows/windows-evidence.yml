@@ -1,6 +1,6 @@
 name: windows evidence
 
-# TEMPORARY probe: learns what the runner's desktop offers. Replaced before review.
+# TEMPORARY while the scripts are developed: the push trigger and the build cache go before review.
 on:
   workflow_dispatch:
   push:
@@ -9,17 +9,27 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   evidence:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Record the runner
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache: true
+          cache-key: evidence-dev
+      - name: Build td-app
+        working-directory: app
+        run: cargo build --release --locked --package td-app --features mock
+      - name: Collect the evidence
         shell: powershell
-        run: ./.github/scripts/windows-evidence/environment.ps1 -Out "$env:RUNNER_TEMP/evidence"
+        run: ./.github/scripts/windows-evidence/run.ps1 -Exe app/target/release/td-app.exe -Out "$env:RUNNER_TEMP/evidence"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

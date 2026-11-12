@@ -56,6 +56,8 @@ namespace TouchDeckEvidence {
         [DllImport("user32.dll")]
         public static extern bool IsIconic(IntPtr hwnd);
         [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hwnd, int command);
+        [DllImport("user32.dll")]
         public static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hwnd);
@@ -253,7 +255,7 @@ function Add-Check([string]$Id, [string]$Name, [scriptblock]$Test) {
     $passed = $false
     $detail = ''
     try {
-        $result = & $Test
+        $result = @(& $Test) | Select-Object -Last 1
         if ($result -is [bool]) { $passed = $result }
         else {
             $passed = [bool]$result.pass
@@ -282,20 +284,117 @@ function Test-Shown([IntPtr]$Hwnd) {
 }
 
 # The app's main window: the process's top-level window titled "Open TouchDeck" that is not the
-# hidden tray window. It exists while hidden too.
+# hidden tray window. It exists while hidden too. $null when there is none.
 function Get-AppWindow([int]$ProcessId) {
     foreach ($hwnd in [TouchDeckEvidence.Native]::TopLevelWindows([uint32]$ProcessId)) {
         if ([TouchDeckEvidence.Native]::Title($hwnd) -eq 'Open TouchDeck' -and
             [TouchDeckEvidence.Native]::ClassName($hwnd) -ne 'OpenTouchDeckTray') { return $hwnd }
     }
-    return [IntPtr]::Zero
+    return $null
 }
 
-function Get-WindowOfClass([int]$ProcessId, [string]$Class) {
+# A top-level window of any process (0) or one process, by class. $null when there is none.
+function Get-WindowOfClass([int]$ProcessId, [string]$Class, [switch]$Visible) {
     foreach ($hwnd in [TouchDeckEvidence.Native]::TopLevelWindows([uint32]$ProcessId)) {
-        if ([TouchDeckEvidence.Native]::ClassName($hwnd) -eq $Class) { return $hwnd }
+        if ([TouchDeckEvidence.Native]::ClassName($hwnd) -eq $Class -and
+            (-not $Visible -or [TouchDeckEvidence.Native]::IsWindowVisible($hwnd))) { return $hwnd }
     }
-    return [IntPtr]::Zero
+    return $null
+}
+
+# Minimises every other window on the desktop (the runner's own terminal), so screenshots show
+# the app over the wallpaper.
+function Hide-OtherWindows {
+    $skip = 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'Progman', 'WorkerW', 'OpenTouchDeckTray'
+    foreach ($hwnd in [TouchDeckEvidence.Native]::TopLevelWindows(0)) {
+        if ((Test-Shown $hwnd) -and [TouchDeckEvidence.Native]::Title($hwnd) -and
+            $skip -notcontains [TouchDeckEvidence.Native]::ClassName($hwnd) -and (Get-Rect $hwnd).width -gt 0) {
+            # SW_SHOWMINNOACTIVE
+            [void][TouchDeckEvidence.Native]::ShowWindow($hwnd, 7)
+        }
+    }
+}
+
+# ---- the app -----------------------------------------------------------------------------------
+
+# Starts td-app with its own app data folder. Its stderr goes to $Log.
+function Start-App([string]$Exe, [string[]]$Arguments, [string]$DataDir, [string]$Log) {
+    New-Item -ItemType Directory -Force -Path $DataDir, (Split-Path -Parent $Log) | Out-Null
+    $env:TOUCHDECK_APP_DATA_DIR = $DataDir
+    $process = Start-Process -FilePath $Exe -ArgumentList $Arguments -RedirectStandardError $Log -PassThru
+    # Keeps the handle open, so the exit code can be read after the process ends.
+    [void]$process.Handle
+    $process
+}
+
+function Stop-App($Process) {
+    if ($Process -and -not $Process.HasExited) {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        [void]$Process.WaitForExit(5000)
+    }
+}
+
+# Waits for the app's window to be on screen and returns its handle.
+function Wait-AppWindow($Process, [double]$Seconds = 30) {
+    $hwnd = Wait-Until { $found = Get-AppWindow $Process.Id; if ($null -ne $found -and (Test-Shown $found)) { $found } } $Seconds
+    if ($null -eq $hwnd) { throw 'The app window did not appear.' }
+    $hwnd
+}
+
+# Brings the window to the front the way a user does: a click on its title bar.
+function Enter-Window([IntPtr]$Hwnd) {
+    if ([TouchDeckEvidence.Native]::GetForegroundWindow() -ne $Hwnd) {
+        $rect = Get-Rect $Hwnd
+        [void][TouchDeckEvidence.Native]::Click($rect.x + [int]($rect.width / 2), $rect.y + 14)
+        Start-Sleep -Milliseconds 400
+    }
+    if ([TouchDeckEvidence.Native]::GetForegroundWindow() -ne $Hwnd) {
+        [void][TouchDeckEvidence.Native]::SetForegroundWindow($Hwnd)
+        Start-Sleep -Milliseconds 400
+    }
+    [TouchDeckEvidence.Native]::GetForegroundWindow() -eq $Hwnd
+}
+
+# Opens a page by clicking its item in the navigation pane, then moves the pointer off it.
+function Select-Page([IntPtr]$Hwnd, [string]$Page) {
+    $root = Get-UiaElement $Hwnd
+    $tab = Find-UiaByName $root $Page 'TabItem'
+    if (-not $tab) { $tab = Find-UiaByName $root $Page $null }
+    if (-not $tab) { throw "No navigation item named $Page." }
+    Invoke-UiaClick $tab
+    $selected = Wait-Until {
+        $pattern = $null
+        $tab.TryGetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern) -and $pattern.Current.IsSelected
+    } 3
+    $rect = Get-Rect $Hwnd
+    [void][TouchDeckEvidence.Native]::SetCursorPos($rect.x + 70, $rect.y + $rect.height - 40)
+    Start-Sleep -Milliseconds 700
+    [bool]$selected
+}
+
+# Closes the window as the title bar's X does. The first close shows the notice; "Keep running"
+# then hides the window. $BeforeKeep runs while the notice is up. Returns what happened.
+function Hide-ToTray([IntPtr]$Hwnd, [scriptblock]$BeforeKeep) {
+    # WM_SYSCOMMAND, SC_CLOSE
+    [void][TouchDeckEvidence.Native]::PostMessageW($Hwnd, 0x0112, [IntPtr]0xF060, [IntPtr]::Zero)
+    $notice = $false
+    $state = Wait-Until {
+        if (-not [TouchDeckEvidence.Native]::IsWindowVisible($Hwnd)) { 'hidden' }
+        elseif (Find-UiaByName (Get-UiaElement $Hwnd) 'Keep running' $null) { 'notice' }
+    } 8
+    if ($state -eq 'notice') {
+        $notice = $true
+        Start-Sleep -Milliseconds 600
+        if ($BeforeKeep) { & $BeforeKeep | Out-Null }
+        Invoke-UiaClick (Find-UiaByName (Get-UiaElement $Hwnd) 'Keep running' $null)
+        [void](Wait-Until { -not [TouchDeckEvidence.Native]::IsWindowVisible($Hwnd) } 8)
+    }
+    [ordered]@{ notice = $notice; hidden = -not [TouchDeckEvidence.Native]::IsWindowVisible($Hwnd) }
+}
+
+# Focusable elements with no accessible name: what Narrator would announce as nothing.
+function Get-UnnamedFocusable($Nodes) {
+    , @($Nodes | Where-Object { $_.focusable -and -not $_.name.Trim() })
 }
 
 # ---- screenshots -------------------------------------------------------------------------------
