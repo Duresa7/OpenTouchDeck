@@ -424,7 +424,7 @@ mod delivery_review_tests {
         let events = crate::events::Events::default();
         let web = WebEvents::new(&events);
         let subscriber = web.subscribe();
-        let service = crate::features::integrations::Service::new(true, events);
+        let service = crate::integrations::Service::new(true, events);
         let message = "The Device is out of space for cover art. Remove unused Assets, then retry.";
         service.delivered(
             "this_pc",

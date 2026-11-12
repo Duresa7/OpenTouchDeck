@@ -65,7 +65,7 @@ impl Config {
 pub struct Snapshot {
     pub devices: Vec<crate::devices::DeviceSummary>,
     pub new_boards: Vec<crate::devices::NewBoard>,
-    pub integrations: Vec<crate::features::integrations::IntegrationSummary>,
+    pub integrations: Vec<crate::integrations::IntegrationSummary>,
     pub jobs: Vec<crate::jobs::Job>,
     pub approvals: Vec<crate::actions::ApprovalRequest>,
 }
@@ -74,7 +74,7 @@ pub struct Snapshot {
 #[derive(Clone)]
 pub struct Handle {
     pub(crate) actions: crate::actions::Actions,
-    pub(crate) integrations: crate::features::integrations::Service,
+    pub(crate) integrations: crate::integrations::Service,
     pub(crate) desktop: Arc<crate::tray::Desktop>,
     pub(crate) devices: crate::devices::DeviceManager,
     pub(crate) firmware: crate::features::firmware::Firmware,
@@ -116,7 +116,7 @@ impl Handle {
             grants,
             mock,
         );
-        let integrations = crate::features::integrations::Service::new(mock, events.clone());
+        let integrations = crate::integrations::Service::new(mock, events.clone());
         integrations.command_approval(Arc::new(actions.clone()));
         let settable = integrations.clone();
         let settable: crate::controls::Settable = Arc::new(move |key| settable.settable(key));
@@ -204,7 +204,7 @@ impl Handle {
     pub fn devices(&self) -> &crate::devices::DeviceManager {
         &self.devices
     }
-    pub fn integrations(&self) -> &crate::features::integrations::Service {
+    pub fn integrations(&self) -> &crate::integrations::Service {
         &self.integrations
     }
     pub fn actions(&self) -> &crate::actions::Actions {

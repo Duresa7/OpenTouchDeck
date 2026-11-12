@@ -18,7 +18,7 @@ use td_link::{Session, xfer};
 
 use super::covers::{COVER_SIDE_MIN, Cover, CoverStore};
 use crate::devices::{LayoutSource, ShownLayout};
-use crate::features::integrations::Controls;
+use crate::integrations::Controls;
 
 /// How long a Device's `layout state` reply may take.
 const LAYOUT_STATE_TIMEOUT: Duration = Duration::from_secs(2);
