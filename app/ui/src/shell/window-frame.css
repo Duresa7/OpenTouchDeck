@@ -3,18 +3,15 @@
   --app-height: calc(100vh - var(--window-top));
 }
 
+/* The document stays the scroller, so keyboard scrolling works from any focus. Content scrolls under the strip, and
+   scroll-padding keeps focused or scrolled-to elements below it. */
 :root[data-window-overlay] {
   --window-top: calc(env(titlebar-area-y, 0px) + env(titlebar-area-height, 0px));
+  scroll-padding-top: var(--window-top);
 }
 
 :root[data-window-overlay] body {
-  overflow: hidden;
   padding-top: var(--window-top);
-}
-
-:root[data-window-overlay] #root {
-  height: var(--app-height);
-  overflow: auto;
 }
 
 .window-drag-strip {

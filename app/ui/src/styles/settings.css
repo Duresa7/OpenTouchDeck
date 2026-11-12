@@ -8,7 +8,7 @@
 
 .settings-nav {
   position: sticky;
-  top: 0;
+  top: var(--window-top);
   align-self: start;
   height: var(--app-height);
   overflow-y: auto;
