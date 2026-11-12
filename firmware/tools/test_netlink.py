@@ -1,5 +1,6 @@
 """net-v2's Device side on the host: tools/host/netlink_test.c runs the production td_netlink_core against every net-v2
-vector and shared negative vector, and against pairing, lockout, backoff and record rules.
+vector and shared negative vector, and against pairing, lockout, backoff, record rules and the TCP connection
+lifecycle with replaceable sockets.
 
 It compiles ESP-IDF's own TF-PSA-Crypto (the Mbed TLS PSA core the Firmware uses) for the host, so it needs IDF_PATH,
 a C compiler (`cl` from an x64 Visual Studio developer terminal on Windows, `cc` elsewhere) and one firmware build

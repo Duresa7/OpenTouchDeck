@@ -1,0 +1,66 @@
+name: rust setup
+description: >-
+  Prepares a runner to build the Rust workspace under app/: the toolchain pinned in app/rust-toolchain.toml, the
+  Linux build packages, a Dev Drive for the build output on Windows, and the build cache when the caller asks for it.
+
+inputs:
+  cache:
+    description: Pass 'true' to restore the build cache. Pull request and main checks only, never a release
+    required: false
+    default: "false"
+  cache-key:
+    description: Names the cache. Give each kind of build its own, such as lint or test-companion
+    required: false
+    default: rust
+
+runs:
+  using: composite
+  steps:
+    # Windows builds Rust on a Dev Drive: ReFS, with Defender scanning it asynchronously.
+    # It mounts beside the checkout so the drive's protected System Volume Information folder stays out of the Rust cache.
+    - uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
+      if: runner.os == 'Windows'
+      with:
+        drive-size: 25GB
+        drive-path: ${{ runner.temp }}/dev-drive.vhdx
+        mount-path: ${{ github.workspace }}/../dev-drive
+        trusted-dev-drive: true
+    - name: Point app/target at the Dev Drive
+      if: runner.os == 'Windows'
+      shell: pwsh
+      working-directory: app
+      run: |
+        $target = New-Item -ItemType Directory -Force -Path "$env:DEV_DRIVE/target"
+        New-Item -ItemType Junction -Path target -Target $target.FullName | Out-Null
+
+    # libudev-dev is for the serial port crate. The rest is what a Slint crate needs to build and open a window
+    # with its winit backend on Linux, so one can be added without a CI change: fontconfig and xkbcommon to build,
+    # Wayland and the X11 libraries Slint's documentation lists to run. A test that opens a window also needs a
+    # display, such as xvfb-run.
+    - name: Install Linux build packages
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libudev-dev \
+          libfontconfig-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+          libx11-dev libx11-xcb-dev libxcursor-dev
+
+    # rustup ships on GitHub-hosted runners. With no toolchain named it installs the one app/rust-toolchain.toml
+    # pins, with its clippy and rustfmt components.
+    - name: Install the pinned Rust toolchain
+      shell: bash
+      working-directory: app
+      run: |
+        rustup toolchain install --no-self-update
+        rustc --version --verbose
+
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      if: inputs.cache == 'true'
+      with:
+        shared-key: ${{ inputs.cache-key }}
+        # On Windows, cache the Dev Drive folder itself, not the app/target junction that points at it.
+        workspaces: ${{ runner.os == 'Windows' && 'app -> ../../dev-drive/target' || 'app' }}
+        # Pull requests restore what main saved. They never save, so a branch cannot fill the cache quota.
+        save-if: ${{ github.event_name != 'pull_request' }}
