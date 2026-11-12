@@ -1,10 +1,7 @@
 use serde_json::{Value, json};
-use std::{
-    io::Write,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use td_companion::{
     api::NoQuery,
@@ -17,7 +14,8 @@ use td_companion::{
 };
 use td_host::{
     catalog::{Error, Fetcher},
-    packs::{CUSTOM_LICENSE, Curated, PackAuthor, PackLicense, PackOrigin, REGISTRY, integrity_of},
+    packs::{CUSTOM_LICENSE, Curated, PackAuthor, PackLicense, PackOrigin, REGISTRY},
+    testing::tarball,
 };
 
 const MONO: &str = r##"{
@@ -35,37 +33,9 @@ const MONO: &str = r##"{
   }
 }"##;
 
-/// A gzipped ustar archive, as npm publishes a package.
-fn tarball(files: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut tar = Vec::new();
-    for (name, data) in files {
-        let mut header = [0u8; 512];
-        header[..name.len()].copy_from_slice(name.as_bytes());
-        header[100..108].copy_from_slice(b"0000644\0");
-        header[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
-        header[156] = b'0';
-        header[257..263].copy_from_slice(b"ustar\0");
-        header[148..156].copy_from_slice(b"        ");
-        let sum: u32 = header.iter().map(|b| u32::from(*b)).sum();
-        header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
-        tar.extend_from_slice(&header);
-        tar.extend_from_slice(data);
-        tar.resize(tar.len().div_ceil(512) * 512, 0);
-    }
-    tar.extend_from_slice(&[0; 1024]);
-    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-    gz.write_all(&tar).unwrap();
-    gz.finish().unwrap()
-}
-
+/// The shared listing for `mono`, licensed for attribution and holding brand logos.
 fn listed(tarball: &[u8]) -> Curated {
     Curated {
-        prefix: "mono".into(),
-        name: "Mono".into(),
-        package: "@iconify-json/mono".into(),
-        version: "1.0.0".into(),
-        tarball: format!("{REGISTRY}@iconify-json/mono/-/mono-1.0.0.tgz"),
-        integrity: integrity_of(tarball),
         unpacked_size: 4096,
         icons: 3,
         license: PackLicense {
@@ -79,8 +49,7 @@ fn listed(tarball: &[u8]) -> Curated {
         },
         attribution: true,
         brands: true,
-        palette: false,
-        samples: vec!["spotify".into()],
+        ..td_host::testing::listed("mono", tarball)
     }
 }
 

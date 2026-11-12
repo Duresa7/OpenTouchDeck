@@ -10,7 +10,7 @@ pub const MAX_UNPACKED: u64 = 256 << 20;
 pub const MAX_FILE: u64 = 64 << 20;
 /// The longest pax header or GNU long name the reader takes.
 const MAX_HEADER: u64 = 64 << 10;
-const BLOCK: usize = 512;
+pub(crate) const BLOCK: usize = 512;
 
 /// Whether an archive path stays inside the folder it would unpack into, on Linux and
 /// Windows alike: relative, no `..`, no drive or stream (`:`), no NUL.
@@ -170,54 +170,9 @@ fn pax_path(data: &[u8]) -> Option<String> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use std::io::Write;
-
-    /// A gzipped ustar archive holding `files`.
-    pub fn tarball(files: &[(&str, &[u8])]) -> Vec<u8> {
-        let entries: Vec<_> = files
-            .iter()
-            .map(|(name, data)| (*name, b'0', *data))
-            .collect();
-        archive(&entries)
-    }
-
-    /// A gzipped ustar archive of `(name, type flag, data)` entries.
-    pub fn archive(entries: &[(&str, u8, &[u8])]) -> Vec<u8> {
-        gzip(&tar(entries, true))
-    }
-
-    fn tar(entries: &[(&str, u8, &[u8])], end: bool) -> Vec<u8> {
-        let mut tar = Vec::new();
-        for (name, flag, data) in entries {
-            let mut header = [0u8; BLOCK];
-            header[..name.len()].copy_from_slice(name.as_bytes());
-            header[100..108].copy_from_slice(b"0000644\0");
-            header[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
-            header[156] = *flag;
-            if *flag == b'2' {
-                header[157..169].copy_from_slice(b"/etc/passwd\0");
-            }
-            header[257..263].copy_from_slice(b"ustar\0");
-            header[148..156].copy_from_slice(b"        ");
-            let sum: u32 = header.iter().map(|b| u32::from(*b)).sum();
-            header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
-            tar.extend_from_slice(&header);
-            tar.extend_from_slice(data);
-            tar.resize(tar.len().div_ceil(BLOCK) * BLOCK, 0);
-        }
-        if end {
-            tar.extend_from_slice(&[0; 2 * BLOCK]);
-        }
-        tar
-    }
-
-    fn gzip(bytes: &[u8]) -> Vec<u8> {
-        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-        gz.write_all(bytes).unwrap();
-        gz.finish().unwrap()
-    }
+    use crate::testing::{archive, gzip, tar, tarball};
 
     #[test]
     fn untar_keeps_only_wanted_files_and_refuses_damage() {

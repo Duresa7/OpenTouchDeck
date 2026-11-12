@@ -20,6 +20,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 use ts_rs::TS;
 
@@ -29,6 +30,10 @@ pub const REGISTRY: &str = "https://registry.npmjs.org/";
 pub const MAX_DOWNLOAD: u64 = 32 << 20;
 /// The most imported packs installed at once.
 pub const MAX_IMPORTED: usize = 20;
+/// How long a loaded pack stays in memory after its last use. Search loads every installed
+/// pack, so while the picker is in use they all stay loaded; once it isn't, they are dropped
+/// and parsed again from disk on the next use.
+pub const IDLE: Duration = Duration::from_secs(5 * 60);
 /// The license title of an imported pack.
 pub const CUSTOM_LICENSE: &str = "Custom (you provided it)";
 /// The files a pack folder holds. Every name is fixed, so nothing from an archive or a request
@@ -192,11 +197,16 @@ pub enum PackStage {
     Done,
 }
 
-/// An installed pack, parsed once on first use.
+/// An installed pack, parsed on first use.
 struct Loaded {
     meta: Meta,
     set: IconSet,
     names: Vec<iconify::Named>,
+}
+/// A loaded pack and when it was last used.
+struct Cached {
+    pack: Arc<Loaded>,
+    used: Instant,
 }
 
 /// A search hit in an installed pack.
@@ -218,7 +228,9 @@ pub struct Packs {
     dir: PathBuf,
     fetcher: Box<dyn Fetcher>,
     curated: Vec<Curated>,
-    loaded: Mutex<HashMap<String, Arc<Loaded>>>,
+    loaded: Mutex<HashMap<String, Cached>>,
+    /// Where cache times come from, so tests can move time on.
+    clock: Box<dyn Fn() -> Instant + Send + Sync>,
     installing: Mutex<HashSet<String>>,
 }
 
@@ -243,6 +255,7 @@ impl Packs {
             fetcher,
             curated,
             loaded: Mutex::new(HashMap::new()),
+            clock: Box::new(Instant::now),
             installing: Mutex::new(HashSet::new()),
         }
     }
@@ -512,10 +525,28 @@ impl Packs {
     }
 
     fn keep(&self, meta: Meta, set: IconSet, names: Vec<iconify::Named>) {
-        self.loaded
-            .lock()
-            .unwrap()
-            .insert(meta.prefix.clone(), Arc::new(Loaded { meta, set, names }));
+        self.loaded.lock().unwrap().insert(
+            meta.prefix.clone(),
+            Cached {
+                pack: Arc::new(Loaded { meta, set, names }),
+                used: (self.clock)(),
+            },
+        );
+    }
+
+    /// Drops the loaded packs last used [`IDLE`] or more ago, so their memory is given back.
+    /// They load again on their next use. Returns how many were dropped.
+    pub fn evict_idle(&self) -> usize {
+        let now = (self.clock)();
+        let mut loaded = self.loaded.lock().unwrap();
+        let idle: Vec<String> = loaded
+            .iter()
+            .filter(|(_, c)| now.saturating_duration_since(c.used) >= IDLE)
+            .map(|(prefix, _)| prefix.clone())
+            .collect();
+        let dropped: Vec<Cached> = idle.iter().filter_map(|p| loaded.remove(p)).collect();
+        drop(loaded);
+        dropped.len()
     }
 
     /// Deletes an installed pack's folder.
@@ -532,18 +563,25 @@ impl Packs {
         Ok(())
     }
 
-    /// The installed pack, parsed on first use.
+    /// The installed pack, parsed on first use or after [`Packs::evict_idle`] dropped it.
     fn load(&self, prefix: &str) -> Option<Arc<Loaded>> {
         let mut loaded = self.loaded.lock().unwrap();
-        if let Some(pack) = loaded.get(prefix) {
-            return Some(pack.clone());
+        if let Some(cached) = loaded.get_mut(prefix) {
+            cached.used = (self.clock)();
+            return Some(cached.pack.clone());
         }
         let meta = self.meta(prefix)?;
         let bytes = fs::read(self.folder(prefix)?.join(ICONS)).ok()?;
         let set = IconSet::parse(&bytes).ok()?;
         let names = set.names();
         let pack = Arc::new(Loaded { meta, set, names });
-        loaded.insert(prefix.into(), pack.clone());
+        loaded.insert(
+            prefix.into(),
+            Cached {
+                pack: pack.clone(),
+                used: (self.clock)(),
+            },
+        );
         Some(pack)
     }
 
@@ -659,11 +697,11 @@ fn is_license(name: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use crate::tarball::{
-        MAX_UNPACKED,
-        tests::{archive, tarball},
+    use crate::{
+        tarball::MAX_UNPACKED,
+        testing::{archive, listed, tarball},
     };
 
     #[test]
@@ -703,32 +741,6 @@ pub(crate) mod tests {
         fn fetch(&self, url: &str) -> Result<Vec<u8>, catalog::Error> {
             assert!(url.starts_with(REGISTRY), "{url}");
             Ok(self.0.clone())
-        }
-    }
-
-    pub fn listed(prefix: &str, tarball: &[u8]) -> Curated {
-        Curated {
-            prefix: prefix.into(),
-            name: "Mono".into(),
-            package: format!("@iconify-json/{prefix}"),
-            version: "1.0.0".into(),
-            tarball: format!("{REGISTRY}@iconify-json/{prefix}/-/{prefix}-1.0.0.tgz"),
-            integrity: integrity_of(tarball),
-            unpacked_size: 1000,
-            icons: 2,
-            license: PackLicense {
-                title: "MIT".into(),
-                spdx: Some("MIT".into()),
-                url: None,
-            },
-            author: PackAuthor {
-                name: "Someone".into(),
-                url: None,
-            },
-            attribution: false,
-            brands: false,
-            palette: false,
-            samples: vec!["spotify".into()],
         }
     }
 
@@ -964,6 +976,49 @@ pub(crate) mod tests {
         let mine = MONO.replace("\"mono\"", "\"mine\"");
         assert!(packs.import(mine.as_bytes()).unwrap().installed);
         assert!(dir.path().join("mine").join(ICONS).is_file());
+    }
+
+    #[test]
+    fn idle_packs_are_dropped_and_load_again_on_next_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let start = Instant::now();
+        let now = Arc::new(Mutex::new(start));
+        let mut packs =
+            Packs::with_list(dir.path().to_owned(), Box::new(Serve(Vec::new())), vec![]);
+        let clock = now.clone();
+        packs.clock = Box::new(move || *clock.lock().unwrap());
+        let at = |minutes: u64| *now.lock().unwrap() = start + Duration::from_secs(minutes * 60);
+        let loaded = |prefix: &str| packs.loaded.lock().unwrap().contains_key(prefix);
+        packs.import(MONO.as_bytes()).unwrap();
+        packs
+            .import(MONO.replace("\"mono\"", "\"mine\"").as_bytes())
+            .unwrap();
+        assert!(loaded("mono") && loaded("mine"));
+        assert_eq!(IDLE, Duration::from_secs(5 * 60));
+
+        // Packs used within the limit stay; using one keeps it.
+        at(4);
+        assert_eq!(packs.evict_idle(), 0);
+        assert!(packs.svg("mono", "spotify").is_ok());
+
+        // The other is dropped once it has been idle for the limit, then the used one.
+        at(5);
+        assert_eq!(packs.evict_idle(), 1);
+        assert!(loaded("mono") && !loaded("mine"));
+        at(9);
+        assert_eq!(packs.evict_idle(), 1);
+        assert!(!loaded("mono"));
+
+        // The next use parses it from disk again, and search still finds every pack.
+        assert!(packs.svg("mono", "spotify").is_ok());
+        assert!(loaded("mono"));
+        let hits = packs.search("spotify", None, 10);
+        assert_eq!(
+            hits.iter().map(|h| h.1.prefix.as_str()).collect::<Vec<_>>(),
+            ["mine", "mono"]
+        );
+        assert!(loaded("mine"));
+        assert_eq!(packs.evict_idle(), 0);
     }
 
     #[test]
