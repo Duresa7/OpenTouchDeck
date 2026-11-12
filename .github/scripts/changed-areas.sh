@@ -10,6 +10,9 @@
 #
 # A path that matches no rule needs no check. Docs are the usual case: their pull request gets a green gate from
 # the changes job alone. test-changed-areas.sh holds one example per rule; add one with every rule you add.
+#
+# The 2.0 installer has no area here: release.yml lists its own paths and starts a release dry run for a pull
+# request that changes them.
 set -euo pipefail
 
 rust=false

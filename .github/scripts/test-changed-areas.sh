@@ -66,11 +66,16 @@ check "firmware actionlint" .github/workflows/firmware.yml
 check "scripts actionlint" .github/workflows/release-windows.yml
 check "frozen scripts actionlint" .github/release-signer/cli.mjs
 check "actionlint" .github/workflows/main.yml
+check "actionlint" .github/workflows/release.yml .github/workflows/sign-hook.yml
 check "actionlint" .github/actions/windows-release-build/action.yml
 check "rust frozen actionlint" .github/actions/rust-setup/action.yml
 check "scripts actionlint" .github/workflows/scripts.yml
 check "rust frozen scripts firmware actionlint" .github/workflows/pr.yml
 check "rust frozen scripts firmware actionlint" .github/scripts/changed-areas.sh
+
+# The 2.0 installer: release.yml starts its own dry run for these, so they need no area here.
+check none app/installer/OpenTouchDeck.wxs
+check "scripts" app/scripts/msi_check.ps1
 
 # No changed path at all.
 check none ""
