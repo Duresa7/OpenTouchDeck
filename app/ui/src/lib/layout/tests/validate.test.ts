@@ -81,7 +81,7 @@ test('the bundled examples are valid', () => {
 
 test('each of the invalid examples fails with exactly its rule key, as check-layouts.mjs reports', () => {
   const files = readdirSync(invalid).filter((name) => name.endsWith('.json'));
-  assert.equal(files.length, 55);
+  assert.equal(files.length, 56);
   const keys = new Set<string>();
   for (const name of files) {
     const bytes = readFileSync(join(invalid, name));
