@@ -1,8 +1,7 @@
 name: main
 
 # After a merge, reruns the checks its changed paths need. These runs save the caches that pull requests restore,
-# and they add two checks no pull request runs: the release program is built on Windows, and a Rust change is
-# tried against the frozen Electron shell.
+# and they add one check no pull request runs: the release program is built on Windows.
 # Run it by hand from the Actions tab to run every check on a branch before it merges.
 on:
   push:
@@ -21,7 +20,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
-      frozen: ${{ steps.paths.outputs.frozen }}
       scripts: ${{ steps.paths.outputs.scripts }}
       firmware: ${{ steps.paths.outputs.firmware }}
     steps:
@@ -42,7 +40,7 @@ jobs:
             git diff --name-only -z "$BEFORE_SHA" "$AFTER_SHA" | bash .github/scripts/changed-areas.sh | tee -a "$GITHUB_OUTPUT"
           else
             # A manual run, or a push whose previous commit is not in the clone: run everything.
-            printf '%s=true\n' rust frozen scripts firmware | tee -a "$GITHUB_OUTPUT"
+            printf '%s=true\n' rust scripts firmware | tee -a "$GITHUB_OUTPUT"
           fi
 
   rust:
@@ -52,13 +50,6 @@ jobs:
     with:
       cache: true
       release-exe: true
-
-  frozen-app:
-    needs: changes
-    if: needs.changes.outputs.frozen == 'true' || needs.changes.outputs.rust == 'true'
-    uses: ./.github/workflows/app.yml
-    with:
-      cache: true
 
   scripts:
     needs: changes

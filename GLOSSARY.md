@@ -21,7 +21,7 @@ _Avoid_: deck software
 ### Computer
 
 **Companion**:
-The background program on the user's computer that runs the Devices, Integrations and actions, and serves the app's UI to the desktop window or a browser.
+The background program on the user's computer that runs the Devices, Integrations and actions. In 2.0 it runs in the same program as the app's window. In 1.x it also served the app's UI to the desktop window or a browser.
 _Avoid_: daemon, service, backend, host
 
 **Carrier**:

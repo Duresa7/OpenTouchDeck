@@ -4,9 +4,9 @@ Open TouchDeck connects through USB-Serial/JTAG. The running Companion sends the
 
 ## Running a distributed app versus building it
 
-A distributed app does not need Node, pnpm, Rust, or a C++ compiler. The Windows installer carries the Electron window, the Companion and the Firmware bundle; the [packaging guide](packaging.md) describes it. Linux source builds need a graphical desktop, Electron runtime dependencies, USB serial access and permission to create a virtual keyboard through `/dev/uinput`.
+A distributed app does not need Rust or a C++ compiler. The 1.x Windows installer on Releases carries the Electron window, the Companion and the Firmware bundle; it is built from the `release/1.x` branch, whose copy of this page covers its Node and pnpm setup ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). The [packaging guide](packaging.md) describes the 2.0 MSI.
 
-Source builds use **Node.js 24**, matching [app CI](../.github/workflows/app.yml), and the **exact pnpm version in [app/package.json](../app/package.json)** (currently `12.12.1`). The Rust version is pinned in [app/rust-toolchain.toml](../app/rust-toolchain.toml); rustup installs it the first time you run cargo under `app/`. Firmware build prerequisites are separate from desktop setup.
+Source builds on `main` are Rust only: no Node and no pnpm. The Rust version is pinned in [app/rust-toolchain.toml](../app/rust-toolchain.toml); rustup installs it the first time you run cargo under `app/`. Linux source builds need a graphical desktop, USB serial access and permission to create a virtual keyboard through `/dev/uinput`. Firmware build prerequisites are separate from desktop setup. The layout schema checks under `schema/` are the one place that uses Node; [the schema guide](../schema/README.md) covers them.
 
 ## Windows source-build setup
 
@@ -18,31 +18,19 @@ pwsh -NoProfile -File app/scripts/setup-windows.ps1
 
 This command **installs missing development tools**. Review it before running it; installers may need administrator consent or a restart. The script does not elevate itself, change execution policy, or persist PATH directly. It sets the default rustup toolchain to `stable-msvc`, adds clippy/rustfmt, installs missing MSVC C++ Build Tools, and checks every native command's exit code.
 
-If Node is absent, setup asks winget for available LTS versions and installs the newest **24.x** entry with an explicit version. If the source no longer offers 24.x, it stops with a manual Node 24 installation link. An existing Node from another major is rejected: select/install Node 24, rather than letting setup replace a version-manager selection. pnpm is installed or updated through npm to the manifest pin. On npm 12 or later, setup passes `--allow-scripts=pnpm` so pnpm's installer can replace its placeholder with the native binary; earlier npm versions omit that flag. Setup reads the selected npm shim before invoking pnpm and repairs a shim targeting the extensionless placeholder without executing it. Its final version must match exactly. Other shims that exit successfully but print no version fail with a repair message.
-
-Setup appends installed Machine/User PATH entries and standard Cargo/npm/Node locations to **its own process PATH**, preserving existing entries and their priority. This makes fresh installs usable in that run. A child script cannot update the terminal that launched it: **open a new PowerShell after setup**, then verify:
+Setup appends installed Machine/User PATH entries and the standard Cargo location to **its own process PATH**, preserving existing entries and their priority. This makes fresh installs usable in that run. A child script cannot update the terminal that launched it: **open a new PowerShell after setup**, then verify:
 
 ```powershell
-node --version
-pnpm --version
 rustc --version
 ```
 
-If a tool is missing or the version is wrong, inspect resolution before retrying:
+If it is missing, inspect resolution before retrying:
 
 ```powershell
-Get-Command node,pnpm,npm,rustup -All
+Get-Command rustup,rustc -All
 ```
 
-Select Node 24 in your version manager or remove the obsolete PATH/shim entry using that tool's normal management procedure. For pnpm, repair npm first if necessary, then run this command on npm 12 or later (use the manifest's version if it changes):
-
-```powershell
-npm install --global pnpm@12.12.1 --allow-scripts=pnpm --foreground-scripts
-```
-
-Check `npm --version`; on npm 11, omit `--allow-scripts=pnpm` because older releases do not support it. npm 12 [blocks unapproved install scripts](https://github.com/npm/cli/blob/v12.0.0/CHANGELOG.md), and [`--allow-scripts=pnpm`](https://docs.npmjs.com/cli/v12/using-npm/config#allow-scripts) approves pnpm's scripts for this install. When those scripts are blocked, Windows may show a **Pick an app** dialog and print no pnpm version because the npm shim targets an extensionless shell placeholder. If pnpm still prints nothing after repair, repair/remove the stale shim shown by `Get-Command pnpm -All`; a zero exit code alone is insufficient. Do not lower execution policy to make a broken PowerShell shim work; setup uses native/`.cmd` launchers.
-
-Rerunning setup retains working Node/pnpm versions and skips their installers. Rustup's default/component operations are repeatable. The MSVC installation is skipped when detected and checked again after an installer succeeds. A nonzero installer exit, incomplete registration, restart requirement, or native command failure stops setup; resolve the reported problem and rerun. A successful version summary does not replace a full app build.
+Rustup's default/component operations are repeatable. The MSVC installation is skipped when detected and checked again after an installer succeeds. A nonzero installer exit, incomplete registration, restart requirement, or native command failure stops setup; resolve the reported problem and rerun. A successful version summary does not replace a full app build.
 
 ## Linux source-build dependencies
 
@@ -53,24 +41,21 @@ sudo apt-get update
 sudo apt-get install -y build-essential libudev-dev
 ```
 
-CI installs `libudev-dev`, for serial discovery, in [its Rust setup](../.github/actions/rust-setup/action.yml), next to the packages the native app's Slint UI will need. Other distributions need their equivalent packages. Install Node 24, the pinned pnpm, and rustup separately using their upstream instructions.
+CI installs `libudev-dev`, for serial discovery, in [its Rust setup](../.github/actions/rust-setup/action.yml), next to the packages the native app's Slint UI will need. Other distributions need their equivalent packages. Install rustup using its upstream instructions.
 
 From `app/`, the ordinary source build is:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm build:ui
 cargo build -p td-companion
-pnpm --filter @touchdeck/electron build
 ```
 
-Use `pnpm dev:electron` to run the Electron window with a mock Device. Use `pnpm dev:ui:demo` from `app/` (or `pnpm dev:demo` from `app/ui/`) for the React UI with demo data and no hardware. Use `pnpm lint`, `pnpm test`, `pnpm e2e:ui` and `cargo test --workspace` to check changes.
+Use `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace` to check changes. [app/README.md](../app/README.md) shows how to run the Companion with a mock Device.
 
-Do not enable `test-hooks` for a distributed app. To build the Windows installer, follow [Build the installer](packaging.md#build-the-installer).
+Do not enable `test-hooks` for a distributed app.
 
 ## Linux runtime libraries and device access
 
-Build headers and compilers are not runtime permissions. The Electron window uses its bundled Chromium, not WebKitGTK. Source builds need the shared libraries required by the installed Electron version and `libudev1` for serial discovery. A portable archive does not imply that all runtime libraries are bundled.
+Build headers and compilers are not runtime permissions. Source builds need `libudev1` for serial discovery.
 
 Before using a connected deck, inspect the actual nodes without opening them or generating input (replace `ttyACM0` with the deck's node):
 
@@ -105,9 +90,9 @@ On Linux, run the app in the intended user's desktop login session with a sessio
 
 ## Verification boundary
 
-Linux CI builds the app and runs its unit and Rust tests on mock Devices; the UI e2e specs run on Windows only. Mock Devices and fake input do not exercise hardware, and mock Integrations use an in-memory key store. Those checks establish neither real serial permissions, real `/dev/uinput` operation, nor a usable desktop credential store. The setup changes were verified with isolated Windows process fixtures; no real installers, Linux runtime session, device permission changes, or real key injection were exercised in that validation.
+Linux CI builds the app and runs its Rust tests on mock Devices. Mock Devices and fake input do not exercise hardware, and mock Integrations use an in-memory key store. Those checks establish neither real serial permissions, real `/dev/uinput` operation, nor a usable desktop credential store. The setup changes were verified with isolated Windows process fixtures; no real installers, Linux runtime session, device permission changes, or real key injection were exercised in that validation.
 
-The focused setup tests require Windows and PowerShell 7, with no Pester or installed Node/Rust/pnpm dependency:
+The focused setup tests require Windows and PowerShell 7, with no Pester or installed Rust dependency. CI runs them in the Windows scripts job:
 
 ```powershell
 pwsh -NoProfile -File app/scripts/tests/setup-windows.test.ps1

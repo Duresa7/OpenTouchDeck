@@ -1,20 +1,5 @@
 use td_companion::{api::Access, bindings};
 
-#[test]
-fn api_bindings_are_current() {
-    assert_eq!(
-        bindings::generate(),
-        include_str!("../../../ui/src/lib/companion/api.gen.ts"),
-        "run `pnpm gen:api`"
-    );
-    assert_eq!(
-        bindings::generate_test(),
-        include_str!("../../../ui/src/lib/companion/api.test.gen.ts"),
-        "run `pnpm gen:api`"
-    );
-    // The product client never carries the test routes.
-    assert!(!bindings::generate().contains("'test."));
-}
 /// Every endpoint name, frame type and error code appears in the contract as a backticked token.
 #[test]
 fn api_contract_is_documented() {

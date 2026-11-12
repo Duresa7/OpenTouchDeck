@@ -1,9 +1,0 @@
-/* Icon picker, Brandfetch hits */
-
-.brandfetch-thumb {
-  display: block;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  object-fit: contain;
-}

@@ -327,8 +327,8 @@ mirrors them into the host session. Built-in pages come from embedded JSON in
 [builtin.json](../schema/examples/builtin.json), and saved layouts use the same
 [layout format](../schema/README.md). The Backlit look is flat: every fill is one
 RGB565 color, with no shadow, glow, border, or gradient. The screen colors are
-macros in `firmware/components/ui/ui_theme.h`, one per token of
-`app/ui/src/styles/tokens.css`. The sizes, radii, and animation times are named
+macros in `firmware/components/ui/ui_theme.h`, one per token of the 1.x app's
+`app/ui/src/styles/tokens.css` (on the `release/1.x` branch). The sizes, radii, and animation times are named
 fields of the theme in `firmware/components/ui/ui_theme.c`.
 
 The `ui` component adds the `ui` console command: `ui state` reports the page and
@@ -392,12 +392,12 @@ decompression. `--lv-include lvgl.h` makes the files include `lvgl.h` the way th
 ESP-IDF LVGL component provides it. The same tool versions and commands give
 the same files byte for byte.
 
-The app's Device Previews measure and break text with the same fonts. After
-you regenerate them, run
+The 1.x app's Device Previews measure and break text with the same fonts. That
+app lives on the `release/1.x` branch. After you regenerate the fonts, run
 `node app/ui/src/lib/deck/fonts.extract.mjs firmware/managed_components/lvgl__lvgl/src/font`
-from the repository root to rewrite `app/ui/src/lib/deck/fonts.data.ts`. The
-UI tests fail when a Preview font's size or line height no longer matches the
-Firmware font `ui_theme.c` names for it.
+there to rewrite `app/ui/src/lib/deck/fonts.data.ts`. Its UI tests fail when a
+Preview font's size or line height no longer matches the Firmware font
+`ui_theme.c` names for it.
 
 ### Performance options
 
@@ -533,9 +533,9 @@ The radio build is an opt-in second Firmware configuration with Wi-Fi, lwIP
 and NimBLE. The installer's Firmware is the normal build, and it stays
 radio-free. A release can also ship the radio build as a separate file,
 `touchdeck-radio-<version>.tdfw`, with the Companion carrying both; then Device
-settings in the app switches a Device between them, both ways. Whether it does
-is set in `app/release-options.json` (see
-[packaging](packaging.md#the-radio-build-in-a-release)). An update keeps the
+settings in the app switches a Device between them, both ways. In 1.x,
+whether it does is set in `app/release-options.json` on the `release/1.x`
+branch. An update keeps the
 build the Device runs. Build the radio build into a directory of its own.
 From `firmware/`:
 
@@ -703,8 +703,7 @@ python firmware/tools/radio_guard.py radio <build dir>
 - `normal` fails on any Wi-Fi, Bluetooth or `TD_RADIO_BUILD` option, and on
   any radio or network component linked: `esp_wifi`, `esp_phy`, `esp_coex`,
   `wpa_supplicant`, `bt`, `esp_netif`, `lwip`, `td_radio`, `td_net`, `td_ble`,
-  and any netlink or mDNS component. The release recipe's audit runs the same
-  check.
+  and any netlink or mDNS component.
 - `radio` requires the radio options and components, and fails when one of
   those options is missing, the floor is set below 24576 or the boot floor below
   16384. The options include LVGL's PSRAM-first allocator and
@@ -733,9 +732,9 @@ the Firmware sources for those calls. It also checks that only
 build. CI builds both configurations on every Firmware change. It uploads the
 normal bundle as `firmware-tdfw` and the radio bundle as `firmware-radio-tdfw`,
 named `touchdeck-radio-<version>.tdfw`. A radio bundle's `manifest.json` has
-`"radio": true`, and the installer recipe refuses such a bundle as
-`--firmware-bundle`. It takes one only as `--radio-firmware-bundle`, which
-refuses a normal bundle.
+`"radio": true`. The Companion's build reads that mark: it refuses a radio
+bundle as `TOUCHDECK_FIRMWARE_BUNDLE` and a normal one as
+`TOUCHDECK_RADIO_FIRMWARE_BUNDLE`.
 
 The radio build's link-v2 hello carries `radio: true`; the normal build sends
 no `radio` field (see [link-v2.md](../schema/protocol/link-v2.md)). The

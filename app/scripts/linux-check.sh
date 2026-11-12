@@ -5,16 +5,14 @@ usage() {
   cat <<'EOF'
 Usage: app/scripts/linux-check.sh [options] [<git-ref>]
 
-Run the Linux app checks from the pull request workflows (rust.yml, app.yml and
-scripts.yml under .github/workflows) in Docker.
+Run the Linux app checks from the pull request workflows (rust.yml and the
+release version check from scripts.yml, under .github/workflows) in Docker.
 
 Checks the committed HEAD of the git checkout it is run from (via git archive
 of the repository root), or <git-ref> if given. Uncommitted changes are not
 included; commit your changes before running this script.
 
 Options:
-  --rust-only    Skip pnpm lint and pnpm test (still runs the release version
-                 check and pnpm build:ui, which the Companion embeds).
   --log <path>   Write the full output to <path> instead of a file under the
                  system temp folder.
   --clean        Remove all touchdeck-linux-* Docker volumes and exit.
@@ -26,7 +24,6 @@ EOF
 }
 
 vol_prefix=${TOUCHDECK_LINUX_VOLUME_PREFIX:-touchdeck-linux}
-rust_only=0
 clean_only=0
 log_file=""
 ref=""
@@ -36,10 +33,6 @@ while (( $# > 0 )); do
     -h|--help)
       usage
       exit 0
-      ;;
-    --rust-only)
-      rust_only=1
-      shift
       ;;
     --clean)
       clean_only=1
@@ -126,7 +119,6 @@ rust_image="rust:${rust_version:-1}"
 checkout_hash=$(printf '%s' "$repo_root" | git hash-object --stdin | cut -c1-12)
 src_vol="${vol_prefix}-src-${checkout_hash}"
 cargo_vol="${vol_prefix}-cargo"
-pnpm_vol="${vol_prefix}-pnpm"
 target_vol="${vol_prefix}-target"
 
 if [[ -z "$log_file" ]]; then
@@ -139,7 +131,7 @@ fi
 t0=$(date +%s)
 overall_rc=0
 
-for vol in "$src_vol" "$cargo_vol" "$pnpm_vol" "$target_vol"; do
+for vol in "$src_vol" "$cargo_vol" "$target_vol"; do
   MSYS_NO_PATHCONV=1 docker volume create "$vol" >/dev/null || exit 1
 done
 
@@ -161,69 +153,13 @@ fi
 if (( overall_rc == 0 )); then
   MSYS_NO_PATHCONV=1 docker run --rm \
     -v "${src_vol}:/src" \
-    -v "${pnpm_vol}:/pnpm-store" \
-    -w /src/app \
-    -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
-    -e CI=true \
-    -e NO_COLOR=1 \
-    -e PYTHONUTF8=1 \
-    -e RUST_ONLY="$rust_only" \
-    node:24 \
-    bash -c '
-      set -uo pipefail
-      run_step() {
-        local name=$1
-        shift
-        local s0 elapsed rc
-        s0=$(date +%s)
-        echo "=== STEP START: $name ==="
-        "$@"
-        rc=$?
-        elapsed=$(( $(date +%s) - s0 ))
-        if (( rc == 0 )); then
-          echo "=== STEP RESULT: $name | PASS | ${elapsed}s ==="
-        else
-          echo "=== STEP RESULT: $name | FAIL (exit $rc) | ${elapsed}s ==="
-        fi
-        return "$rc"
-      }
-      check_release_version() {
-        python3 scripts/release_version.py check &&
-          python3 -B -m unittest discover -s scripts/tests -p "test_release_version.py" -v
-      }
-      install_pnpm_deps() {
-        corepack enable &&
-          pnpm config set store-dir /pnpm-store &&
-          flock /pnpm-store/.touchdeck-pnpm.lock pnpm install --frozen-lockfile
-      }
-      rc=0
-      run_step "release-version" check_release_version || rc=1
-      if (( rc == 0 )); then
-        run_step "pnpm install" install_pnpm_deps || rc=1
-      fi
-      if (( rc == 0 )); then
-        if (( RUST_ONLY == 1 )); then
-          echo "=== STEP RESULT: pnpm lint | SKIP (--rust-only) | 0s ==="
-          echo "=== STEP RESULT: pnpm test | SKIP (--rust-only) | 0s ==="
-        else
-          run_step "pnpm lint" pnpm lint || rc=1
-          run_step "pnpm test" pnpm test || rc=1
-        fi
-        run_step "pnpm build:ui" pnpm build:ui || rc=1
-      fi
-      exit "$rc"
-    ' >>"$log_file" 2>&1 || overall_rc=1
-fi
-
-if (( overall_rc == 0 )) || grep -q "=== STEP RESULT: pnpm build:ui | PASS |" "$log_file"; then
-  MSYS_NO_PATHCONV=1 docker run --rm \
-    -v "${src_vol}:/src" \
     -v "${target_vol}:/src/app/target" \
     -v "${cargo_vol}:/usr/local/cargo/registry" \
     -w /src/app \
     -e DEBIAN_FRONTEND=noninteractive \
     -e CARGO_TERM_COLOR=never \
     -e CARGO_PROFILE_DEV_DEBUG=line-tables-only \
+    -e PYTHONUTF8=1 \
     "$rust_image" \
     bash -c '
       set -uo pipefail
@@ -249,10 +185,15 @@ if (( overall_rc == 0 )) || grep -q "=== STEP RESULT: pnpm build:ui | PASS |" "$
           rustup component add rustfmt clippy >/dev/null 2>&1 &&
           cargo --version
       }
+      check_release_version() {
+        python3 scripts/release_version.py check &&
+          python3 -B -m unittest discover -s scripts/tests -p "test_release_version.py" -v
+      }
       rc=0
       if ! run_step "rust setup" setup_rust_env; then
         exit 1
       fi
+      run_step "release-version" check_release_version || rc=1
       run_step "cargo fmt" cargo fmt --check || rc=1
       exec 9>/src/app/target/.touchdeck-linux.lock
       flock 9

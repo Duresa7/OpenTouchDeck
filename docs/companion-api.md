@@ -1,5 +1,7 @@
 # Companion local API, v1
 
+> **On `main` this API has no first-party client.** The Electron window and the React UI that used it moved to the `release/1.x` branch ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)), and the 2.0 screens replace the API one feature at a time until it is deleted (ADR 0011, M6). Until then the JSON API below is still the contract, and the Companion's tests still hold it to this page. What this page says about the Electron window, the browser UI and app updates describes 1.x. On `main` the Companion serves no UI: every path outside `/api` is `404 route.not_found`.
+
 This is the contract between the Companion and its clients: the Electron window, a browser tab, and tests. Every Companion, Electron and UI ticket builds against it. When the code and this page disagree, one of them has a bug. The `api_contract_is_documented` test fails the build when an endpoint, event or error code is missing here.
 
 Related decisions: [ADR 0001](adr/0001-rust-companion-behind-electron.md) (Rust Companion behind Electron, loopback only), [ADR 0005](adr/0005-updater-keeps-the-signing-key.md) (updates stay in Electron) and [ADR 0006](adr/0006-command-approval-on-the-pc.md) (command approvals happen on the PC).
@@ -27,7 +29,7 @@ Related decisions: [ADR 0001](adr/0001-rust-companion-behind-electron.md) (Rust 
 | Responses | JSON, or raw bytes with their media type for Asset files. `204` for an empty success |
 | Events | `GET /api/v1/events` upgrades to a WebSocket. The server sends events. The client sends only `subscribe` and `unsubscribe` |
 | Slow work | `202 Accepted` with a `Job`, then `job.updated` events. `GET /jobs/{id}` recovers after a reload |
-| UI | Every other path serves the embedded UI. Unknown non-API paths return `index.html`, so client routes work after a reload |
+| UI | None on `main`: every other path is `404 route.not_found`. In 1.x every other path serves the embedded UI |
 
 We compared three shapes. REST plus one WebSocket won because Firmware bundles, Asset uploads and icon bytes travel as plain request and response bodies, and every route can be tested with `curl` or `reqwest`.
 
@@ -152,7 +154,7 @@ Cross-Origin-Resource-Policy: same-origin
 Cache-Control: no-store
 ```
 
-Hashed static files override `Cache-Control` with `public, max-age=31536000, immutable`. `index.html` keeps `no-store`. The UI makes no third-party requests unless you turn on Brandfetch: the Companion fetches and caches icon catalogs and downloads Icon packs, and the UI shows pack icons through the same-origin `icon_packs.thumbnail` route, so `connect-src` and `img-src` stay on `'self'`. While a Brandfetch client ID is saved, and only then, the policy adds `https://cdn.brandfetch.io https://asset.brandfetch.io` to `img-src` and `https://api.brandfetch.io` to `connect-src`, so the icon picker can search Brandfetch and show its thumbnails (see [Brandfetch](#brandfetch)). The page sets its policy when it loads, so saving or forgetting the client ID reloads the window. Without a client ID the header is byte for byte the one above. The UI never uses `dangerouslySetInnerHTML`.
+In 1.x, hashed static files override `Cache-Control` with `public, max-age=31536000, immutable`, and `index.html` keeps `no-store`. The UI makes no third-party requests unless you turn on Brandfetch: the Companion fetches and caches icon catalogs and downloads Icon packs, and the UI shows pack icons through the same-origin `icon_packs.thumbnail` route, so `connect-src` and `img-src` stay on `'self'`. While a Brandfetch client ID is saved, and only then, the policy adds `https://cdn.brandfetch.io https://asset.brandfetch.io` to `img-src` and `https://api.brandfetch.io` to `connect-src`, so the icon picker can search Brandfetch and show its thumbnails (see [Brandfetch](#brandfetch)). The page sets its policy when it loads, so saving or forgetting the client ID reloads the window. Without a client ID the header is byte for byte the one above. The UI never uses `dangerouslySetInnerHTML`.
 
 ### How the Electron window gets its session
 
@@ -1153,7 +1155,7 @@ The auth module mounts these itself. Features can't import it.
 
 ### Test hooks
 
-Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature and mounted only when the Companion runs on mock ports (`--mock-devices N`). Release builds don't contain it: `package_windows.py` builds `td-companion` without features and refuses a binary that holds a test route or test argument. Its types go into a separate `api.test.gen.ts`, so the product UI can't import them.
+Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature and mounted only when the Companion runs on mock ports (`--mock-devices N`). Release builds don't contain it: a release builds `td-companion` without features.
 
 One exception lets a board pass drive the real Device while the Companion owns its port. A `test-hooks` Companion started with `--test-real-device-console` (the only argument) also serves `test.console` for Devices on real ports. Every other test route stays `route.not_found` there, and without the argument `test.console` is `route.not_found` for real ports too. A release build rejects the argument as unknown.
 
@@ -1396,16 +1398,12 @@ pub struct Req<E: Endpoint> { pub path: E::Path, pub query: E::Query, pub body: 
 
 `ClientInfo` holds the session id and kind, for the audit log and for routes limited to window sessions.
 
-### Generated TypeScript
+### Types
 
-ts-rs derives each type. The Companion's generator writes `<ui>/src/lib/companion/api.gen.ts` with every type, an endpoint table, typed wrappers `companion.<feature>.<action>()`, the `EventMap`, the `JobMap`, the `ErrorCode` union and `SyncData`. Each wrapper takes optional request headers after the bearer, such as `If-Match`. A response that isn't JSON comes back as a `Blob`. The file starts with `// Generated from td-companion. Do not edit.` and uses LF endings. `pnpm gen:api` runs `cargo run -p td-companion --features test-hooks -- --emit-ts <path>`.
+ts-rs derives a TypeScript declaration for each type, and `td-core` has an optional `ts` feature that adds `#[cfg_attr(feature = "ts", derive(TS))]` to `Layout`, `Hello`, `Settings`, `Orientation` and the other types the API carries. Nothing on `main` writes those declarations to a file: the generated client `api.gen.ts`, `pnpm gen:api` and the test that compared them left with the React UI ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). The route registry still reads each route's path type, so the derives stay until the API goes.
 
-`td-core` gains an optional `ts` feature that adds `#[cfg_attr(feature = "ts", derive(TS))]` to `Layout`, `Hello`, `Settings`, `Orientation` and the other types the API carries.
+### Contract tests
 
-### Freshness rule
-
-- **`api_bindings_are_current`** renders `api.gen.ts` in memory and compares it byte for byte with the committed file. On a difference it fails with "run `pnpm gen:api`". It runs inside `cargo test --workspace`, which CI already runs.
-- **`pnpm typecheck`**, part of `pnpm lint`, compiles the UI against the generated file, so a UI calling a removed or renamed route fails CI.
 - **`api_contract_is_documented`** asserts that every endpoint `NAME`, event type and error code appears in this page.
 - **`test_registry_is_consistent`** fails when an endpoint's `NAME` doesn't start with its feature's name, when two endpoints share a method and path, or when `Path`'s fields don't match the `{params}` in `PATH`.
 
@@ -1470,7 +1468,7 @@ Under the workspace's default release profile the growth is over the 1.5 MB budg
 
 Rejected: actix-web (a second runtime layered on tokio), warp (filter types make per-feature routes and error mapping awkward), poem (a much smaller community, and its OpenAPI story uses the attribute-declared responses rejected above), tiny_http with tungstenite (a thread per connection, and hand-built upgrade, limits and middleware), and raw hyper (every layer above it would be ours).
 
-**Embedded UI.** `build.rs` embeds `<ui>/dist` as an `include_bytes!` table. In development, the Vite dev server proxies `/api`, including the WebSocket, to the Companion and rewrites `Host` and `Origin` to the Companion's origin. The Companion has no dev-only origin exception that could ship.
+**No embedded UI.** In 1.x `build.rs` embeds the built React UI as an `include_bytes!` table. On `main` it embeds no UI. The Companion has no dev-only origin exception that could ship.
 
 ## Test seam
 
@@ -1526,10 +1524,10 @@ Playwright then drives the Electron window and a browser page against `--mock-de
 ## Versioning
 
 - **The path prefix is `/api/v1`.** The runtime file lists supported versions (`"api": ["v1"]`), and `GET /system/ping` returns them without auth.
-- **The UI and API ship together.** The UI is embedded in the Companion binary, so the first-party UI always matches its API. Two boundaries remain:
+- **The UI and API ship together.** In 1.x the UI is embedded in the Companion binary, so the first-party UI always matches its API. Two boundaries remain:
   - A tab left open across an update sees a new `hello.build` and reloads.
   - Electron's preload contract has `openTouchDeck.version = 1`. Electron checks `GET /system/ping` and shows "Restart Open TouchDeck to finish updating" if it doesn't support the Companion's API version.
-- **Inside v1, changes only add.** Allowed: new routes, new optional fields, new event types, new error codes and new Job kinds. Clients ignore unknown fields and event types, and treat an unknown error code as generic. Not allowed: renaming or removing a field, changing a type, or changing what a status code means. The generated file shows such a change in review as a removed or changed line.
+- **Inside v1, changes only add.** Allowed: new routes, new optional fields, new event types, new error codes and new Job kinds. Clients ignore unknown fields and event types, and treat an unknown error code as generic. Not allowed: renaming or removing a field, changing a type, or changing what a status code means. 
 - **A breaking change** adds `/api/v2` next to v1 for one release, but only if third-party clients exist. Otherwise it replaces v1 in the same release, because every first-party client ships with it.
 - **The Firmware protocol version** (Companion to Device, Protocol v2) is separate and never appears in routes. The API shows it only as `DeviceSummary.firmware.protocol` and in `device.needs_firmware` errors.
 
@@ -1540,10 +1538,9 @@ Playwright then drives the Electron window and a browser page against `--mock-de
 3. Write `struct X; impl Endpoint for X` with `NAME` set to `<feature>.<action>`, the method, the path under `/api/v1`, the types and the feature's error enum. Slow Device work returns `JobRef` with `STATUS = 202` and a registered `JobKind`.
 4. Add `.endpoint::<X>()` to the feature's `feature()`. Add `.event::<E>()` for any new event.
 5. Add new error variants to the feature's enum with a `code` and a status.
-6. Run `pnpm gen:api` and commit the changed `api.gen.ts`.
-7. Add the route, its events and its error codes to this page. Changes only add (see Versioning).
-8. Write an integration test through `TestCompanion` that calls the route with `td.call::<X>()` and checks what a caller sees.
-9. Run `cargo test --workspace` and `pnpm lint`. The freshness and contract tests tell you what you missed.
+6. Add the route, its events and its error codes to this page. Changes only add (see Versioning).
+7. Write an integration test through `TestCompanion` that calls the route with `td.call::<X>()` and checks what a caller sees.
+8. Run `cargo test --workspace`. The contract tests tell you what you missed.
 
 Never add a public route, a CORS header, a route that answers approvals, or a route that takes Firmware bytes. Each of those needs a new ADR and a security review.
 

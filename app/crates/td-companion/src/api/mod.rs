@@ -4,7 +4,6 @@ mod auth;
 mod error;
 pub mod security;
 mod socket;
-mod ui;
 
 pub use crate::events::Events;
 pub use crate::jobs::{JobKind, Jobs};
@@ -124,8 +123,7 @@ impl<T: DeserializeOwned + Serialize + TS + Send + 'static> RequestBody for T {}
 pub trait ResponseBody: DeserializeOwned + Serialize + TS + Send + 'static {}
 impl<T: DeserializeOwned + Serialize + TS + Send + 'static> ResponseBody for T {}
 
-/// One route, declared once. The router, the typed test client and the generated TypeScript
-/// client all read this declaration.
+/// One route, declared once. The router and the typed test client both read this declaration.
 pub trait Endpoint: Sized + Send + Sync + 'static {
     const NAME: &'static str;
     const METHOD: Method;
@@ -211,9 +209,6 @@ pub enum Access {
     Public,
 }
 
-/// Collects TypeScript declarations for the generated client.
-#[cfg(any(test, feature = "test-hooks"))]
-pub type CollectTypes = fn(&mut crate::bindings::Decls);
 pub struct EndpointInfo {
     pub name: &'static str,
     pub method: Method,
@@ -223,39 +218,17 @@ pub struct EndpointInfo {
     pub errors: &'static [&'static str],
     #[cfg(any(test, feature = "test-hooks"))]
     pub path_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub query_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub body_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub ok_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub types: CollectTypes,
 }
 pub struct JobKindInfo {
     pub name: &'static str,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub progress_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub result_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub types: CollectTypes,
 }
 pub struct EventInfo {
     pub name: &'static str,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub data_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub types: CollectTypes,
 }
 pub type ReadSnapshot = Box<dyn Fn(&Ctx) -> serde_json::Value + Send + Sync>;
 pub struct Snapshot {
     pub key: &'static str,
     pub read: ReadSnapshot,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub data_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub types: CollectTypes,
 }
 pub struct Feature {
     pub name: &'static str,
@@ -264,10 +237,6 @@ pub struct Feature {
     pub snapshots: Vec<Snapshot>,
     pub jobs: Vec<JobKindInfo>,
     router: Router<Ctx>,
-}
-#[cfg(any(test, feature = "test-hooks"))]
-fn collect<T: TS + 'static + ?Sized>(decls: &mut crate::bindings::Decls) {
-    decls.add::<T>();
 }
 impl Feature {
     pub fn new(name: &'static str) -> Self {
@@ -281,31 +250,12 @@ impl Feature {
         }
     }
     pub fn event<E: Event>(mut self) -> Self {
-        self.events.push(EventInfo {
-            name: E::NAME,
-            #[cfg(any(test, feature = "test-hooks"))]
-            data_type: E::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            types: collect::<E>,
-        });
+        self.events.push(EventInfo { name: E::NAME });
         self
     }
-    /// A Job kind, so the generated `JobMap` types its progress and result.
+    /// A Job kind.
     pub fn job<K: JobKind>(mut self) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
-        fn types<K: JobKind>(decls: &mut crate::bindings::Decls) {
-            decls.add::<K::Progress>();
-            decls.add::<K::Result>();
-        }
-        self.jobs.push(JobKindInfo {
-            name: K::NAME,
-            #[cfg(any(test, feature = "test-hooks"))]
-            progress_type: K::Progress::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            result_type: K::Result::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            types: types::<K>,
-        });
+        self.jobs.push(JobKindInfo { name: K::NAME });
         self
     }
     /// A `sync` key, filled from `read` for every new socket.
@@ -317,10 +267,6 @@ impl Feature {
         self.snapshots.push(Snapshot {
             key,
             read: Box::new(move |ctx| serde_json::to_value(read(ctx)).unwrap()),
-            #[cfg(any(test, feature = "test-hooks"))]
-            data_type: T::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            types: collect::<T>,
         });
         self
     }
@@ -329,13 +275,6 @@ impl Feature {
     }
     /// Registers a route with another access level. Visible only inside `api`.
     fn route<E: Endpoint>(mut self, access: Access) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
-        fn types<E: Endpoint>(decls: &mut crate::bindings::Decls) {
-            decls.add::<E::Path>();
-            decls.add::<E::Query>();
-            decls.add::<E::Body>();
-            decls.add::<E::Ok>();
-        }
         self.endpoints.push(EndpointInfo {
             name: E::NAME,
             method: E::METHOD,
@@ -345,14 +284,6 @@ impl Feature {
             errors: E::Error::CODES,
             #[cfg(any(test, feature = "test-hooks"))]
             path_type: E::Path::inline(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            query_type: E::Query::inline(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            body_type: E::Body::inline(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            ok_type: E::Ok::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            types: types::<E>,
         });
         self.router = self.router.route(
             &format!("/api/v1{}", E::PATH),
@@ -466,10 +397,15 @@ fn build_router(ctx: Ctx, features: Vec<Feature>) -> Router {
     router = router.route("/api/v1/events", axum::routing::get(socket::upgrade));
     let access = Arc::new(access);
     router
-        .fallback(ui::serve)
+        .fallback(|| async { CommonError::NotFound })
         .method_not_allowed_fallback(|| async { CommonError::MethodNotAllowed })
         .layer(middleware::from_fn_with_state((ctx.clone(), access), guard))
         .with_state(ctx)
+}
+
+/// Only `/api` paths are routed. Every other path is a 404 that still passes the request guard.
+fn is_api(path: &str) -> bool {
+    path == "/api" || path.starts_with("/api/")
 }
 
 type Routes = HashMap<(Method, String), (Access, bool)>;
@@ -514,7 +450,7 @@ fn admit(ctx: &Ctx, access: &Routes, mut request: Request) -> Result<Request, Co
             origin: header("origin"),
             fetch_site: header("sec-fetch-site"),
             fetch_mode: header("sec-fetch-mode"),
-            api: ui::is_api(request.uri().path()),
+            api: is_api(request.uri().path()),
             get: request.method() == Method::GET,
         },
         ctx.port,
@@ -530,7 +466,7 @@ fn admit(ctx: &Ctx, access: &Routes, mut request: Request) -> Result<Request, Co
     {
         return Err(CommonError::MediaType);
     }
-    if !ui::is_api(request.uri().path()) {
+    if !is_api(request.uri().path()) {
         return Ok(request);
     }
     // Access is looked up by the route the request matched, so a request that matches no
