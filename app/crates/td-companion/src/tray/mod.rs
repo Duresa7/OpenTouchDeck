@@ -1,50 +1,57 @@
-use crate::api::{CommonError, Ctx};
+//! The notification-area icon: left-click, Enter or Space opens the app's window; the menu has
+//! Open, Start at sign-in and Quit.
+//!
+//! The tray lives in the Companion crate, but the window it opens belongs to the program that
+//! hosts the Companion (td-app). The host hands [`start`] an [`OpenHook`] that opens its window,
+//! so this crate never depends on the UI. Quit asks the Companion to stop
+//! (`Handle::request_shutdown`); the host then runs its bounded shutdown and drops the [`Tray`].
+use crate::api::CommonError;
 use parking_lot::Mutex;
 use std::sync::Arc;
+#[cfg(any(windows, test))]
+mod menu;
 #[cfg(any(windows, test))]
 mod routing;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub(crate) use windows::Tray;
-#[cfg(not(windows))]
-pub(crate) struct Tray;
-#[cfg(not(windows))]
-impl Drop for Tray {
-    fn drop(&mut self) {}
-}
+pub use windows::{TRAY_ICON_RESOURCE, Tray};
 
+/// Opens, restores and brings the host's window to the front. The tray calls it on its own
+/// thread for left-click, keyboard activation and the Open item, so it must be callable from
+/// any thread and must not block.
+pub type OpenHook = Arc<dyn Fn() + Send + Sync>;
+
+/// Sets the fixed, version-independent AppUserModelID for the process. Call it at startup,
+/// before any window or the tray exists, so the taskbar, pins and the tray share one identity.
 #[cfg(windows)]
-pub(crate) fn set_app_identity() -> std::io::Result<()> {
+pub fn set_app_identity() -> std::io::Result<()> {
     windows::set_app_identity()
 }
 
-/// The single entry point for opening/restoring the app from the Windows shell.
-/// Both tray activation and the Open menu item call this hook. At native UI
-/// cutover, replace its body with dispatch to the Slint event loop; callers must
-/// not create their own window or launch a second UI implementation.
-/// Until then, launch Electron with the existing packaged/dev override rules.
+/// Shows the tray icon until the returned [`Tray`] drops; dropping it removes the icon and
+/// joins the tray thread within 2 s. Call it after [`set_app_identity`]. The executable must embed `app/icons/app/tray.ico` as icon resource
+/// [`TRAY_ICON_RESOURCE`] and the Common Controls v6 manifest.
 #[cfg(windows)]
-pub fn open_app(packaged: bool) -> std::io::Result<()> {
-    let companion = std::env::current_exe()?;
-    let exe = window_exe(
-        packaged,
-        std::env::var_os("TOUCHDECK_WINDOW_BIN"),
-        &companion,
-    );
-    std::process::Command::new(exe).spawn().map(|_| ())
+pub fn start(handle: &crate::companion::Handle, open: OpenHook) -> Tray {
+    windows::start(menu::Actions {
+        handle: handle.clone(),
+        open,
+    })
 }
 
-#[cfg(any(windows, test))]
-fn window_exe(
-    packaged: bool,
-    dev_override: Option<std::ffi::OsString>,
-    companion: &std::path::Path,
-) -> std::path::PathBuf {
-    match dev_override {
-        Some(path) if !packaged => path.into(),
-        _ => companion.with_file_name("Open TouchDeck.exe"),
+/// Turns Start at sign-in on the first time an installed copy starts (`--packaged`), unless the
+/// user already turned it off in Windows. Later starts leave the user's choice alone.
+pub fn initialize_start_at_sign_in(
+    handle: &crate::companion::Handle,
+    data: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let marker = data.join("startup-initialized");
+    if !marker.exists() {
+        handle.desktop.startup.initialize_default()?;
+        std::fs::write(marker, b"1")?;
     }
+    Ok(())
 }
 
 pub trait BrowserOpener: Send + Sync {
@@ -104,6 +111,11 @@ impl Desktop {
     pub(crate) fn notify(&self, message: &str) {
         self.notifier.notify(message);
     }
+    #[cfg(test)]
+    pub(crate) fn with_startup(mut self, startup: Arc<dyn crate::startup::Startup>) -> Self {
+        self.startup = startup;
+        self
+    }
 }
 struct NativeBrowser;
 impl BrowserOpener for NativeBrowser {
@@ -131,23 +143,11 @@ impl TrayNotifier for NativeNotifier {
         }
     }
 }
-pub(crate) fn start(ctx: Ctx, packaged: bool) -> Tray {
-    #[cfg(windows)]
-    {
-        windows::start(ctx, packaged)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (ctx, packaged);
-        eprintln!("Native tray unavailable on this platform.");
-        Tray
-    }
-}
 
 #[cfg(any(test, feature = "test-hooks"))]
 mod captures {
     use super::*;
-    use crate::api::{Endpoint, Feature, NoQuery, Registration, Req, SessionKind};
+    use crate::api::{Ctx, Endpoint, Feature, NoQuery, Registration, Req, SessionKind};
     use axum::http::Method;
     use serde::{Deserialize, Serialize};
     use ts_rs::TS;

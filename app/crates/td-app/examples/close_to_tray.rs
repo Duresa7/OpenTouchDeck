@@ -1,7 +1,7 @@
-//! The close-to-tray flow before the tray exists. Closing the window explains once that the app
-//! keeps running, then hides it; pressing Enter in the terminal calls `Opener::open`, as the
-//! tray's Open item will. Quit in the notice, or Ctrl+C, ends it. Runs on one mock Device in a
-//! scratch data folder.
+//! The close-to-tray flow without a tray icon, on any platform. Closing the window explains once
+//! that the app keeps running, then hides it; pressing Enter in the terminal calls
+//! `Opener::open`, as the tray's Open item does. Quit in the notice, or Ctrl+C, ends it. Runs on
+//! one mock Device in a scratch data folder.
 //!
 //! ```sh
 //! cargo run -p td-app --features mock --example close_to_tray

@@ -1570,14 +1570,13 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 
 ### Tray and startup implementation decisions (#79)
 
-The Companion owns the Windows tray on a dedicated message-loop thread. Open starts
-`Open TouchDeck.exe` beside the Companion. Development may point Open elsewhere with
-`TOUCHDECK_WINDOW_BIN`; a Companion started with `--packaged` ignores it.
-Electron's single-instance handler focuses an existing window. Closing that window
-revokes its session and leaves the detached Companion running.
+The 2.0 program, `td-app`, owns the Windows tray on a dedicated message-loop thread.
+Left-click, keyboard activation and Open show the native window through an open hook
+that `td-app` hands the tray (#379); the standalone Companion starts no tray. In 1.x,
+Open started the Electron window beside the Companion instead.
 
-Electron passes `--packaged` only for installed builds. The first packaged start
-registers the current Companion executable with `--packaged` in the per-user Run
+The Run entry starts the program with `--packaged`. The first packaged start
+registers the current executable with `--packaged` in the per-user Run
 value `Open TouchDeck`, then writes a non-secret `startup-initialized` marker.
 Later starts respect the registry, including an absent value after disabling startup.
 Development and mock starts never enable startup automatically.

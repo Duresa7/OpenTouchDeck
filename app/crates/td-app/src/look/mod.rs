@@ -61,15 +61,25 @@ pub(crate) fn fonts(ui: &AppWindow) {
     let _ = ui;
 }
 
-/// Selects Slint's platform. On Windows 11 22H2 and later the window is created transparent,
-/// so Mica can show behind it; elsewhere Slint's default (or `SLINT_BACKEND`) applies.
+/// Selects Slint's platform. On Windows the window is created with the app icon from the
+/// executable and, on Windows 11 22H2 and later, transparent so Mica can show behind it;
+/// elsewhere Slint's default (or `SLINT_BACKEND`) applies.
 pub fn init_platform() -> Result<(), slint::PlatformError> {
     #[cfg(windows)]
-    if win::mica_supported() {
-        return slint::BackendSelector::new()
-            .with_winit_window_attributes_hook(|attributes| attributes.with_transparent(true))
-            .select();
+    {
+        let mica = win::mica_supported();
+        slint::BackendSelector::new()
+            .with_winit_window_attributes_hook(move |attributes| {
+                let attributes = win::with_app_icon(attributes);
+                if mica {
+                    attributes.with_transparent(true)
+                } else {
+                    attributes
+                }
+            })
+            .select()
     }
+    #[cfg(not(windows))]
     Ok(())
 }
 
@@ -99,10 +109,12 @@ pub(crate) fn watch(ui: &AppWindow) -> Watch {
     }
 }
 
-/// Once the window exists: Mica on Windows 11 22H2 and later, a solid background elsewhere.
+/// Once the window exists: the app icon and, on Windows 11 22H2 and later, Mica; a solid
+/// background elsewhere.
 pub(crate) fn shown(ui: &AppWindow) {
     #[cfg(windows)]
     {
+        win::app_icon(ui.window());
         let theme = ui.global::<Theme>();
         theme.set_backdrop(win::backdrop(ui.window(), theme.get_dark()));
     }

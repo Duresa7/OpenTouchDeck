@@ -50,28 +50,4 @@ mod tests {
             assert_eq!(route(0, event), None);
         }
     }
-
-    #[test]
-    fn packaged_open_ignores_the_dev_override() {
-        let companion = std::path::Path::new("install/td-companion.exe");
-        let adjacent = std::path::Path::new("install/Open TouchDeck.exe");
-        assert_eq!(
-            super::super::window_exe(true, Some("dev/electron.exe".into()), companion),
-            adjacent
-        );
-        assert_eq!(super::super::window_exe(true, None, companion), adjacent);
-    }
-
-    #[test]
-    fn development_open_uses_the_override_when_set() {
-        let companion = std::path::Path::new("install/td-companion.exe");
-        assert_eq!(
-            super::super::window_exe(false, Some("dev/electron.exe".into()), companion),
-            std::path::Path::new("dev/electron.exe")
-        );
-        assert_eq!(
-            super::super::window_exe(false, None, companion),
-            std::path::Path::new("install/Open TouchDeck.exe")
-        );
-    }
 }

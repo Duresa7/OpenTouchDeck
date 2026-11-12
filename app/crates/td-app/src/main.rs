@@ -1,7 +1,14 @@
 //! Open TouchDeck 2.0: the Companion and its native window in one program.
 //!
 //! Usage: `td-app`, or `td-app --mock-devices N` in a build with the `mock` feature.
+//! `--packaged` marks an installed copy, as Start at sign-in runs it.
 //! `TOUCHDECK_APP_DATA_DIR` moves the app data folder, as it does for the Companion.
+//!
+//! On Windows a notification-area icon keeps the app running after the window closes; its Open
+//! item and left-click call `App::opener`, and Quit asks the Companion to stop. Elsewhere there
+//! is no tray yet, so closing the window ends the program.
+// A release build is a GUI program: Windows opens no console for it.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::process::ExitCode;
 use td_companion::companion::{Companion, Config};
 
@@ -15,19 +22,41 @@ fn main() -> ExitCode {
     }
 }
 
-/// How many mock Devices to plug in, if any.
-fn mock_devices(args: &[String]) -> Result<Option<usize>, Box<dyn std::error::Error>> {
+/// What the command line asks for.
+#[derive(Debug, Default, PartialEq)]
+struct Args {
+    /// An installed copy started by the installer or at sign-in.
+    packaged: bool,
+    /// How many mock Devices to plug in, if any.
+    mock_devices: Option<usize>,
+}
+
+fn parse(args: &[String]) -> Result<Args, Box<dyn std::error::Error>> {
     match args {
-        [] => Ok(None),
+        [] => Ok(Args::default()),
+        // Start at sign-in registers this command line (td-companion's startup.rs).
+        [flag] if flag == "--packaged" => Ok(Args {
+            packaged: true,
+            mock_devices: None,
+        }),
         #[cfg(feature = "mock")]
-        [flag, count] if flag == "--mock-devices" => Ok(Some(count.parse()?)),
+        [flag, count] if flag == "--mock-devices" => Ok(Args {
+            packaged: false,
+            mock_devices: Some(count.parse()?),
+        }),
         _ => Err("unknown argument. Run td-app with no arguments.".into()),
     }
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // Before any window or the tray, so both carry the app's identity.
+    #[cfg(windows)]
+    td_companion::tray::set_app_identity()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mock = mock_devices(&args)?;
+    let Args {
+        packaged,
+        mock_devices: mock,
+    } = parse(&args)?;
     let data = td_core::app_dirs::data_dir().ok_or("no app data folder")?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -66,18 +95,65 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    if packaged {
+        // On by default the first time an installed copy runs, unless Windows already says off.
+        let (first, folder) = (handle.clone(), data.clone());
+        let initialized = runtime.block_on(tokio::task::spawn_blocking(move || {
+            td_companion::tray::initialize_start_at_sign_in(&first, &folder)
+        }))?;
+        if let Err(error) = initialized {
+            eprintln!("Open TouchDeck: could not set up Start at sign-in: {error}");
+        }
+    }
+
+    // Kept until the Companion has shut down; dropping it removes the icon within 2 s.
+    #[cfg(windows)]
+    let mut tray = None;
     let shown = td_app::init_platform()
         .and_then(|()| {
             td_app::App::new(td_app::Options {
                 data_dir: data,
-                // The tray rewrite starts the notification-area icon here, hands its "Open" item
-                // `app.opener()` and its "Quit" item `handle.request_shutdown()`, and sets this
-                // to true. Until a tray exists nothing could bring a hidden window back, so
-                // closing it ends the program.
-                close_to_tray: false,
+                // The tray brings a hidden window back. Without one, closing the window ends
+                // the program.
+                close_to_tray: cfg!(windows),
             })
         })
-        .and_then(|app| app.run(&handle, runtime.handle()));
+        .and_then(|app| {
+            #[cfg(windows)]
+            {
+                let opener = app.opener();
+                tray = Some(td_companion::tray::start(
+                    &handle,
+                    std::sync::Arc::new(move || opener.open()),
+                ));
+            }
+            app.run(&handle, runtime.handle())
+        });
     runtime.block_on(companion.shutdown());
+    #[cfg(windows)]
+    drop(tray);
     Ok(shown?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    #[test]
+    fn no_arguments_and_the_start_at_sign_in_flag_are_accepted() {
+        assert_eq!(parse(&[]).unwrap(), Args::default());
+        assert_eq!(
+            parse(&args(&["--packaged"])).unwrap(),
+            Args {
+                packaged: true,
+                mock_devices: None
+            }
+        );
+        assert!(parse(&args(&["--packaged", "extra"])).is_err());
+        assert!(parse(&args(&["--open-in-browser"])).is_err());
+    }
 }

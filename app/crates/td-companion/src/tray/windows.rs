@@ -1,4 +1,7 @@
-use super::{routing, *};
+use super::{
+    menu::{Actions, Activation, Menu, activation},
+    *,
+};
 use std::{
     ptr::{null, null_mut},
     sync::{OnceLock, mpsc},
@@ -31,7 +34,8 @@ struct State {
     stopping: bool,
 }
 
-pub(crate) struct Tray {
+/// The running tray icon. Dropping it removes the icon and joins its thread within 2 s.
+pub struct Tray {
     thread: Option<JoinHandle<()>>,
     state: Arc<Mutex<State>>,
 }
@@ -66,16 +70,17 @@ enum Event {
 }
 // Permanent identity: never change this GUID between versions or rebuilds.
 const TRAY_GUID: GUID = GUID::from_u128(0xb48d722e_6be7_4f73_a636_cff1b93761c7);
-// Matches app.rc; keep the current app icon until a replacement is selected.
-const APP_ICON: *const u16 = std::ptr::without_provenance(1);
+/// The icon resource ID of `app/icons/app/tray.ico` in the host executable. Its `.rc` file must
+/// use the same number.
+pub const TRAY_ICON_RESOURCE: u16 = 2;
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 
 pub(super) fn set_app_identity() -> std::io::Result<()> {
-    // Share the version-independent identity used by the Electron shell and
-    // installer. Set it before creating any UI (including the hidden tray HWND).
+    // One fixed, version-independent identity for the process, its windows, the tray and the
+    // installer's shortcut. Set it before creating any UI (including the hidden tray HWND).
     let result = unsafe {
         SetCurrentProcessExplicitAppUserModelID(wide(td_core::app_dirs::APP_ID).as_ptr())
     };
@@ -152,10 +157,13 @@ fn copy_wide<const N: usize>(out: &mut [u16; N], value: &str) {
     }
 }
 
+/// The tray icon at the notification area's size for the current DPI: `LIM_SMALL` is
+/// `SM_CXSMICON`, so 16, 20, 24 or 32 px, each drawn for its size in `tray.ico`. Called again
+/// when the DPI or display changes.
 unsafe fn load_icon() -> HICON {
     let mut icon = null_mut();
-    let result =
-        unsafe { LoadIconMetric(GetModuleHandleW(null()), APP_ICON, LIM_SMALL, &mut icon) };
+    let name = std::ptr::without_provenance(TRAY_ICON_RESOURCE.into());
+    let result = unsafe { LoadIconMetric(GetModuleHandleW(null()), name, LIM_SMALL, &mut icon) };
     if result < 0 {
         eprintln!("Could not load the embedded tray icon ({result:#x}).");
     }
@@ -174,7 +182,8 @@ unsafe fn add_icon(icon: &mut NOTIFYICONDATAW) {
     }
 }
 
-unsafe fn menu(icon: &NOTIFYICONDATAW, mut x: i32, mut y: i32) -> i32 {
+/// Shows the menu and returns the chosen command ID, or 0 when it was dismissed.
+unsafe fn show_menu(icon: &NOTIFYICONDATAW, model: &Menu, mut x: i32, mut y: i32) -> usize {
     unsafe {
         // Keyboard context activation can supply (-1, -1). Anchor to the icon,
         // including when it lives in the overflow area, rather than the mouse.
@@ -200,13 +209,18 @@ unsafe fn menu(icon: &NOTIFYICONDATAW, mut x: i32, mut y: i32) -> i32 {
         if menu.is_null() {
             return 0;
         }
-        for (id, label) in [
-            (1, "Open"),
-            (2, "Open in browser"),
-            (3, "Reset pairing"),
-            (4, "Quit"),
-        ] {
-            AppendMenuW(menu, MF_STRING, id, wide(label).as_ptr());
+        for item in model.items() {
+            let mut flags = MF_STRING;
+            if item.checked == Some(true) {
+                flags |= MF_CHECKED;
+            }
+            if !item.enabled {
+                flags |= MF_GRAYED;
+            }
+            AppendMenuW(menu, flags, item.id, wide(item.label).as_ptr());
+            if item.default {
+                SetMenuDefaultItem(menu, item.id as u32, 0);
+            }
         }
         SetForegroundWindow(icon.hWnd);
         let action = TrackPopupMenu(
@@ -223,12 +237,11 @@ unsafe fn menu(icon: &NOTIFYICONDATAW, mut x: i32, mut y: i32) -> i32 {
         // cancels it, so keyboard focus returns to the notification area.
         PostMessageW(icon.hWnd, WM_NULL, 0, 0);
         Shell_NotifyIconW(NIM_SETFOCUS, icon);
-        action
+        usize::try_from(action).unwrap_or(0)
     }
 }
 
-pub(super) fn start(ctx: Ctx, packaged: bool) -> Tray {
-    let handle = tokio::runtime::Handle::current();
+pub(super) fn start(actions: Actions) -> Tray {
     let (tx, rx) = mpsc::sync_channel(16);
     let _ = NOTICES.set(tx);
     let (tx, events) = mpsc::channel();
@@ -297,7 +310,7 @@ pub(super) fn start(ctx: Ctx, packaged: bool) -> Tray {
         SetTimer(hwnd, 1, 100, None);
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
-            if *ctx.shutdown.borrow() || thread_state.lock().stopping {
+            if actions.handle.shutdown_requested() || thread_state.lock().stopping {
                 break;
             }
             if let Ok(message) = rx.try_recv() {
@@ -326,37 +339,18 @@ pub(super) fn start(ctx: Ctx, packaged: bool) -> Tray {
                             Shell_NotifyIconW(NIM_MODIFY, &icon);
                         }
                     }
-                    Event::Callback(w, l) => {
-                        let action = match routing::route(w, l) {
-                            Some(routing::Action::Open) => 1,
-                            Some(routing::Action::Menu { x, y }) => menu(&icon, x, y),
-                            None => 0,
-                        };
-                        match action {
-                            1 => {
-                                if open_app(packaged).is_err() {
-                                    ctx.desktop
-                                        .notify("Open TouchDeck could not open its window.");
-                                }
+                    Event::Callback(w, l) => match activation(w, l) {
+                        Some(Activation::Run(choice)) => actions.run(choice),
+                        Some(Activation::Menu { x, y }) => {
+                            // Read Start at sign-in each time, so a change made in Windows'
+                            // Startup apps list shows.
+                            let model = Menu::read(&*actions.handle.desktop.startup);
+                            if let Some(choice) = model.choose(show_menu(&icon, &model, x, y)) {
+                                actions.run(choice);
                             }
-                            2 => {
-                                let ctx = ctx.clone();
-                                handle.spawn(async move {
-                                    let _ = ctx.pair_browser().await;
-                                });
-                            }
-                            3 => {
-                                let ctx = ctx.clone();
-                                handle.spawn(async move {
-                                    let _ = ctx.reset_pairing().await;
-                                });
-                            }
-                            4 => {
-                                let _ = ctx.shutdown.send(true);
-                            }
-                            _ => {}
                         }
-                    }
+                        None => {}
+                    },
                 }
             }
         }

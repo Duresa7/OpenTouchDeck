@@ -4,7 +4,12 @@ use super::Look;
 use crate::{AppWindow, ContrastColors};
 use slint::winit_030::{
     WinitWindowAccessor,
-    winit::raw_window_handle::{HasWindowHandle, RawWindowHandle},
+    winit::{
+        dpi::PhysicalSize,
+        platform::windows::{IconExtWindows, WindowAttributesExtWindows, WindowExtWindows},
+        raw_window_handle::{HasWindowHandle, RawWindowHandle},
+        window::{Icon, WindowAttributes},
+    },
 };
 use windows::{
     Foundation::TypedEventHandler,
@@ -27,7 +32,8 @@ use windows::{
             Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW},
             Controls::MARGINS,
             WindowsAndMessaging::{
-                SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+                GetSystemMetrics, SM_CXICON, SM_CXSMICON, SPI_GETHIGHCONTRAST,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
             },
         },
     },
@@ -77,6 +83,35 @@ fn set_attribute<T>(
         )
     }
     .is_ok()
+}
+
+/// The app icon's resource ID in td-app's executable (`build.rs`).
+const APP_ICON_RESOURCE: u16 = 1;
+
+/// The app icon from the executable, at the system's small (title bar) and large (Alt+Tab,
+/// taskbar) sizes, each picked from `open-touchdeck.ico` rather than scaled from one size.
+fn app_icons() -> (Option<Icon>, Option<Icon>) {
+    let load = |metric| {
+        let side = u32::try_from(unsafe { GetSystemMetrics(metric) }).unwrap_or(0);
+        let size = (side > 0).then(|| PhysicalSize::new(side, side));
+        Icon::from_resource(APP_ICON_RESOURCE, size).ok()
+    };
+    (load(SM_CXSMICON), load(SM_CXICON))
+}
+
+/// Gives a new window the app icon, so it has it from its first frame.
+pub(super) fn with_app_icon(attributes: WindowAttributes) -> WindowAttributes {
+    let (small, large) = app_icons();
+    attributes.with_window_icon(small).with_taskbar_icon(large)
+}
+
+/// Sets the app icon again once the window exists, in case Slint reset it.
+pub(super) fn app_icon(window: &slint::Window) {
+    window.with_winit_window(|window| {
+        let (small, large) = app_icons();
+        window.set_window_icon(small);
+        window.set_taskbar_icon(large);
+    });
 }
 
 /// Asks DWM for Mica behind the whole window. False means it isn't available, so the window
