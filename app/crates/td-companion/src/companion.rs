@@ -138,14 +138,22 @@ impl Handle {
             settable,
             Arc::new(move |id| turned_on.enabled(id)),
         );
+        let jobs = crate::jobs::Jobs::new(events.clone(), clock.clone());
+        let firmware = crate::features::firmware::Firmware::new(
+            mock,
+            devices.clone(),
+            links.clone(),
+            jobs.clone(),
+            clock.clone(),
+        );
         Self {
             actions,
             integrations,
             live,
             authority,
-            firmware: crate::features::firmware::Firmware::new(mock),
+            firmware,
             desktop: Arc::new(crate::tray::Desktop::new(mock)),
-            jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
+            jobs,
             photos: crate::photos::PhotoFrames::new(
                 Some(data.join("photo-frame.json")),
                 devices.clone(),
@@ -201,6 +209,9 @@ impl Handle {
     }
     pub fn actions(&self) -> &crate::actions::Actions {
         &self.actions
+    }
+    pub fn firmware(&self) -> &crate::features::firmware::Firmware {
+        &self.firmware
     }
     pub fn jobs(&self) -> &crate::jobs::Jobs {
         &self.jobs
