@@ -1,8 +1,11 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
 import { clampWidth, INSPECTOR_DEFAULT, INSPECTOR_MIN, inspectorLimits, keyWidth, readWidth, writeWidth, type InspectorLimits } from './inspector-width.ts';
 
-/** The details panel's width, clamped to what the editor can give it and kept clamped as the window resizes. */
-export function useInspectorWidth(editor: RefObject<HTMLElement | null>) {
+/**
+ * The details panel's width, clamped to what the editor can give it and kept clamped as the window resizes.
+ * `reserved` says what an editor this wide gives something else first: the Pages column while it's out.
+ */
+export function useInspectorWidth(editor: RefObject<HTMLElement | null>, reserved: (editorWidth: number) => number = () => 0) {
   const [editorWidth, setEditorWidth] = useState(() => (typeof window === 'undefined' ? 1280 : window.innerWidth));
   const [chosen, setChosen] = useState(() => readWidth());
   useLayoutEffect(() => {
@@ -14,9 +17,10 @@ export function useInspectorWidth(editor: RefObject<HTMLElement | null>) {
     observer.observe(el);
     return () => observer.disconnect();
   }, [editor]);
-  const limits = inspectorLimits(editorWidth);
+  const limits = inspectorLimits(editorWidth - reserved(editorWidth));
   const width = limits.fixed ? INSPECTOR_MIN : clampWidth(chosen, limits);
   return {
+    editorWidth,
     limits,
     width,
     choose(next: number) {

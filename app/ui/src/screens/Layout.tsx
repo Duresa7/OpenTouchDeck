@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
 import { Tooltip } from '@base-ui/react/tooltip';
@@ -15,8 +15,9 @@ import { editorFor, useEditorState } from './layout/editor.ts';
 import { EditorHeader } from './layout/EditorHeader.tsx';
 import { exportLayout, importLayout } from './layout/files.ts';
 import { Inspector } from './layout/Inspector.tsx';
+import { onePanel, PAGES_W } from './layout/inspector-width.ts';
 import { InspectorResizer, useInspectorWidth } from './layout/InspectorResizer.tsx';
-import { PageTabs } from './layout/PageTabs.tsx';
+import { PageStrip } from './layout/PageStrip.tsx';
 import { ReplaceDialog } from './layout/ReplaceDialog.tsx';
 import { StartLayout } from './layout/StartLayout.tsx';
 import { StatusLine } from './layout/StatusLine.tsx';
@@ -44,7 +45,7 @@ function useEditorKeys(store: EditorStore) {
       if (event.key === 'p' || event.key === 'P') {
         store.setMode(state.mode === 'edit' ? 'preview' : 'edit');
       } else if (state.mode === 'preview' && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
-        if (target && target !== document.body && !target.closest('.canvas')) return;
+        if (target && target !== document.body && !target.closest('.canvas, .page-strip')) return;
         event.preventDefault();
         const index = layout.pages.findIndex((p) => p.id === state.page);
         const next = layout.pages[index + (event.key === 'ArrowLeft' ? -1 : 1)];
@@ -112,8 +113,12 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   const foot = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const editor = useRef<HTMLElement>(null);
-  const inspector = useInspectorWidth(editor);
   const detailsOpen = useUi((s) => s.detailsOpen);
+  const pagesOpen = useUi((s) => s.pagesOpen);
+  // Too narrow for both panels, the Details panel wins while it's out; showing the Pages column hides it.
+  const pagesOut = (editorWidth: number) => layout !== null && pagesOpen && !(detailsOpen && onePanel(editorWidth));
+  const inspector = useInspectorWidth(editor, (editorWidth) => (pagesOut(editorWidth) ? PAGES_W : 0));
+  const pagesShown = pagesOut(inspector.editorWidth);
   const long = useDeviceLong(canvas, { head, foot }, layout?.orientation === 'portrait', layout !== null, {
     floor: inspector.limits.fixed ? LONG_NARROW : LONG_MIN,
     ceiling: detailsOpen ? LONG_MAX : LONG_WIDE,
@@ -124,18 +129,26 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   const current = layout?.pages.find((p) => p.id === page) ?? layout?.pages[0];
   const preview = mode === 'preview';
   const openPicker = () => picker.current?.click();
+  const live = useMemo(() => ({ series: device.capabilities?.series ?? 0, stale: !connected }), [device.capabilities?.series, connected]);
 
   return (
     <main
       ref={editor}
-      className={clsx('editor', !layout && 'is-empty', !detailsOpen && 'is-details-hidden')}
+      className={clsx('editor', !layout && 'is-empty', !detailsOpen && 'is-details-hidden', !pagesShown && 'is-pages-folded')}
       style={{ '--inspector-w': `${inspector.width}px` } as CSSProperties}
       data-testid="editor"
       data-device-id={device.id}
       data-inspector-fixed={inspector.limits.fixed}
     >
       <h1 className="visually-hidden">Layout</h1>
-      <EditorHeader store={store} device={device} onImport={openPicker} onExport={() => void exportLayout(store)} />
+      {layout && current && <PageStrip store={store} layout={layout} page={current.id} open={pagesShown} live={live} />}
+      <EditorHeader
+        store={store}
+        device={device}
+        pages={{ shown: pagesShown, crowded: onePanel(inspector.editorWidth) }}
+        onImport={openPicker}
+        onExport={() => void exportLayout(store)}
+      />
       <div ref={canvas} className={clsx('canvas', actualSize && preview && 'is-actual')}>
         <div ref={head} className="canvas-head">
           {!connected && (
@@ -157,10 +170,9 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
               long={long}
               actualSize={preview && actualSize}
               firmwareBadge={(tile) => needsFirmware(device, tileKind(tile), offered)}
-              live={{ series: device.capabilities?.series ?? 0, stale: !connected }}
+              live={live}
             />
             <div ref={foot} className="canvas-foot">
-              <PageTabs store={store} layout={layout} page={current.id} />
               {preview && (
                 <div className="preview-bar">
                   <p className="canvas-hint">Swipe or press ← and → to change Pages. Tap a Tile to see it react.</p>

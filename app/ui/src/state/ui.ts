@@ -36,6 +36,9 @@ export interface UiState {
   /** Whether the Layout editor's Details panel is out. Picking a Tile or adding one brings it back. */
   detailsOpen: boolean;
   setDetailsOpen(open: boolean): void;
+  /** Whether the Layout editor's Pages column is out. This PC remembers it across restarts. */
+  pagesOpen: boolean;
+  setPagesOpen(open: boolean): void;
   openDevice(id: string): void;
   openTroubleshooting(): void;
   /** Goes to the Settings page, at a category, and for the device category at a Device. */
@@ -53,12 +56,38 @@ export interface UiState {
 }
 
 const PENDING_KEY = 'touchdeck.pending-enable';
+const PAGES_KEY = 'touchdeck.pages-open';
 
 function sessionStorageOrNull(): Storage | null {
   try {
     return window.sessionStorage;
   } catch {
     return null;
+  }
+}
+
+function localStorageOrNull(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** The Pages column is out unless it was folded away last time. */
+function readPagesOpen(storage: Storage | null): boolean {
+  try {
+    return storage?.getItem(PAGES_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function writePagesOpen(storage: Storage | null, open: boolean) {
+  try {
+    storage?.setItem(PAGES_KEY, String(open));
+  } catch {
+    // Without storage the column keeps its state until the window closes.
   }
 }
 
@@ -71,7 +100,11 @@ function writePending(storage: Storage | null, id: string | null) {
   }
 }
 
-export function createUiStore(storage: () => Storage | null = sessionStorageOrNull) {
+/**
+ * `storage` keeps what lasts for this window (a pending enable); `prefs` keeps what this PC remembers across
+ * restarts (whether the Pages column is out).
+ */
+export function createUiStore(storage: () => Storage | null = sessionStorageOrNull, prefs: () => Storage | null = localStorageOrNull) {
   return createStore<UiState>()((set, get) => {
     const pending = (id: string | null) => {
       writePending(storage(), id);
@@ -88,6 +121,11 @@ export function createUiStore(storage: () => Storage | null = sessionStorageOrNu
       setAddTileTab: (addTileTab) => set({ addTileTab }),
       detailsOpen: true,
       setDetailsOpen: (detailsOpen) => set({ detailsOpen }),
+      pagesOpen: readPagesOpen(prefs()),
+      setPagesOpen: (pagesOpen) => {
+        writePagesOpen(prefs(), pagesOpen);
+        set({ pagesOpen });
+      },
       openDevice: (deviceId) => set({ section: 'layout', deviceId, integration: null, ...pending(null) }),
       openTroubleshooting: () => get().openSettings('troubleshooting'),
       openSettings: (settingsSection = 'general', device = null) =>

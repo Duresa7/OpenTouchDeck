@@ -9,8 +9,8 @@ export interface Spill {
   by: number;
 }
 
-// A Device screen, on the canvas or in a Preset preview, clips its Tiles' text as the Firmware does.
-const UNCHECKED = ['svg', 'input', 'textarea', 'select', '[data-demo-toggle]', '.device-scene', '.scene', '[data-testid="deck-screen"]', '.preset-screen', '.sonner-toast', '[hidden]'].join(', ');
+// A Device screen, on the canvas, in a Page thumbnail or in a Preset preview, clips its Tiles' text as the Firmware does.
+const UNCHECKED = ['svg', 'input', 'textarea', 'select', '[data-demo-toggle]', '.device-scene', '.scene', '[data-testid="deck-screen"]', '.page-thumb', '.preset-screen', '.sonner-toast', '[hidden]'].join(', ');
 
 /**
  * Every element whose content is wider than its box when the box lets it spill, or with a child or a run of text
@@ -96,12 +96,14 @@ export function spills(page: Page, allowed: readonly string[] = []): Promise<Spi
   );
 }
 
+/** The elements matching `selector` that the nav rail covers. A hidden one, such as a folded Pages column's, can't be. */
 export function underRail(page: Page, selector: string): Promise<string[]> {
   return page.evaluate((selector) => {
     const rail = document.querySelector('.nav-rail')?.getBoundingClientRect();
     if (!rail) return [];
     const covered = (box: DOMRect) => box.width > 1 && box.height > 1 && box.left < rail.right && box.right > rail.left && box.top < rail.bottom && box.bottom > rail.top;
-    return [...document.querySelectorAll(selector)].filter((el) => covered(el.getBoundingClientRect())).map((el) => `${el.getAttribute('data-testid') ?? el.tagName.toLowerCase()} “${(el.textContent ?? '').trim().slice(0, 40)}”`);
+    const shown = (el: Element) => el.checkVisibility({ visibilityProperty: true });
+    return [...document.querySelectorAll(selector)].filter((el) => shown(el) && covered(el.getBoundingClientRect())).map((el) => `${el.getAttribute('data-testid') ?? el.tagName.toLowerCase()} “${(el.textContent ?? '').trim().slice(0, 40)}”`);
   }, selector);
 }
 

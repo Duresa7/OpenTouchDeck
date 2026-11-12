@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { counts, validateSource, type Layout } from '../src/lib/layout/model.ts';
 import { worstCase } from './fixtures/worst-case.ts';
-import { drag, errorCard, errorDetail, exportText, gridCell, gridPage, importText, layoutOf, menu, openLayout, placeOf, sorted, status, swipe, tile, waitEvent } from './layout-helpers.ts';
+import { drag, errorCard, errorDetail, exportText, gridCell, gridPage, importText, layoutOf, menu, openLayout, pageEntry, pageTitles, placeOf, showPages, sorted, status, swipe, tile, waitEvent } from './layout-helpers.ts';
 
 const examples = join(import.meta.dirname, '..', '..', '..', 'schema', 'examples');
 const devText = readFileSync(join(examples, 'dev.json'), 'utf8');
@@ -32,12 +32,12 @@ test.beforeEach(async ({ page }) => {
   await openLayout(page);
 });
 
-test('imports dev.json with a tab per Page and the first Page drawn', async ({ page }) => {
+test('imports dev.json with an entry per Page in the Pages column and the first Page drawn', async ({ page }) => {
   await importDev(page);
   await expect(status(page)).toHaveText(`Imported “${dev.name}”: 4 Pages, 13 Tiles.`);
-  const tabs = await page.getByTestId('page-tab').evaluateAll((els) => els.map((el) => el.getAttribute('data-page')));
-  expect(tabs).toEqual(dev.pages.map((p) => p.id));
-  await expect(page.getByTestId('page-tab').first()).toHaveAttribute('aria-current', 'true');
+  const entries = await page.getByTestId('page-entry').evaluateAll((els) => els.map((el) => el.getAttribute('data-page')));
+  expect(entries).toEqual(dev.pages.map((p) => p.id));
+  await expect(page.getByTestId('page-entry').first()).toHaveAttribute('aria-current', 'true');
   expect((await drawn(page)).sort()).toEqual(first.tiles.map((t) => t.id).sort());
 });
 
@@ -147,14 +147,14 @@ test('keeps a separate Layout for portrait, and both outlive a reload', async ({
   await expect(page.getByTestId('start-layout')).toBeVisible();
   await page.getByTestId('start-new').click();
   await expect(page.getByTestId('deck-preview')).toHaveAttribute('data-orientation', 'portrait');
-  await expect(page.getByTestId('page-tab')).toHaveText(['Page 1']);
+  await expect(pageTitles(page)).toHaveText(['Page 1']);
   await page.getByTestId('orientation-landscape').click();
-  await expect(page.getByTestId('page-tab')).toHaveText(['Media', 'Shortcuts']);
+  await expect(pageTitles(page)).toHaveText(['Media', 'Shortcuts']);
   await page.reload();
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
-  await expect(page.getByTestId('page-tab')).toHaveText(['Media', 'Shortcuts']);
+  await expect(pageTitles(page)).toHaveText(['Media', 'Shortcuts']);
   await page.getByTestId('orientation-portrait').click();
-  await expect(page.getByTestId('page-tab')).toHaveText(['Page 1']);
+  await expect(pageTitles(page)).toHaveText(['Page 1']);
 });
 
 test('tries Pages out like the Device: swipe, tap, a page jump and the arrow keys', async ({ page }) => {
@@ -238,13 +238,16 @@ test('holds up to the worst realistic Layout', async ({ page }) => {
   if (folder) await page.screenshot({ path: join(folder, 'layout-worst-selected-light.png') });
   await page.getByTestId('preview').click();
   for (const id of ['column', 'accounts', 'meters', 'media', 'empty', 'jump']) {
-    await page.locator(`[data-testid="page-tab"][data-page="${id}"]`).click();
+    await page.locator(`[data-testid="page-entry"][data-page="${id}"]`).click();
     await expect(page.getByTestId('deck-preview')).toHaveAttribute('data-page', id);
     await noSpill();
   }
   await page.getByTestId('preview').click();
   await page.setViewportSize({ width: 960, height: 600 });
-  await page.locator('[data-testid="page-tab"][data-page="full"]').click();
+  // Too narrow for both panels: the column folds while Details is out, once the editor has measured its new width.
+  await expect(page.getByTestId('page-strip')).toHaveAttribute('data-open', 'false');
+  await showPages(page);
+  await pageEntry(page, 'full').click();
   await noSpill();
   if (folder) await page.screenshot({ path: join(folder, 'layout-worst-small-light.png') });
   await page.setViewportSize({ width: 1180, height: 760 });
@@ -275,12 +278,12 @@ test('a send that finds the Layout changed on the Device offers Replace and Keep
   await menu(page, 'menu-push');
   await dialog.getByRole('button', { name: 'Replace' }).click();
   await expect(await waitEvent(page, 'pulled')).toHaveText('Loaded “Changed elsewhere” from Desk');
-  await expect(page.getByTestId('page-tab')).toHaveText(['X']);
+  await expect(pageTitles(page)).toHaveText(['X']);
 });
 
 test('Add Tile places a Tile with its kind and selects it; Cancel and Escape close it', async ({ page }) => {
   await page.getByTestId('start-starter').click();
-  await page.locator('[data-testid="page-tab"][data-page="shortcuts"]').click();
+  await page.locator('[data-testid="page-entry"][data-page="shortcuts"]').click();
   await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
   await expect(page.getByTestId('add-where')).toHaveText('Row 3, column 3 on the Shortcuts Page');
   await expect(page.locator('.cell-empty.is-target')).toHaveAttribute('data-col', '2');
@@ -304,7 +307,7 @@ test('Add Tile places a Tile with its kind and selects it; Cancel and Escape clo
   await page.getByTestId('add-tile').click();
   await expect(page.getByTestId('add-where')).toHaveText('The Shortcuts Page is full, so it starts a new Page');
   await page.locator('[data-testid="add-kind"][data-kind="key"]').click();
-  await expect(page.getByTestId('page-tab')).toHaveText(['Media', 'Shortcuts', 'Page 3']);
+  await expect(pageTitles(page)).toHaveText(['Media', 'Shortcuts', 'Page 3']);
   await expect(page.getByTestId('tile-head')).toContainText('Keyboard shortcut on the Page 3 Page');
 });
 
@@ -320,7 +323,7 @@ test('a narrow header keeps only the Add Tile icon, centred in its button', asyn
 
 test('the keyboard moves, resizes, clears and deselects a Tile', async ({ page }) => {
   await page.getByTestId('start-starter').click();
-  await page.locator('[data-testid="page-tab"][data-page="shortcuts"]').click();
+  await page.locator('[data-testid="page-entry"][data-page="shortcuts"]').click();
   await tile(page, 'desktop').focus();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('tile-title')).toHaveText('Show desktop');
@@ -361,7 +364,7 @@ test('a Device that is not connected can still be edited, but not sent to', asyn
   expect((await record(page)).layouts.landscape?.name).toBe('Demo Layout');
 });
 
-test('focus is visible on Tiles, Page tabs and header controls', async ({ page }) => {
+test('focus is visible on Tiles, the Pages column and header controls', async ({ page }) => {
   await page.getByTestId('start-starter').click();
   const reach = async (testId: string, nth = 0) => {
     const el = page.getByTestId(testId).nth(nth);
@@ -375,7 +378,7 @@ test('focus is visible on Tiles, Page tabs and header controls', async ({ page }
     });
   };
   await expect(page.getByTestId('push')).toHaveAttribute('data-state', 'send');
-  for (const id of ['device-rename', 'orientation-landscape', 'preview', 'layout-menu', 'add-tile', 'push', 'details-toggle', 'page-tab', 'page-add']) {
+  for (const id of ['device-rename', 'orientation-landscape', 'preview', 'layout-menu', 'add-tile', 'push', 'details-toggle', 'pages-toggle', 'page-entry', 'page-menu', 'page-add']) {
     expect({ id, ...(await reach(id)) }).toEqual({ id, visible: true, ring: true });
   }
   expect(await reach('tile', 1)).toEqual({ visible: true, ring: true });
@@ -471,16 +474,212 @@ test('the grid picker previews a size under the pointer and sets it with a click
   await expect(gridCell(page, 1, 1)).toHaveAttribute('tabindex', '0');
 });
 
-test('Remove Page is a trash can that asks once more before it removes', async ({ page }) => {
+test('a Page’s menu, from its button or a right-click, removes the Page after asking once more', async ({ page }) => {
   await importDev(page);
   const remove = page.getByTestId('page-remove');
-  await expect(remove).toHaveAccessibleName('Remove Page');
+  const menuButton = (id: string) => page.locator(`.page-entry[data-page="${id}"]`).getByTestId('page-menu');
+  await expect(menuButton('desktop')).toHaveCSS('opacity', '0');
+  await pageEntry(page, 'desktop').hover();
+  await expect(menuButton('desktop'), 'the menu button shows on hover').toHaveCSS('opacity', '1');
+  await expect(menuButton('desktop')).toHaveAccessibleName('Options for “Desktop”');
+  await menuButton('desktop').click();
+  await expect(page.getByRole('menu', { name: 'Options for “Desktop”' })).toBeVisible();
+  await expect(remove).toHaveText('Remove Page');
   await remove.click();
-  await expect(remove).toHaveAccessibleName(`Click again to remove “${first.title}”`);
-  await expect(remove).toContainText(`Remove “${first.title}”?`);
+  await expect(remove).toContainText('Remove “Desktop”?');
+  await expect(remove).toContainText('Click again to remove');
+  await expect(page.getByTestId('page-entry'), 'the first click only asks').toHaveCount(dev.pages.length);
   await remove.click();
-  await expect(page.getByTestId('page-tab')).toHaveCount(dev.pages.length - 1);
-  await expect(page.locator(`[data-testid="page-tab"][data-page="${first.id}"]`)).toHaveCount(0);
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(page.getByTestId('page-entry')).toHaveCount(dev.pages.length - 1);
+  await expect(pageEntry(page, 'desktop')).toHaveCount(0);
+
+  await pageEntry(page, 'usage').click({ button: 'right' });
+  await expect(page.getByRole('menu', { name: 'Options for “Usage”' })).toBeVisible();
+  await remove.click();
+  await expect(remove).toContainText('Remove “Usage”?');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await pageEntry(page, 'usage').click({ button: 'right' });
+  await expect(remove, 'closing the menu disarms it').toHaveText('Remove Page');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+
+  await pageEntry(page, 'accounts').focus();
+  await page.keyboard.press('Tab');
+  await expect(menuButton('accounts')).toBeFocused();
+  await expect(menuButton('accounts'), 'the menu button shows on keyboard focus').toHaveCSS('opacity', '1');
+  await page.keyboard.press('Enter');
+  await expect(remove).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(remove).toContainText('Remove “Accounts”?');
+  await page.keyboard.press('Enter');
+  await expect(pageTitles(page)).toHaveText(['Shortcuts', 'Usage']);
+  await expect(pageEntry(page, 'shortcuts'), 'focus goes to the Page shown, not the window').toBeFocused();
+
+  await menu(page, 'menu-new');
+  await expect(page.getByTestId('page-entry')).toHaveCount(1);
+  await pageEntry(page, 'page1').click({ button: 'right' });
+  await expect(remove).toHaveAttribute('data-disabled');
+  await expect(remove).toContainText('A Layout needs at least one Page');
+  await remove.click({ force: true });
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('page-entry')).toHaveCount(1);
+  await expect(page.getByTestId('page-details'), 'the Details panel no longer removes Pages').not.toContainText('Remove');
+});
+
+test('each Page’s thumbnail draws its Tiles at the Device’s shape and follows edits', async ({ page }) => {
+  await importDev(page);
+  const thumb = (id: string) => pageEntry(page, id).getByTestId('page-thumb');
+  const ratio = (id: string) => thumb(id).evaluate((el) => el.getBoundingClientRect().width / el.getBoundingClientRect().height);
+  expect(await ratio('shortcuts')).toBeCloseTo(1024 / 600, 1);
+  await expect(thumb('shortcuts').locator('.thumb-tile')).toHaveCount(first.tiles.length);
+  await expect(pageEntry(page, 'shortcuts')).toHaveAttribute('aria-current', 'true');
+  const ring = await thumb('shortcuts').evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(ring, 'a 2px accent ring with a 2px gap').toMatch(/0px 0px 0px 2px, rgb\([^)]+\) 0px 0px 0px 4px/);
+  await expect(thumb('desktop')).toHaveCSS('box-shadow', 'none');
+
+  await tile(page, 'f5').click();
+  await page.getByTestId('tile-clear').click();
+  await expect(thumb('shortcuts').locator('.thumb-tile'), 'the thumbnail follows a cleared Tile').toHaveCount(first.tiles.length - 1);
+  await page.getByTestId('page-name').fill('Keys');
+  await page.getByTestId('page-name').press('Enter');
+  await expect(pageEntry(page, 'shortcuts').getByTestId('page-entry-title')).toHaveText('Keys');
+  await expect(pageEntry(page, 'shortcuts')).toHaveAttribute('title', 'Keys');
+
+  const usage = pageEntry(page, 'accounts');
+  await expect(usage.locator('.page-tag')).toHaveText('Usage');
+  await expect(usage.getByTestId('page-thumb').locator('.scene-row'), 'a Usage Page draws its rows').toHaveCount(3);
+  await usage.click();
+  await expect(usage).toHaveAttribute('aria-current', 'true');
+  await expect(page.getByTestId('dashboard-page')).toBeVisible();
+
+  await importText(page, JSON.stringify({ ...dev, orientation: 'portrait' }), 'dev-portrait.json');
+  await waitEvent(page, 'opened');
+  await expect(page.getByTestId('deck-preview')).toHaveAttribute('data-orientation', 'portrait');
+  await expect(thumb('shortcuts')).toHaveAttribute('data-orientation', 'portrait');
+  expect(await ratio('shortcuts')).toBeCloseTo(600 / 1024, 1);
+  await expect(thumb('shortcuts').locator('.thumb-tile')).toHaveCount(first.tiles.length);
+});
+
+test('Add Page adds a Page at the end of the column and shows it, and at 8 Pages it says why it can’t', async ({ page }) => {
+  // The demo data toggle sits over the bottom of the column.
+  await openLayout(page, '/?toggle=0');
+  await page.getByTestId('start-starter').click();
+  const add = page.getByTestId('page-add');
+  await expect(add).toHaveText('Add Page');
+  for (let n = 3; n <= 8; n++) {
+    await add.click();
+    await expect(page.getByTestId('page-entry')).toHaveCount(n);
+    await expect(page.getByTestId('page-entry').last()).toHaveAttribute('aria-current', 'true');
+    await expect(page.getByTestId('page-entry').last()).toBeInViewport();
+  }
+  await expect(pageTitles(page).last()).toHaveText('Page 8');
+  await expect(add).toHaveAttribute('aria-disabled', 'true');
+  await add.hover();
+  await expect(page.locator('.tooltip')).toHaveText('A Layout holds up to 8 Pages');
+  await add.click({ force: true });
+  await expect(page.getByTestId('page-entry')).toHaveCount(8);
+});
+
+test('the Pages column folds away and back, the Device grows into the room, and this PC remembers it', async ({ page }) => {
+  await importDev(page);
+  const toggle = page.getByTestId('pages-toggle');
+  const strip = page.getByTestId('page-strip');
+  const width = async () => (await page.locator('.device').boundingBox())!.width;
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(toggle).toHaveAttribute('aria-controls', 'editor-pages');
+  await expect(toggle).toHaveAccessibleName('Hide Pages');
+  await expect(strip).toHaveAttribute('id', 'editor-pages');
+  const head = await page.getByTestId('editor-head').boundingBox();
+  const toggleBox = await toggle.boundingBox();
+  const nameBox = await page.getByTestId('device-name').boundingBox();
+  expect(toggleBox!.x, 'the button sits at the left of the header').toBeLessThan(head!.x + 24);
+  expect(toggleBox!.x + toggleBox!.width, 'before the Device’s name').toBeLessThanOrEqual(nameBox!.x);
+  expect((await strip.boundingBox())!.width).toBe(160);
+  const motion = await page.getByTestId('editor').evaluate((el) => {
+    const style = getComputedStyle(el);
+    const root = getComputedStyle(document.documentElement);
+    const list = (value: string) => value.split(/,\s*(?![^(]*\))/);
+    const at = list(style.transitionProperty).indexOf('grid-template-columns');
+    return { at, duration: list(style.transitionDuration)[at], easing: list(style.transitionTimingFunction)[at], expand: root.getPropertyValue('--duration-expand').trim() };
+  });
+  expect(motion.at, 'the column’s width animates').toBeGreaterThanOrEqual(0);
+  expect(motion.duration).toBe(`${Number.parseFloat(motion.expand) / 1000}s`);
+  expect(motion.easing).toBe('cubic-bezier(0.32, 0.72, 0, 1)');
+  const open = await width();
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toHaveAccessibleName('Show Pages');
+  await expect(strip).toHaveAttribute('inert');
+  await expect(strip).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Add Page' }), 'a folded column is hidden from screen readers').toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: 'Pages' })).toHaveCount(0);
+  await expect.poll(width, { message: 'the Device grows into the room' }).toBeGreaterThan(open + 100);
+  await toggle.focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByTestId('page-add'), 'a folded column is out of the tab order').not.toBeFocused();
+  await expect(page.locator('.page-strip :focus')).toHaveCount(0);
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Layout', exact: true }).click();
+  await expect(page.getByTestId('pages-toggle'), 'this PC remembers the column folded').toHaveAttribute('aria-expanded', 'false');
+  await expect(strip).toHaveAttribute('inert');
+  await page.getByTestId('pages-toggle').click();
+  await expect(strip).toBeVisible();
+  await expect(strip).not.toHaveAttribute('inert');
+  await expect.poll(width, { message: 'the Device gives the room back' }).toBe(open);
+  await page.reload();
+  await page.getByRole('button', { name: 'Layout', exact: true }).click();
+  await expect(page.getByTestId('pages-toggle')).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('in Preview, ← and → change Pages and the column follows', async ({ page }) => {
+  await importDev(page);
+  await pageEntry(page, 'shortcuts').click();
+  await page.keyboard.press('p');
+  const preview = page.getByTestId('deck-preview');
+  await expect(preview).toHaveAttribute('data-mode', 'preview');
+  await page.keyboard.press('ArrowRight');
+  await expect(preview).toHaveAttribute('data-page', 'desktop');
+  await expect(pageEntry(page, 'desktop')).toHaveAttribute('aria-current', 'true');
+  await expect(pageEntry(page, 'shortcuts')).not.toHaveAttribute('aria-current');
+  await expect(pageEntry(page, 'desktop'), 'focus in the column moves with the Page').toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(preview).toHaveAttribute('data-page', 'accounts');
+  await expect(pageEntry(page, 'accounts')).toHaveAttribute('aria-current', 'true');
+  await page.keyboard.press('ArrowLeft');
+  await expect(pageEntry(page, 'usage')).toHaveAttribute('aria-current', 'true');
+  await pageEntry(page, 'shortcuts').click();
+  await expect(preview).toHaveAttribute('data-page', 'shortcuts');
+});
+
+test('an editor too narrow for both panels shows one at a time, and Details wins while it’s out', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await importDev(page);
+  const strip = page.getByTestId('page-strip');
+  const toggle = page.getByTestId('pages-toggle');
+  const inspector = page.getByTestId('inspector');
+  await expect(inspector).toBeVisible();
+  await expect(strip).toHaveAttribute('data-open', 'false');
+  await expect(toggle).toHaveAccessibleName('Show Pages');
+
+  await page.getByTestId('add-tile').click();
+  await toggle.click();
+  await expect(strip).toBeVisible();
+  await expect(inspector, 'showing Pages hides the Details panel').toBeHidden();
+  await expect(page.getByTestId('add-tile'), 'and ends Add Tile').toHaveAttribute('aria-expanded', 'false');
+  await pageEntry(page, 'desktop').click();
+  await expect(page.getByTestId('deck-preview')).toHaveAttribute('data-page', 'desktop');
+
+  await page.getByTestId('tile').first().click();
+  await expect(inspector, 'picking a Tile brings Details back').toBeVisible();
+  await expect(strip).toBeHidden();
+  await page.getByTestId('details-toggle').click();
+  await expect(strip, 'hiding Details brings the column back').toBeVisible();
+  await expect(toggle).toHaveAccessibleName('Hide Pages');
 });
 
 declare global {

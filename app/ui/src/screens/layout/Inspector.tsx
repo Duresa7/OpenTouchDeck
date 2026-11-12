@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
 import { Tabs } from '@base-ui/react/tabs';
-import { Film, Plus, Trash2, X } from 'lucide-react';
+import { Film, Plus, X } from 'lucide-react';
 import type { IntegrationSummary } from '../../lib/companion/api.ts';
 import { useDevices } from '../../lib/companion/devices.ts';
 import { useIntegrations } from '../../lib/companion/integrations.ts';
@@ -179,37 +179,6 @@ function GridField({ store, page }: { store: EditorStore; page: GridPage }) {
   );
 }
 
-function RemovePage({ store, layout, page }: { store: EditorStore; layout: Layout; page: Page }) {
-  const [armed, setArmed] = useState(false);
-  useEffect(() => setArmed(false), [page.id]);
-  useEffect(() => {
-    if (!armed) return;
-    const timer = setTimeout(() => setArmed(false), 4000);
-    return () => clearTimeout(timer);
-  }, [armed]);
-  const last = layout.pages.length <= 1;
-  return (
-    <Tip label={last ? 'A Layout needs at least one Page' : armed ? 'Click again to remove' : 'Remove Page'}>
-      <button
-        type="button"
-        className={clsx(button({ kind: 'danger', size: 'small' }), 'page-remove', armed && 'is-armed')}
-        aria-disabled={last}
-        aria-label={armed ? `Click again to remove “${page.title}”` : 'Remove Page'}
-        onClick={() => {
-          if (last) return;
-          if (armed) store.removePage(page.id);
-          else setArmed(true);
-        }}
-        onBlur={() => setArmed(false)}
-        data-testid="page-remove"
-      >
-        <Trash2 size={16} strokeWidth={1.9} aria-hidden />
-        {armed && <span>Remove “{page.title}”?</span>}
-      </button>
-    </Tip>
-  );
-}
-
 function Details({ store, layout, page, device }: { store: EditorStore; layout: Layout; page: Page; device: string }) {
   const index = layout.pages.findIndex((p) => p.id === page.id);
   const fullId = useId();
@@ -265,9 +234,6 @@ function Details({ store, layout, page, device }: { store: EditorStore; layout: 
             <p className="field-hint">Hide the Page name and dots so Tiles fill the screen. Swiping between Pages still works.</p>
           </div>
         </section>
-      </div>
-      <div className="inspector-foot is-end">
-        <RemovePage store={store} layout={layout} page={page} />
       </div>
     </>
   );

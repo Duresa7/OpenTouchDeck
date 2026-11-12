@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { consoleErrors, sideScroll, spills } from './break-helpers.ts';
-import { openDeviceSettings, openSettings } from './layout-helpers.ts';
+import { openDeviceSettings, openSettings, pageEntry, showPages } from './layout-helpers.ts';
 
 const survey = process.env.TD_BREAK_SURVEY;
 const shots = process.env.TD_SHOTS;
@@ -76,7 +76,11 @@ async function editor(page: Page, device: string) {
   await expect(page.getByTestId('editor')).toBeVisible();
 }
 
-const pageTab = (page: Page, id: string) => page.locator(`[data-testid="page-tab"][data-page="${id}"]`);
+/** Shows a Page from the Pages column, bringing the column out first when a narrow editor hides it. */
+async function choosePage(page: Page, id: string) {
+  await showPages(page);
+  await pageEntry(page, id).click();
+}
 const tile = (page: Page, id: string) => page.locator(`[data-testid="tile"][data-id="${id}"]`);
 
 const LONGEST_NAME = 'StreamingDeskLeftOfTheMonitorArmForSaturdayShows';
@@ -136,11 +140,18 @@ for (const theme of ['light', 'dark'] as const) {
         await page.mouse.move(canvasBox.x + canvasBox.width / 2, canvasBox.y + 8);
         await page.mouse.wheel(0, 4000);
         await expect.poll(() => canvas.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1), { message: 'the canvas scrolls to its foot' }).toBe(true);
-        expect(await uncovered(page.getByTestId('page-add')), 'the last Page tab clears the nav').toBe(true);
-        expect(await uncovered(page.locator('.canvas-foot')), 'the canvas foot clears the nav').toBe(true);
-        await expect(pageTab(page, 'full')).toHaveAttribute('title', 'Wiśniewska-Kowalczyk Pro');
+        const foot = await boxOf(page.locator('.canvas-foot'));
+        const rail = await boxOf(page.locator('.nav-rail'));
+        expect(foot.x, 'the canvas foot clears the nav').toBeGreaterThanOrEqual(rail.x + rail.width);
         await shot(canvas, { ...at, row: 'row-02-editor-canvas-foot' });
         await canvas.evaluate((el) => el.scrollTo(0, 0));
+
+        await showPages(page);
+        const add = page.getByTestId('page-add');
+        await add.scrollIntoViewIfNeeded();
+        expect(await uncovered(add), 'Add Page, at the end of the Pages column, clears the nav').toBe(true);
+        await expect(pageEntry(page, 'full')).toHaveAttribute('title', 'Wiśniewska-Kowalczyk Pro');
+        await check(page, { ...at, name: 'editor-pages' });
 
         await tile(page, 't6').click();
         const warning = page.getByTestId('tile-fields').locator('.field-hint.is-warning');
@@ -148,15 +159,15 @@ for (const theme of ['light', 'dark'] as const) {
         await check(page, { ...at, name: 'editor-tile' });
         await shot(warning, { ...at, row: 'row-10-glyph-warning' });
         for (const id of ['live', 'rtl', 'cjk', 'usage', 'empty', 'jump', 'one']) {
-          await pageTab(page, id).click();
+          await choosePage(page, id);
           await check(page, { ...at, name: `editor-page-${id}` });
         }
-        await pageTab(page, 'live').click();
+        await choosePage(page, 'live');
         for (const id of ['vol', 'np', 'cpu', 'gif', 'gone']) {
           await tile(page, id).click();
           await check(page, { ...at, name: `editor-live-${id}` });
         }
-        await pageTab(page, 'jump').click();
+        await choosePage(page, 'jump');
         await tile(page, 'j1').click();
         await check(page, { ...at, name: 'editor-launch' });
         await tile(page, 'j2').click();

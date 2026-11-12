@@ -43,7 +43,7 @@ async function startOnShortcuts(page: Page, query = '') {
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
   await page.getByTestId('start-starter').click();
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' }).click();
   await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
 }
 
@@ -396,7 +396,7 @@ test('Add Tile points to Integrations when none offers Tiles', async ({ page }) 
   }
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
   await page.getByTestId('start-starter').click();
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' }).click();
   await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
   await expect(page.getByTestId('add-tab-actions')).toHaveAttribute('aria-selected', 'true');
   await page.getByTestId('add-tab-integrations').click();

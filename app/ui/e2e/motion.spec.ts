@@ -271,7 +271,7 @@ test.describe('with motion', () => {
     await expect(page.getByTestId('dashboard-page')).toBeVisible();
   });
 
-  test('the try-it Page slide and a Page tab switch keep every frame', async ({ page }) => {
+  test('the try-it Page slide and a switch from the Pages column keep every frame', async ({ page }) => {
     await tryIt(page);
     const preview = page.getByTestId('deck-preview');
     const slide = await frames(page);
@@ -288,12 +288,12 @@ test.describe('with motion', () => {
 
     await page.keyboard.press('p');
     await expect(preview).toHaveAttribute('data-mode', 'edit');
-    const tabs = await frames(page);
+    const entries = await frames(page);
     for (const id of ['shortcuts', 'desktop', 'usage', 'accounts', 'shortcuts']) {
-      await page.locator(`[data-testid="page-tab"][data-page="${id}"]`).click();
+      await page.locator(`[data-testid="page-entry"][data-page="${id}"]`).click();
       await expect(preview).toHaveAttribute('data-page', id);
     }
-    const switched = await tabs.stop();
+    const switched = await entries.stop();
 
     const measured = {
       slide_frames: slid.stamps.length,

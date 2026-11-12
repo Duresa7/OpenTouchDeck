@@ -15,7 +15,7 @@ test('This PC is switched off and on from its row, and offers all its Preset til
 
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
   await page.getByTestId('start-starter').click();
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' }).click();
   await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
   await expect(page.locator('[data-testid="preset-group"][data-id="this_pc"]').getByTestId('preset')).toHaveCount(10);
 });

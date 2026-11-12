@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampWidth, inspectorLimits, keyWidth, readWidth, writeWidth } from './inspector-width.ts';
+import { clampWidth, inspectorLimits, keyWidth, onePanel, readWidth, writeWidth } from './inspector-width.ts';
 
 function memory() {
   const items = new Map<string, string>();
@@ -16,6 +16,13 @@ describe('the details panel width', () => {
   it('falls back to a fixed 340px panel below 800px, so the minimum never passes the maximum', () => {
     expect(inspectorLimits(799)).toEqual({ min: 340, max: 340, fixed: true });
     expect(inspectorLimits(640)).toEqual({ min: 340, max: 340, fixed: true });
+  });
+
+  it('leaves room for the Pages column beside both, or puts one panel out at a time', () => {
+    expect(onePanel(1216)).toBe(false);
+    expect(onePanel(960)).toBe(false);
+    expect(onePanel(959)).toBe(true);
+    expect(onePanel(736)).toBe(true);
   });
 
   it('clamps a width to the limits', () => {

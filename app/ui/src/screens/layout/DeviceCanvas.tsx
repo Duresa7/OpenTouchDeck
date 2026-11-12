@@ -8,7 +8,7 @@ import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
 import type { GridPage, Layout, Tile } from '../../lib/layout/model.ts';
 import { openDetails } from '../../state/ui.ts';
-import { SceneText, TileFace } from './TileScene.tsx';
+import { SceneRows, SceneText, TileFace } from './TileScene.tsx';
 
 type ModLook = 'one-shot' | 'locked';
 
@@ -395,14 +395,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     if (view.kind !== 'grid' || source.kind !== 'grid') {
       return (
         <div key={view.id} className="scene-page" style={{ left: offset }} aria-hidden={!here} data-testid={here ? 'dashboard-page' : undefined}>
-          {view.rows.map((row, r) => (
-            <div key={r} className="scene-row" style={{ left: row.rect.x, top: row.rect.y, width: row.rect.w, height: row.rect.h }}>
-              {row.texts.map((text, n) => (
-                <SceneText key={n} view={text} />
-              ))}
-              {row.bar && <span className="scene-bar" style={{ left: row.bar.x, top: row.bar.y, width: row.bar.w, height: row.bar.h, borderRadius: row.bar.radius }} />}
-            </div>
-          ))}
+          <SceneRows rows={view.rows} />
         </div>
       );
     }

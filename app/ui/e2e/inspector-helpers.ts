@@ -7,7 +7,7 @@ export const DESK = 'mock0001';
 export async function openStarter(page: Page, path = '/') {
   await openLayout(page, path);
   await page.getByTestId('start-starter').click();
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' }).click();
 }
 
 /** Add Tile opens on Integrations while one offers Preset tiles; actions live in the Actions tab. */

@@ -76,7 +76,7 @@ async function home(page: Page) {
 
 async function noSpill(page: Page, name: string) {
   await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity));
-  const rail = await underRail(page, '[data-testid=page-tab], [data-testid=page-add], [data-testid=status]');
+  const rail = await underRail(page, '[data-testid=page-entry], [data-testid=page-add], [data-testid=status]');
   expect({ scroll: await sideScroll(page), spills: await spills(page, ['.preset-name']), rail }, name).toEqual({ scroll: 0, spills: [], rail: [] });
 }
 
@@ -147,14 +147,14 @@ test('Review Layout goes through the load flow and keeps an unsent draft until t
   await page.getByTestId('controls-review').click();
   await expect(page.getByTestId('replace-dialog')).toBeVisible();
   await page.getByTestId('keep-mine').click();
-  await expect(page.getByTestId('page-tab')).toHaveCount(1);
+  await expect(page.getByTestId('page-entry')).toHaveCount(1);
   await expect(page.getByTestId('control-review')).toContainText('No Tile on this Layout controls an Integration.');
   await expect(notice(page)).toHaveAttribute('data-state', 'no-pushed-copy');
 
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await card(page, 'Desk').getByTestId('controls-review').click();
   await page.getByTestId('replace').click();
-  await expect(page.getByTestId('page-tab')).toHaveCount(2);
+  await expect(page.getByTestId('page-entry')).toHaveCount(2);
   await expect(page.getByTestId('control-binding')).toHaveCount(3);
 });
 
@@ -291,7 +291,7 @@ for (const theme of ['light', 'dark'] as const) {
         await expect(notice(page)).toHaveCount(0);
       });
 
-      test('a failed Send keeps the notice, the Page tabs and the Details clear of the nav', async ({ page }) => {
+      test('a failed Send keeps the notice, the Pages column and the Details clear of the nav', async ({ page }) => {
         await home(page);
         await onDevice(page, REFUSED, NO_COPY);
         await card(page, 'Desk').getByTestId('controls-review').click();

@@ -79,7 +79,7 @@ test('the preview keeps as many samples as the Device does', async ({ page }) =>
 
 test('a This PC Preset placed from Add Tile is a graph of its stream', async ({ page }) => {
   await starterWithGraphs(page);
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' }).click();
   await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
   await page.getByTestId('add-presets').locator('[data-id="this_pc"] [data-preset="ram_pct"]').click();
   const placed = page.locator('[data-testid="tile"][data-row="2"][data-col="2"]');
@@ -91,7 +91,7 @@ test('a This PC Preset placed from Add Tile is a graph of its stream', async ({ 
 test('without graph Firmware a This PC Preset stays a value Tile', async ({ page }) => {
   await openLayout(page);
   await page.getByTestId('start-starter').click();
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' }).click();
   await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
   await page.getByTestId('add-presets').locator('[data-id="this_pc"] [data-preset="cpu_pct"]').click();
   const placed = page.locator('[data-testid="tile"][data-row="2"][data-col="2"]');
@@ -102,7 +102,7 @@ test('without graph Firmware a This PC Preset stays a value Tile', async ({ page
 test('a Live tile offers its own Integration and CLIProxyAPI by name, with its readings by name', async ({ page }) => {
   await openLayout(page);
   await page.getByTestId('start-starter').click();
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' }).click();
   await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
   await page.getByTestId('add-presets').locator('[data-id="this_pc"] [data-preset="cpu_pct"]').click();
   const source = page.getByTestId('action-source');

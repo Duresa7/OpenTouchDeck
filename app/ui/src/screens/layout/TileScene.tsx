@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import clsx from 'clsx';
 import { Film, Lock, Pause, Play, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import type { Rect } from '../../lib/deck/geometry.ts';
-import { FONTS, type ControlGlyph, type GraphView, type LevelView, type NowPlayingView, type TextView, type TileView } from '../../lib/deck/scene.ts';
+import { FONTS, type ControlGlyph, type GraphView, type LevelView, type NowPlayingView, type RowView, type TextView, type TileView } from '../../lib/deck/scene.ts';
 import type { Line } from '../../lib/deck/text.ts';
 import { THEME } from '../../lib/deck/theme.ts';
 import { AssetImage } from './AssetImage.tsx';
@@ -213,4 +213,16 @@ export function TileFace({ view, label, badge = null, locked = false }: TileFace
       )}
     </span>
   );
+}
+
+/** A Usage Page's rows as the Device draws them, in Device pixels. Spans, so a Page thumbnail can sit in a button. */
+export function SceneRows({ rows }: { rows: RowView[] }) {
+  return rows.map((row, r) => (
+    <span key={r} className="scene-row" style={{ left: row.rect.x, top: row.rect.y, width: row.rect.w, height: row.rect.h }}>
+      {row.texts.map((text, n) => (
+        <SceneText key={n} view={text} />
+      ))}
+      {row.bar && <span className="scene-bar" style={{ left: row.bar.x, top: row.bar.y, width: row.bar.w, height: row.bar.h, borderRadius: row.bar.radius }} />}
+    </span>
+  ));
 }

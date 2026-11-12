@@ -16,6 +16,20 @@ export async function openLayout(page: Page, path = '/') {
 
 export const status = (page: Page) => page.getByTestId('status');
 
+/** A Page's entry in the Pages column. */
+export const pageEntry = (page: Page, id: string) => page.locator(`[data-testid="page-entry"][data-page="${id}"]`);
+
+/** The Page names in the Pages column, in order. */
+export const pageTitles = (page: Page) => page.getByTestId('page-entry-title');
+
+/** Brings the Pages column out if it's folded, or hidden by the Details panel in an editor too narrow for both. */
+export async function showPages(page: Page) {
+  const toggle = page.getByTestId('pages-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+  await expect(page.getByTestId('page-strip')).toHaveAttribute('data-open', 'true');
+  await expect(page.getByTestId('page-strip')).not.toHaveAttribute('inert');
+}
+
 export async function waitEvent(page: Page, event: string, timeout = 10_000): Promise<Locator> {
   await expect(status(page)).toHaveAttribute('data-event', event, { timeout });
   return status(page);

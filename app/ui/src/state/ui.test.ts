@@ -101,3 +101,42 @@ describe('Integration settings pages', () => {
     expect(storage.getItem('touchdeck.pending-enable')).toBeNull();
   });
 });
+
+describe('the Pages column', () => {
+  const broken: Storage = {
+    length: 0,
+    clear: () => {},
+    getItem: () => {
+      throw new Error('storage is off');
+    },
+    key: () => null,
+    removeItem: () => {},
+    setItem: () => {
+      throw new Error('storage is full');
+    },
+  };
+
+  it('starts out, and this PC remembers it folded away and back', () => {
+    const prefs = memory();
+    const ui = createUiStore(() => null, () => prefs);
+    expect(ui.getState().pagesOpen).toBe(true);
+    ui.getState().setPagesOpen(false);
+    expect(ui.getState().pagesOpen).toBe(false);
+    expect(createUiStore(() => null, () => prefs).getState().pagesOpen).toBe(false);
+    ui.getState().setPagesOpen(true);
+    expect(createUiStore(() => null, () => prefs).getState().pagesOpen).toBe(true);
+  });
+
+  it('folds and unfolds without storage, or with storage that throws', () => {
+    for (const prefs of [null, broken]) {
+      const ui = createUiStore(() => null, () => prefs);
+      expect(ui.getState().pagesOpen).toBe(true);
+      expect(() => ui.getState().setPagesOpen(false)).not.toThrow();
+      expect(ui.getState().pagesOpen).toBe(false);
+    }
+  });
+
+  it('is out when the window has no storage at all', () => {
+    expect(createUiStore(() => null).getState().pagesOpen).toBe(true);
+  });
+});

@@ -165,14 +165,14 @@ test('Review Layout goes through the load flow and keeps an unsent draft until t
   await page.getByTestId('controls-review').click();
   await expect(page.getByTestId('replace-dialog')).toBeVisible();
   await page.getByTestId('keep-mine').click();
-  await expect(page.getByTestId('page-tab')).toHaveCount(1);
+  await expect(page.getByTestId('page-entry')).toHaveCount(1);
   await expect(page.getByTestId('control-review')).toContainText('No Tile on this Layout controls an Integration.');
   await expect(notice(page)).toHaveAttribute('data-state', 'no-pushed-copy');
 
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await card(page).getByTestId('controls-review').click();
   await page.getByTestId('replace').click();
-  await expect(page.getByTestId('page-tab')).toHaveCount(2);
+  await expect(page.getByTestId('page-entry')).toHaveCount(2);
   await expect(page.getByTestId('control-binding')).toHaveCount(2);
 });
 

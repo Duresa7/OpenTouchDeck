@@ -66,11 +66,11 @@ test('explains an invalid value next to its field, and Send to Device refuses un
   await expect(page.getByTestId('field-error')).toHaveText(['Give the Tile a label.', 'Choose an app.']);
   await page.getByTestId('tile-label').fill('Notes');
 
-  await page.getByTestId('page-tab').filter({ hasText: 'Media' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Media' }).click();
   await page.getByTestId('push').click();
   await waitEvent(page, 'refused');
   await expect(status(page).locator('.editor-status-text')).toHaveText('Choose an app.');
-  await expect(page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' })).toHaveAttribute('aria-current', 'true');
+  await expect(page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' })).toHaveAttribute('aria-current', 'true');
   await expect(page.getByTestId('tile-fields')).toHaveAttribute('data-id', id);
   expect(await storedAction(page, 'shortcuts', id)).toBeUndefined();
 

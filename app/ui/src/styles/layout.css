@@ -1,18 +1,25 @@
 /* The Layout screen, built from tokens.css. Never write a raw color here. */
 
+/* The Pages column, the canvas under its header, and the Details panel. Either panel folds its column to nothing and
+   the canvas takes the room. */
 .editor {
+  --pages-w: 160px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--inspector-w, 400px);
+  grid-template-columns: var(--pages-w) minmax(0, 1fr) var(--inspector-w, 400px);
   grid-template-rows: 64px minmax(0, 1fr);
   height: var(--app-height);
   overflow: clip;
   transition: grid-template-columns var(--duration-expand) var(--ease-drawer);
 }
 
+.editor.is-pages-folded {
+  --pages-w: 0px;
+}
+
 /* The Details panel slides out to the right and the canvas takes its room. The panel keeps its width as it goes,
    so its content doesn't squeeze, and turns invisible once it's out, which also takes it out of the tab order. */
 .editor.is-details-hidden {
-  grid-template-columns: minmax(0, 1fr) 0px;
+  grid-template-columns: var(--pages-w) minmax(0, 1fr) 0px;
 }
 
 .editor.is-details-hidden .inspector {
@@ -27,7 +34,7 @@ body.is-resizing .editor {
 
 /* The details panel's left edge: drag, or focus and use the arrow keys, to resize it */
 .inspector-resizer {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1 / span 2;
   justify-self: start;
   position: relative;
@@ -77,11 +84,16 @@ body.is-resizing {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.editor.is-empty > .editor-head,
+.editor.is-empty > .canvas {
+  grid-column: 1;
+}
+
 /* ---------- Header ---------- */
 
 /* The header is the container its row queries: an element can't query its own size */
 .editor-head {
-  grid-column: 1;
+  grid-column: 2;
   container: editor-head / inline-size;
   min-width: 0;
 }
@@ -260,7 +272,13 @@ body.is-resizing {
 @container editor-head (max-width: 520px) {
   .editor-head-row {
     gap: var(--space-1);
-    padding-right: var(--space-3);
+    padding: 0 var(--space-2);
+  }
+
+  /* Room for the Pages button before it; the name keeps the same width for its letters */
+  .device-title {
+    min-width: 88px;
+    padding-left: 4px;
   }
 }
 
@@ -572,7 +590,7 @@ body.is-resizing {
 /* ---------- Canvas ---------- */
 
 .canvas {
-  grid-column: 1;
+  grid-column: 2;
   grid-row: 2;
   position: relative;
   display: flex;
@@ -820,64 +838,133 @@ body.is-resizing {
   color: var(--danger-ink);
 }
 
-/* ---------- Page tabs ---------- */
+/* ---------- Pages column ---------- */
 
-.page-tabs {
+/* Between the nav rail and the canvas, like a presentation app's slide list. It keeps its width and slides out to
+   the left as its column folds, then turns invisible, as the Details panel does on the right. */
+.page-strip {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  justify-self: end;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: var(--space-1);
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 160px;
+  min-height: 0;
+  padding: var(--space-3) 10px;
+  overflow: hidden auto;
+  background: var(--surface-inset);
+  box-shadow: inset -1px 0 0 var(--line);
 }
 
-.page-tab {
+.editor.is-pages-folded .page-strip {
+  visibility: hidden;
+  transition: visibility 0ms var(--duration-expand);
+}
+
+.page-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.page-entry {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 34px;
-  padding: 0 12px;
+}
+
+.page-entry-button {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 4px 6px;
+  width: 100%;
+  padding: 6px 6px 6px 2px;
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--ink-2);
-  max-width: 180px;
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
 }
 
-.page-tab-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 @media (hover: hover) and (pointer: fine) {
-  .page-tab:hover {
-    color: var(--ink);
+  .page-entry:hover .page-entry-button {
     background: var(--fill-hover);
   }
 }
 
-.page-tab.is-current {
+.page-entry:has([data-popup-open]) .page-entry-button {
+  background: var(--fill-hover);
+}
+
+.page-entry-button[aria-current='true'] {
   color: var(--ink);
 }
 
-/* The Device's own pager pill marks the current Page */
-.page-tab.is-current::after {
-  content: '';
+.page-entry-number {
+  align-self: start;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-align: right;
+}
+
+/* The Device's screen at its own shape, drawn in Device pixels and scaled down */
+.page-thumb {
+  position: relative;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--screen-bg);
+}
+
+/* The current Page: an accent ring, the pager's color, with a gap of the column behind it */
+.page-entry-button[aria-current='true'] .page-thumb {
+  box-shadow:
+    0 0 0 2px var(--surface-inset),
+    0 0 0 4px var(--accent);
+}
+
+.page-thumb-screen {
   position: absolute;
-  left: 50%;
-  bottom: -6px;
-  width: 18px;
-  height: 4px;
-  margin-left: -9px;
-  border-radius: var(--radius-chip);
-  background: var(--accent);
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  color: var(--screen-ink);
+  font-family: var(--screen-font);
+  font-stretch: 100%;
+  pointer-events: none;
+}
+
+.thumb-tile {
+  cursor: inherit;
+  transition: none;
+}
+
+.page-entry-name {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  font-weight: var(--weight-medium);
+}
+
+.page-entry-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .page-tag {
+  flex: none;
   padding: 0 6px;
   border-radius: var(--radius-chip);
   background: var(--fill-active);
@@ -886,11 +973,90 @@ body.is-resizing {
   line-height: var(--leading-12);
 }
 
+/* The entry's menu button, over the thumbnail's top right corner. It shows on hover and keyboard focus, and while a
+   menu of its Page is open; a touch screen, with no hover, always shows it. */
+.page-entry-menu {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line);
+  opacity: 0;
+  transition:
+    opacity var(--duration-hover) var(--ease-color),
+    background-color var(--duration-hover) var(--ease-color),
+    color var(--duration-hover) var(--ease-color);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .page-entry:hover .page-entry-menu,
+  .page-entry-menu:hover {
+    opacity: 1;
+    background: var(--surface-raised);
+  }
+}
+
+@media (hover: none) {
+  .page-entry-menu {
+    opacity: 1;
+  }
+}
+
+.page-entry:has(:focus-visible) .page-entry-menu,
+.page-entry:has([data-popup-open]) .page-entry-menu {
+  opacity: 1;
+}
+
+.page-menu {
+  min-width: 200px;
+}
+
+.menu-item.is-danger .menu-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--danger-ink);
+}
+
+.menu-item.is-danger[data-disabled] .menu-name {
+  color: var(--ink-disabled);
+}
+
+/* Add Page: a dashed slot at the end of the list */
 .page-add {
-  margin-left: var(--space-2);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: 40px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) var(--ease-color),
+    color var(--duration-hover) var(--ease-color);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .page-add:hover {
+    background: var(--fill-hover);
+    color: var(--ink);
+  }
 }
 
 .page-add[aria-disabled='true'] {
+  background: transparent;
+  border-color: var(--line);
   color: var(--ink-disabled);
   cursor: not-allowed;
 }
@@ -1365,7 +1531,7 @@ body.is-resizing {
 /* ---------- Inspector ---------- */
 
 .inspector {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1 / span 2;
   justify-self: start;
   /* Fills its column as it narrows, and keeps its width as the column closes to nothing */
@@ -1443,16 +1609,6 @@ body.is-resizing {
   background: var(--surface);
 }
 
-.inspector-foot.is-end {
-  justify-content: flex-end;
-}
-
-/* Remove Page: a trash can that asks once more, in words, before it removes */
-.page-remove {
-  gap: 6px;
-  min-width: 32px;
-  padding: 0 8px;
-}
 
 .inspector-details {
   display: flex;

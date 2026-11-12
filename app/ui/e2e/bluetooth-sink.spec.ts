@@ -21,7 +21,7 @@ test('a Device without the advertised sink hides Bluetooth', async ({ page }) =>
   await page.goto('/');
   await page.getByRole('button', { name: 'Edit Studio', exact: true }).click();
   await page.getByTestId('start-starter').click();
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' }).click();
   await addTile(page, 'key');
   await expect(page.getByTestId('action-sink')).toHaveCount(0);
 });

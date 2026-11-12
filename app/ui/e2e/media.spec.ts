@@ -78,7 +78,7 @@ async function addPreset(page: Page, integration: string, preset: string, row: n
 async function onShortcuts(page: Page) {
   await openLayout(page);
   await page.getByTestId('start-starter').click();
-  await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
+  await page.getByTestId('page-entry').filter({ hasText: 'Shortcuts' }).click();
 }
 
 test('a Volume bar from Add Tile reaches the Device as a bar a drag can set', async ({ page }) => {

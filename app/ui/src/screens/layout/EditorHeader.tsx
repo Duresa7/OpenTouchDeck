@@ -2,7 +2,7 @@ import clsx from 'clsx';
 import { Menu } from '@base-ui/react/menu';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
-import { Eye, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, RectangleHorizontal, RectangleVertical } from 'lucide-react';
+import { Eye, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RectangleHorizontal, RectangleVertical } from 'lucide-react';
 import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { saveState, type EditorStore } from '../../lib/editor/store.ts';
 import type { Orientation } from '../../lib/layout/model.ts';
@@ -12,6 +12,7 @@ import { deviceStatus } from '../home-model.ts';
 import { DeviceName } from './DeviceName.tsx';
 import { useEditorState } from './editor.ts';
 import { DETAILS_ID } from './Inspector.tsx';
+import { PAGES_ID } from './PageStrip.tsx';
 import { SendButton } from './SendButton.tsx';
 import { Tip } from './Tip.tsx';
 
@@ -34,6 +35,44 @@ function DetailsToggle({ store }: { store: EditorStore }) {
           setOpen(!open);
         }}
         data-testid="details-toggle"
+      >
+        <Icon size={18} strokeWidth={1.9} aria-hidden />
+      </button>
+    </Tip>
+  );
+}
+
+/** Whether the Pages column is out, and whether the editor is too narrow for it beside the Details panel. */
+export interface PagesState {
+  shown: boolean;
+  crowded: boolean;
+}
+
+/**
+ * Folds the Pages column away and brings it back. This PC remembers which. In an editor too narrow for both panels,
+ * bringing it back hides the Details panel, and with it Add Tile.
+ */
+function PagesToggle({ store, pages }: { store: EditorStore; pages: PagesState }) {
+  const setOpen = useUi((s) => s.setPagesOpen);
+  const setDetailsOpen = useUi((s) => s.setDetailsOpen);
+  const open = pages.shown;
+  const label = open ? 'Hide Pages' : 'Show Pages';
+  const Icon = open ? PanelLeftClose : PanelLeftOpen;
+  return (
+    <Tip label={label}>
+      <button
+        type="button"
+        className={clsx(button({ kind: 'icon' }), 'pages-toggle')}
+        aria-label={label}
+        aria-expanded={open}
+        aria-controls={PAGES_ID}
+        onClick={() => {
+          setOpen(!open);
+          if (open || !pages.crowded) return;
+          if (store.getState().adding !== null) store.closeAdd();
+          setDetailsOpen(false);
+        }}
+        data-testid="pages-toggle"
       >
         <Icon size={18} strokeWidth={1.9} aria-hidden />
       </button>
@@ -100,11 +139,12 @@ function LayoutMenu({ store, device, connected, onImport, onExport }: { store: E
 export interface EditorHeaderProps {
   store: EditorStore;
   device: DeviceSummary;
+  pages: PagesState;
   onImport(): void;
   onExport(): void;
 }
 
-export function EditorHeader({ store, device, onImport, onExport }: EditorHeaderProps) {
+export function EditorHeader({ store, device, pages, onImport, onExport }: EditorHeaderProps) {
   const name = device.name ?? 'Unnamed Device';
   const status = deviceStatus(device);
   const orientation = useEditorState(store, (s) => s.orientation);
@@ -116,6 +156,7 @@ export function EditorHeader({ store, device, onImport, onExport }: EditorHeader
   return (
     <header className="editor-head" data-testid="editor-head" data-save-state={saved}>
       <div className="editor-head-row">
+        {hasDraft && <PagesToggle store={store} pages={pages} />}
         <DeviceName device={device} />
         <span className="visually-hidden" data-testid="connection" data-tone={status.tone}>
           {name}: {status.words}
