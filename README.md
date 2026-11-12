@@ -56,6 +56,10 @@ The packaged app is Windows x64. Linux source builds need a desktop session and 
 
 Open TouchDeck is licensed under the [Apache License 2.0](LICENSE).
 
+## Code signing policy
+
+The Windows programs and installers are not Authenticode-signed yet. The [code signing policy](docs/code-signing.md) says what will be signed, who approves it, where signed builds come from and what the app sends over the network.
+
 ## Icon sources
 
 The icon picker searches [Simple Icons](https://simpleicons.org) and [selfh.st/icons](https://selfh.st/icons) by selfh.st. Simple Icons uses CC0 1.0 for most icons; individual licenses and attribution links are carried in the [bundled catalog](app/crates/td-host/src/catalog/index.json). selfh.st icons use [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Icons are resized, padded or tinted to fit a Tile, so they are modified from the originals. Logos are trademarks of their owners. Open TouchDeck is not affiliated with or endorsed by them.

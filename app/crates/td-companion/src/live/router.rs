@@ -18,7 +18,7 @@ use td_link::{Session, xfer};
 
 use super::covers::{COVER_SIDE_MIN, Cover, CoverStore};
 use crate::devices::{LayoutSource, ShownLayout};
-use crate::features::integrations::Controls;
+use crate::integrations::Controls;
 
 /// How long a Device's `layout state` reply may take.
 const LAYOUT_STATE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -2159,9 +2159,15 @@ mod tests {
         let mut router = Router::default();
         let t0 = Instant::now();
         let samples = numbers(&[("cpu_pct", 1, 7.0)]);
-        device.lose_sent_chunks([0; 5]);
+        device.lose_console_replies(1);
         router.deliver("d", 1, &session, CAPS, &samples, t0);
         assert!(router.read_failed("d", 1));
+        // Fail the state query before a transfer opens, keeping this session usable.
+        // Clear its stale console waiter; the following ping fences the console reply.
+        session.send_line("layout state").unwrap();
+        session
+            .call(&serde_json::json!({"m":"ping"}), Duration::from_secs(1))
+            .unwrap();
         router.layout_changed("d");
         router.deliver(
             "d",

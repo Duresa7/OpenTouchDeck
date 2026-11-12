@@ -1,7 +1,7 @@
 use super::*;
 use crate::actions::{Actions, AllowedAction, GrantStore};
 use crate::devices::{Config, DeviceManager, LinkState};
-use crate::features::integrations::Service;
+use crate::integrations::Service;
 use crate::link::Links;
 use crate::live::{Live, fake::FakeControl};
 use crate::{api::Events, clock::Clock};

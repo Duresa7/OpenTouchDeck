@@ -1,0 +1,536 @@
+name: release
+
+# The Open TouchDeck 2.0 release: an MSI for the current user, built with WiX. docs/packaging.md describes it.
+#
+#   build -> sign hook (programs) -> package -> sign hook (installer) -> updater signature -> verify -> publish
+#
+# A v2 tag on main runs every stage and ends with a draft release. A run from the Actions tab, or a pull request
+# that touches these files, is a dry run: it builds, packages and verifies the same way, signs the update with a
+# throwaway key, and never publishes.
+#
+# Every job runs on a GitHub-hosted runner and none restores a cache.
+# For now the MSI is a pipeline proof, not a product: it installs td-companion.exe alone.
+on:
+  push:
+    tags: ["v2.*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/sign-hook.yml
+      - .github/release-signer/**
+      - app/installer/**
+      - app/scripts/check_exe.ps1
+      - app/scripts/msi_check.ps1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Only a tag is a release. Every other run is a dry run.
+  IS_RELEASE: ${{ github.event_name == 'push' }}
+
+jobs:
+  # The Rust checks again, on the exact commit a tag releases and with no cache.
+  rust:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/rust.yml
+
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      msi-version: ${{ steps.identity.outputs.msi-version }}
+      revision: ${{ steps.identity.outputs.revision }}
+      exe-sha256: ${{ steps.stage.outputs.sha256 }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      # publish reads the release notes from an annotated tag. Refuse a lightweight one here, before the build.
+      - name: Check the release tag is annotated
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ref = gh api "repos/$env:GH_REPO/git/ref/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ($ref.object.type -ne 'tag') { throw "$env:RELEASE_TAG is a lightweight tag. Releases need an annotated tag." }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # rustup ships on the runner. It installs the toolchain app/rust-toolchain.toml pins.
+      - name: Install the pinned Rust toolchain
+        shell: pwsh
+        working-directory: app
+        run: |
+          rustup toolchain install --no-self-update
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustc --version --verbose
+
+      - name: Check what is being built
+        id: identity
+        shell: pwsh
+        working-directory: app
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $version = ($metadata.packages | Where-Object name -eq 'td-companion').version
+          # An MSI version is three numbers: 2.0.0-rc.1 installs as 2.0.0.
+          $msiVersion = ($version -split '[-+]')[0]
+          if ($msiVersion -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,5}$') { throw "Version $version has no three-number form an MSI accepts." }
+          $revision = git rev-parse HEAD
+          if ($env:IS_RELEASE -eq 'true') {
+            if ($env:RELEASE_TAG -cne "v$version") { throw "Tag $env:RELEASE_TAG is not v$version, the version of td-companion." }
+            # Release builds come only from tags on main.
+            git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            git merge-base --is-ancestor HEAD origin/main
+            if ($LASTEXITCODE) { throw "Tagged commit $revision is not on origin/main." }
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "msi-version=$msiVersion" >> $env:GITHUB_OUTPUT
+          "revision=$revision" >> $env:GITHUB_OUTPUT
+          "Building td-companion $version from $revision (release: $env:IS_RELEASE)"
+
+      - name: Build the release program
+        working-directory: app
+        run: cargo build --release --locked --package td-companion
+
+      - name: Check the program's version resource and subsystem
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: ./app/scripts/check_exe.ps1 -Path app/target/release/td-companion.exe -Subsystem gui -Version $env:VERSION
+
+      - name: Collect the unsigned program
+        id: stage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/unsigned-binaries"
+          Copy-Item -LiteralPath app/target/release/td-companion.exe -Destination $out
+          $hash = (Get-FileHash -LiteralPath "$out/td-companion.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "td-companion.exe sha256 $hash"
+
+      # The unsigned programs are a workflow artifact before anything signs them: a signing service fetches them
+      # from GitHub by this artifact's id, which proves this run built them.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: unsigned-binaries
+          path: ${{ runner.temp }}/unsigned-binaries
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 90 || 3 }}
+
+  sign-binaries:
+    name: sign hook (programs)
+    needs: build
+    permissions:
+      contents: read
+      actions: read
+      # Uncomment with sign-hook.yml's Azure block: a called workflow can't have more permissions than its caller.
+      # id-token: write
+    uses: ./.github/workflows/sign-hook.yml
+    with:
+      unsigned-artifact: unsigned-binaries
+      unsigned-artifact-id: ${{ needs.build.outputs.artifact-id }}
+      signed-artifact: binaries
+      signpath-artifact-configuration: programs
+
+  package:
+    needs: [build, sign-binaries]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      msi: ${{ steps.msi.outputs.name }}
+      msi-sha256: ${{ steps.msi.outputs.sha256 }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      # 7.0.1 is free for this project under the WiX maintenance fee terms: see docs/packaging.md before changing it.
+      WIX_VERSION: 7.0.1
+      VERSION: ${{ needs.build.outputs.version }}
+      MSI_VERSION: ${{ needs.build.outputs.msi-version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binaries
+          path: binaries
+
+      - name: Install WiX
+        shell: pwsh
+        run: |
+          dotnet tool install wix --version $env:WIX_VERSION --tool-path "$env:RUNNER_TEMP/wix"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/wix/wix.exe" --version
+
+      # -acceptEula wix7 accepts the WiX Open Source Maintenance Fee EULA. This project owes no fee under it.
+      - name: Build the MSI
+        id: msi
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = "OpenTouchDeck-$env:VERSION-windows-x64.msi"
+          $out = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/unsigned-installer"
+          & "$env:RUNNER_TEMP/wix/wix.exe" build -acceptEula wix7 -arch x64 `
+            -d "Version=$env:MSI_VERSION" -d "CompanionExe=$(Resolve-Path binaries/td-companion.exe)" `
+            -o "$out/$name" app/installer/OpenTouchDeck.wxs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # WiX leaves a .wixpdb beside the MSI. Only the MSI moves on.
+          Get-ChildItem -LiteralPath $out -Exclude $name | Remove-Item -Force
+          $hash = (Get-FileHash -LiteralPath "$out/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "$name sha256 $hash"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: unsigned-installer
+          path: ${{ runner.temp }}/unsigned-installer
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 90 || 3 }}
+
+  sign-installer:
+    name: sign hook (installer)
+    needs: package
+    permissions:
+      contents: read
+      actions: read
+      # Uncomment with sign-hook.yml's Azure block: a called workflow can't have more permissions than its caller.
+      # id-token: write
+    uses: ./.github/workflows/sign-hook.yml
+    with:
+      unsigned-artifact: unsigned-installer
+      unsigned-artifact-id: ${{ needs.package.outputs.artifact-id }}
+      signed-artifact: installer
+      signpath-artifact-configuration: installer
+
+  # The update signature the app's updater checks (ADR 0005). A release signs with the existing updater key from
+  # the release environment. A dry run cannot reach that key: it signs with a throwaway key made here.
+  updater-signature:
+    name: updater signature
+    needs: [build, package, sign-installer]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ${{ github.event_name == 'push' && 'release' || '' }}
+    permissions:
+      contents: read
+    outputs:
+      installer-sha256: ${{ steps.check.outputs.sha256 }}
+    env:
+      MSI: ${{ needs.package.outputs.msi }}
+      UNSIGNED_SHA256: ${{ needs.package.outputs.msi-sha256 }}
+      VERSION: ${{ needs.build.outputs.version }}
+      AUTHENTICODE: ${{ github.event_name == 'push' && vars.CODE_SIGNING_PROVIDER || '' }}
+    steps:
+      # Only the signer: two Node.js files with no packages to install.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.revision }}
+          persist-credentials: false
+          sparse-checkout: .github/release-signer
+          filter: blob:none
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer
+          path: release-assets
+      - name: Check the installer is the one the package job built
+        id: check
+        run: |
+          set -euo pipefail
+          [ "$(ls -A release-assets)" = "$MSI" ]
+          sha256=$(sha256sum "release-assets/$MSI" | cut -d' ' -f1)
+          if [ -z "$AUTHENTICODE" ]; then
+            # Nothing signed it since, so it is byte for byte the package job's file.
+            [ "$sha256" = "$UNSIGNED_SHA256" ]
+          fi
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+      - name: Sign the installer with the updater key
+        if: github.event_name == 'push'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          node .github/release-signer/cli.mjs sign --app-version "$VERSION" "release-assets/$MSI" >/dev/null
+      - name: Sign the installer with a throwaway key
+        if: github.event_name != 'push'
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/dry-run-updater.key"
+          node .github/release-signer/cli.mjs generate --write-keys "$key" >/dev/null
+          node .github/release-signer/cli.mjs sign --app-version "$VERSION" --private-key-path "$key" "release-assets/$MSI" >/dev/null
+          rm "$key"
+          # verify needs the public half. It is named so nobody takes it for the real key.
+          mv "$key.pub" release-assets/DRY-RUN-ONLY-updater.pub
+      - name: Keep the signature
+        run: |
+          set -euo pipefail
+          mkdir signature
+          mv "release-assets/$MSI.sig" signature/
+          if [ -f release-assets/DRY-RUN-ONLY-updater.pub ]; then mv release-assets/DRY-RUN-ONLY-updater.pub signature/; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: updater-signature
+          path: signature
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 90 || 3 }}
+
+  verify-signature:
+    name: verify the update signature
+    needs: [build, package, updater-signature]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      MSI: ${{ needs.package.outputs.msi }}
+      SIGNED_SHA256: ${{ needs.updater-signature.outputs.installer-sha256 }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.revision }}
+          persist-credentials: false
+          sparse-checkout: .github/release-signer
+          filter: blob:none
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer
+          path: release-assets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: updater-signature
+          path: signature
+      # minisign from Ubuntu's archive: a second implementation, so the repo's signer does not check itself.
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+      - name: Verify the signature with minisign
+        run: |
+          set -euo pipefail
+          echo "$SIGNED_SHA256  release-assets/$MSI" | sha256sum --strict -c -
+          # The signer wraps keys and signatures in base64, as the Tauri CLI did. minisign reads the text inside.
+          base64 -d .github/release-signer/updater.pub > committed.pub
+          base64 -d "signature/$MSI.sig" > installer.minisig
+          if [ "$IS_RELEASE" = true ]; then
+            # A release must verify against the committed updater key, the one every installed copy trusts.
+            trusted=committed.pub
+          else
+            base64 -d signature/DRY-RUN-ONLY-updater.pub > trusted.pub
+            trusted=trusted.pub
+            if minisign -V -p committed.pub -m "release-assets/$MSI" -x installer.minisig >/dev/null 2>&1; then
+              echo "::error::A throwaway signature verified against the committed updater key"
+              exit 1
+            fi
+            echo "The committed updater key rejects the throwaway signature, as it must."
+          fi
+          comment=$(minisign -V -Q -p "$trusted" -m "release-assets/$MSI" -x installer.minisig)
+          echo "Trusted comment: $comment"
+          # The signature binds the file name and the version, so it cannot be moved to another file or release.
+          [[ "$comment" == *$'\t'"file:$MSI"$'\t'"version:$VERSION" ]]
+          # One changed byte must fail.
+          cp "release-assets/$MSI" tampered.msi
+          printf '\xff' | dd of=tampered.msi bs=1 seek=1024 conv=notrunc status=none
+          if cmp -s "release-assets/$MSI" tampered.msi; then printf '\x00' | dd of=tampered.msi bs=1 seek=1024 conv=notrunc status=none; fi
+          if minisign -V -p "$trusted" -m tampered.msi -x installer.minisig >/dev/null 2>&1; then
+            echo "::error::A changed installer still verified"
+            exit 1
+          fi
+          echo "A changed installer fails verification."
+
+  verify-install:
+    name: verify install and uninstall (windows-latest)
+    needs: [build, package, updater-signature]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      MSI: ${{ needs.package.outputs.msi }}
+      SIGNED_SHA256: ${{ needs.updater-signature.outputs.installer-sha256 }}
+      EXE_SHA256: ${{ needs.build.outputs.exe-sha256 }}
+      VERSION: ${{ needs.build.outputs.version }}
+      AUTHENTICODE: ${{ github.event_name == 'push' && vars.CODE_SIGNING_PROVIDER || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binaries
+          path: binaries
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer
+          path: release-assets
+      - name: Check the files and their Authenticode state
+        id: files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = "release-assets/$env:MSI"
+          $msiHash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($msiHash -ne $env:SIGNED_SHA256) { throw 'The installer is not the one that got the update signature.' }
+          $exe = 'binaries/td-companion.exe'
+          $exeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          # With no provider both files are unsigned, and the program is byte for byte the built one.
+          # With a provider both carry a valid signature.
+          $want = if ($env:AUTHENTICODE) { 'Valid' } else { 'NotSigned' }
+          if (-not $env:AUTHENTICODE -and $exeHash -ne $env:EXE_SHA256) { throw 'The program is not the one the build job made.' }
+          foreach ($file in @($exe, $msi)) {
+            $status = (Get-AuthenticodeSignature -LiteralPath $file).Status
+            "$(Split-Path -Leaf $file): Authenticode $status"
+            if ($status -ne $want) { throw "$file is $status, expected $want." }
+          }
+          "exe-sha256=$exeHash" >> $env:GITHUB_OUTPUT
+      - name: Install for the current user, check, and uninstall
+        shell: pwsh
+        env:
+          PACKAGED_EXE_SHA256: ${{ steps.files.outputs.exe-sha256 }}
+        run: |
+          ./app/scripts/msi_check.ps1 -Msi "release-assets/$env:MSI" -Expect install -Version $env:VERSION `
+            -ExeSha256 $env:PACKAGED_EXE_SHA256 -ArtifactDir "$env:RUNNER_TEMP/msi-check"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: msi-check-install
+          path: ${{ runner.temp }}/msi-check
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Windows Server 2022 is build 20348, below Windows 11's 22000, as every Windows 10 is.
+  verify-old-windows:
+    name: verify an older Windows refuses it (windows-2022)
+    needs: [build, package, updater-signature]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      MSI: ${{ needs.package.outputs.msi }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer
+          path: release-assets
+      - name: Check the install is refused
+        shell: pwsh
+        run: |
+          ./app/scripts/msi_check.ps1 -Msi "release-assets/$env:MSI" -Expect refuse-old-windows `
+            -ArtifactDir "$env:RUNNER_TEMP/msi-check"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: msi-check-old-windows
+          path: ${{ runner.temp }}/msi-check
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    name: publish a draft release
+    needs: [rust, build, package, updater-signature, verify-signature, verify-install, verify-old-windows]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+      TAGGED_SHA: ${{ needs.build.outputs.revision }}
+      MSI: ${{ needs.package.outputs.msi }}
+      SIGNED_SHA256: ${{ needs.updater-signature.outputs.installer-sha256 }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer
+          path: release-assets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: updater-signature
+          path: signature
+
+      - name: Check the assets belong to this tag and collect them
+        run: |
+          set -euo pipefail
+          echo "$SIGNED_SHA256  release-assets/$MSI" | sha256sum --strict -c -
+          tag=$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG")
+          [ "$(jq -r .object.type <<< "$tag")" = tag ]
+          annotation=$(gh api "repos/$GH_REPO/git/tags/$(jq -r .object.sha <<< "$tag")")
+          [ "$(jq -r .object.type <<< "$annotation")" = commit ]
+          [ "$(jq -r .object.sha <<< "$annotation")" = "$TAGGED_SHA" ]
+          # The tag's message is the release notes, without a signed tag's signature block.
+          jq -r '.message | split("-----BEGIN PGP SIGNATURE-----")[0] | split("-----BEGIN SSH SIGNATURE-----")[0] | sub("\\s+$"; "")' <<< "$annotation" > "$RUNNER_TEMP/release-notes.md"
+          cp "signature/$MSI.sig" release-assets/
+          [ -s "release-assets/$MSI.sig" ]
+          (cd release-assets && sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS")
+          mv "$RUNNER_TEMP/SHA256SUMS" release-assets/SHA256SUMS
+
+      - name: Upload every asset to a draft release
+        run: |
+          set -euo pipefail
+          if state=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$state" != "true" ]; then
+              echo "::error::Release $RELEASE_TAG is already published; refusing to replace its assets"
+              exit 1
+            fi
+            gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+              [ -f "release-assets/$name" ] || gh release delete-asset "$RELEASE_TAG" "$name" --yes
+            done
+            gh release edit "$RELEASE_TAG" --title "Open TouchDeck ${RELEASE_TAG#v}" --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "Open TouchDeck ${RELEASE_TAG#v}" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
+
+      - name: Check draft assets
+        run: |
+          set -euo pipefail
+          uploaded=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | "\(.name) \(.size)"' | sort)
+          expected=$(cd release-assets && for name in *; do echo "$name $(stat -c %s "$name")"; done | sort)
+          if [ "$uploaded" != "$expected" ]; then
+            echo "::error::Uploaded assets differ from the build"
+            diff <(echo "$expected") <(echo "$uploaded") || true
+            exit 1
+          fi
+          gh release view "$RELEASE_TAG" --json url,isDraft,tagName

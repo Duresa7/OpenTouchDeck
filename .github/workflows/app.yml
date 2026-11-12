@@ -1,5 +1,8 @@
 name: app
 
+# The frozen Electron shell and React UI. They get no new features and are deleted at the 2.0 cutover; until
+# then these checks run when someone touches them. The Rust workspace has its own workflow, rust.yml.
+# Pull requests and main call this with caches on. A release calls it with caches off.
 on:
   workflow_call:
     inputs:
@@ -15,13 +18,13 @@ on:
         description: Run the UI e2e specs on the fake Companion
         type: boolean
         default: true
+      cache:
+        description: Restore the pnpm and Rust caches. Pull request and main checks only, never a release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
-
-concurrency:
-  group: app-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   source:
@@ -54,68 +57,23 @@ jobs:
           [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
-  app:
+  checks:
     needs: source
-    name: ${{ matrix.os }}
+    name: lint and unit tests ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(inputs.os) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: app
-    env:
-      CARGO_TERM_COLOR: always
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
-      # Python on Windows decodes tool output with the ANSI code page unless told to use UTF-8.
-      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.source.outputs.revision }}
           persist-credentials: false
-
-      # Windows builds Rust on a Dev Drive: ReFS, with Defender scanning it asynchronously.
-      # It mounts beside the checkout so the drive's protected System Volume Information folder stays out of the Rust cache.
-      - uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
-        if: runner.os == 'Windows'
-        with:
-          drive-size: 25GB
-          drive-path: ${{ runner.temp }}/dev-drive.vhdx
-          mount-path: ${{ github.workspace }}/../dev-drive
-          trusted-dev-drive: true
-      - name: Point app/target at the Dev Drive
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $target = New-Item -ItemType Directory -Force -Path "$env:DEV_DRIVE/target"
-          New-Item -ItemType Junction -Path target -Target $target.FullName | Out-Null
-
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.13"
-      - name: Check every app version agrees
-        run: python scripts/release_version.py check
-      - name: Test the release version script
-        run: python -B -m unittest discover -s scripts/tests -p "test_release_version.py" -v
-
-      - name: Install Linux serial prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libudev-dev
-
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          # On Windows, cache the Dev Drive folder itself, not the app/target junction that points at it.
-          workspaces: ${{ runner.os == 'Windows' && 'app -> ../../dev-drive/target' || 'app' }}
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
@@ -124,44 +82,58 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ inputs.cache && 'pnpm' || '' }}
           cache-dependency-path: app/pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm test
-      - name: Test the packaging recipe's disposable signing
-        run: python -B -m unittest discover -s scripts/tests -p "test_package_signing.py" -v
-      - name: Test the packaging, catalog and Icon pack scripts
-        run: |
-          python -B -m unittest discover -s scripts/tests -p "test_package_windows.py" -v
-          python -B -m unittest discover -s scripts/tests -p "test_generate_catalog.py" -v
-          python -B -m unittest discover -s scripts/tests -p "test_generate_packs.py" -v
-      - name: Test the release workflow steps
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -B -m unittest discover -s scripts/tests -p "test_release_workflow.py" -v 2>&1 | tee "$RUNNER_TEMP/release-workflow-tests.log"
-          # These tests skip when bash, jq or node is missing. A skip here would hide a broken release workflow.
-          if grep -q skipped "$RUNNER_TEMP/release-workflow-tests.log"; then
-            echo "::error::A release workflow test was skipped; it needs bash, jq and node"
-            exit 1
-          fi
+
+  electron:
+    needs: source
+    name: electron specs
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: app
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.revision }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache: ${{ inputs.cache }}
+          cache-key: electron
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: app/package.json
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: ${{ inputs.cache && 'pnpm' || '' }}
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
       - name: Build the UI that the Companion embeds
         run: pnpm build:ui
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace -- -D warnings
-      - run: cargo test --workspace
       - name: Build the Companion for Electron specs
-        if: runner.os == 'Windows'
         run: cargo build -p td-companion --features test-hooks
+      # The Rust workflow tests the Companion without a built UI. This runs the same test on every real asset.
+      - name: Test the Companion serves the built UI
+        run: cargo test -p td-companion --test embedded_ui
       - name: Run the Electron Playwright specs
-        if: runner.os == 'Windows'
         run: pnpm --filter @touchdeck/electron e2e
       # Each failed Electron spec leaves its error context and the Companion and Electron logs here.
       - name: Keep the output of failed Electron specs
-        if: failure() && runner.os == 'Windows'
+        if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: electron-e2e-output
@@ -172,12 +144,12 @@ jobs:
 
   e2e:
     needs: source
-    name: e2e ${{ matrix.shard }}/3
+    name: e2e ${{ matrix.shard }}/4
     if: inputs.e2e
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -196,12 +168,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ inputs.cache && 'pnpm' || '' }}
           cache-dependency-path: app/pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile --filter touchdeck-ui
       - name: Run the UI e2e specs on the fake Companion
-        run: pnpm e2e:ui --shard=${{ matrix.shard }}/3
+        run: pnpm e2e:ui --shard=${{ matrix.shard }}/4
 
       # playwright.config.ts keeps a trace for each failed spec; without this they die with the runner.
       - name: Keep the traces of failed specs

@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "td_link.h"
+#include "td_transfer.h"
 
 bool td_link_v2_selected(void);
 uint32_t td_link_v2_session(void);
@@ -38,15 +39,17 @@ void td_link_v2_fail(cJSON *reply, const char *reason, const char *error);
 /* True when the request has `m`, no other field outside `allowed`, and no key twice. */
 bool td_link_v2_fields(const cJSON *request, const char *const *allowed, size_t count);
 
-/* A transfer belongs to the carrier connection whose request opened it. Claim records the frame being handled as its
- * origin. Ours is true while the frame being handled has that origin: the link drops chunk and ack frames that
- * don't. Live is false once that connection has ended, and the transfer is then cut. */
-void td_link_transfer_claim(void);
-bool td_link_transfer_ours(void);
-bool td_link_transfer_live(void);
+/* A carrier connection's origin: the carrier and its generation, never 0. td_link_origin_current is the connection
+ * of the frame being handled, or 0 while the link has no carrier. td_link_origin_live is false once that connection
+ * has ended (td_link_carrier_offline). The open transfer remembers the origin that opened it (td_transfer.h). */
+uint32_t td_link_origin_current(void);
+bool td_link_origin_live(uint32_t origin);
 
-/* Chunk and ack frames, and the periodic work of a transfer: the chunks of a get that are due, and the abort of a
- * transfer that stopped moving. */
+/* The one open transfer of the link (td_link_transfer.c), which the file handlers open. */
+td_transfer_t *td_link_transfer(void);
+
+/* Chunk and ack frames, and the periodic work of a transfer: the chunks of a get that are due, and the cut of a
+ * transfer whose connection ended or that stopped moving. Chunks and acks from another connection are dropped. */
 void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len);
 void td_link_files_ack(const uint8_t *payload, size_t len);
 void td_link_files_service(uint32_t now_ms);

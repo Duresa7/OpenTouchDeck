@@ -73,10 +73,6 @@ impl ListingBudget {
     }
 }
 
-fn transfer_deadline(bytes: usize) -> Instant {
-    Instant::now() + Duration::from_secs(5 + (bytes as u64).div_ceil(4096))
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum XferError {
     Link(LinkError),
@@ -257,17 +253,19 @@ pub fn put_bytes(
         check_layout_orientation(&layout, orientation)?;
     }
     let started = Instant::now();
-    let transfer = session.transfer()?;
+    let mut transfer = session.transfer()?;
     let request = json!({
         "m": "layout.put",
         "orientation": orientation_name(orientation),
         "bytes": data.len(),
         "crc32": crc32(data),
     });
-    let opened: Opened = session.call(&request, REQUEST_TIMEOUT)?.fields()?;
+    let opened: Opened = transfer
+        .begin(|| session.call(&request, REQUEST_TIMEOUT))?
+        .fields()?;
     let (chunks, retransmits) = send_chunks(&transfer, opened.xfer, data)?;
-    let state: LayoutState = session
-        .call(&json!({"m": "xfer.end", "xfer": opened.xfer}), END_TIMEOUT)?
+    let state: LayoutState = transfer
+        .finish(|| session.call(&json!({"m": "xfer.end", "xfer": opened.xfer}), END_TIMEOUT))?
         .fields()?;
     Ok(PutReport {
         state,
@@ -283,7 +281,7 @@ pub(crate) fn send_chunks(
     xfer: u8,
     data: &[u8],
 ) -> Result<(u16, u32), XferError> {
-    let deadline = transfer_deadline(data.len());
+    let deadline = transfer.data_deadline(data.len());
     let mut progress = Instant::now();
     let count = chunk_count(data.len());
     let chunk = |idx: u16| {
@@ -352,12 +350,14 @@ pub(crate) fn send_chunks(
 /// Pulls the layout the deck stores for `orientation` and checks its size and CRC-32.
 pub fn get_layout(session: &Session, orientation: Orientation) -> Result<GetReport, XferError> {
     let started = Instant::now();
-    let transfer = session.transfer()?;
-    let opened: Opened = session
-        .call(
-            &json!({"m": "layout.get", "orientation": orientation_name(orientation)}),
-            REQUEST_TIMEOUT,
-        )?
+    let mut transfer = session.transfer()?;
+    let opened: Opened = transfer
+        .begin(|| {
+            session.call(
+                &json!({"m": "layout.get", "orientation": orientation_name(orientation)}),
+                REQUEST_TIMEOUT,
+            )
+        })?
         .fields()?;
     let bytes = opened.bytes.ok_or_else(|| {
         XferError::from(ReplyError::Fields("layout.get reply has no bytes".into()))
@@ -371,7 +371,7 @@ pub fn get_layout(session: &Session, orientation: Orientation) -> Result<GetRepo
     let count = chunk_count(bytes);
     let mut data = Vec::with_capacity(bytes);
     let mut next = 0u16;
-    let deadline = transfer_deadline(bytes);
+    let deadline = transfer.data_deadline(bytes);
     let mut progress = Instant::now();
     while next < count {
         let until = deadline.min(progress + IDLE_TIMEOUT);
@@ -413,8 +413,8 @@ pub fn get_layout(session: &Session, orientation: Orientation) -> Result<GetRepo
         }
         transfer.send_ack(seq, xfer, next)?;
     }
-    session
-        .call(&json!({"m": "xfer.end", "xfer": opened.xfer}), END_TIMEOUT)?
+    transfer
+        .finish(|| session.call(&json!({"m": "xfer.end", "xfer": opened.xfer}), END_TIMEOUT))?
         .fields::<Value>()?;
     if data.len() != bytes {
         return Err(XferError::Size {
@@ -485,12 +485,14 @@ pub fn put_icon(session: &Session, id: &str, data: &[u8]) -> Result<(), XferErro
             got: data.len(),
         });
     }
-    let transfer = session.transfer()?;
+    let mut transfer = session.transfer()?;
     let request = json!({"m": "icon.put", "id": id, "bytes": data.len(), "crc32": crc32(data)});
-    let opened: Opened = session.call(&request, REQUEST_TIMEOUT)?.fields()?;
+    let opened: Opened = transfer
+        .begin(|| session.call(&request, REQUEST_TIMEOUT))?
+        .fields()?;
     send_chunks(&transfer, opened.xfer, data)?;
-    session
-        .call(&json!({"m": "xfer.end", "xfer": opened.xfer}), END_TIMEOUT)?
+    transfer
+        .finish(|| session.call(&json!({"m": "xfer.end", "xfer": opened.xfer}), END_TIMEOUT))?
         .fields::<IgnoredAny>()?;
     Ok(())
 }
@@ -686,7 +688,10 @@ mod tests {
             Err(XferError::Aborted { idx: 0 })
         );
         assert_eq!(deck.layout(Orientation::Landscape), None);
-        assert!(session.transfer().is_ok(), "the aborted transfer let go");
+        assert!(
+            !session.is_open(),
+            "an abandoned Device transfer closes its session"
+        );
     }
 
     #[test]

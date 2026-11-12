@@ -6,7 +6,7 @@ Open TouchDeck connects through USB-Serial/JTAG. The running Companion sends the
 
 A distributed app does not need Node, pnpm, Rust, or a C++ compiler. The Windows installer carries the Electron window, the Companion and the Firmware bundle; the [packaging guide](packaging.md) describes it. Linux source builds need a graphical desktop, Electron runtime dependencies, USB serial access and permission to create a virtual keyboard through `/dev/uinput`.
 
-Source builds use **Node.js 24**, matching [app CI](../.github/workflows/app.yml), and the **exact pnpm version in [app/package.json](../app/package.json)** (currently `12.12.1`). Use stable Rust, at least the workspace's declared minimum in [app/Cargo.toml](../app/Cargo.toml). Firmware build prerequisites are separate from desktop setup.
+Source builds use **Node.js 24**, matching [app CI](../.github/workflows/app.yml), and the **exact pnpm version in [app/package.json](../app/package.json)** (currently `12.12.1`). The Rust version is pinned in [app/rust-toolchain.toml](../app/rust-toolchain.toml); rustup installs it the first time you run cargo under `app/`. Firmware build prerequisites are separate from desktop setup.
 
 ## Windows source-build setup
 
@@ -53,7 +53,7 @@ sudo apt-get update
 sudo apt-get install -y build-essential libudev-dev
 ```
 
-This matches [the workflow](../.github/workflows/app.yml), with `libudev-dev` for serial discovery. Other distributions need their equivalent packages. Install Node 24, the pinned pnpm, and stable Rust separately using their upstream instructions.
+CI installs `libudev-dev`, for serial discovery, in [its Rust setup](../.github/actions/rust-setup/action.yml), next to the packages the native app's Slint UI will need. Other distributions need their equivalent packages. Install Node 24, the pinned pnpm, and rustup separately using their upstream instructions.
 
 From `app/`, the ordinary source build is:
 

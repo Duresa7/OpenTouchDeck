@@ -5,7 +5,8 @@ usage() {
   cat <<'EOF'
 Usage: app/scripts/linux-check.sh [options] [<git-ref>]
 
-Run the Linux app checks from .github/workflows/app.yml in Docker.
+Run the Linux app checks from the pull request workflows (rust.yml, app.yml and
+scripts.yml under .github/workflows) in Docker.
 
 Checks the committed HEAD of the git checkout it is run from (via git archive
 of the repository root), or <git-ref> if given. Uncommitted changes are not
@@ -117,6 +118,11 @@ if ! short_sha=$(git -C "$repo_root" rev-parse --short "${ref}^{commit}" 2>/dev/
   exit 1
 fi
 
+# The Rust image is the toolchain the checked commit pins in app/rust-toolchain.toml. A commit from before
+# that file gets the latest stable.
+rust_version=$(git -C "$repo_root" show "${ref}:app/rust-toolchain.toml" 2>/dev/null | sed -n 's/^channel = "\([0-9.]*\)"$/\1/p')
+rust_image="rust:${rust_version:-1}"
+
 checkout_hash=$(printf '%s' "$repo_root" | git hash-object --stdin | cut -c1-12)
 src_vol="${vol_prefix}-src-${checkout_hash}"
 cargo_vol="${vol_prefix}-cargo"
@@ -218,7 +224,7 @@ if (( overall_rc == 0 )) || grep -q "=== STEP RESULT: pnpm build:ui | PASS |" "$
     -e DEBIAN_FRONTEND=noninteractive \
     -e CARGO_TERM_COLOR=never \
     -e CARGO_PROFILE_DEV_DEBUG=line-tables-only \
-    rust:1 \
+    "$rust_image" \
     bash -c '
       set -uo pipefail
       run_step() {

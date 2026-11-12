@@ -22,128 +22,24 @@
 #define ICON_ID_LEN 16
 #define ICON_FILE_BYTES 12300
 #define ICON_PAGE 32
-#define GET_IDLE_MS 5000
 
-typedef enum {
-    KIND_NONE,
-    KIND_LAYOUT_PUT,
-    KIND_ICON_PUT,
-    KIND_GET,
-    KIND_UPDATE,
-    KIND_ASSET_PUT,
-    KIND_PHOTO_PUT,
-} kind_t;
-
-/* One transfer at a time. A put holds the whole file in PSRAM and writes it with td_store_write_atomic at xfer.end,
- * so a cut transfer leaves nothing on the volume. A get reads the file once and sends it from memory. A firmware
- * update holds no buffer: td_update writes each chunk into the other OTA slot as it arrives. A v2 Asset put holds no
- * buffer either: td_asset streams each chunk into a temporary file and hashes it, and v2.asset.end commits it. */
+/* One transfer at a time, owned by td_transfer (td_link_transfer.c): the Carrier session that opened it and what it
+ * holds. A put holds the whole file in PSRAM and writes it with td_store_write_atomic at xfer.end, so a cut transfer
+ * leaves nothing on the volume. A get reads the file once and sends it from memory. A firmware update holds no
+ * buffer: td_update writes each chunk into the other OTA slot as it arrives. A v2 Asset put holds no buffer either:
+ * td_asset streams each chunk into a temporary file and hashes it, and v2.asset.end commits it. What the handlers
+ * remember about the request that opened it lives here. */
 static struct {
-    kind_t kind;
-    td_xfer_t x;
-    uint8_t *buf;
-    size_t fill;
     char path[TD_STORE_PATH_MAX];
     char orientation[10];
     char icon_id[ICON_ID_LEN + 1];
-    uint32_t last_ms;
-    uint8_t last_id;
-    uint8_t tx_seq;
-    const char *asset_failure;
     char asset_id[TD_ASSET_ID_LEN + 1];
     uint8_t photo_sha256[TD_SHA256_BYTES];
-    uint32_t photo_entry;
-} s;
-
-/* The outcome of the last v2 Asset transfer that closed, which v2.asset.end repeats for its xfer until the next bulk
- * open: the committed id and size, or the refusal reason. */
-static struct {
-    uint8_t xfer;
-    const char *reason;
-    char id[TD_ASSET_ID_LEN + 1];
-    uint32_t bytes;
-} s_asset_end;
-
-static void asset_end_record(uint8_t xfer, const char *reason, const char *id, uint32_t bytes)
-{
-    s_asset_end.xfer = xfer;
-    s_asset_end.reason = reason;
-    s_asset_end.bytes = bytes;
-    snprintf(s_asset_end.id, sizeof s_asset_end.id, "%s", id ? id : "");
-}
-
-static struct {
-    uint8_t xfer;
-    const char *failure;
-} s_photo_end;
+} s_req;
 
 static td_photo_pace_t s_pace;
 
-/* Any bulk open, v1 or v2, ends the replay of the last Asset or picture end. */
-static void bulk_opened(void)
-{
-    s_asset_end.xfer = 0;
-    s_photo_end.xfer = 0;
-}
-
-/* Frees the buffer and forgets the transfer, and leaves a running update alone. */
-static void drop_xfer(void)
-{
-    if (s.kind == KIND_ASSET_PUT) {
-        td_asset_upload_abort();
-    }
-    heap_caps_free(s.buf);
-    s.buf = NULL;
-    s.fill = 0;
-    s.kind = KIND_NONE;
-}
-
-/* A transfer that is replaced or cut. An update that was still receiving returns to IDLE. */
-static void close_xfer(void)
-{
-    if (s.kind == KIND_UPDATE) {
-        td_update_cancel();
-    }
-    drop_xfer();
-}
-
-static bool open_xfer(kind_t kind, uint32_t bytes)
-{
-    close_xfer();
-    bulk_opened();
-    s.buf = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (s.buf == NULL) {
-        s.buf = heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
-    }
-    if (s.buf == NULL) {
-        return false;
-    }
-    s.kind = kind;
-    s.last_id = s.last_id % 255 + 1;
-    s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
-    td_link_transfer_claim();
-    return true;
-}
-
-/* An end request for a transfer that another carrier connection opened finds no transfer. */
-static bool other_origin(void)
-{
-    return s.kind != KIND_NONE && !td_link_transfer_ours();
-}
-
-static bool put_sink(void *ctx, const uint8_t *data, size_t len)
-{
-    (void)ctx;
-    memcpy(s.buf + s.fill, data, len);
-    s.fill += len;
-    return true;
-}
-
-static bool update_sink(void *ctx, const uint8_t *data, size_t len)
-{
-    (void)ctx;
-    return td_update_write(data, len);
-}
+_Static_assert(TD_TRANSFER_ASSET_ID_MAX >= TD_ASSET_ID_LEN, "an Asset end record must hold an Asset id");
 
 static bool u32_arg(const cJSON *request, const char *name, uint32_t *out)
 {
@@ -207,6 +103,7 @@ void td_link_layout_fields(cJSON *reply)
 
 void td_link_layout_put(const cJSON *request, cJSON *reply)
 {
+    td_transfer_t *t = td_link_transfer();
     const char *orientation = orientation_arg(request);
     uint32_t bytes;
     uint32_t crc32;
@@ -218,18 +115,19 @@ void td_link_layout_put(const cJSON *request, cJSON *reply)
         td_link_fail(reply, "layout must be 1 to 32768 bytes");
     } else if (!td_store_mounted()) {
         td_link_fail(reply, "store not mounted");
-    } else if (!open_xfer(KIND_LAYOUT_PUT, bytes)) {
+    } else if (!td_transfer_begin_buffered(t, TD_TRANSFER_LAYOUT_PUT, bytes)) {
         td_link_fail(reply, "no memory");
     } else {
-        td_xfer_init(&s.x, s.last_id, false, bytes, crc32, put_sink, NULL);
-        snprintf(s.orientation, sizeof s.orientation, "%s", orientation);
-        td_layout_path(orientation, s.path, sizeof s.path);
-        cJSON_AddNumberToObject(reply, "xfer", s.x.id);
+        td_transfer_arm(t, false, bytes, crc32);
+        snprintf(s_req.orientation, sizeof s_req.orientation, "%s", orientation);
+        td_layout_path(orientation, s_req.path, sizeof s_req.path);
+        cJSON_AddNumberToObject(reply, "xfer", t->x.id);
     }
 }
 
 void td_link_icon_put(const cJSON *request, cJSON *reply)
 {
+    td_transfer_t *t = td_link_transfer();
     const char *id = icon_id_arg(request);
     uint32_t bytes;
     uint32_t crc32;
@@ -241,18 +139,19 @@ void td_link_icon_put(const cJSON *request, cJSON *reply)
         td_link_fail(reply, "an icon is 12300 bytes");
     } else if (!td_store_mounted()) {
         td_link_fail(reply, "store not mounted");
-    } else if (!open_xfer(KIND_ICON_PUT, bytes)) {
+    } else if (!td_transfer_begin_buffered(t, TD_TRANSFER_ICON_PUT, bytes)) {
         td_link_fail(reply, "no memory");
     } else {
-        td_xfer_init(&s.x, s.last_id, false, bytes, crc32, put_sink, NULL);
-        snprintf(s.icon_id, sizeof s.icon_id, "%s", id);
-        snprintf(s.path, sizeof s.path, ICON_DIR "/%s.bin", id);
-        cJSON_AddNumberToObject(reply, "xfer", s.x.id);
+        td_transfer_arm(t, false, bytes, crc32);
+        snprintf(s_req.icon_id, sizeof s_req.icon_id, "%s", id);
+        snprintf(s_req.path, sizeof s_req.path, ICON_DIR "/%s.bin", id);
+        cJSON_AddNumberToObject(reply, "xfer", t->x.id);
     }
 }
 
 void td_link_layout_get(const cJSON *request, cJSON *reply)
 {
+    td_transfer_t *t = td_link_transfer();
     const char *orientation = orientation_arg(request);
     if (orientation == NULL) {
         td_link_fail(reply, "orientation must be landscape or portrait");
@@ -271,19 +170,19 @@ void td_link_layout_get(const cJSON *request, cJSON *reply)
         td_link_fail(reply, "the stored layout is not a valid size");
         return;
     }
-    if (!open_xfer(KIND_GET, stat.size)) {
+    if (!td_transfer_begin_buffered(t, TD_TRANSFER_GET, stat.size)) {
         td_link_fail(reply, "no memory");
         return;
     }
     size_t len = 0;
-    if (td_store_read(path, s.buf, stat.size, &len) != ESP_OK || len != stat.size) {
-        close_xfer();
+    if (td_store_read(path, t->buf, stat.size, &len) != ESP_OK || len != stat.size) {
+        td_transfer_close(t);
         td_link_fail(reply, "read failed");
         return;
     }
-    const uint32_t crc32 = td_xfer_crc32(s.buf, len);
-    td_xfer_init(&s.x, s.last_id, true, (uint32_t)len, crc32, NULL, NULL);
-    cJSON_AddNumberToObject(reply, "xfer", s.x.id);
+    const uint32_t crc32 = td_xfer_crc32(t->buf, len);
+    td_transfer_arm(t, true, (uint32_t)len, crc32);
+    cJSON_AddNumberToObject(reply, "xfer", t->x.id);
     cJSON_AddNumberToObject(reply, "bytes", (double)len);
     cJSON_AddNumberToObject(reply, "crc32", (double)crc32);
 }
@@ -293,36 +192,36 @@ static bool le16_is(const uint8_t *p, unsigned value)
     return (unsigned)(p[0] | (p[1] << 8)) == value;
 }
 
-static void finish_put(cJSON *reply)
+static void finish_put(td_transfer_t *t, cJSON *reply)
 {
     char message[sizeof(td_layout_error_t) + 4];
-    if (s.x.received != s.x.bytes) {
-        snprintf(message, sizeof message, "received %u of %u bytes", (unsigned)s.x.received, (unsigned)s.x.bytes);
+    if (t->x.received != t->x.bytes) {
+        snprintf(message, sizeof message, "received %u of %u bytes", (unsigned)t->x.received, (unsigned)t->x.bytes);
         td_link_fail(reply, message);
         return;
     }
-    if (!td_xfer_complete(&s.x)) {
+    if (!td_xfer_complete(&t->x)) {
         td_link_fail(reply, "crc32 mismatch");
         return;
     }
-    if (s.kind == KIND_ICON_PUT) {
-        const uint8_t *h = s.buf;
+    if (t->kind == TD_TRANSFER_ICON_PUT) {
+        const uint8_t *h = t->buf;
         if (memcmp(h, "TDI1", 4) != 0 || !le16_is(h + 4, 64) || !le16_is(h + 6, 64) || !le16_is(h + 8, 1)
             || !le16_is(h + 10, 0)) {
             td_link_fail(reply, "bad icon header");
             return;
         }
-        if (td_store_write_atomic(s.path, s.buf, s.fill) != ESP_OK) {
+        if (td_store_write_atomic(s_req.path, t->buf, t->fill) != ESP_OK) {
             td_link_fail(reply, "write failed");
             return;
         }
-        cJSON_AddStringToObject(reply, "id", s.icon_id);
+        cJSON_AddStringToObject(reply, "id", s_req.icon_id);
         return;
     }
     /* A candidate layout is validated before it replaces anything, so a bad file never costs the good one. */
     td_layout_t *parsed = NULL;
     td_layout_error_t err;
-    if (!td_layout_parse((const char *)s.buf, s.fill, &parsed, &err)) {
+    if (!td_layout_parse((const char *)t->buf, t->fill, &parsed, &err)) {
         snprintf(message, sizeof message, "%s: %s", err.key, err.message);
         if (strcmp(err.key, "layout.live_image_limit") == 0) {
             if (td_link_v2_selected()) td_link_v2_fail(reply, "size", message);
@@ -375,14 +274,14 @@ static void finish_put(cJSON *reply)
         }
     }
     td_layout_free(parsed);
-    const esp_err_t written = td_store_write_atomic(s.path, s.buf, s.fill);
+    const esp_err_t written = td_store_write_atomic(s_req.path, t->buf, t->fill);
     td_store_unlock();
     if (written != ESP_OK) {
         td_link_fail(reply, "write failed");
         return;
     }
-    const bool shown = strcmp(s.orientation, ui_layout_slot()) == 0;
-    close_xfer();
+    const bool shown = strcmp(s_req.orientation, ui_layout_slot()) == 0;
+    td_transfer_close(t);
     ui_leave_recovery("layout.put");
     if (shown && ui_ready() && !ui_layout_reload(false, &err)) {
         snprintf(message, sizeof message, "%s: %s", err.key, err.message);
@@ -394,27 +293,28 @@ static void finish_put(cJSON *reply)
 
 void td_link_xfer_end(const cJSON *request, cJSON *reply)
 {
+    td_transfer_t *t = td_link_transfer();
     uint32_t id;
     if (!u32_arg(request, "xfer", &id)) {
         td_link_fail(reply, "xfer.end needs xfer");
-    } else if (other_origin()) {
+    } else if (td_transfer_other_origin(t)) {
         td_link_fail(reply, "no transfer with that xfer");
         return;
-    } else if (s.kind == KIND_ASSET_PUT || s.kind == KIND_PHOTO_PUT) {
+    } else if (t->kind == TD_TRANSFER_ASSET_PUT || t->kind == TD_TRANSFER_PHOTO_PUT) {
         /* A v1 end never finishes or cuts a v2 Asset or picture put. */
-        const char *v2_end =
-            s.kind == KIND_ASSET_PUT ? "end an Asset with v2.asset.end" : "end a picture with v2.photo.end";
-        td_link_fail(reply, id == s.x.id ? v2_end : "no transfer with that xfer");
+        const char *v2_end = t->kind == TD_TRANSFER_ASSET_PUT ? "end an Asset with v2.asset.end"
+                                                               : "end a picture with v2.photo.end";
+        td_link_fail(reply, id == t->x.id ? v2_end : "no transfer with that xfer");
         return;
-    } else if (s.kind == KIND_NONE || id != s.x.id) {
+    } else if (t->kind == TD_TRANSFER_NONE || id != t->x.id) {
         td_link_fail(reply, "no transfer with that xfer");
-    } else if (s.kind == KIND_UPDATE) {
+    } else if (t->kind == TD_TRANSFER_UPDATE) {
         td_link_fail(reply, "end a firmware update with update.end");
         return;
-    } else if (s.kind != KIND_GET) {
-        finish_put(reply);
+    } else if (t->kind != TD_TRANSFER_GET) {
+        finish_put(t, reply);
     }
-    close_xfer();
+    td_transfer_close(t);
 }
 
 static void fail_update(cJSON *reply, td_update_reason_t reason)
@@ -439,14 +339,10 @@ void td_link_update_begin(const cJSON *request, cJSON *reply)
         fail_update(reply, reason);
         return;
     }
-    drop_xfer();
-    bulk_opened();
-    s.kind = KIND_UPDATE;
-    s.last_id = s.last_id % 255 + 1;
-    s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
-    td_link_transfer_claim();
-    td_xfer_init(&s.x, s.last_id, false, bytes, 0, update_sink, NULL);
-    cJSON_AddNumberToObject(reply, "xfer", s.x.id);
+    td_transfer_t *t = td_link_transfer();
+    td_transfer_begin_streamed(t, TD_TRANSFER_UPDATE);
+    td_transfer_arm(t, false, bytes, 0);
+    cJSON_AddNumberToObject(reply, "xfer", t->x.id);
     cJSON_AddStringToObject(reply, "slot", slot);
 }
 
@@ -458,7 +354,8 @@ void td_link_update_end(const cJSON *request, cJSON *reply)
         cJSON_AddStringToObject(reply, "reason", "args");
         return;
     }
-    if (s.kind != KIND_UPDATE || id != s.x.id || other_origin()) {
+    td_transfer_t *t = td_link_transfer();
+    if (t->kind != TD_TRANSFER_UPDATE || id != t->x.id || td_transfer_other_origin(t)) {
         td_link_fail(reply, "no update with that xfer");
         cJSON_AddStringToObject(reply, "reason", "state");
         return;
@@ -470,94 +367,7 @@ void td_link_update_end(const cJSON *request, cJSON *reply)
     } else {
         fail_update(reply, reason);
     }
-    drop_xfer();
-}
-
-static void send_chunk(uint16_t idx)
-{
-    static uint8_t payload[TD_FRAME_PAYLOAD_MAX];
-    const size_t start = (size_t)idx * TD_FRAME_CHUNK_DATA_MAX;
-    size_t len = s.x.bytes - start;
-    if (len > TD_FRAME_CHUNK_DATA_MAX) {
-        len = TD_FRAME_CHUNK_DATA_MAX;
-    }
-    payload[0] = s.x.id;
-    payload[1] = idx & 0xff;
-    payload[2] = idx >> 8;
-    memcpy(payload + TD_FRAME_CHUNK_HEADER, s.buf + start, len);
-    s.tx_seq = s.tx_seq % 255 + 1;
-    td_link_send(TD_FRAME_CHUNK, s.tx_seq, 0, payload, TD_FRAME_CHUNK_HEADER + len);
-}
-
-static bool photo_cancelled(void)
-{
-    uint32_t entry = 0;
-    if (s.kind != KIND_PHOTO_PUT || (power_idle_face(&entry) && entry == s.photo_entry)) {
-        return false;
-    }
-    s_photo_end.xfer = s.x.id;
-    s_photo_end.failure = "idle";
-    drop_xfer();
-    return true;
-}
-
-void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len)
-{
-    if (len < TD_FRAME_CHUNK_HEADER
-        || (s.kind != KIND_LAYOUT_PUT && s.kind != KIND_ICON_PUT && s.kind != KIND_UPDATE && s.kind != KIND_ASSET_PUT
-            && s.kind != KIND_PHOTO_PUT)
-        || payload[0] != s.x.id) {
-        td_link_count_drop();
-        return;
-    }
-    if (photo_cancelled()) {
-        return;
-    }
-    const uint16_t idx = (uint16_t)(payload[1] | (payload[2] << 8));
-    /* A duplicate, a gap and a chunk past the window all get the same answer: the next index the deck wants. */
-    td_xfer_receive(&s.x, idx, payload + TD_FRAME_CHUNK_HEADER, len - TD_FRAME_CHUNK_HEADER);
-    s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
-    if (s.kind == KIND_ASSET_PUT && s.asset_failure != NULL) {
-        /* A failed sink ends the transfer and stops the acks. v2.asset.end reports why. */
-        asset_end_record(s.x.id, s.asset_failure, NULL, 0);
-        drop_xfer();
-        return;
-    }
-    const uint8_t ack[3] = { s.x.id, s.x.next & 0xff, s.x.next >> 8 };
-    td_link_send(TD_FRAME_ACK, seq, TD_FRAME_RESPONSE, ack, sizeof ack);
-}
-
-void td_link_files_ack(const uint8_t *payload, size_t len)
-{
-    if (len != 3 || s.kind != KIND_GET || payload[0] != s.x.id) {
-        td_link_count_drop();
-        return;
-    }
-    td_xfer_ack(&s.x, (uint16_t)(payload[1] | (payload[2] << 8)));
-    s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
-}
-
-void td_link_files_service(uint32_t now_ms)
-{
-    if (s.kind == KIND_NONE || photo_cancelled()) {
-        return;
-    }
-    if (!td_link_transfer_live()) {
-        /* The carrier connection that opened it ended: a network session closed. */
-        close_xfer();
-        return;
-    }
-    if (s.kind == KIND_GET) {
-        int idx;
-        for (int guard = 0; guard < 2 * TD_XFER_WINDOW && (idx = td_xfer_due(&s.x, now_ms)) >= 0; guard++) {
-            send_chunk((uint16_t)idx);
-        }
-        if (s.x.aborted || now_ms - s.last_ms > GET_IDLE_MS) {
-            close_xfer();
-        }
-    } else if (now_ms - s.last_ms > TD_XFER_IDLE_MS) {
-        close_xfer();
-    }
+    td_transfer_drop(t);
 }
 
 typedef struct {
@@ -710,24 +520,6 @@ void td_link_store_stat(const cJSON *request, cJSON *reply)
     cJSON_AddNumberToObject(reply, "icons", icons);
 }
 
-static bool asset_sink(void *ctx, const uint8_t *data, size_t len)
-{
-    (void)ctx;
-    const td_asset_result_t result = td_asset_upload_write(data, len);
-    if (result != TD_ASSET_OK) {
-        s.asset_failure = td_asset_result_reason(result);
-        return false;
-    }
-    return true;
-}
-
-void td_link_files_select(void)
-{
-    if (s.kind == KIND_ASSET_PUT || s.kind == KIND_PHOTO_PUT) {
-        drop_xfer();
-    }
-}
-
 static const char *asset_id_field(const cJSON *request)
 {
     const char *id = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(request, "id"));
@@ -821,7 +613,8 @@ void td_link_asset_put(const cJSON *request, cJSON *reply)
         cJSON_AddNullToObject(reply, "xfer");
         return;
     }
-    if (s.kind != KIND_NONE) {
+    td_transfer_t *t = td_link_transfer();
+    if (t->kind != TD_TRANSFER_NONE) {
         td_link_v2_fail(reply, "busy", "Another transfer is open");
         return;
     }
@@ -831,26 +624,21 @@ void td_link_asset_put(const cJSON *request, cJSON *reply)
                         result == TD_ASSET_FULL ? "Not enough free space" : "Storage unavailable");
         return;
     }
-    bulk_opened();
-    s.kind = KIND_ASSET_PUT;
-    s.asset_failure = NULL;
-    snprintf(s.asset_id, sizeof s.asset_id, "%s", id);
-    s.last_id = s.last_id % 255 + 1;
-    s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
-    td_link_transfer_claim();
-    td_xfer_init(&s.x, s.last_id, false, bytes, 0, asset_sink, NULL);
+    td_transfer_begin_streamed(t, TD_TRANSFER_ASSET_PUT);
+    snprintf(s_req.asset_id, sizeof s_req.asset_id, "%s", id);
+    td_transfer_arm(t, false, bytes, 0);
     cJSON_AddBoolToObject(reply, "present", false);
-    cJSON_AddNumberToObject(reply, "xfer", s.x.id);
+    cJSON_AddNumberToObject(reply, "xfer", t->x.id);
 }
 
-static void asset_end_reply(cJSON *reply)
+static void asset_end_reply(const td_transfer_t *t, cJSON *reply)
 {
-    if (s_asset_end.reason != NULL) {
-        td_link_v2_fail(reply, s_asset_end.reason, "Asset not stored");
+    if (t->asset_end.reason != NULL) {
+        td_link_v2_fail(reply, t->asset_end.reason, "Asset not stored");
         return;
     }
-    cJSON_AddStringToObject(reply, "id", s_asset_end.id);
-    cJSON_AddNumberToObject(reply, "bytes", s_asset_end.bytes);
+    cJSON_AddStringToObject(reply, "id", t->asset_end.id);
+    cJSON_AddNumberToObject(reply, "bytes", t->asset_end.bytes);
 }
 
 void td_link_asset_end(const cJSON *request, cJSON *reply)
@@ -861,17 +649,19 @@ void td_link_asset_end(const cJSON *request, cJSON *reply)
         td_link_v2_fail(reply, "args", "Invalid request fields");
         return;
     }
-    if (s.kind == KIND_ASSET_PUT && s.x.id == id && !other_origin()) {
+    td_transfer_t *t = td_link_transfer();
+    if (t->kind == TD_TRANSFER_ASSET_PUT && t->x.id == id && !td_transfer_other_origin(t)) {
         const td_asset_result_t result = td_asset_upload_finish();
         if (result == TD_ASSET_INCOMPLETE) {
             td_link_v2_fail(reply, "incomplete", "Bytes are still missing");
             return;
         }
-        asset_end_record(s.x.id, result == TD_ASSET_OK ? NULL : td_asset_result_reason(result), s.asset_id, s.x.bytes);
-        drop_xfer();
-        asset_end_reply(reply);
-    } else if (s_asset_end.xfer != 0 && s_asset_end.xfer == id) {
-        asset_end_reply(reply);
+        td_transfer_asset_end_record(t, t->x.id, result == TD_ASSET_OK ? NULL : td_asset_result_reason(result),
+                                     s_req.asset_id, t->x.bytes);
+        td_transfer_drop(t);
+        asset_end_reply(t, reply);
+    } else if (t->asset_end.xfer != 0 && t->asset_end.xfer == id) {
+        asset_end_reply(t, reply);
     } else {
         td_link_v2_fail(reply, "state", "No Asset transfer with that xfer");
     }
@@ -981,35 +771,36 @@ void td_link_photo_put(const cJSON *request, cJSON *reply)
     case TD_PHOTO_OK:
         break;
     }
-    if (s.kind != KIND_NONE) {
+    td_transfer_t *t = td_link_transfer();
+    if (t->kind != TD_TRANSFER_NONE) {
         td_link_v2_fail(reply, "busy", "Another transfer is open");
         return;
     }
-    if (!open_xfer(KIND_PHOTO_PUT, bytes)) {
+    if (!td_transfer_begin_buffered(t, TD_TRANSFER_PHOTO_PUT, bytes)) {
         td_link_v2_fail(reply, "memory", "No memory for the picture");
         return;
     }
-    td_xfer_init(&s.x, s.last_id, false, bytes, 0, put_sink, NULL);
-    memcpy(s.photo_sha256, digest, sizeof digest);
-    s.photo_entry = entry;
-    cJSON_AddNumberToObject(reply, "xfer", s.x.id);
+    td_transfer_arm(t, false, bytes, 0);
+    memcpy(s_req.photo_sha256, digest, sizeof digest);
+    t->photo_entry = entry;
+    cJSON_AddNumberToObject(reply, "xfer", t->x.id);
 }
 
-static const char *photo_show_failure(void)
+static const char *photo_show_failure(const td_transfer_t *t)
 {
     uint32_t entry = 0;
-    if (!power_idle_face(&entry) || entry != s.photo_entry) {
+    if (!power_idle_face(&entry) || entry != t->photo_entry) {
         return "idle";
     }
     td_sha256_t sha;
     uint8_t digest[TD_SHA256_BYTES];
     td_sha256_init(&sha);
-    td_sha256_update(&sha, s.buf, s.fill);
+    td_sha256_update(&sha, t->buf, t->fill);
     td_sha256_final(&sha, digest);
-    if (memcmp(digest, s.photo_sha256, sizeof digest) != 0) {
+    if (memcmp(digest, s_req.photo_sha256, sizeof digest) != 0) {
         return "hash";
     }
-    switch (ui_idle_picture(s.buf, s.fill)) {
+    switch (ui_idle_picture(t->buf, t->fill)) {
     case UI_PICTURE_SHOWN:
         td_photo_shown(&s_pace, entry, esp_timer_get_time());
         return NULL;
@@ -1025,7 +816,7 @@ static const char *photo_show_failure(void)
     }
 }
 
-static void photo_end_reply(cJSON *reply)
+static void photo_end_reply(const td_transfer_t *t, cJSON *reply)
 {
     static const struct {
         const char *reason;
@@ -1037,17 +828,17 @@ static void photo_end_reply(cJSON *reply)
         { "memory", "No memory for the picture" },
         { "format", "Not a baseline JPEG" },
     };
-    if (s_photo_end.failure == NULL) {
+    if (t->photo_end.failure == NULL) {
         cJSON_AddBoolToObject(reply, "shown", true);
         return;
     }
     const char *error = "Picture not shown";
     for (size_t i = 0; i < sizeof errors / sizeof errors[0]; i++) {
-        if (strcmp(errors[i].reason, s_photo_end.failure) == 0) {
+        if (strcmp(errors[i].reason, t->photo_end.failure) == 0) {
             error = errors[i].error;
         }
     }
-    td_link_v2_fail(reply, s_photo_end.failure, error);
+    td_link_v2_fail(reply, t->photo_end.failure, error);
 }
 
 void td_link_photo_end(const cJSON *request, cJSON *reply)
@@ -1058,17 +849,19 @@ void td_link_photo_end(const cJSON *request, cJSON *reply)
         td_link_v2_fail(reply, "args", "Invalid request fields");
         return;
     }
-    if (s.kind == KIND_PHOTO_PUT && s.x.id == id && !other_origin() && !photo_cancelled()) {
-        if (s.x.received != s.x.bytes) {
+    td_transfer_t *t = td_link_transfer();
+    if (t->kind == TD_TRANSFER_PHOTO_PUT && t->x.id == id && !td_transfer_other_origin(t)
+        && !td_transfer_photo_cancelled(t)) {
+        if (t->x.received != t->x.bytes) {
             td_link_v2_fail(reply, "incomplete", "Bytes are still missing");
             return;
         }
-        s_photo_end.xfer = s.x.id;
-        s_photo_end.failure = photo_show_failure();
-        drop_xfer();
-        photo_end_reply(reply);
-    } else if (s_photo_end.xfer != 0 && s_photo_end.xfer == id) {
-        photo_end_reply(reply);
+        t->photo_end.xfer = t->x.id;
+        t->photo_end.failure = photo_show_failure(t);
+        td_transfer_drop(t);
+        photo_end_reply(t, reply);
+    } else if (t->photo_end.xfer != 0 && t->photo_end.xfer == id) {
+        photo_end_reply(t, reply);
     } else {
         td_link_v2_fail(reply, "state", "No picture transfer with that xfer");
     }
