@@ -18,12 +18,13 @@ fn git(args: &[&str]) -> Option<String> {
 
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
-        let manifest = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap())
-            .join("app.manifest");
-        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+        embed_resource::compile("app.rc", embed_resource::NONE)
+            .manifest_required()
+            .expect("embed the Windows app icon and Common Controls manifest");
+        println!("cargo:rerun-if-changed=app.rc");
         println!("cargo:rerun-if-changed=app.manifest");
         embed_version_info();
+        println!("cargo:rerun-if-changed=../../electron/installer/icon.ico");
     }
     embed_ui();
     // Each channel embeds its own bundle, and each bundle must be the build its channel names: the normal channel never
