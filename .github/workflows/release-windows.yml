@@ -23,6 +23,16 @@ jobs:
     with:
       ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
+  rust:
+    uses: ./.github/workflows/rust.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+  scripts:
+    uses: ./.github/workflows/scripts.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
   firmware:
     uses: ./.github/workflows/firmware.yml
     with:
@@ -198,7 +208,7 @@ jobs:
             release-assets "$RUNNER_TEMP/tls.key" "$RUNNER_TEMP/tls.crt"
 
   publish:
-    needs: [build, sign, verify, app, firmware, installer-lifecycle]
+    needs: [build, sign, verify, app, rust, scripts, firmware, installer-lifecycle]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 30

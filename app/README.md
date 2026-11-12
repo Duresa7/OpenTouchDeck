@@ -141,7 +141,7 @@ Run the React specs against the fake Companion from `app/`:
 pnpm e2e:ui
 ```
 
-CI splits them into three parallel shards. Run one shard locally with `pnpm e2e:ui --shard=1/3`.
+CI splits them into four parallel shards. Run one shard locally with `pnpm e2e:ui --shard=1/4`.
 
 For the real Companion API tests:
 

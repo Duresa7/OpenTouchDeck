@@ -1,7 +1,8 @@
 name: firmware
 
-# Pull requests run these checks once; merging to main does not rerun them.
-# The windows release workflow calls this again on the exact commit it releases.
+# Pull requests run these checks when Firmware, the schema or the release audit changes. Main reruns them after
+# such a merge, which saves the compiler cache the next pull request restores.
+# The windows release workflow calls this again on the exact commit it releases, with the cache off.
 on:
   workflow_call:
     inputs:
@@ -9,13 +10,13 @@ on:
         description: Commit or tag to check (empty means the triggering ref)
         type: string
         default: ""
+      cache:
+        description: Keep the ESP-IDF compiler cache between runs. Pull request and main checks only, never a release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
-
-concurrency:
-  group: firmware-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   firmware:
@@ -34,6 +35,22 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
+      # The ESP-IDF image compiles through ccache (IDF_CCACHE_ENABLE=1). Its folder is kept between runs under
+      # build/, which is git-ignored, so most of a build is cache hits. Pull requests restore what main saved.
+      - name: Keep the compiler cache in the workspace
+        if: inputs.cache
+        shell: bash
+        run: |
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=400M" >> "$GITHUB_ENV"
+      - name: Restore the compiler cache
+        if: inputs.cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/ccache
+          key: idf-ccache-normal-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: idf-ccache-normal-
+
       - name: Build the firmware
         shell: bash
         run: |
@@ -42,6 +59,17 @@ jobs:
           . "$IDF_PATH/export.sh"
           set -euo pipefail
           idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" build
+
+      - name: Report and save the compiler cache
+        if: inputs.cache
+        shell: bash
+        run: ccache --show-stats
+      # A cache entry cannot be replaced, so each save is a new entry and a restore takes the newest.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: inputs.cache && github.event_name != 'pull_request'
+        with:
+          path: build/ccache
+          key: idf-ccache-normal-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Test Firmware file loaders, key events, link carriers, Wi-Fi, the Bluetooth keyboard, Assets, Tile geometry, td_ui_core and net-v2 on the host
         # After the build: the LittleFS test compiles the pinned managed component it fetched.
@@ -131,6 +159,22 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
+      # The ESP-IDF image compiles through ccache (IDF_CCACHE_ENABLE=1). Its folder is kept between runs under
+      # build/, which is git-ignored, so most of a build is cache hits. Pull requests restore what main saved.
+      - name: Keep the compiler cache in the workspace
+        if: inputs.cache
+        shell: bash
+        run: |
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=400M" >> "$GITHUB_ENV"
+      - name: Restore the compiler cache
+        if: inputs.cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/ccache
+          key: idf-ccache-radio-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: idf-ccache-radio-
+
       - name: Build the radio firmware
         shell: bash
         run: |
@@ -138,6 +182,17 @@ jobs:
           . "$IDF_PATH/export.sh"
           set -euo pipefail
           idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" -DTD_RADIO_BUILD=1 build
+
+      - name: Report and save the compiler cache
+        if: inputs.cache
+        shell: bash
+        run: ccache --show-stats
+      # A cache entry cannot be replaced, so each save is a new entry and a restore takes the newest.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: inputs.cache && github.event_name != 'pull_request'
+        with:
+          path: build/ccache
+          key: idf-ccache-radio-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check the radio build and that the release guards reject it
         # Wi-Fi, lwIP and NimBLE on, buffers in PSRAM, the BLE controller in flash, BLE started only by the Bluetooth
@@ -208,6 +263,22 @@ jobs:
         with:
           node-version: 24
 
+      # The ESP-IDF image compiles through ccache (IDF_CCACHE_ENABLE=1). Its folder is kept between runs under
+      # build/, which is git-ignored, so most of a build is cache hits. Pull requests restore what main saved.
+      - name: Keep the compiler cache in the workspace
+        if: inputs.cache
+        shell: bash
+        run: |
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=400M" >> "$GITHUB_ENV"
+      - name: Restore the compiler cache
+        if: inputs.cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/ccache
+          key: idf-ccache-qemu-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: idf-ccache-qemu-
+
       - name: Build the QEMU test image
         shell: bash
         run: |
@@ -215,6 +286,17 @@ jobs:
           . "$IDF_PATH/export.sh"
           set -euo pipefail
           idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" -DTD_RADIO_BUILD=1 -DTD_QEMU_TEST=1 build
+
+      - name: Report and save the compiler cache
+        if: inputs.cache
+        shell: bash
+        run: ccache --show-stats
+      # A cache entry cannot be replaced, so each save is a new entry and a restore takes the newest.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: inputs.cache && github.event_name != 'pull_request'
+        with:
+          path: build/ccache
+          key: idf-ccache-qemu-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check the radio guard rejects the QEMU test image
         shell: bash
