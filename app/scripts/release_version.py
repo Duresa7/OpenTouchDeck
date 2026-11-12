@@ -4,7 +4,7 @@
     python app/scripts/release_version.py check [--tag vX.Y.Z]
     python app/scripts/release_version.py bump X.Y.Z
 
-check verifies the version of the four crate Cargo.toml files and the workspace crates in app/Cargo.lock,
+check verifies the version of the workspace crate Cargo.toml files and the workspace crates in app/Cargo.lock,
 plus an optional release tag.
 bump changes only those version strings, preserving all other bytes.
 """
@@ -18,7 +18,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 TOML_VERSION = re.compile(r'(^\[package\]\r?\n(?:(?!\[)[^\n]*\n)*?version\s*=\s*")([^"]*)(")', re.MULTILINE)
-CRATES = ("td-companion", "td-core", "td-host", "td-link")
+CRATES = ("td-app", "td-companion", "td-core", "td-host", "td-link", "td-updater")
 LOCK = "app/Cargo.lock"
 PATTERNS = {f"app/crates/{crate}/Cargo.toml": TOML_VERSION for crate in CRATES}
 

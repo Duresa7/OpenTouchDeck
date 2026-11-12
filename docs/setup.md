@@ -38,7 +38,7 @@ Ubuntu **24.04** is the Linux CI target. Its build packages are:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential libudev-dev
+sudo apt-get install -y build-essential libudev-dev libfontconfig-dev
 ```
 
 CI installs `libudev-dev`, for serial discovery, in [its Rust setup](../.github/actions/rust-setup/action.yml), next to the packages the native app's Slint UI will need. Other distributions need their equivalent packages. Install rustup using its upstream instructions.
@@ -49,7 +49,7 @@ From `app/`, the ordinary source build is:
 cargo build -p td-companion
 ```
 
-Use `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace` to check changes. [app/README.md](../app/README.md) shows how to run the Companion with a mock Device.
+`libfontconfig-dev` is for the native app's Slint UI (`td-app`), which `cargo test --workspace` builds. Use `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace` to check changes. [app/README.md](../app/README.md) shows how to run the app.
 
 Do not enable `test-hooks` for a distributed app.
 

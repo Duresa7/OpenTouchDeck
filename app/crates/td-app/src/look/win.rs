@@ -1,0 +1,216 @@
+//! Windows 11: Mica through DWM, the text size setting through UISettings, and contrast themes
+//! through `SPI_GETHIGHCONTRAST` and the system colours. See docs/research/windows-11-native.md.
+use super::Look;
+use crate::{AppWindow, ContrastColors};
+use slint::winit_030::{
+    WinitWindowAccessor,
+    winit::raw_window_handle::{HasWindowHandle, RawWindowHandle},
+};
+use windows::{
+    Foundation::TypedEventHandler,
+    UI::ViewManagement::{AccessibilitySettings, UISettings},
+    Wdk::System::SystemServices::RtlGetVersion,
+    Win32::{
+        Foundation::HWND,
+        Graphics::{
+            Dwm::{
+                DWM_SYSTEMBACKDROP_TYPE, DWMSBT_MAINWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
+                DWMWA_USE_IMMERSIVE_DARK_MODE, DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
+            },
+            Gdi::{
+                COLOR_BTNFACE, COLOR_BTNTEXT, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT,
+                COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor, SYS_COLOR_INDEX,
+            },
+        },
+        System::SystemInformation::OSVERSIONINFOW,
+        UI::{
+            Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW},
+            Controls::MARGINS,
+            WindowsAndMessaging::{
+                SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+            },
+        },
+    },
+    core::BOOL,
+};
+
+/// `DWMWA_SYSTEMBACKDROP_TYPE` is documented from Windows 11 build 22621 (22H2).
+const MICA_BUILD: u32 = 22621;
+
+fn build() -> u32 {
+    let mut info = OSVERSIONINFOW {
+        dwOSVersionInfoSize: size_of::<OSVERSIONINFOW>() as u32,
+        ..Default::default()
+    };
+    // RtlGetVersion reports the real build, whatever the manifest claims compatibility with.
+    if unsafe { RtlGetVersion(&mut info) }.is_ok() {
+        info.dwBuildNumber
+    } else {
+        0
+    }
+}
+
+pub(super) fn mica_supported() -> bool {
+    build() >= MICA_BUILD
+}
+
+fn hwnd(window: &slint::Window) -> Option<HWND> {
+    window
+        .with_winit_window(|window| match window.window_handle().ok()?.as_raw() {
+            RawWindowHandle::Win32(handle) => Some(HWND(handle.hwnd.get() as *mut _)),
+            _ => None,
+        })
+        .flatten()
+}
+
+fn set_attribute<T>(
+    hwnd: HWND,
+    attribute: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE,
+    value: &T,
+) -> bool {
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            attribute,
+            (value as *const T).cast(),
+            size_of::<T>() as u32,
+        )
+    }
+    .is_ok()
+}
+
+/// Asks DWM for Mica behind the whole window. False means it isn't available, so the window
+/// keeps a solid background.
+pub(super) fn backdrop(window: &slint::Window, dark: bool) -> bool {
+    if !mica_supported() {
+        return false;
+    }
+    let Some(hwnd) = hwnd(window) else {
+        return false;
+    };
+    set_attribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &BOOL::from(dark));
+    // Extending the frame over the client area lets the backdrop show through it.
+    let margins = MARGINS {
+        cxLeftWidth: -1,
+        cxRightWidth: -1,
+        cyTopHeight: -1,
+        cyBottomHeight: -1,
+    };
+    unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) }.is_ok()
+        && set_attribute::<DWM_SYSTEMBACKDROP_TYPE>(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            &DWMSBT_MAINWINDOW,
+        )
+}
+
+/// Light or dark Mica and title bar.
+pub(super) fn dark(window: &slint::Window, dark: bool) {
+    if let Some(hwnd) = hwnd(window) {
+        set_attribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &BOOL::from(dark));
+    }
+}
+
+fn high_contrast() -> bool {
+    let mut contrast = HIGHCONTRASTW {
+        cbSize: size_of::<HIGHCONTRASTW>() as u32,
+        ..Default::default()
+    };
+    let read = unsafe {
+        SystemParametersInfoW(
+            SPI_GETHIGHCONTRAST,
+            contrast.cbSize,
+            Some((&mut contrast as *mut HIGHCONTRASTW).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    read.is_ok() && contrast.dwFlags.contains(HCF_HIGHCONTRASTON)
+}
+
+fn system_color(index: SYS_COLOR_INDEX) -> slint::Color {
+    // A COLORREF is 0x00BBGGRR.
+    let [r, g, b, _] = unsafe { GetSysColor(index) }.to_le_bytes();
+    slint::Color::from_rgb_u8(r, g, b)
+}
+
+/// The colours of the contrast theme, including any the user customised.
+fn contrast_colors() -> ContrastColors {
+    ContrastColors {
+        window: system_color(COLOR_WINDOW),
+        window_text: system_color(COLOR_WINDOWTEXT),
+        highlight: system_color(COLOR_HIGHLIGHT),
+        highlight_text: system_color(COLOR_HIGHLIGHTTEXT),
+        hotlight: system_color(COLOR_HOTLIGHT),
+        gray_text: system_color(COLOR_GRAYTEXT),
+        button_face: system_color(COLOR_BTNFACE),
+        button_text: system_color(COLOR_BTNTEXT),
+    }
+}
+
+/// The text size setting and contrast theme as they are now.
+pub(super) fn read() -> Look {
+    let text_scale = UISettings::new()
+        .and_then(|settings| settings.TextScaleFactor())
+        .unwrap_or(1.0) as f32;
+    let high_contrast = high_contrast();
+    Look {
+        text_scale,
+        high_contrast,
+        contrast: high_contrast.then(contrast_colors),
+    }
+}
+
+/// Keeps the change subscriptions; dropping it unsubscribes.
+pub(super) struct Watch {
+    settings: UISettings,
+    accessibility: AccessibilitySettings,
+    text_scale: i64,
+    colors: i64,
+    contrast: i64,
+}
+impl Drop for Watch {
+    fn drop(&mut self) {
+        let _ = self.settings.RemoveTextScaleFactorChanged(self.text_scale);
+        let _ = self.settings.RemoveColorValuesChanged(self.colors);
+        let _ = self.accessibility.RemoveHighContrastChanged(self.contrast);
+    }
+}
+
+/// Rereads everything when the text size, the system colours or the contrast theme change.
+/// The events arrive on a background thread, so the look reaches the window through its event
+/// loop.
+pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Option<Watch> {
+    let changed = move || {
+        let look = read();
+        let _ = ui.upgrade_in_event_loop(move |ui| super::apply(&ui, &look));
+    };
+    let settings = UISettings::new().ok()?;
+    let accessibility = AccessibilitySettings::new().ok()?;
+    let on_text = changed.clone();
+    let text_scale = settings
+        .TextScaleFactorChanged(&TypedEventHandler::new(move |_, _| {
+            on_text();
+            Ok(())
+        }))
+        .ok()?;
+    let on_colors = changed.clone();
+    let colors = settings
+        .ColorValuesChanged(&TypedEventHandler::new(move |_, _| {
+            on_colors();
+            Ok(())
+        }))
+        .ok()?;
+    let contrast = accessibility
+        .HighContrastChanged(&TypedEventHandler::new(move |_, _| {
+            changed();
+            Ok(())
+        }))
+        .ok()?;
+    Some(Watch {
+        settings,
+        accessibility,
+        text_scale,
+        colors,
+        contrast,
+    })
+}

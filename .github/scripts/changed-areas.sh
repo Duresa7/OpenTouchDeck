@@ -31,6 +31,8 @@ while IFS= read -r -d '' path; do
   case "$path" in
     app/crates/*|app/Cargo.toml|app/Cargo.lock|app/rust-toolchain.toml) rust=true ;;
     app/icons/*|schema/*|docs/companion-api.md) rust=true ;;
+    # td-updater's tests read the signer test's key fixture.
+    .github/release-signer-test/fixtures/*) rust=true ;;
     app/scripts/check_exe.ps1|.github/workflows/rust.yml|.github/actions/rust-setup/*) rust=true ;;
   esac
 

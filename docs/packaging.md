@@ -1,5 +1,12 @@
 # Windows installer and app updates
 
+Native 2.0 updater groundwork lives in
+[`td-updater`](../app/crates/td-updater/README.md). It selects a stable 2.x GitHub
+release and downloads and verifies its MSI with the existing updater key, without
+installing it. Its opt-out preference and request details are described in
+[PRIVACY](PRIVACY.md). Startup/UI wiring, MSI execution and the 1.x bridge remain
+M5 work.
+
 End users download the [Windows x64 installer](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the latest GitHub release and run it. It installs for the current user only and needs no administrator rights, Node, Rust, Python or ESP-IDF.
 
 The installer on Releases today is the 1.x installer. Its source, recipe and release workflows are not on `main`: they live on the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/blob/release/1.x/docs/packaging.md), whose copy of this page describes what the installer holds, how its update is signed and how a 1.x release is made ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). A `vX.Y.Z` tag pushed on that branch runs its **windows release** workflow from the tagged commit. The bridge release that moves 1.x to 2.0 is built there too.

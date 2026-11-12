@@ -181,7 +181,7 @@ if (( overall_rc == 0 )); then
       }
       setup_rust_env() {
         apt-get update -qq >/dev/null &&
-          apt-get install -y -qq libudev-dev >/dev/null &&
+          apt-get install -y -qq libudev-dev libfontconfig-dev >/dev/null &&
           rustup component add rustfmt clippy >/dev/null 2>&1 &&
           cargo --version
       }

@@ -1,7 +1,7 @@
 # Open TouchDeck desktop app
 
-This folder is the Rust workspace for Open TouchDeck 2.0: one program that runs the Companion and, as it
-lands, a native Slint window ([ADR 0011](../docs/adr/0011-native-windows-app-in-rust-and-slint.md)). It talks
+This folder is the Rust workspace for Open TouchDeck 2.0: one program that runs the Companion and a native
+Slint window ([ADR 0011](../docs/adr/0011-native-windows-app-in-rust-and-slint.md)). It talks
 to the Device over USB-Serial/JTAG, edits and transfers Layouts, runs PC actions, feeds Integrations and
 updates Firmware.
 
@@ -12,8 +12,9 @@ that moves 1.x to 2.0 are built
 app, check out that branch and follow its copy of this page. For everyday use, follow the
 [USB user guide](../docs/usage.md).
 
-Until the Slint window lands, a Companion built from `main` has no window: it runs the Devices, the tray and
-the local JSON API ([contract](../docs/companion-api.md)), and its tests drive it through that API.
+The window is `td-app`, described under [Native app](#native-app-20-in-development). The `td-companion`
+program alone has no window: it runs the Devices, the tray and the local JSON API
+([contract](../docs/companion-api.md)), and its tests drive it through that API.
 
 ## Build
 
@@ -39,6 +40,28 @@ cargo build -p td-companion
 
 The Companion executable is `target/debug/td-companion.exe` on Windows or `target/debug/td-companion` on
 Linux. The [packaging guide](../docs/packaging.md) describes the 2.0 MSI and its release pipeline.
+
+## Native app (2.0, in development)
+
+`crates/td-app` is the Open TouchDeck 2.0 program from
+[ADR 0011](../docs/adr/0011-native-windows-app-in-rust-and-slint.md): the Companion and a
+Slint window in one process. It is not released yet; the 1.x app on `release/1.x` is what people
+install until the cutover. It has Home and About so far. Linux builds need `libfontconfig-dev` as well.
+
+```sh
+cargo run -p td-app                                    # with your real Devices
+cargo run -p td-app --features mock -- --mock-devices 2 # with mock Devices
+cargo test -p td-app                                   # includes headless UI tests
+```
+
+`TOUCHDECK_APP_DATA_DIR` moves the app data folder, as it does for the Companion; the window
+keeps its place and the close-notice flag in `window.json` there. `SLINT_BACKEND=winit-software`
+selects Slint's software renderer.
+
+The crate's own source is Apache-2.0 like the rest of the repository, but it links Slint under
+GPL-3.0, so the program it builds is GPL-3.0-only. Its About page lists the licences of the
+components the program uses directly; `cargo test -p td-app` checks that list against the Cargo
+manifests.
 
 ## Develop and check changes
 
@@ -78,8 +101,8 @@ MSVC setup); Linux cross-checks use MinGW's `x86_64-w64-mingw32-windres`.
 `td_companion::tray::open_app(packaged)` is the single Windows app-opening
 hook, shared by tray activation and Open. It still looks for the 1.x window program
 next to the Companion, allowing `TOUCHDECK_WINDOW_BIN` only in development, and
-`main` no longer builds that program. When the Slint window lands, replace its
-body with a dispatch to the native UI event loop.
+`main` no longer builds that program. At Slint cutover, replace its body with a
+dispatch to the native UI event loop.
 
 Start at sign-in defaults to on at the first packaged start. Its reported state
 requires both the per-user Run registration and Explorer's matching
@@ -97,6 +120,8 @@ setting on clears that decision. Linux startup behavior is unchanged.
 | `crates/td-link` | Serial and mock transports, transfers, firmware update and ROM recovery, and the link CLI. |
 | `crates/td-host` | Host input, actions, approvals, icon processing, and Sources. |
 | `crates/td-companion` | Background Companion and local API. |
+| `crates/td-updater` | Finds, downloads and verifies a 2.x update. |
+| `crates/td-app` | The 2.0 program: the Companion and the Slint window. |
 | `installer` | The 2.0 MSI's WiX source. |
 | `icons` | Built-in Tile icons and the app icon set. |
 | `scripts` | Release, data and setup scripts, and their tests. |

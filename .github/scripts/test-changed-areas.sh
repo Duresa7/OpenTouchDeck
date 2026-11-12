@@ -55,6 +55,7 @@ check "rust actionlint" .github/workflows/rust.yml
 check "firmware actionlint" .github/workflows/firmware.yml
 check "scripts actionlint" .github/release-signer/cli.mjs
 check "scripts actionlint" .github/release-signer-test/signer.test.mjs
+check "rust scripts actionlint" .github/release-signer-test/fixtures/tauri-cli-2.12.4-test-only-key.json
 check "actionlint" .github/workflows/main.yml
 check "actionlint" .github/workflows/release.yml .github/workflows/sign-hook.yml
 check "rust actionlint" .github/actions/rust-setup/action.yml

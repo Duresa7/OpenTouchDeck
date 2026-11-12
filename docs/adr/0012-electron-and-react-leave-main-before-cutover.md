@@ -15,7 +15,7 @@ A frozen app still cost work on main. Its pnpm workspace, its lint, unit and end
 
 ## Consequences
 
-Until the Slint window lands, a Companion built from main has no window to open: the tray's Open still looks for the 1.x window program next to it. People who want a working app use a 1.x release.
+The `td-companion` program built from main has no window to open: its tray's Open still looks for the 1.x window program next to it. The 2.0 window is `td-app`, which has Home and About so far. People who want a working app use a 1.x release.
 
 Main has no Node workspace. Node is still used in three small places that need no install step beyond `npm ci` in `schema/`: the layout schema checks, the net-v2 reference client, and the release signer and its test.
 
