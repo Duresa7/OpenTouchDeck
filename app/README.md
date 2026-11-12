@@ -103,6 +103,30 @@ pnpm --filter @touchdeck/electron e2e
 The shell starts the Companion from `TOUCHDECK_COMPANION_BIN` in development and
 tests, and from `td-companion` next to the app executable when packaged.
 
+### Windows Companion shell
+
+The Companion sets the fixed process AUMID `io.github.duresa7.touchdeck` before
+creating the tray. Its notification icon uses a permanent GUID and restores
+itself after Explorer restarts. Left-click and Enter/Space open the app;
+right-click and the context-menu key show the existing menu. The executable
+embeds the current `electron/installer/icon.ico` as resource 1 through `app.rc`,
+alongside the Common Controls v6 manifest, and loads it with `LoadIconMetric`.
+Windows builds need the SDK resource compiler (included in the documented
+MSVC setup); Linux cross-checks use MinGW's `x86_64-w64-mingw32-windres`.
+
+`td_companion::tray::open_app(packaged)` is the single Windows app-opening
+hook, shared by tray activation and Open. It currently launches Electron next
+to the Companion, allowing `TOUCHDECK_WINDOW_BIN` only in development. At Slint
+cutover, replace its body with a dispatch to the native UI event loop.
+
+Start at sign-in defaults to on at the first packaged start. Its reported state
+requires both the per-user Run registration and Explorer's matching
+`StartupApproved\Run` approval. That binary format is undocumented: the parser
+recognizes enabled DWORD states 2/6 in twelve-byte records, treats missing
+approval as allowed, and keeps disabled (3/7), malformed or unknown records off.
+Initialization preserves Explorer's decision; only explicitly turning the app's
+setting on clears that decision. Linux startup behavior is unchanged.
+
 ## Repository layout
 
 | Path | Responsibility |

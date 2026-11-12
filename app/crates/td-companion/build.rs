@@ -18,12 +18,14 @@ fn git(args: &[&str]) -> Option<String> {
 
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
-        let manifest = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap())
-            .join("app.manifest");
-        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+        // Library tests also import LoadIconMetric, which requires Common Controls v6.
+        embed_resource::compile_for_everything("app.rc", embed_resource::NONE)
+            .manifest_required()
+            .expect("embed the Windows app icon and Common Controls manifest");
+        println!("cargo:rerun-if-changed=app.rc");
         println!("cargo:rerun-if-changed=app.manifest");
         embed_version_info();
+        println!("cargo:rerun-if-changed=../../electron/installer/icon.ico");
     }
     embed_ui();
     // Each channel embeds its own bundle, and each bundle must be the build its channel names: the normal channel never
@@ -47,7 +49,7 @@ fn main() {
 /// name and the Cargo version. Explorer, Task Manager and the Startup apps list show them, and a code-signing
 /// service checks them before it signs.
 fn embed_version_info() {
-    // Only MSVC's linker takes a `.res` file as an input. The manifest arguments above are MSVC's too.
+    // Only MSVC's linker takes a `.res` file as an input. app.rc carries the icon and manifest separately.
     if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
         return;
     }
