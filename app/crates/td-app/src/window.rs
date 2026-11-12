@@ -308,6 +308,8 @@ pub(crate) fn reveal(ui: &AppWindow) {
     });
     if let Some(placement) = placement.filter(|placement| was_hidden && !placement.maximized) {
         window.set_position(PhysicalPosition::new(placement.x, placement.y));
+        // Its monitor may have gone while the window was hidden.
+        keep_on_screen(window);
     }
     if window.is_minimized() {
         window.set_minimized(false);
