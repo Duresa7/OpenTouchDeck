@@ -114,3 +114,43 @@ pwsh -NoProfile -File app/scripts/tests/setup-windows.test.ps1
 ```
 
 Each case starts a fresh process with temporary tool stubs and a guarded tool resolver. Installer calls, tool versions, PATH additions, and native failures are simulated; the suite does not install tools or modify host settings.
+
+## Git hooks
+
+Enable the committed hooks once per clone (shared by its worktrees), from the repository root:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Python 3 is required (`python3`, `python`, or `py -3`). Pre-commit scans added
+staged lines for private data and, when a Rust file is staged, runs CI's
+`cargo fmt --check` from `app/`. Missing Cargo skips only the format check.
+Pre-push scans added lines and messages of outgoing commits; new branches exclude
+commits already reachable from remote-tracking refs. Keep those refs current.
+Both hooks block on findings: remove the data and retry. They run no tests or clippy.
+
+Existing executable hooks in the common Git directory's `hooks/` continue to run
+after the shared checks pass, with their arguments and pre-push input preserved.
+The pass-through post-checkout hook also preserves local worktree setup.
+
+For local-only exact values, edit `info/private-patterns` under the directory
+reported by `git rev-parse --git-common-dir`. Every worktree shares this file;
+never commit it. Blank lines and lines starting with `#` are ignored. Plain lines
+are case-insensitive literals; `re:` introduces a Python regex (case-sensitive
+unless it includes a flag). For example:
+
+```text
+# Placeholder examples; replace locally
+<private-email>
+<private-lan-address>
+<private-hostname>
+re:(?i)<private-user-name>
+```
+
+Run `python3 .githooks/scanner.py --all-files` to scan every tracked file at HEAD
+with generic rules only. Exact-line SHA-256 entries in `.githooks/allowlist.json`
+document existing false positives without publishing matched contact details;
+each entry is restricted to a file and rule and requires an explanation. Local
+patterns cannot be allowlisted. Private IP ranges are not flagged generically.
+Run the scanner tests with `python3 -B -m unittest discover -s .githooks -v`.
