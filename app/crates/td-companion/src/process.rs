@@ -97,9 +97,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         initial.runtime.as_ref().unwrap().repair(&value)
     })
     .await?;
-    if !ctx.mock || args.contains(&"--native-desktop") {
-        crate::tray::start(ctx.clone(), packaged);
-    }
+    // Own the tray until shutdown, including early returns during startup.
+    let tray = (!ctx.mock || args.contains(&"--native-desktop"))
+        .then(|| crate::tray::start(ctx.clone(), packaged));
     if written.is_err() {
         ctx.desktop
             .notify("The runtime file failed its check. Restart Open TouchDeck.");
@@ -148,6 +148,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     crate::serve::serve(listener, crate::api::router(ctx), limits, stop).await;
     companion.shutdown().await;
     maintenance.abort();
+    drop(tray);
     runtime.remove();
     Ok(())
 }

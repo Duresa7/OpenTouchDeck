@@ -2,6 +2,8 @@ use super::{routing, *};
 use std::{
     ptr::{null, null_mut},
     sync::{OnceLock, mpsc},
+    thread::JoinHandle,
+    time::{Duration, Instant},
 };
 use windows_sys::{
     Win32::{
@@ -20,6 +22,43 @@ static NOTICES: OnceLock<mpsc::SyncSender<String>> = OnceLock::new();
 static EVENTS: OnceLock<mpsc::Sender<Event>> = OnceLock::new();
 static TASKBAR_CREATED: OnceLock<u32> = OnceLock::new();
 const CALLBACK: u32 = WM_APP + 1;
+const STOP: u32 = WM_APP + 2;
+
+#[derive(Default)]
+struct State {
+    // Store the HWND as an integer so the shared state can cross threads.
+    hwnd: isize,
+    stopping: bool,
+}
+
+pub(crate) struct Tray {
+    thread: Option<JoinHandle<()>>,
+    state: Arc<Mutex<State>>,
+}
+
+impl Drop for Tray {
+    fn drop(&mut self) {
+        {
+            let mut state = self.state.lock();
+            state.stopping = true;
+            if state.hwnd != 0 {
+                unsafe { PostMessageW(state.hwnd as HWND, STOP, 0, 0) };
+            }
+        }
+        let thread = self.thread.take().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !thread.is_finished() {
+            if Instant::now() >= deadline {
+                eprintln!("Tray cleanup timed out; continuing shutdown.");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if thread.join().is_err() {
+            eprintln!("The tray thread panicked during shutdown.");
+        }
+    }
+}
 enum Event {
     Callback(WPARAM, LPARAM),
     Recreate,
@@ -75,6 +114,15 @@ pub(super) fn notify(message: &str) {
 }
 
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if msg == STOP {
+        // TrackPopupMenu runs a nested loop: close it too, so shutdown cannot
+        // leave the tray thread waiting for the user to dismiss the menu.
+        unsafe {
+            EndMenu();
+            PostQuitMessage(0);
+        }
+        return 0;
+    }
     // Explorer may send messages directly to the window procedure, bypassing
     // GetMessage. Queue work so tray state stays thread-local and callbacks
     // cannot reenter it. A channel also preserves events during TrackPopupMenu's
@@ -179,13 +227,15 @@ unsafe fn menu(icon: &NOTIFYICONDATAW, mut x: i32, mut y: i32) -> i32 {
     }
 }
 
-pub(super) fn start(ctx: Ctx, packaged: bool) {
+pub(super) fn start(ctx: Ctx, packaged: bool) -> Tray {
     let handle = tokio::runtime::Handle::current();
     let (tx, rx) = mpsc::sync_channel(16);
     let _ = NOTICES.set(tx);
     let (tx, events) = mpsc::channel();
     let _ = EVENTS.set(tx);
-    std::thread::spawn(move || unsafe {
+    let state = Arc::new(Mutex::new(State::default()));
+    let thread_state = state.clone();
+    let thread = std::thread::spawn(move || unsafe {
         let taskbar_created = RegisterWindowMessageW(wide("TaskbarCreated").as_ptr());
         if taskbar_created == 0 {
             eprintln!("Could not register the taskbar restart message.");
@@ -222,6 +272,15 @@ pub(super) fn start(ctx: Ctx, packaged: bool) {
         if hwnd.is_null() {
             return;
         }
+        {
+            let mut state = thread_state.lock();
+            // Shutdown can arrive before the thread has created its window.
+            if state.stopping {
+                DestroyWindow(hwnd);
+                return;
+            }
+            state.hwnd = hwnd as isize;
+        }
         let mut icon: NOTIFYICONDATAW = std::mem::zeroed();
         icon.cbSize = std::mem::size_of_val(&icon) as u32;
         icon.hWnd = hwnd;
@@ -229,6 +288,7 @@ pub(super) fn start(ctx: Ctx, packaged: bool) {
         icon.uCallbackMessage = CALLBACK;
         icon.hIcon = load_icon();
         if icon.hIcon.is_null() {
+            thread_state.lock().hwnd = 0;
             DestroyWindow(hwnd);
             return;
         }
@@ -237,7 +297,7 @@ pub(super) fn start(ctx: Ctx, packaged: bool) {
         SetTimer(hwnd, 1, 100, None);
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
-            if *ctx.shutdown.borrow() {
+            if *ctx.shutdown.borrow() || thread_state.lock().stopping {
                 break;
             }
             if let Ok(message) = rx.try_recv() {
@@ -303,6 +363,93 @@ pub(super) fn start(ctx: Ctx, packaged: bool) {
         Shell_NotifyIconW(NIM_DELETE, &icon);
         DestroyIcon(icon.hIcon);
         KillTimer(hwnd, 1);
+        // Serialize with the owner posting STOP; never post to a destroyed HWND.
+        thread_state.lock().hwnd = 0;
         DestroyWindow(hwnd);
     });
+    Tray {
+        thread: Some(thread),
+        state,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_tray_wakes_and_joins_an_idle_window_thread() {
+        let state = Arc::new(Mutex::new(State::default()));
+        let thread_state = state.clone();
+        let (ready, window) = mpsc::channel();
+        let (finished, cleanup) = mpsc::channel();
+        let thread = std::thread::spawn(move || unsafe {
+            let class = wide("OpenTouchDeckTrayShutdownTest");
+            let instance = GetModuleHandleW(null());
+            let wc = WNDCLASSW {
+                lpfnWndProc: Some(proc),
+                hInstance: instance,
+                lpszClassName: class.as_ptr(),
+                ..std::mem::zeroed()
+            };
+            assert_ne!(RegisterClassW(&wc), 0);
+            let hwnd = CreateWindowExW(
+                0,
+                class.as_ptr(),
+                class.as_ptr(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                null_mut(),
+                null_mut(),
+                instance,
+                null(),
+            );
+            assert!(!hwnd.is_null());
+            thread_state.lock().hwnd = hwnd as isize;
+            ready.send(()).unwrap();
+            // No timer: only the owner's posted shutdown message can wake this loop.
+            let mut msg = std::mem::zeroed();
+            while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
+                DispatchMessageW(&msg);
+            }
+            thread_state.lock().hwnd = 0;
+            assert_ne!(DestroyWindow(hwnd), 0);
+            UnregisterClassW(class.as_ptr(), instance);
+            finished.send(()).unwrap();
+        });
+        let tray = Tray {
+            thread: Some(thread),
+            state,
+        };
+        window.recv_timeout(Duration::from_secs(5)).unwrap();
+        drop(tray);
+        assert_eq!(cleanup.try_recv(), Ok(()), "cleanup finished before return");
+    }
+
+    #[test]
+    fn a_stuck_tray_thread_cannot_block_exit() {
+        let (release, stuck) = mpsc::channel();
+        let (finished, cleanup) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            // Even a regression to an unbounded join must finish this test.
+            let _ = stuck.recv_timeout(Duration::from_secs(5));
+            finished.send(()).unwrap();
+        });
+        let state = Arc::new(Mutex::new(State::default()));
+        let tray = Tray {
+            thread: Some(thread),
+            state: state.clone(),
+        };
+        drop(tray);
+        assert!(
+            state.lock().stopping,
+            "shutdown also covers window creation"
+        );
+        assert_eq!(cleanup.try_recv(), Err(mpsc::TryRecvError::Empty));
+        release.send(()).unwrap();
+        cleanup.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
 }

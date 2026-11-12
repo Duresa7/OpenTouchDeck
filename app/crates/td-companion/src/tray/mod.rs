@@ -5,6 +5,14 @@ use std::sync::Arc;
 mod routing;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+pub(crate) use windows::Tray;
+#[cfg(not(windows))]
+pub(crate) struct Tray;
+#[cfg(not(windows))]
+impl Drop for Tray {
+    fn drop(&mut self) {}
+}
 
 #[cfg(windows)]
 pub(crate) fn set_app_identity() -> std::io::Result<()> {
@@ -123,13 +131,16 @@ impl TrayNotifier for NativeNotifier {
         }
     }
 }
-pub(crate) fn start(ctx: Ctx, packaged: bool) {
+pub(crate) fn start(ctx: Ctx, packaged: bool) -> Tray {
     #[cfg(windows)]
-    windows::start(ctx, packaged);
+    {
+        windows::start(ctx, packaged)
+    }
     #[cfg(not(windows))]
     {
         let _ = (ctx, packaged);
         eprintln!("Native tray unavailable on this platform.");
+        Tray
     }
 }
 
