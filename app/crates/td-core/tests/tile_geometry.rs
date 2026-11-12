@@ -151,3 +151,144 @@ fn art_sizes_match_the_shared_now_playing_vectors() {
     assert_eq!(art_size(u16::MAX, u16::MAX), Some(256));
     assert_eq!(art_size(0, 0), None);
 }
+
+#[test]
+fn live_layouts_match_shared_vectors() {
+    use serde_json::{Value, json};
+    use td_core::live::{bar_layout, now_playing_layout};
+    let rect = |r: PixelRect| json!({"x":r.x,"y":r.y,"w":r.w,"h":r.h});
+    let players: Value = serde_json::from_str(include_str!(
+        "../../../../schema/live/now-playing-vectors.json"
+    ))
+    .unwrap();
+    for c in players["cases"].as_array().unwrap() {
+        let l = now_playing_layout(
+            c["w"].as_u64().unwrap() as u16,
+            c["h"].as_u64().unwrap() as u16,
+        );
+        assert_eq!(
+            l.art
+                .map(|r| json!({"x":r.x,"y":r.y,"size":r.w}))
+                .unwrap_or(Value::Null),
+            c["art"]
+        );
+        assert_eq!(json!({"x":l.text_x,"w":l.text_w}), c["text"]);
+        assert_eq!(l.controls, c["controls"].as_bool().unwrap());
+        let parts: Vec<_> = l
+            .parts
+            .iter()
+            .map(|(name, r)| {
+                let mut v = rect(*r);
+                v["part"] = json!(name);
+                v
+            })
+            .collect();
+        assert_eq!(json!(parts), c["parts"]);
+        for hit in c["hits"].as_array().unwrap() {
+            assert_eq!(
+                json!(l.part_at(
+                    hit["x"].as_i64().unwrap() as i32,
+                    hit["y"].as_i64().unwrap() as i32,
+                    hit["state"].as_u64().unwrap() as u8
+                )),
+                hit["part"]
+            );
+        }
+    }
+    let bars: Value =
+        serde_json::from_str(include_str!("../../../../schema/live/bar-vectors.json")).unwrap();
+    for c in bars["cases"].as_array().unwrap() {
+        let l = bar_layout(
+            c["w"].as_u64().unwrap() as u16,
+            c["h"].as_u64().unwrap() as u16,
+            c["muted_declared"].as_bool().unwrap(),
+        );
+        assert_eq!(rect(l.track), c["track"]);
+        assert_eq!(l.capture.map(rect).unwrap_or(Value::Null), c["capture"]);
+        assert_eq!(l.mute.map(rect).unwrap_or(Value::Null), c["mute"]);
+        for hit in c["hits"].as_array().unwrap() {
+            assert_eq!(
+                json!(l.zone_at(
+                    hit["x"].as_i64().unwrap() as i32,
+                    hit["y"].as_i64().unwrap() as i32,
+                    hit["fresh"].as_bool().unwrap(),
+                    hit["input"].as_bool().unwrap()
+                )),
+                hit["zone"]
+            );
+        }
+    }
+}
+
+#[test]
+fn inverse_preserves_rounded_edges_and_following_gaps() {
+    use td_core::live::cell_at;
+    for screen in [
+        ScreenSize { w: 1024, h: 600 },
+        ScreenSize { w: 600, h: 1024 },
+    ] {
+        for full in [false, true] {
+            for rows in 1..=8 {
+                for cols in 1..=8 {
+                    for row in 0..rows {
+                        for col in 0..cols {
+                            let r =
+                                cell_rect(screen, full, [rows, cols], [row, col, 1, 1]).unwrap();
+                            for (x, y) in [
+                                (f64::from(r.x), f64::from(r.y)),
+                                (
+                                    f64::from(r.x) + f64::from(r.w) + 15.9,
+                                    f64::from(r.y) + f64::from(r.h) + 15.9,
+                                ),
+                            ] {
+                                assert_eq!(
+                                    cell_at(screen, full, [rows, cols], x, y),
+                                    Some([i32::from(row), i32::from(col)])
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn outside_points_orientation_and_cover_crops() {
+    use td_core::live::{cell_at, cover_crop};
+    let screen = ScreenSize { w: 1024, h: 600 };
+    assert_eq!(
+        screen.oriented(td_core::layout::Orientation::Portrait),
+        ScreenSize { w: 600, h: 1024 }
+    );
+    assert_eq!(cell_at(screen, false, [3, 4], 27.0, 75.0), Some([-1, -1]));
+    assert_eq!(cell_at(screen, false, [3, 4], 1012.0, 76.0), Some([0, 4]));
+    assert_eq!(cell_at(screen, false, [0, 4], 0.0, 0.0), None);
+    assert_eq!(cell_at(screen, false, [3, 4], f64::NAN, 0.0), None);
+    let art = PixelRect {
+        x: 20,
+        y: 20,
+        w: 100,
+        h: 100,
+    };
+    assert_eq!(
+        cover_crop(screen, art),
+        PixelRect {
+            x: 462,
+            y: 250,
+            w: 100,
+            h: 100
+        }
+    );
+    assert_eq!(
+        cover_crop(ScreenSize { w: 50, h: 60 }, art),
+        PixelRect {
+            x: 0,
+            y: 0,
+            w: 50,
+            h: 60
+        }
+    );
+    assert!(td_core::live::bar_layout(71, 200, true).capture.is_none());
+}
