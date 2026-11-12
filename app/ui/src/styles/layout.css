@@ -4,7 +4,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--inspector-w, 400px);
   grid-template-rows: 64px minmax(0, 1fr);
-  height: 100vh;
+  height: var(--app-height);
   overflow: clip;
   transition: grid-template-columns var(--duration-expand) var(--ease-drawer);
 }
@@ -518,7 +518,7 @@ body.is-resizing {
 /* The Bluetooth keyboard makes the panel taller than a short window. A fixed cap, because following
    --available-height loops the positioner's ResizeObserver. */
 .device-panel {
-  max-height: calc(100vh - 80px);
+  max-height: calc(var(--app-height) - 80px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }

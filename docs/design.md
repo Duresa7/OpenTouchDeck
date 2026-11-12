@@ -167,6 +167,21 @@ A few places change where the ring is drawn. All of them keep the token's color 
 - **The slider** draws the ring on its thumb, because the focused element is the thumb's hidden input.
 - **The editor canvas** is scaled, so its rings divide by the canvas scale to stay 2 app pixels wide. On a Tile the ring sits inside the Tile edge. The selection ring sits outside, so a selected Tile with focus shows both.
 
+## Window frame
+
+The Electron window draws the desk mat to the top edge on Windows and Linux,
+using a hidden title bar and Window Controls Overlay. The system owns the caption
+buttons and their hover behaviour (including Windows Snap layouts). The window
+keeps the title **Open TouchDeck** for the taskbar and assistive technology.
+
+A thin drag strip occupies the reported `titlebar-area-*` rectangle. Drag,
+double-click and the system menu use Electron's native drag region; interactive
+controls inside it are `no-drag`. All screens and modal content reserve the
+reported top inset, including after resize, maximize, fullscreen or scale changes.
+Browser tabs reserve none. The hidden app menu keeps its keyboard shortcuts.
+Caption backgrounds and glyphs follow Appearance immediately; Match Windows
+also follows system theme changes. No Mica or acrylic is used.
+
 ## Components
 
 Each part below is in the reference prototype; [Reference prototype](#reference-prototype) lists the screenshot for each state.

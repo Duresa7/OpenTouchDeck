@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { connect, devUiOrigin, restartMessage, revoke, runtimePath, type WindowSession } from './companion';
@@ -7,6 +7,7 @@ import { Updater, feedSettings } from './updates';
 import { UPDATER_PUBLIC_KEY } from './updates/key.gen';
 import { trustedSender } from './trusted-sender';
 import { menuTemplate } from './menu';
+import { frameOptions, overlayColors } from './window-frame';
 
 app.setName('Open TouchDeck');
 if (process.platform === 'win32') {
@@ -89,6 +90,18 @@ ipcMain.handle('dialog:pick-folder', async event => {
   } catch { return null; }
 });
 
+// Only the window's top frame may select one of the three Appearance values. The caption colours follow the
+// scheme the page renders, because on Linux nativeTheme can disagree with the page's prefers-color-scheme.
+ipcMain.on('window:appearance', (event, appearance: unknown, dark: unknown) => {
+  if (closing || !window || event.sender !== window.webContents ||
+      event.senderFrame !== window.webContents.mainFrame || !current ||
+      event.senderFrame.origin !== pageOrigin(current)) return;
+  if (appearance !== 'light' && appearance !== 'dark' && appearance !== 'system') return;
+  if (typeof dark !== 'boolean') return;
+  nativeTheme.themeSource = appearance;
+  if (process.platform === 'win32' || process.platform === 'linux') window.setTitleBarOverlay(overlayColors(dark));
+});
+
 let updater: Updater | undefined;
 for (const action of ['check', 'download', 'install'] as const) {
   ipcMain.handle(`updates:${action}`, async event => {
@@ -131,10 +144,12 @@ async function openWindow() {
   // so closing the app loses no work. No credential lives there; the window session arrives over IPC and is revoked
   // on close. The page's origin stays put because the Companion keeps its port.
   window = new BrowserWindow({
-    title: 'Open TouchDeck', useContentSize: true, width: 1100, height: 760, minWidth: 800, minHeight: 600, autoHideMenuBar: true,
+    ...frameOptions(process.platform, nativeTheme.shouldUseDarkColors),
+    title: 'Open TouchDeck', useContentSize: true, width: 1100, height: 760, minWidth: 800, minHeight: 600, autoHideMenuBar: false,
     webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true,
       nodeIntegration: false, webviewTag: false, partition: 'persist:touchdeck-window' },
   });
+  window.setMenuBarVisibility(false);
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.webContents.session.setPermissionCheckHandler(() => false);
   window.on('page-title-updated', event => event.preventDefault());

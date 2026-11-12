@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type {} from '../../ui/src/lib/companion/session';
+import { overlayColors } from '../src/window-frame';
 
 // Build with `cargo build -p td-companion --features test-hooks` in app/, or point TOUCHDECK_COMPANION_BIN at a build.
 const binary = process.env.TOUCHDECK_COMPANION_BIN ||
@@ -200,6 +201,60 @@ test('a saved Brandfetch client ID opens the window to Brandfetch after a reload
       await expect(page.getByTestId('icon-picker').locator('.icon-credits')).not.toContainText('Brandfetch');
       await expect(page.getByTestId('icon-picker').getByTestId('icon-section-brandfetch')).toHaveCount(0);
       expect(searches).toHaveLength(1);
+    } finally { await app.close(); }
+  });
+});
+
+test('native title bar reserves its reported geometry and follows Appearance', async () => {
+  await withCompanion(async env => {
+    const app = await launch(env);
+    try {
+      const page = await app.firstWindow();
+      const strip = page.locator('.window-drag-strip');
+      await expect(strip).toBeVisible();
+      expect(await strip.evaluate(el => getComputedStyle(el).getPropertyValue('-webkit-app-region'))).toBe('drag');
+      expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarVisible())).toBe(false);
+      await strip.evaluate(el => { const button = document.createElement('button'); button.textContent = 'Test'; el.append(button); });
+      expect(await strip.locator('button').evaluate(el => getComputedStyle(el).getPropertyValue('-webkit-app-region'))).toBe('no-drag');
+      await strip.locator('button').evaluate(el => el.remove());
+      // Record the caption colours main hands the window, and check they match the scheme the page renders.
+      await app.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        const set = window.setTitleBarOverlay.bind(window);
+        const seen: unknown[] = [];
+        (globalThis as { overlays?: unknown[] }).overlays = seen;
+        window.setTitleBarOverlay = options => { seen.push(options); set(options); };
+      });
+      for (const theme of ['light', 'dark', 'system']) {
+        await page.evaluate(theme => {
+          if (theme === 'system') delete document.documentElement.dataset.theme;
+          else document.documentElement.dataset.theme = theme;
+        }, theme);
+        await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe(theme);
+        const dark = theme === 'system' ? await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches) : theme === 'dark';
+        await expect.poll(() => app.evaluate(() => (globalThis as { overlays?: unknown[] }).overlays!.at(-1))).toEqual(overlayColors(dark));
+      }
+      for (const size of [[800, 600], [1200, 800]]) {
+        await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size[0], size[1]), size);
+        await expect.poll(() => page.evaluate(() => {
+          const strip = document.querySelector('.window-drag-strip')!.getBoundingClientRect();
+          return parseFloat(getComputedStyle(document.body).paddingTop) >= strip.bottom;
+        })).toBe(true);
+      }
+      // At the smallest size a screen taller than the window still scrolls from the keyboard after the nav is used.
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(800, 600));
+      await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight > innerHeight)).toBe(true);
+      await page.keyboard.press('PageDown');
+      await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
+      // The icon picker flips above its button there, and still keeps below the caption area.
+      await page.getByRole('button', { name: 'Layout', exact: true }).click();
+      await page.getByTestId('start-starter').click();
+      await page.locator('[data-testid="tile"]').last().click();
+      await page.getByTestId('icon-change').click();
+      const bottom = await strip.evaluate(el => el.getBoundingClientRect().bottom);
+      await expect.poll(() => page.getByTestId('icon-picker').evaluate(el => el.getBoundingClientRect().top))
+        .toBeGreaterThanOrEqual(bottom);
     } finally { await app.close(); }
   });
 });

@@ -5,6 +5,7 @@ import type { EditorStore } from '../../lib/editor/store.ts';
 import { assetOf, type ActionType, type Tile } from '../../lib/layout/model.ts';
 import { readRecent, recentKey } from '../../lib/icons/recent.ts';
 import { button } from '../../shell/button.ts';
+import { windowTop } from '../../shell/WindowFrame.tsx';
 import { TileIcon } from './AssetImage.tsx';
 import { SYMBOL_NAMES } from './glyphs.tsx';
 import { IconPicker } from './IconPicker.tsx';
@@ -54,7 +55,7 @@ export function IconField({ store, tile, kind }: { store: EditorStore; tile: Til
               side="bottom"
               align="end"
               sideOffset={8}
-              collisionPadding={12}
+              collisionPadding={{ top: 12 + windowTop(), right: 12, bottom: 12, left: 12 }}
               collisionAvoidance={{ side: 'flip', align: 'shift', fallbackAxisSide: 'none' }}
             >
               <Popover.Popup

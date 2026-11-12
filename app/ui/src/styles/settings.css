@@ -3,14 +3,14 @@
 .settings-screen {
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
-  min-height: 100vh;
+  min-height: var(--app-height);
 }
 
 .settings-nav {
   position: sticky;
-  top: 0;
+  top: var(--window-top);
   align-self: start;
-  height: 100vh;
+  height: var(--app-height);
   overflow-y: auto;
   padding: var(--space-8) var(--space-3) 96px;
   border-right: 1px solid var(--line);
