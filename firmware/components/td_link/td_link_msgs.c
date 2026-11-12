@@ -146,7 +146,7 @@ static void hello(const cJSON *request, cJSON *reply)
     const char *sinks[] = { "log", "link" };
     cJSON *sink_list = cJSON_CreateStringArray(sinks, 2);
 #if CONFIG_TD_RADIO_BUILD
-    cJSON_AddItemToArray(sink_list, cJSON_CreateString("hid"));
+    cJSON_AddItemToArray(sink_list, cJSON_CreateString("bluetooth"));
 #endif
     cJSON_AddItemToObject(reply, "sinks", sink_list);
     cJSON_AddBoolToObject(reply, "recovery", td_recovery_mode());

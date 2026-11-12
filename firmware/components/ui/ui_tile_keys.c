@@ -83,12 +83,12 @@ void ui_tile_keys_dress(lv_obj_t *obj, const ui_tile_t *tile)
                    (t->lock.h - t->lock.body_h) / 2);
 }
 
-static key_sink_t s_hid;
-void ui_set_hid_sink(key_sink_t sink) { s_hid = sink; }
-static void click_hid(void *ctx, const td_action_t *action)
+static key_sink_t s_bluetooth;
+void ui_set_bluetooth_sink(key_sink_t sink) { s_bluetooth = sink; }
+static void click_bluetooth(void *ctx, const td_action_t *action)
 {
     (void)ctx;
-    ui_action_hid(action, s_hid);
+    ui_action_bluetooth(action, s_bluetooth);
 }
 
 static void click_key(void *ctx, uint8_t usage, uint8_t mods)
@@ -158,7 +158,7 @@ void ui_tile_keys_press_part(const char *page_id, const ui_tile_t *tile, const c
 void ui_tile_keys_click(const ui_page_t *page, const ui_tile_t *tile)
 {
     static const ui_action_ops_t ops = {
-        .hid = click_hid, .key = click_key, .mod = click_mod, .consumer = click_consumer, .page = click_page, .press = click_press,
+        .bluetooth = click_bluetooth, .key = click_key, .mod = click_mod, .consumer = click_consumer, .page = click_page, .press = click_press,
     };
     if (ui_tile_click(tile, &ops, (void *)page)) {
         sync_mods();

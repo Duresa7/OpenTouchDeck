@@ -612,14 +612,14 @@ static bool check_action(const cJSON *a, const char *tile_where, td_layout_error
     }
 #define FIELD(name) (snprintf(field, sizeof field, "%s/%s", where, name), field)
     const cJSON *sink = member(a, "sink");
-    if (sink && (!cJSON_IsString(sink) || (strcmp(sink->valuestring, "link") != 0 && strcmp(sink->valuestring, "hid") != 0))) {
-        return fail(err, "action.sink", "%s must be link or hid", FIELD("sink"));
+    if (sink && (!cJSON_IsString(sink) || (strcmp(sink->valuestring, "link") != 0 && strcmp(sink->valuestring, "bluetooth") != 0))) {
+        return fail(err, "action.sink", "%s must be link or bluetooth", FIELD("sink"));
     }
-    const bool hid = sink && strcmp(sink->valuestring, "hid") == 0;
+    const bool bluetooth = sink && strcmp(sink->valuestring, "bluetooth") == 0;
 #if !CONFIG_TD_RADIO_BUILD
-    if (hid) return fail(err, "action.sink", "%s is unavailable on this Device", FIELD("sink"));
+    if (bluetooth) return fail(err, "action.sink", "%s is unavailable on this Device", FIELD("sink"));
 #endif
-    if (hid && strcmp(shape->type, "consumer") == 0 && member(a, "usage") && member(a, "usage")->valuedouble > 1023) {
+    if (bluetooth && strcmp(shape->type, "consumer") == 0 && member(a, "usage") && member(a, "usage")->valuedouble > 1023) {
         return fail(err, "consumer.usage-range", "%s exceeds Bluetooth's consumer range", FIELD("usage"));
     }
     const char *t = shape->type;
@@ -1073,7 +1073,7 @@ static size_t align8(size_t n)
 static td_action_t build_action(const cJSON *a, const cJSON *pages, char **strings)
 {
     const cJSON *sink = member(a, "sink");
-    td_action_t action = { .type = TD_ACTION_NONE, .hid = sink && strcmp(sink->valuestring, "hid") == 0 };
+    td_action_t action = { .type = TD_ACTION_NONE, .bluetooth = sink && strcmp(sink->valuestring, "bluetooth") == 0 };
     const char *type = member(a, "type")->valuestring;
     if (strcmp(type, "key") == 0) {
         action.type = TD_ACTION_KEY;

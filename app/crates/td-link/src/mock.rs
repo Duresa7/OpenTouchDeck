@@ -507,9 +507,9 @@ impl MockDeck {
     pub fn set_ble_capability(&self, bonds: Option<u32>) {
         let mut state = self.state();
         state.ble.bonds_max = bonds;
-        state.hello.sinks.retain(|s| s != "hid");
+        state.hello.sinks.retain(|s| s != "bluetooth");
         if bonds.is_some() {
-            state.hello.sinks.push("hid".into());
+            state.hello.sinks.push("bluetooth".into());
         }
     }
 

@@ -1564,5 +1564,8 @@ Shown only while a client ID is saved.
 
 The Tile action destination field is **Send to**, with **This PC (Companion)**
 and **Bluetooth computer or phone**. Offer it only for shortcuts and media keys
-when the Device advertises the `hid` sink. A Bluetooth shortcut hint ends with
+when the Device advertises the `bluetooth` sink. A Bluetooth shortcut hint ends with
 “on the Bluetooth computer or phone”.
+
+Imported Bluetooth Tiles keep **Send to** visible on Devices without that destination.
+Show the inline error: “This Device can't send to Bluetooth. Choose This PC (Companion).”

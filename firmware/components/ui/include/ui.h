@@ -150,7 +150,7 @@ void ui_pairing_show(const char *code, const char *name, uint32_t left_s, void (
 void ui_pairing_hide(void);
 
 /* Configure the Tile Bluetooth destination before UI start. */
-void ui_set_hid_sink(key_sink_t sink);
+void ui_set_bluetooth_sink(key_sink_t sink);
 
 #ifdef __cplusplus
 }

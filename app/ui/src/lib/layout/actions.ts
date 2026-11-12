@@ -17,4 +17,4 @@ export {
   switchKind,
 } from './lib/actions.ts';
 
-export { offersHid } from './lib/actions.ts';
+export { offersBluetooth } from './lib/actions.ts';

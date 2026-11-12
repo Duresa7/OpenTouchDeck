@@ -1708,9 +1708,9 @@ Companion and mock Device.
 
 ### Tile key destinations
 
-Key and consumer Tile actions accept optional `sink: "link" | "hid"`. Omission
+Key and consumer Tile actions accept optional `sink: "link" | "bluetooth"`. Omission
 means `link` (the Companion). Device diagnostics expose the Firmware's `sinks`;
-only Devices advertising `hid` offer the Bluetooth destination. Layout push
+only Devices advertising `bluetooth` offer the Bluetooth destination. Layout push
 checks this before transferring Assets and fails with `layout.invalid`, issue
 `action.sink`, if the destination is unsupported. Bluetooth consumer usages are
 limited to 1–1023 by the existing report map. Other action types have no sink.

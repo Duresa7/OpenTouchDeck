@@ -28,7 +28,7 @@ esp_err_t td_ble_init(void);
  * display, touch and Wi-Fi have their internal RAM. */
 esp_err_t td_ble_boot(void);
 
-/* Explicit HID Tile reports go to a bonded, subscribed host while one is connected, and nowhere while none is. */
+/* Explicit Bluetooth Tile reports go to a bonded, subscribed host while one is connected, and nowhere while none is. */
 key_sink_t td_ble_key_sink(void);
 
 /* Pairing needs the passkey on the Device's screen: the host types the six digits shown. td_ble calls the hook with

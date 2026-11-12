@@ -156,6 +156,6 @@ const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 export const escapeInvisible = (text: string) =>
   text.replace(INVISIBLE, (char) => `\\u{${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}}`);
 
-export function offersHid(device: { diagnostics?: { sinks: readonly string[] } | null } | undefined): boolean {
-  return device?.diagnostics?.sinks.includes('hid') ?? false;
+export function offersBluetooth(device: { diagnostics?: { sinks: readonly string[] } | null } | undefined): boolean {
+  return device?.diagnostics?.sinks.includes('bluetooth') ?? false;
 }

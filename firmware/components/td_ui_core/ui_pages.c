@@ -113,9 +113,9 @@ bool ui_tile_click(const ui_tile_t *tile, const ui_action_ops_t *ops, void *ctx)
         return false;
     }
     const td_action_t *a = &tile->action;
-    if (a->hid && (a->type == TD_ACTION_KEY || a->type == TD_ACTION_CONSUMER)) {
-        if (!ops->hid) return false;
-        ops->hid(ctx, a);
+    if (a->bluetooth && (a->type == TD_ACTION_KEY || a->type == TD_ACTION_CONSUMER)) {
+        if (!ops->bluetooth) return false;
+        ops->bluetooth(ctx, a);
         return true;
     }
     switch (a->type) {
@@ -156,7 +156,7 @@ bool ui_tile_click(const ui_tile_t *tile, const ui_action_ops_t *ops, void *ctx)
     return false;
 }
 
-void ui_action_hid(const td_action_t *action, key_sink_t sink)
+void ui_action_bluetooth(const td_action_t *action, key_sink_t sink)
 {
     if (!action || !sink.report) return;
     key_report_t down, up;

@@ -352,7 +352,7 @@
             "sink": {
               "enum": [
                 "link",
-                "hid"
+                "bluetooth"
               ],
               "x-rules": {
                 "enum": "action.sink"
@@ -399,7 +399,7 @@
             "sink": {
               "enum": [
                 "link",
-                "hid"
+                "bluetooth"
               ],
               "x-rules": {
                 "enum": "action.sink"

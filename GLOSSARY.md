@@ -87,5 +87,5 @@ _Avoid_: bond, paired device, Pairing (that is a Companion's approval)
 
 **Action sink**:
 The destination of a Tile's keys or media keys: the Companion (`link`) or the
-Bluetooth keyboard's computer or phone (`hid`). The editor calls it “Send to”.
+Bluetooth keyboard's computer or phone (`bluetooth`). The editor calls it “Send to”.
 Omitting the sink keeps the Companion destination.

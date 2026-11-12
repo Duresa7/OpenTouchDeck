@@ -260,7 +260,7 @@ pub struct Tile {
 #[serde(rename_all = "lowercase")]
 pub enum ActionSink {
     Link,
-    Hid,
+    Bluetooth,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1315,11 +1315,11 @@ impl Check {
             return;
         };
         if let Some(sink) = obj.get("sink") {
-            if !matches!(sink, Json::Str(s) if matches!(s.text.as_str(), "link" | "hid")) {
+            if !matches!(sink, Json::Str(s) if matches!(s.text.as_str(), "link" | "bluetooth")) {
                 self.fail(
                     Rule::ActionSink,
                     &format!("{pointer}/sink"),
-                    "must be link or hid",
+                    "must be link or bluetooth",
                 );
             }
         }
@@ -1722,8 +1722,9 @@ impl Layout {
                         Action::Consumer { sink, usage } => (sink, Some(*usage)),
                         _ => continue,
                     };
-                    if sink.as_ref() == Some(&ActionSink::Hid)
-                        && (!sinks.iter().any(|s| s == "hid") || usage.is_some_and(|u| u > 1023))
+                    if sink.as_ref() == Some(&ActionSink::Bluetooth)
+                        && (!sinks.iter().any(|s| s == "bluetooth")
+                            || usage.is_some_and(|u| u > 1023))
                     {
                         errors.push(LayoutError { rule: Rule::ActionSink, path: format!("/pages/{pi}/tiles/{ti}/action/sink"), message: "Bluetooth destination is unsupported on this Device or for this media key.".into() });
                     }

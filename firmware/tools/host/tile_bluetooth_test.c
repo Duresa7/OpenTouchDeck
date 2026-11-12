@@ -14,10 +14,10 @@ static void report(void *ctx, const key_report_t *r)
     lengths[count] = td_ble_encode(r, 1, bytes[count], &inputs[count]);
     count++;
 }
-static void hid(void *ctx, const td_action_t *action)
+static void bluetooth(void *ctx, const td_action_t *action)
 {
     (void)ctx;
-    ui_action_hid(action, (key_sink_t){ .report = report });
+    ui_action_bluetooth(action, (key_sink_t){ .report = report });
 }
 static void link(void *ctx, uint8_t usage, uint8_t mods)
 {
@@ -26,14 +26,14 @@ static void link(void *ctx, uint8_t usage, uint8_t mods)
 }
 int main(void)
 {
-    ui_tile_t tile = { .action = { .type = TD_ACTION_KEY, .hid = true, .key = { .usage = 6, .mods = 3 } } };
-    const ui_action_ops_t ops = { .hid = hid, .key = link };
+    ui_tile_t tile = { .action = { .type = TD_ACTION_KEY, .bluetooth = true, .key = { .usage = 6, .mods = 3 } } };
+    const ui_action_ops_t ops = { .bluetooth = bluetooth, .key = link };
     assert(ui_tile_click(&tile, &ops, NULL));
     assert(count == 2 && link_count == 0);
     assert(lengths[0] == 8 && inputs[0] == TD_BLE_IN_KEYBOARD);
     assert(bytes[0][0] == 3 && bytes[0][2] == 6);
     assert(memcmp(bytes[1], (uint8_t[8]){0}, 8) == 0);
-    tile.action = (td_action_t){ .type = TD_ACTION_CONSUMER, .hid = true, .consumer = { .usage = 205 } };
+    tile.action = (td_action_t){ .type = TD_ACTION_CONSUMER, .bluetooth = true, .consumer = { .usage = 205 } };
     assert(ui_tile_click(&tile, &ops, NULL));
     assert(count == 4 && link_count == 0);
     assert(inputs[2] == TD_BLE_IN_CONSUMER && lengths[2] == 2);

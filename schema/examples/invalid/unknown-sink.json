@@ -39,7 +39,7 @@ expected: action.sink
           "action": {
             "type": "consumer",
             "usage": 205,
-            "sink": "hid"
+            "sink": "bluetooth"
           }
         },
         {

@@ -24,7 +24,7 @@
             "mods": [
               "ctrl"
             ],
-            "sink": "hid"
+            "sink": "bluetooth"
           }
         },
         {
@@ -38,7 +38,7 @@
           "action": {
             "type": "consumer",
             "usage": 205,
-            "sink": "hid"
+            "sink": "bluetooth"
           }
         },
         {

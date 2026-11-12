@@ -15,7 +15,7 @@ def build_and_run(test, sources, out):
     includes = [BLE, ROOT / "components/keys/include", ROOT / "components/td_ui_core/include", CJSON]
     exe = out / ("test.exe" if os.name == "nt" else "test")
     files = [HOST / test] + [BLE / s for s in sources]
-    if test == "tile_hid_test.c":
+    if test == "tile_bluetooth_test.c":
         files += [ROOT / "components/td_ui_core/ui_pages.c"]
     if any(s.startswith("td_ble_msgs") for s in sources):
         files.append(CJSON / "cJSON.c")
@@ -34,7 +34,7 @@ class BleTest(unittest.TestCase):
 
     def test_tile_destinations(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TD_TEST_OUT")) as tmp:
-            build_and_run("tile_hid_test.c", ["td_ble_hid.c"], Path(tmp))
+            build_and_run("tile_bluetooth_test.c", ["td_ble_hid.c"], Path(tmp))
 
     def test_report_map_and_gatt_table(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TD_TEST_OUT")) as tmp:

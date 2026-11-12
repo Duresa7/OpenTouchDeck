@@ -2,7 +2,7 @@
 export type AccountUsage = { provider: string, account: string, status: string, success: number, failed: number, recent_10m: number, plan: string | null, five_hour: UsageWindow | null, seven_day: UsageWindow | null, error: string | null, };
 export type ActionLog = { id: string, device: DeviceId, at_ms: number, page: string, tile: string, kind: string, status: string, detail: string, pid: number | null, exit_code: number | null, };
 export type ActionQuery = { device: DeviceId | null, };
-export type ActionSink = "link" | "hid";
+export type ActionSink = "link" | "bluetooth";
 export type AllowedAction = { hash: string, granted_ms: number, kind: string, program: string, args: Array<string>, cwd: string, shell: boolean, };
 export type AllowedPath = { hash: string, };
 export type AnimationCapabilities = { image: [number, number], min_delay_ms: number, page_tiles: number, page_pixels: number, };

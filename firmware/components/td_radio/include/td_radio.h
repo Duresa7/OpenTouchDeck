@@ -32,7 +32,7 @@ extern "C" {
 esp_err_t td_radio_init(void);
 esp_err_t td_radio_start(void);
 
-/* The explicit HID Tile destination, sending only while a bonded Bluetooth host is connected. */
+/* The explicit Bluetooth Tile destination, sending only while a bonded Bluetooth host is connected. */
 key_sink_t td_radio_key_sink(void);
 
 /* Where the Bluetooth pairing passkey goes on screen (td_ble_set_passkey_hook): show true with the six-digit code, or

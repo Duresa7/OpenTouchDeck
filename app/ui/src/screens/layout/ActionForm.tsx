@@ -6,7 +6,7 @@ import {
   ACTION_GROUPS,
   KEYS,
   MEDIA,
-  offersHid,
+  offersBluetooth,
   MOD_NAMES,
   PROXY_FIELDS,
   spellShortcut,
@@ -116,7 +116,7 @@ function KeyFields({ action, commit, error }: KindProps<'key'>) {
           ))}
         </ToggleGroup>
         <p className="field-hint" data-testid="action-shortcut">
-          Presses <strong className="shortcut">{spellShortcut(action)}</strong> {action.sink === 'hid' ? 'on the Bluetooth computer or phone' : 'on this PC'}.
+          Presses <strong className="shortcut">{spellShortcut(action)}</strong> {action.sink === 'bluetooth' ? 'on the Bluetooth computer or phone' : 'on this PC'}.
         </p>
       </div>
     </>
@@ -307,7 +307,7 @@ function KindFields({ action, commit, error, pages }: { action: Action; commit(n
 }
 
 export function ActionForm({ store, page, tile, layout, device, deviceId }: { store: EditorStore; page: GridPage; tile: Tile; layout: Layout; device: string; deviceId: string }) {
-  const hid = useDevices((s) => offersHid(s.devices.find((d) => d.id === deviceId)));
+  const bluetooth = useDevices((s) => offersBluetooth(s.devices.find((d) => d.id === deviceId)));
   const sinkIds = useFieldIds();
   const edit = useEffectiveTileEdit(store, device, tile.id);
   const ids = useFieldIds();
@@ -316,6 +316,9 @@ export function ActionForm({ store, page, tile, layout, device, deviceId }: { st
   const pageIds = layout.pages.map((p) => p.id);
   const commit = (next: Action) => void store.editAction(tile.id, next);
   const error = (field: string) => (at === field ? message : null);
+  const sinkError = !bluetooth && (action.type === 'key' || action.type === 'consumer') && action.sink === 'bluetooth'
+    ? "This Device can't send to Bluetooth. Choose This PC (Companion)."
+    : null;
   return (
     <div className="action-form" data-testid="action-form" data-type={action.type} data-invalid={message !== null ? 'true' : undefined}>
       <Field ids={ids} label="When tapped">
@@ -340,11 +343,11 @@ export function ActionForm({ store, page, tile, layout, device, deviceId }: { st
           {action.type === 'widget' && <option value="widget">Live tile</option>}
         </Select>
       </Field>
-      {hid && (action.type === 'key' || action.type === 'consumer') && (
-        <Field ids={sinkIds} label="Send to">
-          <Select id={sinkIds.control} value={action.sink ?? 'link'} onChange={(event) => commit({ ...action, sink: event.target.value === 'hid' ? 'hid' : 'link' })} data-testid="action-sink">
+      {(action.type === 'key' || action.type === 'consumer') && (bluetooth || action.sink === 'bluetooth') && (
+        <Field ids={sinkIds} label="Send to" error={sinkError}>
+          <Select id={sinkIds.control} value={action.sink ?? 'link'} onChange={(event) => commit({ ...action, sink: event.target.value === 'bluetooth' ? 'bluetooth' : 'link' })} data-testid="action-sink" {...described(sinkIds, null, sinkError)}>
             <option value="link">This PC (Companion)</option>
-            <option value="hid">Bluetooth computer or phone</option>
+            <option value="bluetooth">Bluetooth computer or phone</option>
           </Select>
         </Field>
       )}
