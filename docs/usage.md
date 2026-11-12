@@ -298,4 +298,7 @@ choose **Send to → Bluetooth computer or phone** in the Tile action form. Turn
 on the Bluetooth keyboard and add the computer or phone in Device settings first.
 These Tiles work without the Companion. **This PC (Companion)** keeps sending
 keys to the PC running the Companion. A disconnected Bluetooth destination drops
-the press; it does not send it to the Companion instead.
+the press; it does not send it to the Companion instead. Firmware without the
+Bluetooth keyboard refuses a Layout with Bluetooth Tiles, so before you switch a
+Device back to the normal build, send those Tiles to **This PC (Companion)**;
+otherwise the Device starts its built-in Layout.

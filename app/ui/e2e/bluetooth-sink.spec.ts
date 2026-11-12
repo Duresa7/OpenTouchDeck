@@ -40,5 +40,5 @@ test('an imported Bluetooth Tile on a normal Device can switch back to the Compa
   await tile(page, 'play').click();
   await page.getByTestId('action-sink').selectOption('link');
   await send(page);
-  expect(await storedAction(page, 'keys', 'copy', 'mock0002')).toMatchObject({ sink: 'link' });
+  expect(await storedAction(page, 'keys', 'copy', 'mock0002')).not.toHaveProperty('sink');
 });

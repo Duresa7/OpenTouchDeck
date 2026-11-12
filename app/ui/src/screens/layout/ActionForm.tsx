@@ -316,7 +316,7 @@ export function ActionForm({ store, page, tile, layout, device, deviceId }: { st
   const pageIds = layout.pages.map((p) => p.id);
   const commit = (next: Action) => void store.editAction(tile.id, next);
   const error = (field: string) => (at === field ? message : null);
-  const sinkError = !bluetooth && (action.type === 'key' || action.type === 'consumer') && action.sink === 'bluetooth'
+  const sinkError = bluetooth === false && (action.type === 'key' || action.type === 'consumer') && action.sink === 'bluetooth'
     ? "This Device can't send to Bluetooth. Choose This PC (Companion)."
     : null;
   return (
@@ -345,7 +345,11 @@ export function ActionForm({ store, page, tile, layout, device, deviceId }: { st
       </Field>
       {(action.type === 'key' || action.type === 'consumer') && (bluetooth || action.sink === 'bluetooth') && (
         <Field ids={sinkIds} label="Send to" error={sinkError}>
-          <Select id={sinkIds.control} value={action.sink ?? 'link'} onChange={(event) => commit({ ...action, sink: event.target.value === 'bluetooth' ? 'bluetooth' : 'link' })} data-testid="action-sink" {...described(sinkIds, null, sinkError)}>
+          <Select id={sinkIds.control} value={action.sink ?? 'link'} onChange={(event) => {
+            // The Companion is the default, so it is left out: older Firmware rejects a `sink` field.
+            const { sink: _sink, ...rest } = action;
+            commit(event.target.value === 'bluetooth' ? { ...rest, sink: 'bluetooth' } : rest);
+          }} data-testid="action-sink" {...described(sinkIds, null, sinkError)}>
             <option value="link">This PC (Companion)</option>
             <option value="bluetooth">Bluetooth computer or phone</option>
           </Select>
