@@ -671,8 +671,9 @@ impl Inner {
             eprintln!("Companion: couldn't save {}: {error}", path.display());
         }
     }
+    /// True while a dialog holds input, and for good once the Devices stop.
     fn input_suppressed(&self) -> bool {
-        self.dialogs.load(Ordering::SeqCst) > 0
+        self.dialogs.load(Ordering::SeqCst) > 0 || self.stop.load(Ordering::SeqCst)
     }
 }
 
@@ -768,7 +769,11 @@ impl DeviceManager {
     }
     /// Stops the scan and Wi-Fi threads, which then close every link.
     pub fn stop(&self) {
-        self.inner.stop.store(true, Ordering::SeqCst);
+        {
+            // Under the input gate, a key report in flight finishes first and none types after.
+            let _gate = self.inner.input_gate.lock();
+            self.inner.stop.store(true, Ordering::SeqCst);
+        }
         self.inner.wake.kick();
         self.inner.wifi.wake.kick();
     }

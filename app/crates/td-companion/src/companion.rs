@@ -284,9 +284,9 @@ impl Companion {
     }
     /// Requests shutdown and waits for maintenance, any in-flight Brandfetch refresh (including
     /// Asset and provenance writes), the Actions approval worker, and the Device threads (for at
-    /// most `DEVICE_STOP_LIMIT`). On return, approvals are expired, no more actions can start, and,
-    /// unless a Device thread is stuck in kernel I/O, Device links are closed, forwarders have
-    /// finished and held keys are released. Already-started commands may keep
+    /// most `DEVICE_STOP_LIMIT`). On return, approvals are expired, no more actions can start and
+    /// no Device key report types on the PC. If every Device thread finished within the limit,
+    /// Device links are also closed, forwarders have finished and held keys are released. Already-started commands may keep
     /// running. Integration, Live tile and photo workers are signalled but are not joined.
     /// Blocking cleanup runs off the async runtime; `Drop` only requests and signals shutdown.
     pub async fn shutdown(mut self) {
