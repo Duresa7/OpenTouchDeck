@@ -1,3 +1,5 @@
+Superseded by ADR 0011.
+
 # A Rust Companion behind a thin Electron window
 
 The app splits in two: a web UI, and the Companion, a background program built in Rust from the existing `td-link`, `td-host` and `td-core` crates. The Companion owns USB, actions, Integrations and the keychain, and serves the UI through one local API on `127.0.0.1`. The Electron window and a browser tab are both clients of that API.
