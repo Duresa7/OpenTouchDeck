@@ -11,6 +11,7 @@ pub mod devices;
 mod dialog_text;
 mod events;
 pub mod features;
+pub mod integrations;
 pub mod jobs;
 pub mod layouts;
 pub mod link;

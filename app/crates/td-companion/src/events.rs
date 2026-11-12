@@ -17,7 +17,7 @@ pub enum Change {
     ApprovalResolved(crate::actions::ApprovalResolved),
     ActionLogged(crate::actions::ActionLog),
     JobUpdated(crate::jobs::JobUpdated),
-    IntegrationStatus(crate::features::integrations::IntegrationStatusEvent),
+    IntegrationStatus(crate::integrations::IntegrationStatusEvent),
     Stopping,
 }
 impl From<crate::devices::DeviceAdded> for Change {
@@ -80,8 +80,8 @@ impl From<crate::jobs::JobUpdated> for Change {
         Self::JobUpdated(value)
     }
 }
-impl From<crate::features::integrations::IntegrationStatusEvent> for Change {
-    fn from(value: crate::features::integrations::IntegrationStatusEvent) -> Self {
+impl From<crate::integrations::IntegrationStatusEvent> for Change {
+    fn from(value: crate::integrations::IntegrationStatusEvent) -> Self {
         Self::IntegrationStatus(value)
     }
 }

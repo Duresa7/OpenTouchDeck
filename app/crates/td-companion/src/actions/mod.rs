@@ -428,7 +428,7 @@ impl Actions {
     pub(crate) fn attach(
         &self,
         authority: crate::layouts::LayoutAuthority,
-        controls: crate::features::integrations::Controls,
+        controls: crate::integrations::Controls,
         settable: crate::controls::Settable,
         turned_on: crate::controls::TurnedOn,
     ) {
