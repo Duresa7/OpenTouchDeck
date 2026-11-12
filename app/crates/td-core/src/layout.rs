@@ -1314,14 +1314,14 @@ impl Check {
         let Some(obj) = self.object_with(value, pointer, fields, optional) else {
             return;
         };
-        if let Some(sink) = obj.get("sink") {
-            if !matches!(sink, Json::Str(s) if matches!(s.text.as_str(), "link" | "bluetooth")) {
-                self.fail(
-                    Rule::ActionSink,
-                    &format!("{pointer}/sink"),
-                    "must be link or bluetooth",
-                );
-            }
+        if let Some(sink) = obj.get("sink")
+            && !matches!(sink, Json::Str(s) if matches!(s.text.as_str(), "link" | "bluetooth"))
+        {
+            self.fail(
+                Rule::ActionSink,
+                &format!("{pointer}/sink"),
+                "must be link or bluetooth",
+            );
         }
         for name in &fields[1..] {
             let Some((field, at)) = self.field(obj, pointer, name) else {
