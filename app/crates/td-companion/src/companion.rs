@@ -77,6 +77,7 @@ pub struct Handle {
     pub(crate) integrations: crate::features::integrations::Service,
     pub(crate) desktop: Arc<crate::tray::Desktop>,
     pub(crate) devices: crate::devices::DeviceManager,
+    device_operations: crate::devices::Operations,
     pub(crate) firmware: crate::features::firmware::Firmware,
     pub(crate) events: Events,
     pub(crate) jobs: crate::jobs::Jobs,
@@ -138,6 +139,20 @@ impl Handle {
             settable,
             Arc::new(move |id| turned_on.enabled(id)),
         );
+        let photos = crate::photos::PhotoFrames::new(
+            Some(data.join("photo-frame.json")),
+            devices.clone(),
+            links.clone(),
+        );
+        #[cfg(any(test, feature = "test-hooks"))]
+        let checkpoints = crate::checkpoints::Checkpoints::default();
+        let device_operations = crate::devices::Operations::new(
+            devices.clone(),
+            authority.clone(),
+            photos.clone(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            checkpoints.clone(),
+        );
         Self {
             actions,
             integrations,
@@ -146,11 +161,8 @@ impl Handle {
             firmware: crate::features::firmware::Firmware::new(mock),
             desktop: Arc::new(crate::tray::Desktop::new(mock)),
             jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
-            photos: crate::photos::PhotoFrames::new(
-                Some(data.join("photo-frame.json")),
-                devices.clone(),
-                links.clone(),
-            ),
+            photos,
+            device_operations,
             links,
             assets: crate::store::AssetStore::new(
                 data.join("assets"),
@@ -178,7 +190,7 @@ impl Handle {
             stopped: Default::default(),
             mock,
             #[cfg(any(test, feature = "test-hooks"))]
-            checkpoints: Default::default(),
+            checkpoints,
         }
     }
     pub fn snapshot(&self) -> Snapshot {
@@ -195,6 +207,9 @@ impl Handle {
     }
     pub fn devices(&self) -> &crate::devices::DeviceManager {
         &self.devices
+    }
+    pub fn device_operations(&self) -> &crate::devices::Operations {
+        &self.device_operations
     }
     pub fn integrations(&self) -> &crate::features::integrations::Service {
         &self.integrations

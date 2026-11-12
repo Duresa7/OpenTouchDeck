@@ -130,21 +130,22 @@ impl PhotoFrames {
     /// Sets or clears the folder and saves it. Blocking.
     pub fn set_folder(&self, id: &DeviceId, folder: Option<String>) -> std::io::Result<()> {
         let mut state = self.inner.state.lock();
+        let mut folders = state.folders.clone();
         match folder {
-            Some(folder) => state.folders.insert(id.to_string(), folder),
-            None => state.folders.remove(id.as_str()),
+            Some(folder) => folders.insert(id.to_string(), folder),
+            None => folders.remove(id.as_str()),
         };
-        let Some(path) = &self.inner.file else {
-            return Ok(());
-        };
-        let saved = Saved {
-            folders: state.folders.clone(),
-        };
-        drop(state);
-        td_core::app_dirs::write_atomic(
-            path,
-            &serde_json::to_vec_pretty(&saved).expect("folders serialize"),
-        )
+        if let Some(path) = &self.inner.file {
+            let saved = Saved {
+                folders: folders.clone(),
+            };
+            td_core::app_dirs::write_atomic(
+                path,
+                &serde_json::to_vec_pretty(&saved).expect("folders serialize"),
+            )?;
+        }
+        state.folders = folders;
+        Ok(())
     }
 
     /// Records idle settings the Device just reported or stored.
