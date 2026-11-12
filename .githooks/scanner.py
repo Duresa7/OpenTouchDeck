@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fast, dependency-free checks for staged changes and outgoing commits."""
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -14,14 +15,17 @@ HERE = Path(__file__).resolve().parent
 RULES = [
     ('private-key', r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----'),
     ('minisign-secret', r'\bRWR[A-Za-z0-9+/]{155}(?:==)?'),
+    # base64("untrusted comment:") opens a wrapped key box; exempt() keeps only secret keys.
+    ('minisign-secret-wrapped', r'\bdW50cnVzdGVkIGNvbW1lbnQ6[A-Za-z0-9+/]{200,}={0,2}'),
     ('companion-token', r'\btd[ps]_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])'),
-    ('github-token', r'\b(?:gh[pous]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})\b'),
+    ('github-token', r'\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})\b'),
     ('aws-access-key', r'\b(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|ASCA)[A-Z0-9]{16}\b'),
     ('email', r'[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![A-Za-z0-9-])'),
-    ('windows-user-path', r'(?i)\b[A-Z]:[\\/]Users[\\/]([^\\/\s"\x27]+)[\\/]'),
+    ('windows-user-path', r'(?i)\b[A-Z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/)([^\\/"\x27\r\n]+)(?:\\{1,2}|/)'),
     ('unix-user-path', r'/(?:home|Users)/([^/\s"\x27]+)/'),
 ]
 RULES = [(name, re.compile(pattern)) for name, pattern in RULES]
+SECRET_KEY = dict(RULES)['minisign-secret']
 
 
 def git(*args, data=None):
@@ -34,13 +38,20 @@ def mask(value):
 
 
 def exempt(rule, match):
+    if rule == 'minisign-secret-wrapped':
+        try:
+            # Comments may be any UTF-8 text; only the key line has to be ASCII.
+            text = base64.b64decode(match.group() + '=' * (-len(match.group()) % 4)).decode('utf-8', 'replace')
+        except ValueError:
+            return True
+        return not SECRET_KEY.search(text)
     if rule == 'email':
         local, domain = match.group().lower().rsplit('@', 1)
         return (domain in {'example.com', 'example.org', 'example.net', 'users.noreply.github.com'}
                 or domain.endswith(('.example', '.test', '.invalid', '.localhost'))
                 or local in {'noreply', 'no-reply'})
     if rule.endswith('user-path'):
-        user = match.group(1).lower()
+        user = match.group(1).strip().lower()
         return (user.startswith('<') and user.endswith('>')
                 or user.startswith('%') and user.endswith('%')
                 or user.startswith('${') and user.endswith('}')
@@ -93,10 +104,10 @@ def findings(path, number, line, rules, allowed):
 
 def diff_lines(args):
     # NUL-delimited raw paths avoid Git's quoting rules, including for unusual filenames.
-    paths = git('diff', '--name-only', '-z', '--diff-filter=ACMRT', *args).split(b'\0')
+    paths = git('diff', '--no-color', '--name-only', '-z', '--diff-filter=ACMRT', *args).split(b'\0')
     for raw in filter(None, paths):
         path = os.fsdecode(raw)
-        patch = git('diff', '--no-ext-diff', '--no-textconv', '--no-renames',
+        patch = git('diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames',
                     '--unified=0', *args, '--', path).decode('utf-8', 'replace')
         number = None
         for line in patch.splitlines():
@@ -123,9 +134,12 @@ def outgoing(ref_input):
         if peeled.returncode:
             continue
         args = ['rev-list', peeled.stdout.decode().strip()]
-        if set(remote_sha) != {'0'}:
+        known = subprocess.run(['git', 'cat-file', '-e', remote_sha + '^{commit}'],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
+        if set(remote_sha) != {'0'} and known:
             args.append('^' + remote_sha)
         else:
+            # New branch, or a remote tip this clone never fetched: scan what no remote-tracking ref has.
             args.extend(['--not', '--remotes'])
         commits.update(git(*args).decode().splitlines())
     return sorted(commits)

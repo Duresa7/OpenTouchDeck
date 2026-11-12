@@ -1,4 +1,5 @@
 """Rule tests and real Git hook proofs; all suspect strings are built at runtime."""
+import base64
 import contextlib
 import hashlib
 import io
@@ -17,6 +18,11 @@ def token():
     return 'tdp' + '_' + 'x' * 43
 
 
+def wrapped(second_line, comment='fixture'):
+    # The release signer's box: base64 of an untrusted comment and the key or signature line.
+    return base64.b64encode(('untrusted comment: ' + comment + '\n' + second_line + '\n').encode()).decode()
+
+
 class Rules(unittest.TestCase):
     def matches(self, text, rules=None, allowed=None):
         return scanner.findings('fixture', 7, text, rules or scanner.RULES, allowed or [])
@@ -25,11 +31,15 @@ class Rules(unittest.TestCase):
         samples = {
             'private-key': ['-----BEGIN ' + kind + 'PRIVATE KEY-----' for kind in ('', 'RSA ', 'OPENSSH ', 'EC ', 'ENCRYPTED ')],
             'minisign-secret': ['RW' + 'R' + 'a' * 209],
+            'minisign-secret-wrapped': [wrapped('RW' + 'RTY0Iy' + 'A' * 204 + '='),
+                                        wrapped('RW' + 'RTY0Iy' + 'A' * 204 + '=', 'Cl\u00e9 priv\u00e9e')],
             'companion-token': [token(), 'tds' + '_' + 'a' * 43],
-            'github-token': [prefix + '_' + 'a' * 36 for prefix in ('ghp', 'gho', 'ghu', 'ghs', 'github_pat')],
+            'github-token': [prefix + '_' + 'a' * 36 for prefix in ('ghp', 'gho', 'ghu', 'ghs', 'ghr', 'github_pat')],
             'aws-access-key': ['AK' + 'IA' + 'A' * 16, 'AS' + 'IA' + 'B' * 16],
             'email': ['someone' + '@' + 'private-domain.dev'],
-            'windows-user-path': ['C:' + '\\Users\\' + 'fake-person' + '\\data'],
+            'windows-user-path': ['C:' + '\\Users\\' + 'fake-person' + '\\data',
+                                  '"C:' + '\\\\Users\\\\' + 'fake-person' + '\\\\data"',
+                                  'C:' + '\\Users\\' + 'Fake Person' + '\\data'],
             'unix-user-path': ['/' + base + '/' + 'fake-person' + '/data' for base in ('home', 'Users')],
         }
         for rule, values in samples.items():
@@ -45,6 +55,8 @@ class Rules(unittest.TestCase):
         for value in values:
             self.assertEqual([], self.matches(value), value)
         self.assertEqual([], self.matches('tdp' + '_' + 'x' * 42))
+        # Public key and signature boxes are published on purpose.
+        self.assertEqual([], self.matches(wrapped('RW' + 'Q' + 'b' * 53) + 'A' * 160))
 
     def test_allowlist_is_exact_and_never_applies_to_local_patterns(self):
         value = token()
@@ -166,6 +178,25 @@ class GitHooks(unittest.TestCase):
                 self.assertEqual([], scanner.outgoing('refs/heads/topic ' + '0' * 40 + ' refs/heads/topic ' + sha))
             finally:
                 os.chdir(previous)
+
+    def test_forced_colour_still_scans_added_lines(self):
+        self.git('config', 'color.ui', 'always')
+        result = self.commit('fixture.txt', token() + '\n')
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('companion-token', result.stderr)
+
+    def test_force_push_over_an_unfetched_remote_tip(self):
+        other = self.root / 'other'
+        self.run_git(self.root, 'clone', '-b', 'main', str(self.remote), str(other))
+        self.configure(other)
+        (other / 'other.txt').write_text('clean\n')
+        self.run_git(other, 'add', 'other.txt')
+        self.run_git(other, 'commit', '-m', 'test: advance the remote')
+        self.run_git(other, 'push', 'origin', 'main')
+        self.assertEqual(0, self.commit('fixture.txt', 'clean\n').returncode)
+        result = self.git('push', '--force', 'origin', 'main', ok=False)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('1 outgoing commit(s)', result.stdout + result.stderr)
 
     def test_commit_message_is_scanned(self):
         self.assertEqual(0, self.commit('fixture.txt', 'clean\n', 'test: ' + token()).returncode)
