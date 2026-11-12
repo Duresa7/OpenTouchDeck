@@ -1,0 +1,62 @@
+[
+  {
+    "file": "app/crates/td-host/src/catalog/index.json",
+    "rule": "unix-user-path",
+    "line_sha256": "c01b4f2874c19c1ae4ead66457fac0df189de38c9b483b73afed31cb1f365592",
+    "comment": "Upstream project URL contains a path resembling a home directory."
+  },
+  {
+    "file": "app/crates/td-host/tests/fixtures/auth-files.json",
+    "rule": "email",
+    "line_sha256": "f84458ca33ee11e0334bc47d243f1a277448985e1a5489cb85d5a10bf7294183",
+    "comment": "Reserved-domain fixture email with a filename suffix or subdomain."
+  },
+  {
+    "file": "app/crates/td-host/tests/fixtures/auth-files.json",
+    "rule": "email",
+    "line_sha256": "9fbb4b56301b27a4906e81b0d3757085a70a6300584f4d87abfb4206070078ec",
+    "comment": "Reserved-domain fixture email with a filename suffix or subdomain."
+  },
+  {
+    "file": "app/crates/td-host/tests/fixtures/auth-files.json",
+    "rule": "email",
+    "line_sha256": "ca24d4219b9126733dd4414d3c7285f69ec2b57d232ae6aec5a277a67a1cc829",
+    "comment": "Reserved-domain fixture email with a filename suffix or subdomain."
+  },
+  {
+    "file": "app/crates/td-host/tests/fixtures/auth-files.json",
+    "rule": "email",
+    "line_sha256": "36cd720bd2ead85d7eea8c850385370f85b68e56c0a5f88d95c5ab6b10694018",
+    "comment": "Reserved-domain fixture email with a filename suffix or subdomain."
+  },
+  {
+    "file": "app/crates/td-host/tests/fixtures/auth-files.json",
+    "rule": "email",
+    "line_sha256": "b41f52c97a62857a10e0c6ddf6e6add4230b6d12e91b5f1d115cd619322bbb1e",
+    "comment": "Reserved-domain fixture email with a filename suffix or subdomain."
+  },
+  {
+    "file": "app/crates/td-host/tests/fixtures/auth-files.json",
+    "rule": "email",
+    "line_sha256": "888b95e58b344c27bd79fe82fdf4172b0d259538557c4a9311817baacb999d78",
+    "comment": "Reserved-domain fixture email with a filename suffix or subdomain."
+  },
+  {
+    "file": "app/pnpm-lock.yaml",
+    "rule": "email",
+    "line_sha256": "a32b4904ef769dd0d8617abd307a6eb569696c96872e30dc2a64c2da96ea8aa6",
+    "comment": "Upstream dependency deprecation text includes its public support contact."
+  },
+  {
+    "file": "app/ui/src/lib/companion/fake/fake-worst.ts",
+    "rule": "email",
+    "line_sha256": "678430e14cf704333b088fbb47053963b2d3195ecdce2ea636989b2a784e32e2",
+    "comment": "Reserved-domain fixture email with a filename suffix or subdomain."
+  },
+  {
+    "file": "app/electron/tests/fixtures/tauri-cli-2.12.4-test-only-key.json",
+    "rule": "minisign-secret-wrapped",
+    "line_sha256": "9eeb3920b097b844458cf37ae204098cbbce221424b95141ca3c05d39fed2f39",
+    "comment": "Disposable test-only updater key for the release-signer tests; published on purpose."
+  }
+]

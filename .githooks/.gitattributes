@@ -1,0 +1,2 @@
+# Hooks must stay executable by Git for Windows' sh with autocrlf enabled.
+* text eol=lf
