@@ -52,36 +52,41 @@ pub(super) fn spawn(
     let (presses, taps) = mpsc::sync_channel::<serde_json::Value>(16);
     let action_inner = inner.clone();
     let action_id = id.clone();
-    thread::spawn(move || {
+    inner.track(thread::spawn(move || {
         for event in taps {
             if let Some(handler) = action_inner.actions.get() {
                 handler(&action_id, &event);
             }
         }
-    });
-    thread::Builder::new()
-        .name(format!("td-device-{id}"))
-        .spawn(move || {
-            for job in jobs {
-                job(&session);
-            }
-            session.close();
-        })
-        .expect("the Device thread starts");
-    thread::Builder::new()
-        .name(format!("td-device-{id}-in"))
-        .spawn(move || {
-            forward(
-                &inner,
-                &id,
-                connection,
-                session_id,
-                incoming,
-                mirror,
-                Touches { presses },
-            )
-        })
-        .expect("the Device forwarder starts");
+    }));
+    inner.track(
+        thread::Builder::new()
+            .name(format!("td-device-{id}"))
+            .spawn(move || {
+                for job in jobs {
+                    job(&session);
+                }
+                session.close();
+            })
+            .expect("the Device thread starts"),
+    );
+    let forward_inner = inner.clone();
+    inner.track(
+        thread::Builder::new()
+            .name(format!("td-device-{id}-in"))
+            .spawn(move || {
+                forward(
+                    &forward_inner,
+                    &id,
+                    connection,
+                    session_id,
+                    incoming,
+                    mirror,
+                    Touches { presses },
+                )
+            })
+            .expect("the Device forwarder starts"),
+    );
     Handle {
         connection,
         carrier,
@@ -229,6 +234,29 @@ fn key_report(inner: &Inner, id: &DeviceId, mirror: Option<&mut Mirror>, report:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_reports_type_nothing_once_the_devices_stop() {
+        // A Device thread left running after a timed-out shutdown must not type on the PC.
+        let devices = super::super::DeviceManager::new(crate::api::Events::default());
+        let sink = td_host::FakeSink::default();
+        let mut mirror = Mirror::new(Box::new(sink.clone()));
+        mirror.set_enabled(true);
+        devices.stop();
+        let down = serde_json::json!({"m":"key.report","seq":1,"type":"kbd","mods":0,"keys":[4]});
+        forward(
+            &devices.inner,
+            &DeviceId::parse("mock0001").unwrap(),
+            0,
+            0,
+            [Incoming::Event(down)],
+            Some(mirror),
+            Touches {
+                presses: mpsc::sync_channel(16).0,
+            },
+        );
+        assert_eq!(sink.take(), Vec::new());
+    }
 
     #[test]
     fn overflow_releases_held_keys_before_the_next_event() {

@@ -82,6 +82,15 @@ impl Drop for PollWorker {
 }
 type Pending = Mutex<HashMap<(String, String), Delivery>>;
 impl Service {
+    pub(crate) fn stop(&self) {
+        self.runtime
+            .stop
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Some(handle) = self.runtime.handle.lock().unwrap().as_ref() {
+            handle.thread().unpark();
+        }
+    }
+
     pub fn command_approval(&self, approval: Arc<dyn td_host::integrations::CommandApproval>) {
         if let Ok(registry) = self.registry.lock().unwrap().as_mut()
             && let Ok(custom) = registry.get("custom")
@@ -317,7 +326,7 @@ fn loopback_stub(url: &str) -> bool {
         .and_then(|rest| rest.split_once('/'))
         .is_some_and(|(port, _)| port.parse::<u16>().is_ok_and(|port| port > 0))
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct IntegrationStatusEvent(pub IntegrationSummary);
 impl Event for IntegrationStatusEvent {
     const NAME: &'static str = "integration.status";

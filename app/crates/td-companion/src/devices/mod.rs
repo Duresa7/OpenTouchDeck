@@ -394,7 +394,7 @@ pub enum PortStatus {
     },
 }
 
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceAdded(pub DeviceSummary);
 impl Event for DeviceAdded {
     const NAME: &'static str = "device.added";
@@ -402,7 +402,7 @@ impl Event for DeviceAdded {
         Some(self.0.id.as_str())
     }
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceUpdated(pub DeviceSummary);
 impl Event for DeviceUpdated {
     const NAME: &'static str = "device.updated";
@@ -410,7 +410,7 @@ impl Event for DeviceUpdated {
         Some(self.0.id.as_str())
     }
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceRemoved {
     pub id: DeviceId,
 }
@@ -420,7 +420,7 @@ impl Event for DeviceRemoved {
         Some(self.id.as_str())
     }
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct NewBoardAdded(pub NewBoard);
 impl Event for NewBoardAdded {
     const NAME: &'static str = "new-board.added";
@@ -428,7 +428,7 @@ impl Event for NewBoardAdded {
         Some(self.0.id.as_str())
     }
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct NewBoardRemoved {
     pub id: DeviceId,
 }
@@ -439,7 +439,7 @@ impl Event for NewBoardRemoved {
     }
 }
 /// One console line from a Device.
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceConsole {
     pub device: DeviceId,
     pub line: String,
@@ -452,7 +452,7 @@ impl Event for DeviceConsole {
     }
 }
 /// One mirrored key report and what the PC did with it.
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceKeyMirror {
     pub device: DeviceId,
     pub seq: u32,
@@ -472,7 +472,7 @@ impl Event for DeviceKeyMirror {
     }
 }
 /// A raw Device event, for diagnostics.
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct DeviceEvent {
     pub device: DeviceId,
     pub event: serde_json::Value,
@@ -595,6 +595,7 @@ struct Inner {
     reg: Mutex<Registry>,
     wake: Wake,
     stop: AtomicBool,
+    threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
     dialogs: AtomicUsize,
     input_gate: Mutex<()>,
     config: OnceLock<Config>,
@@ -603,6 +604,11 @@ struct Inner {
     wifi: wifi::WifiState,
 }
 impl Inner {
+    fn track(&self, thread: std::thread::JoinHandle<()>) {
+        let mut threads = self.threads.lock();
+        threads.retain(|thread| !thread.is_finished());
+        threads.push(thread);
+    }
     fn config(&self) -> &Config {
         self.config.get().expect("the Device manager has started")
     }
@@ -665,8 +671,9 @@ impl Inner {
             eprintln!("Companion: couldn't save {}: {error}", path.display());
         }
     }
+    /// True while a dialog holds input, and for good once the Devices stop.
     fn input_suppressed(&self) -> bool {
-        self.dialogs.load(Ordering::SeqCst) > 0
+        self.dialogs.load(Ordering::SeqCst) > 0 || self.stop.load(Ordering::SeqCst)
     }
 }
 
@@ -694,6 +701,7 @@ impl DeviceManager {
                 reg: Mutex::new(Registry::default()),
                 wake: Wake::default(),
                 stop: AtomicBool::new(false),
+                threads: Mutex::new(Vec::new()),
                 dialogs: AtomicUsize::new(0),
                 input_gate: Mutex::new(()),
                 config: OnceLock::new(),
@@ -745,21 +753,53 @@ impl DeviceManager {
         }
         self.inner.load_wifi(&mut self.inner.reg.lock());
         let inner = self.inner.clone();
-        std::thread::Builder::new()
-            .name("td-device-scan".into())
-            .spawn(move || scan::run(inner))
-            .expect("the scan thread starts");
+        self.inner.track(
+            std::thread::Builder::new()
+                .name("td-device-scan".into())
+                .spawn(move || scan::run(inner))
+                .expect("the scan thread starts"),
+        );
         let inner = self.inner.clone();
-        std::thread::Builder::new()
-            .name("td-device-wifi".into())
-            .spawn(move || wifi::run(inner))
-            .expect("the Wi-Fi thread starts");
+        self.inner.track(
+            std::thread::Builder::new()
+                .name("td-device-wifi".into())
+                .spawn(move || wifi::run(inner))
+                .expect("the Wi-Fi thread starts"),
+        );
     }
     /// Stops the scan and Wi-Fi threads, which then close every link.
+    /// From here on, key reports type nothing; `wait_stopped` lets one already typing finish.
     pub fn stop(&self) {
         self.inner.stop.store(true, Ordering::SeqCst);
         self.inner.wake.kick();
         self.inner.wifi.wake.kick();
+    }
+    /// Blocking: after `stop`, waits up to `limit` for discovery, actors and forwarders, including
+    /// key release. Returns false if a thread was still running at the deadline, for example one
+    /// stuck in a USB write the kernel won't finish; that thread is left to end with the process.
+    pub(crate) fn wait_stopped(&self, limit: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + limit;
+        // A key report that began before `stop` may still be typing; reports after it are suppressed.
+        match self.inner.input_gate.try_lock_until(deadline) {
+            Some(gate) => drop(gate),
+            None => return false,
+        }
+        loop {
+            // Discovery may register actor threads while its final probe is completing.
+            let threads = std::mem::take(&mut *self.inner.threads.lock());
+            if threads.is_empty() {
+                return true;
+            }
+            for thread in threads {
+                while !thread.is_finished() {
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                let _ = thread.join();
+            }
+        }
     }
     pub(crate) fn control_layout(&self, device: &str, session: Option<u64>, status: ControlLayout) {
         let Some(id) = DeviceId::parse(device) else {
@@ -1081,4 +1121,46 @@ pub struct AnimationCapabilities {
     pub min_delay_ms: u32,
     pub page_tiles: u32,
     pub page_pixels: u32,
+}
+
+#[cfg(test)]
+mod wait_stopped_tests {
+    use super::*;
+
+    #[test]
+    fn a_thread_stuck_in_io_cannot_hold_shutdown_forever() {
+        let devices = DeviceManager::new(Events::default());
+        // Stands in for a Device thread blocked in a serial flush that never returns.
+        let (_release, stuck) = std::sync::mpsc::channel::<()>();
+        devices.inner.track(std::thread::spawn(move || {
+            let _ = stuck.recv();
+        }));
+        devices.stop();
+        let started = std::time::Instant::now();
+        assert!(!devices.wait_stopped(std::time::Duration::from_millis(100)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_key_report_stuck_in_the_input_sink_cannot_hold_shutdown() {
+        let devices = DeviceManager::new(Events::default());
+        // Stands in for a key report stuck inside a synchronous input sink send.
+        let stuck = devices.pause_key_reports();
+        let (done, finished) = std::sync::mpsc::channel();
+        let stopper = devices.clone();
+        std::thread::spawn(move || {
+            stopper.stop();
+            let _ = done.send(());
+        });
+        assert!(
+            finished
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .is_ok(),
+            "stop must not wait for an in-flight key report"
+        );
+        let started = std::time::Instant::now();
+        assert!(!devices.wait_stopped(std::time::Duration::from_millis(100)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        drop(stuck);
+    }
 }

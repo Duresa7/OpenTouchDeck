@@ -65,7 +65,7 @@ impl Endpoint for Console {
             return Err(CommonError::invalid("wait_ms", "Expected 0 to 15000.").into());
         }
         let device = req.path.device;
-        let listener = ctx.events.listen(Topic::Console, device.as_str());
+        let listener = ctx.web_events.listen(Topic::Console, device.as_str());
         let deadline = tokio::time::Instant::now() + wait;
         let line = req.body.line;
         let word = line

@@ -1,3 +1,6 @@
+mod in_process;
+pub use in_process::InProcessCompanion;
+
 use crate::{
     actions::{FileGrants, GrantStore},
     api::{Ctx, Endpoint},
@@ -21,6 +24,7 @@ enum Ports {
 /// [`TestCompanion::start`] runs.
 struct StartOptions {
     limits: crate::Limits,
+    asset_store_bytes: u64,
     /// Serve the release router instead of the one with test routes.
     release: bool,
     /// Grants kept here instead of in a file.
@@ -41,6 +45,7 @@ impl Default for StartOptions {
     fn default() -> Self {
         Self {
             limits: crate::Limits::default(),
+            asset_store_bytes: crate::store::ASSET_STORE_BYTES,
             release: false,
             grants: None,
             desktop: None,
@@ -52,6 +57,7 @@ impl Default for StartOptions {
 }
 pub struct TestCompanion {
     ctx: Ctx,
+    companion: Option<crate::companion::Companion>,
     ports: MockPorts,
     input: td_host::FakeSink,
     _data: tempfile::TempDir,
@@ -75,6 +81,13 @@ impl TestCompanion {
     }
     pub async fn start() -> Self {
         Self::start_with(crate::Limits::default()).await
+    }
+    pub async fn start_with_asset_quota(asset_store_bytes: u64) -> Self {
+        Self::start_router(StartOptions {
+            asset_store_bytes,
+            ..Default::default()
+        })
+        .await
     }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
@@ -133,6 +146,7 @@ impl TestCompanion {
     async fn start_router(options: StartOptions) -> Self {
         let StartOptions {
             limits,
+            asset_store_bytes,
             release,
             grants,
             desktop,
@@ -144,14 +158,14 @@ impl TestCompanion {
         let port = listener.local_addr().unwrap().port();
         let data = tempfile::tempdir().unwrap();
         let path = data.path().to_owned();
-        let mut ctx = tokio::task::spawn_blocking(move || {
+        let mut handle = tokio::task::spawn_blocking(move || {
             let grants = grants
                 .unwrap_or_else(|| Arc::new(FileGrants::new(path.join("allowed-actions.json"))));
-            Ctx::new(port, true, None, limits, &path, grants)
+            crate::companion::Handle::new(true, &path, asset_store_bytes, grants)
         })
         .await
         .unwrap();
-        ctx.catalog = std::sync::Arc::new(td_host::catalog::Catalog::new(
+        handle.catalog = std::sync::Arc::new(td_host::catalog::Catalog::new(
             data.path().join("cache/catalog"),
             fetcher,
         ));
@@ -162,21 +176,24 @@ impl TestCompanion {
                 Box::new(NoCatalogNetwork),
             ),
         };
-        ctx.packs = std::sync::Arc::new(td_host::packs::Packs::with_list(
+        handle.packs = std::sync::Arc::new(td_host::packs::Packs::with_list(
             data.path().join("packs"),
             pack_fetcher,
             curated,
         ));
         if let Some(desktop) = desktop {
-            ctx.desktop = desktop;
+            handle.desktop = desktop;
         }
         let mut config = Config::mock(Some(data.path().join("devices.json")));
         let (ports, input) = config.mock.clone().unwrap();
-        if let Ports::Real { device_console } = mode {
+        if let Ports::Real { .. } = mode {
             config.mock = None;
+        }
+        let companion = crate::companion::Companion::launch(handle.clone(), config);
+        let mut ctx = Ctx::new(handle, port, None, limits);
+        if let Ports::Real { device_console } = mode {
             ctx.real_device_console = device_console;
         }
-        ctx.devices.start(config);
         let router = if release {
             crate::api::release_router(ctx.clone())
         } else {
@@ -206,6 +223,7 @@ impl TestCompanion {
             .unwrap();
         Self {
             ctx,
+            companion: Some(companion),
             ports,
             input,
             _data: data,
@@ -447,7 +465,14 @@ impl TestCompanion {
     /// Asks the Companion to stop and reports whether its server finished within `within`.
     pub async fn stop(&mut self, within: std::time::Duration) -> bool {
         let _ = self.ctx.shutdown.send(true);
-        tokio::time::timeout(within, &mut self.task).await.is_ok()
+        tokio::time::timeout(within, async {
+            let _ = (&mut self.task).await;
+            if let Some(companion) = self.companion.take() {
+                companion.shutdown().await;
+            }
+        })
+        .await
+        .is_ok()
     }
     /// The Brandfetch settings and provenance, to point it at a local server.
     pub fn brandfetch(&self) -> &crate::features::brandfetch::Brandfetch {
@@ -468,13 +493,16 @@ impl TestCompanion {
     /// [`Self::clock`] moves. It stops when the handle is aborted.
     pub fn start_brandfetch_refresh(&self, tick: Duration) -> tokio::task::JoinHandle<()> {
         tokio::spawn(crate::features::brandfetch::refresh_loop(
-            self.ctx.clone(),
+            self.ctx.companion_handle(),
             tick,
         ))
     }
     /// Runs one 60 s maintenance step now.
     pub async fn maintain(&self) {
-        assert!(crate::process::maintain(&self.ctx).await);
+        // Sweep sessions before yielding to pack eviction, as the process maintenance did.
+        // Otherwise an expired socket can close first and its row is pruned by the sweep.
+        assert!(crate::api::maintain(&self.ctx).await);
+        self.ctx.companion_handle().maintain().await;
     }
     /// Whether anything asked the Companion to stop.
     pub fn shutdown_requested(&self) -> bool {
@@ -491,7 +519,7 @@ impl TestCompanion {
     }
     pub fn flood_state(&self, frames: usize, bytes: usize) {
         for _ in 0..frames {
-            self.ctx.events.publish_frame(
+            self.ctx.web_events.publish_frame(
                 serde_json::json!({"type": "device.updated", "data": "x".repeat(bytes)}),
                 crate::api::Topic::State,
                 None,
