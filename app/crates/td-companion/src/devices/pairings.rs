@@ -3,12 +3,12 @@
 //!
 //! A forget whose answer never came may or may not have reached the Device. Until a later answer settles it, the app
 //! stays marked as being removed: the next list over USB sends the forget again first, and a USB link that comes up
-//! sends it too. Once the Device answers, or `net.list` no longer shows the app, the mark goes. When the app was this
-//! Companion, its own key for that Device goes with it.
+//! sends it too. Once the Device confirms the forget, or `net.list` no longer shows the app, the mark goes. When the
+//! app was this Companion, its own key for that Device goes with it.
 use super::{DeviceId, DeviceManager, Inner, actor};
 use std::sync::Arc;
 use td_link::{
-    LinkError, Session,
+    Session,
     net::CompanionId,
     pairings::{self, Forget, NetPairings, PairingsError},
 };
@@ -64,7 +64,7 @@ impl Inner {
             .is_some_and(|ids| ids.contains(&own))
     }
 
-    /// Sends one forget and settles the mark on any answer. A request that went unanswered keeps it.
+    /// Sends one forget and settles the mark only on success. Any failure keeps it for a retry.
     fn forget_marked(
         self: &Arc<Self>,
         device: &DeviceId,
@@ -74,13 +74,7 @@ impl Inner {
     ) -> Result<(), PairingsError> {
         self.mark(device, apps.iter().copied());
         let result = pairings::net_forget(session, forget);
-        let unanswered = matches!(
-            result,
-            Err(PairingsError::Link(
-                LinkError::Timeout(_) | LinkError::Unanswered(_)
-            ))
-        );
-        if !unanswered {
+        if result.is_ok() {
             for app in apps {
                 self.settled(device, app);
             }
@@ -91,7 +85,7 @@ impl Inner {
     /// Sends every forget still marked for `device` again. Stops at the first that goes unanswered.
     fn resend(self: &Arc<Self>, device: &DeviceId, session: &Session) -> Result<(), PairingsError> {
         for app in self.marked(device) {
-            // Any answer or refusal settles it: the Device heard the request.
+            // Each marked app is attempted once per call; refusals keep the mark for the next call.
             if let Err(PairingsError::Link(error)) =
                 self.forget_marked(device, session, Forget::One(app), &[app])
             {

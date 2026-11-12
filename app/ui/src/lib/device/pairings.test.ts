@@ -61,6 +61,18 @@ describe('Pairings in words', () => {
 });
 
 describe('the list over USB', () => {
+  test.each(['offline', 'wifi'] as const)('loads after %s becomes USB connected, even if load ran before observe', async (previous) => {
+    const store = pairingsFor(previous === 'offline' ? { ...desk, link: { state: 'offline' } } : { ...desk, carrier: 'wifi' });
+    await store.load();
+    expect(pairingCalls()).toBe(0);
+    store.observe(desk);
+    await vi.waitFor(() => expect(store.getState().load).toBe('ready'));
+    expect(store.count()).toBe(DEMO_APPS.length);
+    const calls = pairingCalls();
+    store.observe(desk);
+    expect(pairingCalls()).toBe(calls);
+  });
+
   test('lists the apps oldest first, with this app marked', async () => {
     start(DEMO_APPS, true);
     const store = pairingsFor(desk);

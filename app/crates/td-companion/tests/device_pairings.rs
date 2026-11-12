@@ -219,3 +219,54 @@ async fn over_wifi_the_device_hears_nothing() {
     );
     assert_eq!(fake.paired(), 1);
 }
+
+#[tokio::test]
+async fn a_refused_forget_keeps_the_mark_and_key_until_a_successful_retry() {
+    let td = TestCompanion::start().await;
+    let (id, _fake) = paired_then_plugged(&td).await;
+    let own = td
+        .call::<PairingsGet>(path(&id), NoQuery, ())
+        .await
+        .unwrap()
+        .pairings[0]
+        .app
+        .clone();
+    let deck = td.deck(SERIAL);
+    deck.fail_net_storage(true);
+    assert_eq!(
+        error_code(
+            &td,
+            reqwest::Method::DELETE,
+            &format!("/devices/{id}/pairings/{own}")
+        )
+        .await,
+        (502, "pairings.storage".into())
+    );
+    assert!(td.wifi_keys().has(&id));
+    assert!(td.call::<PairingsList>((), NoQuery, ()).await.unwrap()[0].removing);
+    let sent = forgets(&td);
+    // A refused retry is attempted once; listing still completes and keeps the mark and key.
+    let listed = td
+        .call::<PairingsGet>(path(&id), NoQuery, ())
+        .await
+        .unwrap();
+    assert_eq!(listed.pairings.len(), 1);
+    assert_eq!(forgets(&td), sent + 1);
+    assert!(td.wifi_keys().has(&id));
+    assert!(td.call::<PairingsList>((), NoQuery, ()).await.unwrap()[0].removing);
+    deck.fail_net_storage(false);
+    assert!(
+        td.call::<PairingsGet>(path(&id), NoQuery, ())
+            .await
+            .unwrap()
+            .pairings
+            .is_empty()
+    );
+    assert!(!td.wifi_keys().has(&id));
+    assert!(
+        td.call::<PairingsList>((), NoQuery, ())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

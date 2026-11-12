@@ -332,7 +332,8 @@ static void open_panel(void)
     lv_obj_set_flex_grow(s.list, 1);
     lv_obj_set_flex_flow(s.list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s.list, 12, 0);
-    lv_obj_set_scrollable(s.list, false);
+    lv_obj_set_scrollable(s.list, true);
+    lv_obj_set_scroll_dir(s.list, LV_DIR_VER);
 
     s.message = add_label(panel, ui_theme.font_sub, ui_theme.color.signal, "");
     lv_obj_set_width(s.message, lv_pct(100));

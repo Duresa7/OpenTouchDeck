@@ -346,12 +346,18 @@ bool td_netlink_forget_one(td_netlink_deck_t *deck, const uint8_t companion_id[T
     if (at < 0) {
         return true;
     }
-    td_netlink_pairings_t *p = &deck->pairings;
+    td_netlink_pairings_t next = deck->pairings;
+    td_netlink_pairings_t *p = &next;
     td_netlink_wipe(&p->entries[at], sizeof p->entries[at]);
     memmove(&p->entries[at], &p->entries[at + 1], (size_t)(p->count - at - 1) * sizeof p->entries[0]);
     p->count--;
     td_netlink_wipe(&p->entries[p->count], sizeof p->entries[0]);
-    return deck->env.save_pairings(deck->env.ctx, p);
+    const bool saved = deck->env.save_pairings(deck->env.ctx, p);
+    if (saved) {
+        deck->pairings = next;
+    }
+    td_netlink_wipe(&next, sizeof next);
+    return saved;
 }
 
 bool td_netlink_names_stored(const td_netlink_deck_t *deck, const uint8_t *body, size_t len)

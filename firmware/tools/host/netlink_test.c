@@ -1301,12 +1301,22 @@ static void test_forget_one(void)
         cJSON_Delete(reply);
     }
 
-    /* A failed erase still ends the session, drops the entry from RAM and reports storage. */
+    /* A failed erase ends the session but keeps the live table available for a retry. */
     g_pairings_fail = true;
     g_ended = 0;
     reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"303132333435363738393a3b3c3d3e3f\"}");
     CHECK(refused_with(reply, "storage"));
-    CHECK(g_ended == 1 && g_deck.pairings.count == 2);
+    CHECK(g_ended == 1 && g_deck.pairings.count == 3);
+    cJSON_Delete(reply);
+    reply = manage_text("{\"m\":\"net.list\"}");
+    CHECK(cJSON_GetArraySize(at(reply, "pairings")) == 3);
+    cJSON_Delete(reply);
+
+    g_pairings_fail = false;
+    reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"303132333435363738393a3b3c3d3e3f\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1);
+    CHECK(g_deck.pairings.count == 2 && g_saved.count == 2);
+    CHECK(g_saved.entries[0].companion_id[0] == 0x20 && g_saved.entries[1].companion_id[0] == 0x40);
     cJSON_Delete(reply);
 
     /* All ends every session first. */

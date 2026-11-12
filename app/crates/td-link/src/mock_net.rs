@@ -161,7 +161,7 @@ fn state_fields(view: &NetView) -> Map<String, Value> {
 }
 
 /// Answers one `net.*` request over USB. `storage_fails` makes a forget that removes something answer `storage`, as
-/// the Firmware does when the erase doesn't reach flash (the entry is gone from RAM all the same).
+/// the Firmware does when the erase doesn't reach flash. A failed single-app erase keeps the entry.
 pub(crate) fn handle(
     m: &str,
     request: &Map<String, Value>,
@@ -206,6 +206,9 @@ pub(crate) fn handle(
                     let Some(id) = app_id.as_str().and_then(parse_app_id) else {
                         return refusal("args", "Invalid app_id");
                     };
+                    if storage_fails && store.view().pairings.iter().any(|(app, _)| *app == id) {
+                        return refusal("storage", "The pairings could not be erased");
+                    }
                     usize::from(store.forget(&id))
                 }
                 (None, Some(Value::Bool(true))) => {

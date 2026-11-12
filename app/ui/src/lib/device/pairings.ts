@@ -122,7 +122,9 @@ export function createDevicePairings(deps: DevicePairingsDeps) {
     },
 
     observe(summary: Summary) {
+      const wasUsb = overUsb();
       device = summary;
+      if (!wasUsb && overUsb()) void api.load();
     },
 
     dispose() {
