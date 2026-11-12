@@ -75,7 +75,7 @@ export function UpdateSlot() {
             </span>
           </Tooltip.Trigger>
           <Tooltip.Portal>
-            <Tooltip.Positioner className="tooltip-positioner" side="top" sideOffset={8} anchor={icon}>
+            <Tooltip.Positioner className="tooltip-positioner" side="right" sideOffset={8} anchor={icon}>
               <Tooltip.Popup className="tooltip">{label}</Tooltip.Popup>
             </Tooltip.Positioner>
           </Tooltip.Portal>

@@ -65,19 +65,20 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('toasts sit at the bottom centre, clear of the details panel and the nav', async ({ page }) => {
-  const error = await errorToast(page);
-  await expect(error).toBeVisible();
-  const box = (await error.boundingBox())!;
-  const width = page.viewportSize()!.width;
-  expect(Math.abs(box.x + box.width / 2 - width / 2)).toBeLessThan(2);
-  const dock = (await page.locator('.nav-dock').boundingBox())!;
-  await expect
-    .poll(async () => {
-      const settled = (await error.boundingBox())!;
-      return settled.y + settled.height;
-    }, { message: 'the toast rises above the nav' })
-    .toBeLessThanOrEqual(dock.y);
+test('toasts sit at the bottom centre of the content right of the rail, with no room kept for the old dock', async ({ page }) => {
+  for (const size of [{ width: 800, height: 600 }, { width: 1280, height: 800 }]) {
+    await page.setViewportSize(size);
+    const error = await errorToast(page);
+    await expect(error).toBeVisible();
+    const rail = (await page.locator('.nav-rail').boundingBox())!;
+    const content = rail.x + rail.width + (size.width - rail.x - rail.width) / 2;
+    await expect
+      .poll(async () => {
+        const settled = (await error.boundingBox())!;
+        return { centre: Math.abs(settled.x + settled.width / 2 - content) < 2, clear: settled.x > rail.x + rail.width, gap: Math.round(size.height - settled.y - settled.height) };
+      }, { message: `the toast at ${size.width} × ${size.height}` })
+      .toEqual({ centre: true, clear: true, gap: 24 });
+  }
 });
 
 test('toasts drop their slide when the system asks for reduced motion', async ({ page }) => {

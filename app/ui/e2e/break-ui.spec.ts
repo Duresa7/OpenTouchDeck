@@ -7,8 +7,9 @@ import { openDeviceSettings, openSettings } from './layout-helpers.ts';
 const survey = process.env.TD_BREAK_SURVEY;
 const shots = process.env.TD_SHOTS;
 
-// A Preset name is clamped to two lines, with the whole name in a tooltip.
-const CUT_BY_DESIGN = ['.preset-name'];
+// A Preset name is clamped to two lines, with the whole name in a tooltip. The Update icon is laid out at full width
+// and clipped to its icon, so its label runs out of the nav rail over the screen.
+const CUT_BY_DESIGN = ['.preset-name', '.nav-rail:has(> .update-slot)', '.update-slot'];
 
 const SIZES = [
   { size: 'min', viewport: { width: 800, height: 600 } },

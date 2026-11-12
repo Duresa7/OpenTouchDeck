@@ -224,8 +224,9 @@ test('holds up to the worst realistic Layout', async ({ page }) => {
     expect(device.x + device.width).toBeLessThanOrEqual(canvas.x + canvas.width + 0.5);
     expect(device.y + device.height).toBeLessThanOrEqual(canvas.y + canvas.height + 0.5);
     const foot = (await page.locator('.canvas-foot').boundingBox())!;
-    const dock = (await page.locator('.nav-dock').boundingBox())!;
-    expect(foot.y + foot.height).toBeLessThanOrEqual(dock.y + 0.5);
+    const rail = (await page.locator('.nav-rail').boundingBox())!;
+    expect(foot.y + foot.height).toBeLessThanOrEqual(canvas.y + canvas.height + 0.5);
+    expect(canvas.x).toBeGreaterThanOrEqual(rail.x + rail.width);
     expect(await page.getByTestId('device-name').evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(30);
   };
   await importText(page, JSON.stringify(worstCase), 'worst-case.json');
@@ -384,11 +385,6 @@ test('focus is visible on Tiles, Page tabs and header controls', async ({ page }
   expect(Number(/([\d.]+)px inset/.exec(ring)?.[1])).toBeCloseTo(2 / scale, 1);
 });
 
-const centerOf = async (page: Page, selector: string) => {
-  const box = (await page.locator(selector).boundingBox())!;
-  return box.x + box.width / 2;
-};
-
 test('hiding Details grows the Device, and picking a Tile, even the selected one, or Add Tile brings it back', async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 1000 });
   await importDev(page);
@@ -399,7 +395,7 @@ test('hiding Details grows the Device, and picking a Tile, even the selected one
   await expect(page.getByTestId('tile-title')).toBeVisible();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await expect(toggle).toHaveAttribute('aria-controls', 'editor-details');
-  await expect.poll(async () => Math.abs((await centerOf(page, '.nav-dock')) - (await centerOf(page, '.canvas'))), { message: 'the dock centers over the canvas' }).toBeLessThan(2);
+  const rail = await page.locator('.nav-rail').boundingBox();
   const open = await width();
 
   await toggle.click();
@@ -409,7 +405,7 @@ test('hiding Details grows the Device, and picking a Tile, even the selected one
   await expect(inspector).toBeHidden();
   await expect(page.locator('.inspector-resizer')).toHaveCount(0);
   await expect.poll(width, { message: 'the Device grows into the room' }).toBeGreaterThan(open + 100);
-  await expect.poll(async () => Math.abs((await centerOf(page, '.nav-dock')) - (await centerOf(page, '.canvas'))), { message: 'the dock follows the canvas' }).toBeLessThan(2);
+  expect(await page.locator('.nav-rail').boundingBox(), 'the rail stays put').toEqual(rail);
 
   const free = { row: first.rows - 1, col: first.cols - 1 };
   await drag(page, 'f5', free.row, free.col, 'move');

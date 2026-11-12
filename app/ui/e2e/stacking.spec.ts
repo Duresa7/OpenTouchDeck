@@ -6,7 +6,7 @@ import { importText, menu, openLayout, openSettings as openSettingsAt, waitEvent
 const devText = readFileSync(join(import.meta.dirname, '..', '..', '..', 'schema', 'examples', 'dev.json'), 'utf8');
 const folder = process.env.TD_SHOTS ?? '';
 
-const dock = (page: Page) => page.locator('.nav-dock');
+const rail = (page: Page) => page.locator('.nav-rail');
 
 function topAt(target: Locator) {
   return target.evaluate((el) => {
@@ -55,22 +55,36 @@ async function openReplace(page: Page) {
   return confirm;
 }
 
-test('the nav dock draws over the Settings page', async ({ page }) => {
+test('the nav rail sits beside the Settings page, not over it', async ({ page }) => {
   await openSettings(page);
-  const at = await topAt(dock(page));
-  expect(at.inside).toBe(true);
-  expect(at.below.some((name) => name.includes('settings'))).toBe(true);
+  expect((await topAt(rail(page))).inside).toBe(true);
+  const edge = (await rail(page).boundingBox())!;
+  const categories = (await page.locator('.settings-nav').boundingBox())!;
+  expect(categories.x).toBeGreaterThanOrEqual(edge.x + edge.width);
 });
 
-test.describe('the nav dock sits under every dialog', () => {
+test('the open Update icon draws over the screen beside the rail', async ({ page }) => {
+  await openHome(page, '/?update=available');
+  await page.locator('.update-button').hover({ position: { x: 22, y: 22 } });
+  await expect(page.locator('.update-slot')).toHaveClass(/is-expanded/);
+  const label = page.locator('.update-label');
+  await expect(label).toHaveCSS('opacity', '1');
+  const box = (await label.boundingBox())!;
+  const edge = (await rail(page).boundingBox())!;
+  expect(box.x + box.width).toBeGreaterThan(edge.x + edge.width);
+  const top = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('.update-button') !== null, { x: box.x + box.width - 4, y: box.y + box.height / 2 });
+  expect(top).toBe(true);
+});
+
+test.describe('the nav rail sits under every dialog', () => {
   test('the Update dialog', async ({ page }) => {
     await openUpdate(page);
-    expect((await topAt(dock(page))).className).toBe('scrim');
+    expect((await topAt(rail(page))).className).toBe('scrim');
   });
 
   test('the Replace confirm', async ({ page }) => {
     await openReplace(page);
-    expect((await topAt(dock(page))).className).toBe('scrim');
+    expect((await topAt(rail(page))).className).toBe('scrim');
   });
 });
 
@@ -81,7 +95,7 @@ test('a confirm opened from Settings draws over Settings and its scrim covers it
   await expect(confirm).toBeVisible();
   expect((await topAt(confirm)).inside).toBe(true);
   expect((await topAt(page.getByTestId('settings-nav-general'))).className).toBe('scrim');
-  expect((await topAt(dock(page))).className).toBe('scrim');
+  expect((await topAt(rail(page))).className).toBe('scrim');
 });
 
 test.describe('on the Layout editor', () => {
@@ -89,10 +103,11 @@ test.describe('on the Layout editor', () => {
     await openEditor(page);
   });
 
-  test('the nav dock draws over the canvas', async ({ page }) => {
-    const at = await topAt(dock(page));
-    expect(at.inside).toBe(true);
-    expect(at.below).toContain('canvas');
+  test('the nav rail sits beside the canvas, not over it', async ({ page }) => {
+    expect((await topAt(rail(page))).inside).toBe(true);
+    const edge = (await rail(page).boundingBox())!;
+    const canvas = (await page.locator('.canvas').boundingBox())!;
+    expect(canvas.x).toBeGreaterThanOrEqual(edge.x + edge.width);
   });
 
   test('the Layout menu draws over the editor', async ({ page }) => {

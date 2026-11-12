@@ -1,6 +1,6 @@
 .integrations {
   max-width: 1040px;
-  padding: var(--space-10) var(--space-12) 120px;
+  padding: var(--space-10) var(--space-12);
 }
 
 .integration-list {

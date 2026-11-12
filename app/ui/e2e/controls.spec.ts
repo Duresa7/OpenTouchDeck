@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Capabilities, ControlLayout } from '../src/lib/companion/api.ts';
 import type { GridPage, Layout, Tile } from '../src/lib/layout/model.ts';
-import { consoleErrors, sideScroll, spills, underDock } from './break-helpers.ts';
+import { consoleErrors, sideScroll, spills, underRail } from './break-helpers.ts';
 import { errorCard, errorDetail, layoutOf, waitEvent } from './layout-helpers.ts';
 
 const shots = process.env.TD_SHOTS;
@@ -76,8 +76,8 @@ async function home(page: Page) {
 
 async function noSpill(page: Page, name: string) {
   await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity));
-  const dock = await underDock(page, '[data-testid=page-tab], [data-testid=page-add], [data-testid=status]');
-  expect({ scroll: await sideScroll(page), spills: await spills(page, ['.preset-name']), dock }, name).toEqual({ scroll: 0, spills: [], dock: [] });
+  const rail = await underRail(page, '[data-testid=page-tab], [data-testid=page-add], [data-testid=status]');
+  expect({ scroll: await sideScroll(page), spills: await spills(page, ['.preset-name']), rail }, name).toEqual({ scroll: 0, spills: [], rail: [] });
 }
 
 async function shot(page: Page, name: string) {

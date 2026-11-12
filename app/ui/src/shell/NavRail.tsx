@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import clsx from 'clsx';
 import { Tooltip } from '@base-ui/react/tooltip';
 import { Cable, House, LayoutGrid, Settings, type LucideProps } from 'lucide-react';
+import { useSetupUi } from '../state/setup.ts';
 import { useUi, type Section } from '../state/ui.ts';
 import { UpdateSlot } from './UpdateSlot.tsx';
 
@@ -16,10 +17,10 @@ function NavButton({ label, icon: Icon, current, onClick }: { label: string; ico
   return (
     <Tooltip.Root>
       <Tooltip.Trigger className={clsx('nav-button', current && 'is-current')} aria-label={label} aria-current={current ? 'page' : undefined} onClick={onClick}>
-        <Icon size={18} strokeWidth={1.9} aria-hidden />
+        <Icon size={20} strokeWidth={1.9} aria-hidden />
       </Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Positioner className="tooltip-positioner" side="top" sideOffset={8}>
+        <Tooltip.Positioner className="tooltip-positioner" side="right" sideOffset={8}>
           <Tooltip.Popup className="tooltip">{label}</Tooltip.Popup>
         </Tooltip.Positioner>
       </Tooltip.Portal>
@@ -28,19 +29,20 @@ function NavButton({ label, icon: Icon, current, onClick }: { label: string; ico
 }
 
 /**
- * The bottom-centre cluster: Home, Layout, Integrations and Settings, then the
- * Update slot in its own puck. Names appear as tooltips after 500ms, and at
- * once while the pointer stays in the cluster.
+ * The rail down the window's left edge: Home, Layout, Integrations and Settings at the top, the Update slot at the
+ * bottom. No screen moves it. Names appear as tooltips to the right after 500ms, and at once while the pointer stays
+ * in the rail. Onboarding hides it, keeping its column so the screen behind doesn't shift.
  */
-export function NavCluster() {
+export function NavRail() {
   const section = useUi((s) => s.section);
   const go = useUi((s) => s.go);
   const openSettings = useUi((s) => s.openSettings);
+  const settingUp = useSetupUi((s) => s.open !== null);
 
   return (
     <Tooltip.Provider delay={500} closeDelay={0}>
-      <nav className="nav-dock" aria-label="Main">
-        <div className="nav-puck">
+      <nav className={clsx('nav-rail', settingUp && 'is-hidden')} aria-label="Main">
+        <div className="nav-rail-list">
           {destinations.map((d) => (
             <NavButton
               key={d.section}

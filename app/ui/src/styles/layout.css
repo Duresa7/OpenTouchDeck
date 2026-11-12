@@ -582,7 +582,7 @@ body.is-resizing {
   gap: var(--space-8);
   min-width: 0;
   min-height: 0;
-  padding: var(--space-6) var(--space-8) 72px;
+  padding: var(--space-6) var(--space-8);
   overflow: hidden auto;
 }
 

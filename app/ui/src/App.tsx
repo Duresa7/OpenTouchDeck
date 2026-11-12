@@ -5,7 +5,7 @@ import { Toaster, type ToasterProps } from 'sonner';
 import { useDevices } from './lib/companion/devices.ts';
 import { Home } from './screens/Home.tsx';
 import { SetupHost } from './screens/onboarding/SetupHost.tsx';
-import { NavCluster } from './shell/NavCluster.tsx';
+import { NavRail } from './shell/NavRail.tsx';
 import { applyTheme } from './state/theme.ts';
 import { useUi } from './state/ui.ts';
 
@@ -19,9 +19,6 @@ const TOAST_ICONS: ToasterProps['icons'] = {
   warning: <TriangleAlert size={16} strokeWidth={2} aria-hidden />,
   info: <Info size={16} strokeWidth={2} aria-hidden />,
 };
-
-/** Toasts rise above the nav dock, which sits 12px up and stands 44px tall. */
-const TOAST_OFFSET: ToasterProps['offset'] = { bottom: 72 };
 
 const TOAST_OPTIONS: ToasterProps['toastOptions'] = {
   unstyled: true,
@@ -41,8 +38,9 @@ const TOAST_OPTIONS: ToasterProps['toastOptions'] = {
 };
 
 /**
- * The app shell: the current screen, the nav cluster over it and the toast
- * outlet. Switching screens never animates. Motion follows the system's reduced
+ * The app shell: the nav rail down the left edge, the current screen to its
+ * right and the toast outlet. The rail comes first, so Tab reaches it before
+ * the screen. Switching screens never animates. Motion follows the system's reduced
  * motion setting everywhere; the shell's own transitions are CSS and tokens.css
  * handles them.
  */
@@ -58,25 +56,29 @@ export function App() {
 
   return (
     <MotionConfig reducedMotion="user">
-      {section === 'home' && <Home />}
-      {section === 'layout' && (
-        <Suspense fallback={null}>
-          <Layout />
-        </Suspense>
-      )}
-      {section === 'integrations' && (
-        <Suspense fallback={null}>
-          <Integrations />
-        </Suspense>
-      )}
-      {section === 'settings' && (
-        <Suspense fallback={null}>
-          <Settings />
-        </Suspense>
-      )}
-      <NavCluster />
+      <div className="shell">
+        <NavRail />
+        <div className="shell-screen">
+          {section === 'home' && <Home />}
+          {section === 'layout' && (
+            <Suspense fallback={null}>
+              <Layout />
+            </Suspense>
+          )}
+          {section === 'integrations' && (
+            <Suspense fallback={null}>
+              <Integrations />
+            </Suspense>
+          )}
+          {section === 'settings' && (
+            <Suspense fallback={null}>
+              <Settings />
+            </Suspense>
+          )}
+        </div>
+      </div>
       <SetupHost />
-      <Toaster theme={appearance} position="bottom-center" offset={TOAST_OFFSET} icons={TOAST_ICONS} toastOptions={TOAST_OPTIONS} />
+      <Toaster theme={appearance} position="bottom-center" icons={TOAST_ICONS} toastOptions={TOAST_OPTIONS} />
     </MotionConfig>
   );
 }

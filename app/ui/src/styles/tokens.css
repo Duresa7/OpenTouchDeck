@@ -66,14 +66,14 @@
   /* Radius, by physical hierarchy: the bigger and more physical, the rounder */
   --radius-chip: 999px; /* badges, progress, pager */
   --radius-control: 8px; /* buttons, inputs, nav buttons */
-  --radius-group: 12px; /* nav cluster, Update icon, grouped rows, popovers */
+  --radius-group: 12px; /* Update icon, grouped rows, popovers */
   --radius-sheet: 16px; /* dialogs, the Integrations list */
   /* The Device's case scales with how wide it's drawn: multiply by that width in px */
   --bezel-pad: 0.034; /* bezel thickness around the screen */
   --bezel-radius: 0.049; /* corner radius of the case */
   --bezel-screen-radius: 0.012; /* corner radius of the glass */
 
-  --layer-dock: 10;
+  --layer-rail: 10;
   --layer-dialog: 20;
   --layer-popup: 30;
 

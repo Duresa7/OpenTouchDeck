@@ -126,6 +126,8 @@ test('keyboard focus is visible; fine-pointer lift stops with reduced motion', a
   await page.goto('/');
   const device = page.getByRole('button', { name: 'Edit Desk' });
   await expect(device).toBeVisible();
+  // The rail comes first in the tab order; the Device is next after its last button.
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Settings', exact: true }).focus();
   await page.keyboard.press('Tab');
   await expect(device).toBeFocused();
   await expect(device).toHaveCSS('outline-width', '2px');
