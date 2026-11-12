@@ -90,12 +90,24 @@ function Read-Package([string]$Path) {
     [pscustomobject]@{ Properties = $properties; NoElevation = [bool]($wordCount -band 8) }
 }
 
-# The registration Windows keeps for an installed product, per user or per PC.
+# What Windows Installer says about a product for the current user, and where its uninstall entry is.
+# State 5 is installed and -1 is unknown. AssignmentType 0 is "for the current user" and 1 is "for the whole PC".
 function Get-Registration([string]$ProductCode) {
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $state = [int](Get-ComProperty $installer 'ProductState' @($ProductCode))
+    $info = @{}
+    if ($state -eq 5) {
+        foreach ($name in 'AssignmentType', 'InstalledProductName', 'VersionString', 'Publisher') {
+            $info[$name] = [string](Get-ComProperty $installer 'ProductInfo' @($ProductCode, $name))
+        }
+    }
+    $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($installer)
     [pscustomobject]@{
-        User    = Get-ItemProperty -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$ProductCode" -ErrorAction SilentlyContinue
-        Machine = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') |
-            ForEach-Object { Get-ItemProperty -LiteralPath "$_\$ProductCode" -ErrorAction SilentlyContinue }
+        State      = $state
+        Info       = $info
+        UserKey    = Test-Path -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$ProductCode"
+        MachineKey = [bool](@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') |
+            Where-Object { Test-Path -LiteralPath "$_\$ProductCode" })
     }
 }
 
@@ -124,7 +136,7 @@ if ($Expect -eq 'refuse-old-windows') {
     Assert-That ($result.Log -match 'Open TouchDeck needs Windows 11') 'The log gives the reason: Open TouchDeck needs Windows 11.'
     Assert-That (-not (Test-Path -LiteralPath $installDir)) 'No install folder was created.'
     $registration = Get-Registration $productCode
-    Assert-That (-not $registration.User -and -not $registration.Machine) 'Nothing was registered in Installed apps.'
+    Assert-That ($registration.State -eq -1 -and -not $registration.UserKey -and -not $registration.MachineKey) 'Windows Installer registered nothing.'
     $summary.refusedExitCode = $result.ExitCode
     $summary.refusedMessage = ([regex]::Match($result.Log, 'Open TouchDeck needs Windows 11[^\r\n]*')).Value
 }
@@ -161,19 +173,23 @@ else {
     & (Join-Path $PSScriptRoot 'check_exe.ps1') -Path $installedExe -Subsystem gui -Version $Version | Out-Host
     Assert-That $true "The installed program carries ProductName '$productName', version $Version and the GUI subsystem."
     $registration = Get-Registration $productCode
-    Assert-That ($null -ne $registration.User) 'Installed apps lists it for the current user (HKCU).'
-    Assert-That ($registration.User.DisplayName -ceq $productName -and $registration.User.DisplayVersion -ceq $numbers) "It is listed as '$productName' $numbers."
-    Assert-That (-not $registration.Machine) 'Nothing is registered for the whole PC (HKLM).'
+    Assert-That ($registration.State -eq 5) 'Windows Installer lists the product as installed.'
+    Assert-That ($registration.Info['AssignmentType'] -eq '0') 'It is installed for the current user, not for the whole PC (AssignmentType 0).'
+    Assert-That ($registration.Info['InstalledProductName'] -ceq $productName -and $registration.Info['VersionString'] -ceq $numbers) "It is listed as '$productName' $numbers."
+    Assert-That ($registration.Info['Publisher'] -ceq $manufacturer) "Its publisher is '$manufacturer'."
+    Assert-That (-not $registration.MachineKey) 'It has no uninstall entry under HKEY_LOCAL_MACHINE.'
     Assert-That ((Get-ItemProperty -LiteralPath $appKey).InstallFolder.TrimEnd('\') -ieq $installDir) 'The component registered its install folder under HKCU.'
     $summary.installExitCode = $result.ExitCode
     $summary.installedExeSha256 = $installedHash
+    $summary.assignmentType = $registration.Info['AssignmentType']
+    $summary.uninstallEntryUnderHkcu = $registration.UserKey
 
     # Uninstall.
     $result = Invoke-Msiexec 'uninstall' @('/x', $productCode)
     Assert-That ($result.ExitCode -eq 0) "msiexec uninstalls with exit code 0 (got $($result.ExitCode))."
     Assert-That (-not (Test-Path -LiteralPath $installDir)) 'The install folder is gone.'
     $registration = Get-Registration $productCode
-    Assert-That (-not $registration.User -and -not $registration.Machine) 'Installed apps no longer lists it.'
+    Assert-That ($registration.State -eq -1 -and -not $registration.UserKey -and -not $registration.MachineKey) 'Windows Installer no longer lists the product.'
     Assert-That (-not (Test-Path -LiteralPath $appKey)) 'The component removed its registry key.'
     $summary.uninstallExitCode = $result.ExitCode
 }
