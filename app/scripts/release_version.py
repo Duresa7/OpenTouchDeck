@@ -21,7 +21,7 @@ VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 JSON_VERSION = re.compile(r'(\A\{\s*(?:"[^"]*"\s*:\s*(?:"[^"]*"|true|false|null|-?[0-9][0-9.eE+-]*)\s*,\s*)*?'
                           r'"version"\s*:\s*")([^"]*)(")')
 TOML_VERSION = re.compile(r'(^\[package\]\r?\n(?:(?!\[)[^\n]*\n)*?version\s*=\s*")([^"]*)(")', re.MULTILINE)
-CRATES = ("td-companion", "td-core", "td-host", "td-link", "td-updater")
+CRATES = ("td-app", "td-companion", "td-core", "td-host", "td-link", "td-updater")
 LOCK = "app/Cargo.lock"
 PATTERNS = {
     "app/package.json": JSON_VERSION,

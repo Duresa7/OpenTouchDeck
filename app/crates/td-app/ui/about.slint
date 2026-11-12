@@ -1,0 +1,160 @@
+// About: the version, the program's GPL-3.0 notice, the Slint credit and the licences of the
+// components it uses directly. The notice covers what GPL-3.0 section 0 asks an interactive
+// program to show: a copyright notice, no warranty, the right to convey, and the licence text.
+import { Theme } from "theme.slint";
+import { Body, Card, Link, PageTitle, SectionTitle } from "controls.slint";
+import { ScrollingPage } from "page.slint";
+
+export struct Component {
+    name: string,
+    license: string,
+}
+
+// One component and its licence.
+component ComponentRow inherits Rectangle {
+    in property <Component> entry;
+    in property <bool> first;
+
+    accessible-role: list-item;
+    accessible-label: self.entry.name;
+    accessible-description: self.entry.license;
+
+    VerticalLayout {
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 2px;
+        Text {
+            accessible-role: none;
+            text: root.entry.name;
+            font-size: Theme.body;
+            color: Theme.text;
+            wrap: word-wrap;
+        }
+
+        Text {
+            accessible-role: none;
+            text: root.entry.license;
+            font-size: Theme.caption;
+            color: Theme.secondary-text;
+            wrap: word-wrap;
+        }
+    }
+
+    // A divider above every row but the first.
+    Rectangle {
+        visible: !root.first;
+        y: 0;
+        height: 1px;
+        background: Theme.card-stroke;
+    }
+}
+
+export component AboutPage inherits ScrollingPage {
+    in property <string> version;
+    in property <[Component]> components;
+    callback open-url(string);
+    title: "About";
+
+    PageTitle {
+        text: "About";
+    }
+
+    Card {
+        VerticalLayout {
+            padding: 16px;
+            spacing: 4px;
+            Text {
+                text: "Open TouchDeck";
+                font-size: Theme.body-large;
+                font-weight: Theme.semibold;
+                font-family: Theme.display-font;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+
+            Body {
+                text: "Version " + root.version;
+                color: Theme.secondary-text;
+            }
+
+            Body {
+                text: "Copyright Duresa Kadi";
+                color: Theme.secondary-text;
+            }
+        }
+    }
+
+    SectionTitle {
+        text: "Licence";
+    }
+
+    Body {
+        text: "Open TouchDeck is free software: you can share it and change it under the terms of the GNU General Public License, version 3 (GPL-3.0). It comes with no warranty, to the extent the law allows.";
+    }
+
+    Body {
+        text: "The program is GPL-3.0 because it includes Slint, which it uses under that licence. Open TouchDeck's own source code is also available under the Apache License 2.0.";
+    }
+
+    Link {
+        text: "Read the GNU General Public License";
+        url: "https://www.gnu.org/licenses/gpl-3.0.html";
+        open(url) => {
+            root.open-url(url);
+        }
+    }
+
+    Link {
+        text: "Get the source code";
+        url: "https://github.com/Duresa7/OpenTouchDeck";
+        open(url) => {
+            root.open-url(url);
+        }
+    }
+
+    SectionTitle {
+        text: "Made with Slint";
+    }
+
+    Body {
+        text: "The window is built with Slint, a toolkit by SixtyFPS GmbH, used under the GPL-3.0.";
+    }
+
+    Link {
+        text: "slint.dev";
+        url: "https://slint.dev";
+        open(url) => {
+            root.open-url(url);
+        }
+    }
+
+    SectionTitle {
+        text: "Components";
+    }
+
+    Body {
+        text: "Open TouchDeck uses these components directly, some on one platform only. Each may include more components under their own licences.";
+        color: Theme.secondary-text;
+    }
+
+    // The components and their licences, as one list for screen readers.
+    if root.components.length > 0: Rectangle {
+        accessible-role: list;
+        accessible-label: "Components";
+        accessible-item-count: root.components.length;
+        background: Theme.card;
+        border-width: 1px;
+        border-color: Theme.card-stroke;
+        border-radius: 8px;
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 4px;
+            padding-bottom: 4px;
+            for entry[index] in root.components: ComponentRow {
+                entry: entry;
+                first: index == 0;
+            }
+        }
+    }
+}

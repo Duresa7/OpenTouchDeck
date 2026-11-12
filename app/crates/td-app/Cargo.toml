@@ -1,0 +1,43 @@
+[package]
+name = "td-app"
+version = "1.2.0"
+edition.workspace = true
+# Our own source files are Apache-2.0, like the rest of the repository. This crate links Slint,
+# which we use under GPL-3.0-only, so the program it builds is distributed as GPL-3.0-only
+# (ADR 0011).
+license = "GPL-3.0-only"
+# Slint 1.18 needs Rust 1.92. The other crates keep the workspace minimum.
+rust-version = "1.92"
+publish = false
+description = "Open TouchDeck 2.0: the Companion and its native Slint window in one program."
+
+[features]
+# `--mock-devices N`: run on mock Devices for development and screenshots. Never in a release.
+mock = ["td-companion/test-hooks"]
+
+[dependencies]
+open = "5"
+serde.workspace = true
+serde_json.workspace = true
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "renderer-software", "accessibility", "unstable-winit-030"] }
+td-companion = { path = "../td-companion" }
+td-core.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "signal", "sync"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Foundation", "UI_ViewManagement", "Wdk_System_SystemServices", "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_SystemInformation", "Win32_UI_Accessibility", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
+
+# The desktop portal's text size and contrast settings. Slint and the keyring already build zbus.
+[target.'cfg(all(unix, not(target_vendor = "apple")))'.dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[build-dependencies]
+slint-build = "=1.18.1"
+
+[dev-dependencies]
+i-slint-backend-testing = "=1.18.1"
+tempfile = "3"
+
+[[example]]
+name = "close_to_tray"
+required-features = ["mock"]

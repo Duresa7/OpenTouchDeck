@@ -13,6 +13,14 @@ pub(crate) fn env_dir(name: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// The app data folder the Companion and the native window share: `TOUCHDECK_APP_DATA_DIR`
+/// when set, otherwise `APP_ID` in the user's local data folder.
+pub fn data_dir() -> Option<PathBuf> {
+    std::env::var_os("TOUCHDECK_APP_DATA_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs::data_local_dir().map(|p| p.join(APP_ID)))
+}
+
 /// Writes through a temporary file in the same directory and renames it into place.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));

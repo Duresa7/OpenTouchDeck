@@ -66,6 +66,28 @@ The Companion executable is `target/debug/td-companion.exe` on Windows or
 `target/debug/td-companion` on Linux. The Companion embeds the built UI.
 The packaging recipe owns installer and release generation.
 
+## Native app (2.0, in development)
+
+`crates/td-app` is the Open TouchDeck 2.0 program from
+[ADR 0011](../docs/adr/0011-native-windows-app-in-rust-and-slint.md): the Companion and a
+Slint window in one process. It is not released yet; the Electron app above is unchanged until
+the cutover. It has Home and About so far. Linux builds need `libfontconfig-dev` as well.
+
+```sh
+cargo run -p td-app                                    # with your real Devices
+cargo run -p td-app --features mock -- --mock-devices 2 # with mock Devices
+cargo test -p td-app                                   # includes headless UI tests
+```
+
+`TOUCHDECK_APP_DATA_DIR` moves the app data folder, as it does for the Companion; the window
+keeps its place and the close-notice flag in `window.json` there. `SLINT_BACKEND=winit-software`
+selects Slint's software renderer.
+
+The crate's own source is Apache-2.0 like the rest of the repository, but it links Slint under
+GPL-3.0, so the program it builds is GPL-3.0-only. Its About page lists the licences of the
+components the program uses directly; `cargo test -p td-app` checks that list against the Cargo
+manifests.
+
 ## Develop and check changes
 
 Run these commands from `app/` after installing dependencies:
