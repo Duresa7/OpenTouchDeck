@@ -247,6 +247,10 @@ impl Handle {
     pub fn integrations(&self) -> &crate::integrations::Service {
         &self.integrations
     }
+    /// Brandfetch storage and blocking operations. Native screens use `BrandfetchSession`.
+    pub fn brandfetch(&self) -> &crate::features::brandfetch::Brandfetch {
+        &self.brandfetch
+    }
     pub fn actions(&self) -> &crate::actions::Actions {
         &self.actions
     }
