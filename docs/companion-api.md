@@ -1719,3 +1719,7 @@ only Devices advertising `bluetooth` offer the Bluetooth destination. Layout pus
 checks this before transferring Assets and fails with `layout.invalid`, issue
 `action.sink`, if the destination is unsupported. Bluetooth consumer usages are
 limited to 1–1023 by the existing report map. Other action types have no sink.
+
+Layout read, last-seen lookup and push orchestration live behind
+`Handle::layout_operations()`. The local web API translates headers and responses
+for those same in-process operations; their wire contract is unchanged.
