@@ -1,0 +1,9 @@
+# Review triage and the merge gate
+
+On 2026-11-13, [PR #386](https://github.com/Duresa7/OpenTouchDeck/pull/386) merged at 04:41:08 UTC while non-required checks were still running. The required gate had passed at 04:39:01, but [CodeQL's Rust analysis](https://github.com/Duresa7/OpenTouchDeck/actions/runs/43365850918/job/131689975946) finished at 04:43:39 and the [Windows install/uninstall check](https://github.com/Duresa7/OpenTouchDeck/actions/runs/43365855406/job/131693182952) ended cancelled at 05:03:45. A green required gate had not established that all checks were green.
+
+On 2026-11-13, the process correction was to wait for every check before merging, including CodeQL and the Windows install test whenever scheduled. The [M4 tickets, beginning with #393](https://github.com/Duresa7/OpenTouchDeck/issues/393), explicitly required fully green CI including CodeQL. At [OpenTouchDeck commit 2a14ad8, `pr.yml`](https://github.com/Duresa7/OpenTouchDeck/blob/2a14ad8d2562f360deb2cb83a07e57930c253034/.github/workflows/pr.yml), `gate` covered only its declared workflow dependencies; checking it alone could miss other workflows. Path-filtered skips meant a job did not apply, not that a running job could be ignored.
+
+On 2026-11-13, the review process separated blockers from follow-ups. [#376](https://github.com/Duresa7/OpenTouchDeck/issues/376) retained deferred findings from [PR #372](https://github.com/Duresa7/OpenTouchDeck/pull/372) so they did not disappear or widen that PR. [#401](https://github.com/Duresa7/OpenTouchDeck/issues/401) likewise distinguished the keyboard-address privacy blocker from non-blocking discovery hardening. The lesson was to verify findings against code, send blockers back for correction and record nitpicks with their source and rationale as follow-ups.
+
+Related: [overlapping branches](parallel-edit-conflicts.md), [test crypto alerts](test-crypto-alerts.md), [coding standards](../../CODING_STANDARDS.md).
