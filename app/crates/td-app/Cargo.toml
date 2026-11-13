@@ -38,6 +38,9 @@ slint-build = "=1.18.1"
 [dev-dependencies]
 i-slint-backend-testing = "=1.18.1"
 tempfile = "3"
+# The Setup and Settings tests run on mock Devices.
+td-companion = { path = "../td-companion", features = ["test-hooks"] }
+td-link.workspace = true
 
 [[example]]
 name = "close_to_tray"

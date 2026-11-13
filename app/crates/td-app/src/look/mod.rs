@@ -38,9 +38,22 @@ fn text_scale(scale: f32) -> f32 {
     }
 }
 
+/// A mock build's text size for screenshots, from `TOUCHDECK_TEXT_SCALE`, so the desktop's own
+/// setting can stay as it is.
+fn scale_override() -> Option<f32> {
+    #[cfg(all(feature = "mock", not(test)))]
+    {
+        std::env::var("TOUCHDECK_TEXT_SCALE")
+            .ok()
+            .and_then(|scale| scale.parse().ok())
+    }
+    #[cfg(any(not(feature = "mock"), test))]
+    None
+}
+
 pub(crate) fn apply(ui: &AppWindow, look: &Look) {
     let theme = ui.global::<Theme>();
-    theme.set_text_scale(text_scale(look.text_scale));
+    theme.set_text_scale(text_scale(scale_override().unwrap_or(look.text_scale)));
     theme.set_high_contrast(look.high_contrast);
     theme.set_has_system_contrast(look.contrast.is_some());
     if let Some(colors) = &look.contrast {

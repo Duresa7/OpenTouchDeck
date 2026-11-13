@@ -1,0 +1,612 @@
+// Settings: this PC's settings, then one page per Device with its name, orientation, photo
+// frame, paired apps and Firmware.
+import { ComboBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ActionButton, Body, Card, Choice, Choices, Details, GroupTitle, Hint, InfoBar, Link, PageTitle, ProgressBar, SectionTitle, SettingBlock, SettingRow, Severity, TextField, ToggleSwitch } from "controls.slint";
+import { ScrollingPage, Focus } from "page.slint";
+
+// This PC's settings.
+export struct PcSettings {
+    // Start at sign-in is a Windows setting.
+    start-shown: bool,
+    start-on: bool,
+    start-enabled: bool,
+    start-problem: string,
+    update-on: bool,
+    update-enabled: bool,
+    update-problem: string,
+    // system, light or dark.
+    appearance: string,
+}
+
+// A Device in the Settings list.
+export struct DeviceEntry {
+    id: string,
+    name: string,
+    status: string,
+}
+
+// One app a Device keeps a Pairing with.
+export struct PairedApp {
+    app: string,
+    name: string,
+    this-app: bool,
+    forgetting: bool,
+}
+
+// One Device's settings page.
+export struct DevicePage {
+    id: string,
+    name: string,
+    status: string,
+    offline: string,
+    editable: bool,
+    name-value: string,
+    name-hint: string,
+    name-invalid: bool,
+    name-disabled: bool,
+    orientation: string,
+    // The orientation waiting for "Restart", or "".
+    confirm: string,
+    confirm-title: string,
+    // Why the photo frame can't change, or "".
+    photo-needs: string,
+    photo-on: bool,
+    photo-enabled: bool,
+    photo-hint: string,
+    after-index: int,
+    folder: string,
+    folder-hint: string,
+    folder-problem: string,
+    can-pick: bool,
+    pairings-shown: bool,
+    pairings-needs: string,
+    pairings-count: string,
+    pairings-status: string,
+    pairings-listed: bool,
+    pairings-editable: bool,
+    pairings-error: string,
+    forgetting-all: bool,
+    firmware-title: string,
+    firmware-status: string,
+    firmware-offer: bool,
+    firmware-usb: bool,
+    restart-enabled: bool,
+    // idle, waiting, running, done, failed or cancelled.
+    firmware-step: string,
+    firmware-pct: int,
+    firmware-hint: string,
+    firmware-log: string,
+    notice: string,
+    // info, ok or error.
+    notice-kind: string,
+    notice-detail: string,
+}
+
+// A card of settings rows under its heading.
+component Group inherits VerticalLayout {
+    in property <string> title;
+    spacing: 8px;
+    padding-top: 8px;
+    GroupTitle {
+        text: root.title;
+    }
+
+    Card {
+        VerticalLayout {
+            @children
+        }
+    }
+}
+
+// The question before an action that can't be taken back, inside its card.
+component Confirm inherits Rectangle {
+    in property <string> title;
+    in property <string> text;
+    in property <string> action;
+    in property <bool> enabled: true;
+    callback cancel();
+    callback confirm();
+
+    accessible-role: groupbox;
+    accessible-label: self.title;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.high-contrast ? Theme.contrast.window-text : Theme.card-stroke;
+    background: Theme.high-contrast ? Theme.contrast.window : Theme.subtle-selected;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        Text {
+            accessible-role: none;
+            text: root.title;
+            font-size: Theme.body;
+            font-weight: Theme.semibold;
+            color: Theme.text;
+            wrap: word-wrap;
+        }
+
+        Hint {
+            text: root.text;
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            padding-top: 4px;
+            cancel := ActionButton {
+                text: "Cancel";
+                clicked => {
+                    root.cancel();
+                }
+                init => {
+                    self.focus();
+                }
+            }
+
+            ActionButton {
+                text: root.action;
+                primary: true;
+                enabled: root.enabled;
+                clicked => {
+                    root.confirm();
+                }
+            }
+        }
+    }
+}
+
+// A Device in the Settings list: one button that opens its page.
+component DeviceButton inherits Rectangle {
+    in property <DeviceEntry> device;
+    in property <bool> first;
+    callback open();
+
+    accessible-role: button;
+    accessible-label: self.device.name;
+    accessible-description: self.device.status;
+    accessible-action-default => {
+        self.open();
+    }
+    forward-focus: keys;
+    min-height: max(56px, content.preferred-height);
+    background: touch.has-hover ? Theme.subtle-hover : transparent;
+
+    content := HorizontalLayout {
+        padding: 12px;
+        padding-left: 16px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                accessible-role: none;
+                text: root.device.name;
+                font-size: Theme.body;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+
+            Text {
+                accessible-role: none;
+                text: root.device.status;
+                font-size: Theme.caption;
+                color: Theme.secondary-text;
+                wrap: word-wrap;
+            }
+        }
+
+        Text {
+            accessible-role: none;
+            text: "›";
+            font-size: Theme.body-large;
+            color: Theme.secondary-text;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+
+    if !root.first: Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.card-stroke;
+    }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") && !event.repeat {
+                root.open();
+                return accept;
+            }
+            return reject;
+        }
+        changed has-focus => {
+            if self.has-focus {
+                Focus.show(root.absolute-position.y, root.height);
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.open();
+        }
+    }
+
+    if keys.has-focus: Rectangle {
+        x: 2px;
+        y: 2px;
+        width: root.width - 4px;
+        height: root.height - 4px;
+        border-width: 2px;
+        border-radius: 4px;
+        border-color: Theme.focus;
+    }
+}
+
+export component SettingsPage inherits ScrollingPage {
+    in property <PcSettings> pc;
+    in property <[DeviceEntry]> devices;
+    // The Device whose page is open, or "" for the list.
+    in property <string> device-id;
+    in property <DevicePage> device;
+    in property <[PairedApp]> paired;
+    in property <[string]> after-choices;
+    in-out property <bool> confirming-forget-all;
+    callback set-start(bool);
+    callback set-updates(bool);
+    callback set-appearance(string);
+    callback open-device(string);
+    callback close-device();
+    callback rename(string);
+    callback choose-orientation(string);
+    callback cancel-orientation();
+    callback confirm-orientation();
+    callback set-photo(bool);
+    callback set-after(int);
+    callback choose-folder();
+    callback forget(string);
+    callback forget-all();
+    callback update-firmware();
+    callback restart();
+    title: root.device-id == "" ? "Settings" : root.device.name;
+
+    if root.device-id == "": VerticalLayout {
+        spacing: 12px;
+        PageTitle {
+            text: "Settings";
+        }
+
+        Group {
+            title: "This PC";
+            if root.pc.start-shown: SettingRow {
+                first: true;
+                title: "Start at sign-in";
+                description: "Runs in the tray when you sign in to Windows, so your Devices work right away.";
+                problem: root.pc.start-problem;
+                ToggleSwitch {
+                    label: "Start at sign-in";
+                    checked: root.pc.start-on;
+                    enabled: root.pc.start-enabled;
+                    toggled(on) => {
+                        root.set-start(on);
+                    }
+                }
+            }
+            SettingRow {
+                first: !root.pc.start-shown;
+                title: "Check for updates";
+                description: "Asks GitHub for a newer Open TouchDeck every few hours. Nothing about you or your Devices is sent.";
+                problem: root.pc.update-problem;
+                ToggleSwitch {
+                    label: "Check for updates";
+                    checked: root.pc.update-on;
+                    enabled: root.pc.update-enabled;
+                    toggled(on) => {
+                        root.set-updates(on);
+                    }
+                }
+            }
+
+            SettingBlock {
+                title: "Appearance";
+                appearance-choices := Choices {
+                    label: "Appearance";
+                    value: root.pc.appearance;
+                    choices: [
+                        { value: "system", label: "Match Windows", hint: "" },
+                        { value: "light", label: "Light", hint: "" },
+                        { value: "dark", label: "Dark", hint: "" },
+                    ];
+                    chose(value) => {
+                        root.set-appearance(value);
+                    }
+                }
+            }
+        }
+
+        Group {
+            title: "Devices";
+            if root.devices.length == 0: SettingBlock {
+                first: true;
+                description: "No Device connected. Plug one in with a USB cable.";
+            }
+            for entry[index] in root.devices: DeviceButton {
+                device: entry;
+                first: index == 0;
+                open => {
+                    root.open-device(entry.id);
+                }
+            }
+        }
+    }
+
+    if root.device-id != "": VerticalLayout {
+        spacing: 12px;
+        // The way back, as Windows 11 Settings shows it above a page.
+        HorizontalLayout {
+            alignment: start;
+            spacing: 4px;
+            Link {
+                text: "Settings";
+                url: "settings";
+                open => {
+                    root.close-device();
+                }
+            }
+
+            Text {
+                accessible-role: none;
+                text: "›";
+                color: Theme.secondary-text;
+                font-size: Theme.body;
+                vertical-alignment: center;
+            }
+        }
+
+        PageTitle {
+            text: root.device.name;
+        }
+
+        Hint {
+            text: root.device.status;
+        }
+
+        if root.device.offline != "": InfoBar {
+            text: root.device.offline;
+            severity: Severity.info;
+        }
+
+        Group {
+            title: "General";
+            SettingBlock {
+                first: true;
+                title: "Name";
+                problem: root.device.name-invalid ? root.device.name-hint : "";
+                description: root.device.name-invalid ? "" : root.device.name-hint;
+                TextField {
+                    label: "Name";
+                    value: root.device.name-value;
+                    enabled: root.device.editable && !root.device.name-disabled;
+                    invalid: root.device.name-invalid;
+                    description: root.device.name-hint;
+                    accepted(text) => {
+                        root.rename(text);
+                    }
+                }
+            }
+
+            SettingBlock {
+                title: "Orientation";
+                Choices {
+                    label: "Orientation";
+                    value: root.device.confirm != "" ? root.device.confirm : root.device.orientation;
+                    enabled: root.device.editable;
+                    choices: [
+                        { value: "landscape", label: "Landscape", hint: "" },
+                        { value: "portrait", label: "Portrait", hint: "" },
+                    ];
+                    chose(value) => {
+                        root.choose-orientation(value);
+                    }
+                }
+
+                if root.device.confirm != "": Confirm {
+                    title: root.device.confirm-title;
+                    text: "Each orientation keeps its own Layout.";
+                    action: "Restart";
+                    cancel => {
+                        root.cancel-orientation();
+                    }
+                    confirm => {
+                        root.confirm-orientation();
+                    }
+                }
+            }
+        }
+
+        Group {
+            title: "Screen";
+            if root.device.photo-needs != "": SettingBlock {
+                first: true;
+                title: "Photo frame";
+                description: root.device.photo-needs;
+            }
+            if root.device.photo-needs == "": SettingRow {
+                first: true;
+                title: "Photo frame";
+                description: root.device.photo-hint;
+                ToggleSwitch {
+                    label: "Photo frame";
+                    description: root.device.photo-hint;
+                    checked: root.device.photo-on;
+                    enabled: root.device.photo-enabled;
+                    toggled(on) => {
+                        root.set-photo(on);
+                    }
+                }
+            }
+            if root.device.photo-needs == "" && root.device.photo-on: SettingRow {
+                title: "Start after";
+                ComboBox {
+                    accessible-label: "Start after";
+                    enabled: root.device.photo-enabled;
+                    model: root.after-choices;
+                    current-index: root.device.after-index;
+                    selected => {
+                        root.set-after(self.current-index);
+                    }
+                }
+            }
+            if root.device.photo-needs == "" && root.device.photo-on: SettingBlock {
+                title: "Folder";
+                description: root.device.folder;
+                problem: root.device.folder-problem;
+                Hint {
+                    text: root.device.folder-hint;
+                }
+
+                if root.device.can-pick: HorizontalLayout {
+                    alignment: start;
+                    ActionButton {
+                        text: "Choose folder";
+                        enabled: root.device.photo-enabled;
+                        clicked => {
+                            root.choose-folder();
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.device.pairings-shown: Group {
+            title: "Wireless";
+            SettingBlock {
+                first: true;
+                title: "Paired apps" + (root.device.pairings-count != "" ? " · " + root.device.pairings-count : "");
+                description: root.device.pairings-needs != "" ? root.device.pairings-needs : root.device.pairings-status;
+                if root.device.pairings-needs == "" && root.device.pairings-listed: Rectangle {
+                    accessible-role: list;
+                    accessible-label: "Paired apps";
+                    accessible-item-count: root.paired.length;
+                    VerticalLayout {
+                        spacing: 4px;
+                        for app in root.paired: HorizontalLayout {
+                            spacing: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    accessible-role: list-item;
+                                    accessible-label: app.name;
+                                    accessible-description: app.this-app ? "This app" : "";
+                                    text: app.name;
+                                    font-size: Theme.body;
+                                    color: Theme.text;
+                                    wrap: word-wrap;
+                                }
+
+                                if app.this-app: Text {
+                                    accessible-role: none;
+                                    text: "This app";
+                                    font-size: Theme.caption;
+                                    color: Theme.secondary-text;
+                                }
+                            }
+
+                            ActionButton {
+                                text: app.forgetting ? "Forgetting…" : "Forget";
+                                label: "Forget " + app.name;
+                                horizontal-stretch: 0;
+                                enabled: root.device.pairings-editable;
+                                clicked => {
+                                    root.forget(app.app);
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.device.pairings-needs == "" && root.device.pairings-listed && !root.confirming-forget-all: HorizontalLayout {
+                    alignment: start;
+                    ActionButton {
+                        text: "Forget all";
+                        enabled: root.device.pairings-editable;
+                        clicked => {
+                            root.confirming-forget-all = true;
+                        }
+                    }
+                }
+                if root.device.pairings-listed && root.confirming-forget-all: Confirm {
+                    title: "Forget every paired app?";
+                    text: "None of them can reach " + root.device.name + " over Wi-Fi until it pairs again with a new code.";
+                    action: root.device.forgetting-all ? "Forgetting…" : "Forget all";
+                    enabled: root.device.pairings-editable;
+                    cancel => {
+                        root.confirming-forget-all = false;
+                    }
+                    confirm => {
+                        root.forget-all();
+                    }
+                }
+                if root.device.pairings-error != "": InfoBar {
+                    text: root.device.pairings-error;
+                    severity: Severity.error;
+                }
+            }
+        }
+
+        Group {
+            title: "Firmware";
+            SettingBlock {
+                first: true;
+                title: root.device.firmware-title;
+                description: root.device.firmware-status;
+                if root.device.firmware-step == "running" || root.device.firmware-step == "waiting": ProgressBar {
+                    label: "Updating " + root.device.name;
+                    value: root.device.firmware-step == "running" ? root.device.firmware-pct : -1;
+                    value-text: root.device.firmware-status;
+                }
+                if root.device.firmware-hint != "": Hint {
+                    text: root.device.firmware-hint;
+                }
+                if root.device.firmware-step == "failed": InfoBar {
+                    text: root.device.firmware-status;
+                    severity: Severity.error;
+                    details: root.device.firmware-log;
+                }
+                if root.device.firmware-step == "cancelled": InfoBar {
+                    text: root.device.firmware-status;
+                    severity: Severity.info;
+                    details: root.device.firmware-log;
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    if root.device.firmware-offer: ActionButton {
+                        text: "Update";
+                        primary: true;
+                        enabled: root.device.firmware-usb;
+                        clicked => {
+                            root.update-firmware();
+                        }
+                    }
+                    ActionButton {
+                        text: "Restart";
+                        label: "Restart " + root.device.name;
+                        enabled: root.device.restart-enabled;
+                        clicked => {
+                            root.restart();
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.device.notice != "": InfoBar {
+            text: root.device.notice;
+            severity: root.device.notice-kind == "error" ? Severity.error : root.device.notice-kind == "ok" ? Severity.success : Severity.info;
+            details: root.device.notice-detail;
+        }
+    }
+}

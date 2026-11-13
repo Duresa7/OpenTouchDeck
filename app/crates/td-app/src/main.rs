@@ -1,6 +1,10 @@
 //! Open TouchDeck 2.0: the Companion and its native window in one program.
 //!
-//! Usage: `td-app`, or `td-app --mock-devices N` in a build with the `mock` feature.
+//! Usage: `td-app`, or in a build with the `mock` feature `td-app --mock-devices N` or
+//! `td-app --mock KIND,KIND…`, where a KIND is `device`, `radio` (the radio build, with two
+//! paired apps), `v1` (Firmware too old to keep a name), `old` (Firmware with an update offered)
+//! or `board` (a New board). Mock builds accept every Firmware install and update on their own,
+//! and `TOUCHDECK_TEXT_SCALE` overrides the text size for screenshots.
 //! `--packaged` marks an installed copy, as Start at sign-in runs it.
 //! `TOUCHDECK_APP_DATA_DIR` moves the app data folder, as it does for the Companion.
 //!
@@ -27,8 +31,8 @@ fn main() -> ExitCode {
 struct Args {
     /// An installed copy started by the installer or at sign-in.
     packaged: bool,
-    /// How many mock Devices to plug in, if any.
-    mock_devices: Option<usize>,
+    /// The mock Devices and boards to plug in, if any.
+    mock: Option<Vec<String>>,
 }
 
 fn parse(args: &[String]) -> Result<Args, Box<dyn std::error::Error>> {
@@ -37,13 +41,27 @@ fn parse(args: &[String]) -> Result<Args, Box<dyn std::error::Error>> {
         // Start at sign-in registers this command line (td-companion's startup.rs).
         [flag] if flag == "--packaged" => Ok(Args {
             packaged: true,
-            mock_devices: None,
+            mock: None,
         }),
         #[cfg(feature = "mock")]
         [flag, count] if flag == "--mock-devices" => Ok(Args {
             packaged: false,
-            mock_devices: Some(count.parse()?),
+            mock: Some(vec!["device".into(); count.parse()?]),
         }),
+        #[cfg(feature = "mock")]
+        [flag, kinds] if flag == "--mock" => {
+            let kinds: Vec<String> = kinds.split(',').map(str::to_owned).collect();
+            if let Some(unknown) = kinds
+                .iter()
+                .find(|k| !["device", "radio", "v1", "old", "board"].contains(&k.as_str()))
+            {
+                return Err(format!("unknown mock kind {unknown:?}").into());
+            }
+            Ok(Args {
+                packaged: false,
+                mock: Some(kinds),
+            })
+        }
         _ => Err("unknown argument. Run td-app with no arguments.".into()),
     }
 }
@@ -53,10 +71,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     td_companion::tray::set_app_identity()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let Args {
-        packaged,
-        mock_devices: mock,
-    } = parse(&args)?;
+    let Args { packaged, mock } = parse(&args)?;
     let data = td_core::app_dirs::data_dir().ok_or("no app data folder")?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -78,12 +93,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let companion = runtime.block_on(Companion::start(config))?;
     let handle = companion.handle();
     #[cfg(feature = "mock")]
-    if let (Some(count), Some((ports, _))) = (mock, handle.devices().mock()) {
-        for n in 1..=count {
-            ports.plug(
-                &format!("mock{n:04}"),
-                td_companion::devices::BoardKind::Device,
-            );
+    if let (Some(kinds), Some((ports, _))) = (&mock, handle.devices().mock()) {
+        use td_companion::{devices::BoardKind, features::firmware::ConsentAnswer};
+        handle.firmware().script(vec![ConsentAnswer::Accept; 1024]);
+        for (n, kind) in kinds.iter().enumerate() {
+            let serial = format!("mock{:04}", n + 1);
+            let board = match kind.as_str() {
+                "radio" => BoardKind::DeviceRadio,
+                "v1" => BoardKind::DeviceV1,
+                "board" => BoardKind::Silent,
+                _ => BoardKind::Device,
+            };
+            let deck = ports.board(&serial, board);
+            match kind.as_str() {
+                "old" => deck.set_version("0.1.0"),
+                "radio" => {
+                    deck.add_net_pairing([0x21; 16], "Laptop");
+                    deck.add_net_pairing([0x42; 16], "Studio PC");
+                }
+                _ => {}
+            }
+            ports.plug(&serial, board);
         }
     }
 
@@ -113,6 +143,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|()| {
             td_app::App::new(td_app::Options {
                 data_dir: data,
+                config: td_core::app_dirs::Dirs::current(),
                 // The tray brings a hidden window back. Without one, closing the window ends
                 // the program.
                 close_to_tray: cfg!(windows),
@@ -150,7 +181,7 @@ mod tests {
             parse(&args(&["--packaged"])).unwrap(),
             Args {
                 packaged: true,
-                mock_devices: None
+                mock: None
             }
         );
         assert!(parse(&args(&["--packaged", "extra"])).is_err());

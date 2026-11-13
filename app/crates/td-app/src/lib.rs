@@ -12,7 +12,11 @@
 //! use td_companion::companion::{Companion, Config};
 //! let companion = runtime.block_on(Companion::start(Config::real(data.clone())))?;
 //! td_app::init_platform()?;
-//! let app = td_app::App::new(td_app::Options { data_dir: data, close_to_tray: true })?;
+//! let app = td_app::App::new(td_app::Options {
+//!     data_dir: data,
+//!     config: td_core::app_dirs::Dirs::current(),
+//!     close_to_tray: true,
+//! })?;
 //! let open = app.opener(); // The tray's "Open" calls `open.open()` from its own thread.
 //! app.run(&companion.handle(), runtime.handle())?;
 //! runtime.block_on(companion.shutdown());
@@ -29,6 +33,7 @@ mod about;
 mod home;
 mod look;
 pub mod prefs;
+mod screens;
 mod window;
 
 pub use look::init_platform;
@@ -37,6 +42,8 @@ pub use window::Opener;
 pub struct Options {
     /// The app data folder, where the window keeps `window.json`.
     pub data_dir: PathBuf,
+    /// The configuration folder, where `app-settings.json` keeps the update-check switch.
+    pub config: td_core::app_dirs::Dirs,
     /// A tray icon can open the window again, so closing it hides it and the app keeps running.
     /// Without one, closing the window ends the program.
     pub close_to_tray: bool,
@@ -46,6 +53,8 @@ pub struct Options {
 pub struct App {
     ui: AppWindow,
     state: Rc<window::State>,
+    config: td_core::app_dirs::Dirs,
+    screens: std::cell::RefCell<Option<Rc<screens::Screens>>>,
 }
 
 impl App {
@@ -60,7 +69,33 @@ impl App {
             prefs::Prefs::load(&options.data_dir),
             options.close_to_tray,
         );
-        Ok(Self { ui, state })
+        ui.set_appearance(screens::scheme(state.appearance()));
+        Ok(Self {
+            ui,
+            state,
+            config: options.config,
+            screens: Default::default(),
+        })
+    }
+
+    /// Wires Setup and Settings to the Companion. `run` does it; tests call it themselves.
+    fn connect(
+        &self,
+        companion: &Handle,
+        runtime: &tokio::runtime::Handle,
+    ) -> Rc<screens::Screens> {
+        self.screens
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                screens::Screens::attach(
+                    &self.ui,
+                    companion.clone(),
+                    runtime.clone(),
+                    self.state.clone(),
+                    self.config.clone(),
+                )
+            })
+            .clone()
     }
 
     /// The handle that opens the window from any thread.
@@ -77,6 +112,7 @@ impl App {
         runtime: &tokio::runtime::Handle,
     ) -> Result<(), slint::PlatformError> {
         let feed = home::follow(companion.clone(), runtime, self.ui.as_weak());
+        let _screens = self.connect(companion, runtime);
         let stopping = companion.clone();
         let stop = runtime.spawn(async move {
             stopping.stopping().await;
@@ -116,5 +152,7 @@ fn open_url(url: &str) {
     }
 }
 
+#[cfg(test)]
+mod screens_tests;
 #[cfg(test)]
 mod ui_tests;

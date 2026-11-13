@@ -21,6 +21,7 @@ pub mod photos;
 mod process;
 mod runtime;
 mod serve;
+pub mod setup;
 pub mod startup;
 pub mod store;
 pub mod tray;

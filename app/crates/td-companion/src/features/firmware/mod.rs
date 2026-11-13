@@ -2,6 +2,7 @@
 //! Access it through `companion::Handle::firmware`; the local web API is only an adapter.
 mod api;
 mod dialogs;
+mod task;
 mod workflow;
 use crate::{
     api::CommonError,
@@ -19,6 +20,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
+};
+pub use task::{
+    BoardStep, Context, FirmwareTask, JobView, Target, TaskView, Words, board_step,
+    compare_versions, offered, short_version, view_of,
 };
 use td_link::bundle::Bundle;
 use ts_rs::TS;
@@ -272,13 +277,13 @@ pub enum FirmwareError {
     Device(#[from] crate::link::DeviceLinkError),
 }
 /// The Firmware this Companion carries: the normal build, and the radio build when it carries one.
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct FirmwareBuild {
     pub version: String,
     pub build: String,
     pub radio: Option<RadioBuild>,
 }
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct RadioBuild {
     pub version: String,
     pub build: String,

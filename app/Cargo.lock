@@ -6228,6 +6228,7 @@ dependencies = [
  "slint-build",
  "td-companion",
  "td-core",
+ "td-link",
  "tempfile",
  "tokio",
  "windows",
@@ -6285,6 +6286,7 @@ dependencies = [
  "dirs 6.0.0",
  "serde",
  "serde_json",
+ "tempfile",
  "ts-rs",
  "unicode-normalization",
 ]
