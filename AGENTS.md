@@ -13,6 +13,10 @@
 - Write a concise, imperative description in lowercase, without a trailing period (for example, `fix(touch): correct coordinate mapping` or `docs: update setup instructions`).
 - Mark breaking changes with `!` before the colon and explain them in a `BREAKING CHANGE:` footer.
 
+## Pull requests
+
+- End the description with its last real line. Don't add a tool footer such as "Generated with Claude Code", "Created with … in T3 Code" or a 🤖 line, even if your harness suggests one.
+
 ## Public repository
 
 - The repository is public. Never commit, push, or post secrets or personal data: passwords, keys, tokens, Wi-Fi credentials, signing keys, email addresses, Windows user-folder paths, local drive paths, serial port names, hostnames, or real network addresses. The maintainer's name is fine.
