@@ -69,7 +69,8 @@ build -> sign hook (programs) -> package -> sign hook (installer) -> updater sig
 | 5. Sign the installer | `sign hook (installer)` | The same hook for the MSI. Uploads `installer` |
 | 6. Update signature | `updater signature`, ubuntu-24.04 | Signs the MSI with the updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)) through `.github/release-signer` |
 | 7. Verify | three jobs | See [What verify proves](#what-verify-proves) |
-| 8. Publish | `publish a draft release`, ubuntu-24.04 | For a tag only: uploads the MSI, its `.sig` and `SHA256SUMS` to a **draft** release with the tag's message as its notes, then checks the uploaded names and sizes. It never publishes the draft |
+| 8. The 1.x feed | `carry the 1.x feed`, ubuntu-24.04 | Takes `latest.json` from the newest published 1.x release. It must name that release's own installer, and its signature must verify with the committed updater key and name that installer and version. See [The 1.x feed on a 2.x release](#the-1x-feed-on-a-2x-release) |
+| 9. Publish | `publish a draft release`, ubuntu-24.04 | For a tag only: uploads the MSI, its `.sig`, the 1.x `latest.json` and `SHA256SUMS` to a **draft** release with the tag's message as its notes, then checks the uploaded names and sizes. It never publishes the draft |
 
 Rules every job keeps, so a signing service can trust the result:
 
@@ -148,9 +149,14 @@ Three jobs run on the signed installer, on runners that built none of it:
 
 The public half of the updater key is committed at `.github/release-signer/updater.pub`, with the same value as the repository variable `TAURI_UPDATER_PUBLIC_KEY` that the 1.x build reads. It is public by design, and committing it lets anyone check a release's `.sig` from a clone. The private half stays a secret in the `release` environment. Never regenerate either: every installed copy trusts this key.
 
+### The 1.x feed on a 2.x release
+
+Installed 1.x copies read `releases/latest/download/latest.json` and run the installer it names with the 1.x installer's flags. Once a 2.x release is the latest, that URL is the 2.x release's. So every 2.x release carries a copy of the newest published 1.x release's `latest.json`, which names that release's NSIS installer: the bridge release, or a later 1.x fix. A 1.x copy that never reached the bridge updates to it first, and the bridge then offers 2.0. The file never names the MSI: a 1.x copy would run it as an NSIS installer. 2.0's own updater ignores the file and reads the release list.
+
+Publish a 1.x release before the 2.x release that should carry it. A 1.x fix published after a 2.x release reaches 1.x copies only once the next 2.x release carries it, and is published without "Set as the latest release".
+
 ### Not done yet
 
-- **The 1.x feed on a 2.x release.** Installed 1.x copies read `releases/latest/download/latest.json` and run what it names with the NSIS installer's flags, so a 2.x release must never name its MSI there. Once a 2.x release is the latest, that URL is the 2.x release's, so 1.x copies that never reached the bridge release find nothing. The publish job should attach a copy of the newest 1.x release's `latest.json`, which names the bridge, before 2.0 is published. Until it does, publish 2.0 only after most 1.x copies have had time to reach 1.3.0.
 - **Update UI.** The native host checks after startup and about daily on Windows, with status in the Companion snapshot. `updates().install_now(&handle)` reverifies the staged MSI, launches Windows Installer and requests the normal bounded shutdown. The update UI is separate work.
 - **Firmware.** The 1.x release builds the Firmware and ships `touchdeck.tdfw`. The 2.0 pipeline doesn't yet.
 - **Pre-release versions.** Two release candidates of one version get the same MSI version, so one does not replace the other.

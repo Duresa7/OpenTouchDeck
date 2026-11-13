@@ -372,6 +372,58 @@ jobs:
           fi
           echo "A changed installer fails verification."
 
+  # Installed 1.x copies read releases/latest/download/latest.json and run the installer it names with the 1.x
+  # installer's flags. Once a 2.x release is the latest, that file is this release's, so it carries the newest 1.x
+  # release's own feed, which names the bridge release (docs/packaging.md, "The move from 1.x"). It never names
+  # the MSI. A dry run checks the same feed and keeps it as an artifact.
+  onex-feed:
+    name: carry the 1.x feed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/release-signer
+          filter: blob:none
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+      - name: Take the newest 1.x feed and check it against the updater key
+        run: |
+          set -euo pipefail
+          tag=$(gh api "repos/$GH_REPO/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == false)
+            | select(.tag_name | test("^v1\\.[0-9]+\\.[0-9]+$"))] | sort_by(.tag_name | ltrimstr("v") | split(".") | map(tonumber))
+            | last | .tag_name // ""')
+          [ -n "$tag" ] || { echo "::error::No published 1.x release"; exit 1; }
+          version=${tag#v}
+          installer=OpenTouchDeck-windows-x64-setup.exe
+          mkdir -p onex-feed check
+          gh release download "$tag" --pattern latest.json --pattern "$installer" --dir check
+          # It must be that release's own 1.x feed, naming that release's NSIS installer.
+          jq -e --arg version "$version" --arg url "https://github.com/$GH_REPO/releases/download/$tag/$installer" \
+            '.version == $version and .platforms["windows-x86_64"].url == $url
+              and (.platforms["windows-x86_64"].signature | type == "string" and length > 0)' check/latest.json > /dev/null
+          # Its signature must verify with the committed updater key and name that installer and version.
+          base64 -d .github/release-signer/updater.pub > committed.pub
+          jq -r '.platforms["windows-x86_64"].signature' check/latest.json | base64 -d > check/installer.minisig
+          comment=$(minisign -V -Q -p committed.pub -m "check/$installer" -x check/installer.minisig)
+          [[ "$comment" == *$'\t'"file:$installer"$'\t'"version:$version" ]]
+          cp check/latest.json onex-feed/latest.json
+          echo "Carrying the $tag feed: $comment"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: onex-feed
+          path: onex-feed
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 90 || 3 }}
+
   verify-install:
     name: verify install and uninstall (windows-latest)
     needs: [build, package, updater-signature]
@@ -467,7 +519,7 @@ jobs:
 
   publish:
     name: publish a draft release
-    needs: [rust, build, package, updater-signature, verify-signature, verify-install, verify-old-windows]
+    needs: [rust, build, package, updater-signature, verify-signature, verify-install, verify-old-windows, onex-feed]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -492,6 +544,10 @@ jobs:
         with:
           name: updater-signature
           path: signature
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: onex-feed
+          path: release-assets
 
       - name: Check the assets belong to this tag and collect them
         run: |
