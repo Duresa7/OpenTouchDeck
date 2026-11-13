@@ -543,7 +543,7 @@ impl ApiError for LastSeenError {
     }
 }
 
-#[derive(Default, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PushProgress {
     pub assets_sent: u32,
     pub assets_total: u32,
