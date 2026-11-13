@@ -29,6 +29,7 @@ pub const COMPONENTS: &[(&str, &str)] = &[
     ("keyring", "MIT OR Apache-2.0"),
     ("libc", "MIT OR Apache-2.0"),
     ("mdns-sd", "Apache-2.0 OR MIT"),
+    ("minisign-verify", "MIT"),
     ("num-bigint", "MIT OR Apache-2.0"),
     ("open", "MIT"),
     ("parking_lot", "MIT OR Apache-2.0"),
@@ -46,6 +47,7 @@ pub const COMPONENTS: &[(&str, &str)] = &[
     ("slint", SLINT_LICENSE),
     ("srp", "MIT OR Apache-2.0"),
     ("subtle", "BSD-3-Clause"),
+    ("tempfile", "MIT OR Apache-2.0"),
     ("thiserror", "MIT OR Apache-2.0"),
     ("time", "MIT OR Apache-2.0"),
     ("tokio", "MIT"),
@@ -86,7 +88,14 @@ mod tests {
     use serde_json::Value;
     use std::collections::{BTreeMap, BTreeSet};
 
-    const OWN: [&str; 5] = ["td-app", "td-companion", "td-core", "td-host", "td-link"];
+    const OWN: [&str; 6] = [
+        "td-app",
+        "td-companion",
+        "td-core",
+        "td-host",
+        "td-link",
+        "td-updater",
+    ];
 
     fn metadata(args: &[&str]) -> Value {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());

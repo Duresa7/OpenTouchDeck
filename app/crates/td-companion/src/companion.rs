@@ -63,6 +63,7 @@ impl Config {
 /// A typed view of the state sent to every new UI.
 #[derive(Clone, serde::Serialize)]
 pub struct Snapshot {
+    pub update: crate::updates::Status,
     pub devices: Vec<crate::devices::DeviceSummary>,
     pub new_boards: Vec<crate::devices::NewBoard>,
     pub integrations: Vec<crate::integrations::IntegrationSummary>,
@@ -73,6 +74,7 @@ pub struct Snapshot {
 /// A window-independent handle. Construction and worker ownership stay in `Companion`.
 #[derive(Clone)]
 pub struct Handle {
+    updates: crate::updates::Updates,
     pub(crate) actions: crate::actions::Actions,
     pub(crate) integrations: crate::integrations::Service,
     pub(crate) desktop: Arc<crate::tray::Desktop>,
@@ -162,6 +164,7 @@ impl Handle {
             checkpoints.clone(),
         );
         Self {
+            updates: Default::default(),
             actions,
             integrations,
             live,
@@ -203,6 +206,7 @@ impl Handle {
     }
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
+            update: self.updates.snapshot(),
             devices: self.devices.summaries(),
             new_boards: self.devices.new_boards(),
             integrations: self.integrations.summaries(),
@@ -210,11 +214,17 @@ impl Handle {
             approvals: self.actions.pending(),
         }
     }
+    pub fn updates(&self) -> &crate::updates::Updates {
+        &self.updates
+    }
     pub fn observe(&self) -> tokio::sync::broadcast::Receiver<Change> {
         self.events.subscribe()
     }
     pub fn devices(&self) -> &crate::devices::DeviceManager {
         &self.devices
+    }
+    pub fn layout_operations(&self) -> crate::layouts::Operations {
+        crate::layouts::Operations::new(self.clone())
     }
     pub fn device_operations(&self) -> &crate::devices::Operations {
         &self.device_operations

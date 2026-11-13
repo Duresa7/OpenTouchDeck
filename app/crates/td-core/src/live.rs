@@ -224,10 +224,177 @@ pub fn cell_rect(
 /// The side of the square cover a `now-playing` Tile of this size draws, or None when it has no art box, by the
 /// rules and vectors in `schema/live/now-playing-vectors.json`.
 pub fn art_size(tile_w: u16, tile_h: u16) -> Option<u16> {
-    const PAD: u16 = 20;
-    const ART_MIN: u16 = 48;
-    const ART_MAX: u16 = 256;
-    let by_width = (u32::from(tile_w.saturating_sub(2 * PAD)) * 2 / 5) as u16;
-    let size = tile_h.saturating_sub(2 * PAD).min(by_width).min(ART_MAX);
-    (size >= ART_MIN).then_some(size)
+    now_playing_layout(tile_w, tile_h).art.map(|r| r.w)
+}
+
+impl ScreenSize {
+    /// Orient native panel dimensions for the Layout.
+    pub fn oriented(self, orientation: crate::layout::Orientation) -> Self {
+        let (short, long) = (self.w.min(self.h), self.w.max(self.h));
+        match orientation {
+            crate::layout::Orientation::Portrait => Self { w: short, h: long },
+            crate::layout::Orientation::Landscape => Self { w: long, h: short },
+        }
+    }
+}
+
+/// Inverse of cell edges, including the following gap. Outside indices are retained.
+/// Returns None for invalid grids, screens or non-finite pointer coordinates.
+pub fn cell_at(
+    screen: ScreenSize,
+    full_screen: bool,
+    grid: [u8; 2],
+    x: f64,
+    y: f64,
+) -> Option<[i32; 2]> {
+    let area = cell_rect(screen, full_screen, grid, [0, 0, grid[0], grid[1]])?;
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
+    let gap = f64::from(u32::from(screen.w.min(screen.h)) * 16 / 600);
+    let index = |point: f64, origin: i32, length: u16, cells: u8| {
+        (((point - f64::from(origin)).floor() + 1.0) * f64::from(cells) - 1.0)
+            / (f64::from(length) + gap)
+    };
+    Some([
+        index(y, area.y, area.h, grid[0]).floor() as i32,
+        index(x, area.x, area.w, grid[1]).floor() as i32,
+    ])
+}
+
+/// Tile-local now-playing geometry. There is no progress bar on the Device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NowPlayingLayout {
+    pub art: Option<PixelRect>,
+    pub text_x: i32,
+    pub text_w: u16,
+    pub controls: bool,
+    /// Wire part name and its half-open rectangle.
+    pub parts: Vec<(&'static str, PixelRect)>,
+}
+
+pub fn now_playing_layout(w: u16, h: u16) -> NowPlayingLayout {
+    let size = h
+        .saturating_sub(40)
+        .min((u32::from(w.saturating_sub(40)) * 2 / 5) as u16)
+        .min(256);
+    let art = (size >= 48).then_some(PixelRect {
+        x: 20,
+        y: i32::from((h - size) / 2),
+        w: size,
+        h: size,
+    });
+    let text_x = art.map_or(20, |r| r.x + i32::from(r.w) + 20);
+    let text_w = w.saturating_sub(20 + text_x as u16);
+    let controls = h >= 200 && text_w >= 180;
+    let parts = if controls {
+        let each = text_w / 3;
+        ["previous", "play_pause", "next"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| {
+                (
+                    name,
+                    PixelRect {
+                        x: text_x + i as i32 * i32::from(each),
+                        y: i32::from(h) - 76,
+                        w: if i == 2 { text_w - 2 * each } else { each },
+                        h: 56,
+                    },
+                )
+            })
+            .collect()
+    } else {
+        vec![("play_pause", PixelRect { x: 0, y: 0, w, h })]
+    };
+    NowPlayingLayout {
+        art,
+        text_x,
+        text_w,
+        controls,
+        parts,
+    }
+}
+
+/// Centered source crop for a cover; smaller images retain their native size.
+pub fn cover_crop(source: ScreenSize, art: PixelRect) -> PixelRect {
+    let (w, h) = (source.w.min(art.w), source.h.min(art.h));
+    PixelRect {
+        x: i32::from((source.w - w) / 2),
+        y: i32::from((source.h - h) / 2),
+        w,
+        h,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BarLayout {
+    pub glyph: PixelRect,
+    pub track: PixelRect,
+    pub capture: Option<PixelRect>,
+    pub mute: Option<PixelRect>,
+}
+
+pub fn bar_layout(w: u16, h: u16, muted_declared: bool) -> BarLayout {
+    let glyph = PixelRect {
+        x: 20,
+        y: 20,
+        w: 32,
+        h: 32,
+    };
+    let track = PixelRect {
+        x: 20,
+        y: i32::from(h) - 48,
+        w: w.saturating_sub(40),
+        h: 28,
+    };
+    let zones = w >= 72 && h >= 72;
+    let top = (track.y - 24).max(20);
+    let bottom = (track.y + 52).min(i32::from(h) - 20);
+    BarLayout {
+        glyph,
+        track,
+        capture: zones.then_some(PixelRect {
+            x: 20,
+            y: top,
+            w: track.w,
+            h: (bottom - top).max(0) as u16,
+        }),
+        mute: (zones && muted_declared).then_some(glyph),
+    }
+}
+
+impl PixelRect {
+    /// Half-open Device or Tile-local bounds.
+    pub fn contains(self, x: i32, y: i32) -> bool {
+        x >= self.x
+            && y >= self.y
+            && i64::from(x) < i64::from(self.x) + i64::from(self.w)
+            && i64::from(y) < i64::from(self.y) + i64::from(self.h)
+    }
+}
+
+impl NowPlayingLayout {
+    /// Idle or unknown playback state has no actionable part.
+    pub fn part_at(&self, x: i32, y: i32, state: u8) -> Option<&'static str> {
+        if !matches!(state, 1 | 2) {
+            return None;
+        }
+        self.parts
+            .iter()
+            .find(|(_, r)| r.contains(x, y))
+            .map(|(part, _)| *part)
+    }
+}
+
+impl BarLayout {
+    pub fn zone_at(&self, x: i32, y: i32, fresh: bool, input: bool) -> Option<&'static str> {
+        if !fresh {
+            return None;
+        }
+        if self.mute.is_some_and(|r| r.contains(x, y)) {
+            return Some("mute");
+        }
+        (input && self.capture.is_some_and(|r| r.contains(x, y))).then_some("value")
+    }
 }
