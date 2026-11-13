@@ -135,6 +135,7 @@ mod tests {
         );
         td_core::settings::AppSettings {
             automatic_update_checks: false,
+            ..Default::default()
         }
         .save(&dirs)
         .unwrap();

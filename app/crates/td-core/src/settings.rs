@@ -8,12 +8,15 @@ use crate::layout::Orientation;
 #[serde(default)]
 pub struct AppSettings {
     pub automatic_update_checks: bool,
+    /// Whether the native editor offers Brandfetch search. Credentials stay saved when off.
+    pub brandfetch_enabled: bool,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             automatic_update_checks: true,
+            brandfetch_enabled: false,
         }
     }
 }
@@ -41,6 +44,18 @@ impl AppSettings {
         dirs: &crate::app_dirs::Dirs,
         on: bool,
     ) -> std::io::Result<Self> {
+        Self::set_switch(dirs, "automatic_update_checks", on)
+    }
+
+    /// Changes only the Brandfetch switch, preserving other and unknown preferences.
+    pub fn set_brandfetch_enabled(dirs: &crate::app_dirs::Dirs, on: bool) -> std::io::Result<Self> {
+        Self::set_switch(dirs, "brandfetch_enabled", on)
+    }
+
+    fn set_switch(dirs: &crate::app_dirs::Dirs, field: &str, on: bool) -> std::io::Result<Self> {
+        // All switch owners share the read-modify-write gate.
+        static WRITES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _write = WRITES.lock().unwrap_or_else(|e| e.into_inner());
         let path = dirs.app_settings();
         let mut fields = match std::fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
@@ -60,7 +75,7 @@ impl AppSettings {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
             Err(error) => return Err(error),
         };
-        fields.insert("automatic_update_checks".into(), Value::Bool(on));
+        fields.insert(field.into(), Value::Bool(on));
         let value = Value::Object(fields);
         let settings: Self =
             serde_json::from_value(value.clone()).map_err(std::io::Error::other)?;
@@ -122,6 +137,45 @@ mod tests {
     fn dirs(folder: &std::path::Path) -> crate::app_dirs::Dirs {
         crate::app_dirs::Dirs {
             config: folder.join("config"),
+        }
+    }
+
+    #[test]
+    fn the_brandfetch_switch_defaults_off_and_preserves_other_preferences() {
+        let folder = tempfile::tempdir().unwrap();
+        let dirs = dirs(folder.path());
+        assert!(!AppSettings::load(&dirs).unwrap().brandfetch_enabled);
+        std::fs::create_dir_all(&dirs.config).unwrap();
+        std::fs::write(
+            dirs.app_settings(),
+            br#"{"automatic_update_checks":false,"future":[1,2]}"#,
+        )
+        .unwrap();
+        assert!(
+            AppSettings::set_brandfetch_enabled(&dirs, true)
+                .unwrap()
+                .brandfetch_enabled
+        );
+        AppSettings::set_automatic_update_checks(&dirs, true).unwrap();
+        assert!(AppSettings::load(&dirs).unwrap().brandfetch_enabled);
+        assert!(
+            !AppSettings::set_brandfetch_enabled(&dirs, false)
+                .unwrap()
+                .brandfetch_enabled
+        );
+        let written: Value =
+            serde_json::from_slice(&std::fs::read(dirs.app_settings()).unwrap()).unwrap();
+        assert_eq!(
+            written,
+            json!({"automatic_update_checks":true,"brandfetch_enabled":false,"future":[1,2]})
+        );
+        for damaged in ["{bad", "[]", r#"{"brandfetch_enabled":"yes"}"#] {
+            std::fs::write(dirs.app_settings(), damaged).unwrap();
+            assert!(AppSettings::set_brandfetch_enabled(&dirs, true).is_err());
+            assert_eq!(
+                std::fs::read_to_string(dirs.app_settings()).unwrap(),
+                damaged
+            );
         }
     }
 
