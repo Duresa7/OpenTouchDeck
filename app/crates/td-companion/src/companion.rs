@@ -73,6 +73,7 @@ pub struct Snapshot {
 /// A window-independent handle. Construction and worker ownership stay in `Companion`.
 #[derive(Clone)]
 pub struct Handle {
+    editor_root: PathBuf,
     pub(crate) actions: crate::actions::Actions,
     pub(crate) integrations: crate::integrations::Service,
     pub(crate) desktop: Arc<crate::tray::Desktop>,
@@ -162,6 +163,7 @@ impl Handle {
             checkpoints.clone(),
         );
         Self {
+            editor_root: data.to_path_buf(),
             actions,
             integrations,
             live,
@@ -215,6 +217,12 @@ impl Handle {
     }
     pub fn devices(&self) -> &crate::devices::DeviceManager {
         &self.devices
+    }
+    pub fn open_editor(
+        &self,
+        device: &str,
+    ) -> Result<crate::editor::Session, crate::editor::EditorError> {
+        crate::editor::Session::open(self.clone(), self.editor_root.clone(), device)
     }
     pub fn layout_operations(&self) -> crate::layouts::Operations {
         crate::layouts::Operations::new(self.clone())

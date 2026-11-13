@@ -29,6 +29,7 @@ pub enum EditError {
     NoSpace,
     SinkNotApplicable,
     LiveActionRequired,
+    BarRequired,
 }
 impl std::fmt::Display for EditError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,6 +42,8 @@ impl std::error::Error for EditError {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Appearance {
     Plain {
+        /// Optional widget binding when returning a Live tile to its plain value.
+        action: Option<Action>,
         icon: Option<String>,
         asset: Option<String>,
     },
@@ -56,6 +59,21 @@ pub enum Appearance {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Edit {
+    Name {
+        name: String,
+    },
+    PageTitle {
+        page: String,
+        title: String,
+    },
+    GridSize {
+        page: String,
+        rows: u8,
+        cols: u8,
+    },
+    FullScreen {
+        on: bool,
+    },
     Place {
         page: String,
         tile: Tile,
@@ -89,6 +107,10 @@ pub enum Edit {
     Action {
         tile: String,
         action: Action,
+    },
+    Input {
+        tile: String,
+        on: bool,
     },
     Sink {
         tile: String,
@@ -165,6 +187,28 @@ impl Document {
         let mut next = self.0.clone();
         let mut created_tile = None;
         match edit {
+            Edit::Name { name } => next.name = name.clone(),
+            Edit::FullScreen { on } => next.full_screen = *on,
+            Edit::PageTitle { page, title } => {
+                match next.pages.iter_mut().find(|p| p.id() == page) {
+                    Some(
+                        Page::Grid { title: target, .. } | Page::Dashboard { title: target, .. },
+                    ) => *target = title.clone(),
+                    None => return Err(EditError::MissingPage(page.clone())),
+                }
+            }
+            Edit::GridSize { page, rows, cols } => {
+                match next.pages.iter_mut().find(|p| p.id() == page) {
+                    Some(Page::Grid {
+                        rows: r, cols: c, ..
+                    }) => {
+                        *r = *rows;
+                        *c = *cols;
+                    }
+                    Some(_) => return Err(EditError::NotGrid(page.clone())),
+                    None => return Err(EditError::MissingPage(page.clone())),
+                }
+            }
             Edit::Place { page, tile } => {
                 let mut placed = tile.clone();
                 normalize_sink(&mut placed.action);
@@ -254,6 +298,13 @@ impl Document {
                 normalize_sink(&mut action);
                 tile_mut(&mut next, tile)?.action = action;
             }
+            Edit::Input { tile, on } => {
+                let target = tile_mut(&mut next, tile)?;
+                if target.render != Some(TileRender::Bar) {
+                    return Err(EditError::BarRequired);
+                }
+                target.input = *on;
+            }
             Edit::Sink { tile, sink } => {
                 let target = tile_mut(&mut next, tile)?;
                 target.action = action_with_sink(target.action.clone(), sink.clone())?;
@@ -266,7 +317,17 @@ impl Document {
                 tile.streams = None;
                 tile.input = false;
                 match appearance {
-                    Appearance::Plain { icon, asset } => {
+                    Appearance::Plain {
+                        icon,
+                        asset,
+                        action,
+                    } => {
+                        if let Some(action) = action {
+                            if !matches!(action, Action::Widget { .. }) {
+                                return Err(EditError::LiveActionRequired);
+                            }
+                            tile.action = action.clone();
+                        }
                         tile.icon = icon.clone();
                         tile.asset = asset.clone();
                     }
@@ -309,6 +370,8 @@ impl Document {
             Edit::Renderer { .. }
                 | Edit::Place { .. }
                 | Edit::AddPage { .. }
+                | Edit::RemoveTile { .. }
+                | Edit::RemovePage { .. }
                 | Edit::ReplaceAssets { .. }
         ) {
             next.schema = if next.pages.iter().any(|page| matches!(page, Page::Grid { tiles, .. }

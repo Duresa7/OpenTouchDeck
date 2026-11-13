@@ -1,8 +1,11 @@
-//! Native Layout editor session for one Device. UI adapters own selection and rendering;
-//! this module owns admitted drafts, effective rejected values, persistence and revision decisions.
-//! It does no Device I/O: a caller executes a PushPlan through the Device lane, then returns
-//! the Layout actually observed after sending. Keep one session owner per Device.
+//! Headless Layout editing. Session couples a persisted Editor to the Companion Device lane.
+//! Editor remains usable independently for deterministic lifecycle tests and offline drafts.
+//! Keep one owner per Device; UI adapters render snapshots and own dialogs and window state.
+mod presets;
+pub use presets::placed_appearance;
+mod session;
 use serde::{Deserialize, Serialize};
+pub use session::{Session, SessionError};
 use std::{collections::BTreeMap, io, path::PathBuf};
 use td_core::{
     Layout, Orientation,
@@ -112,6 +115,7 @@ pub struct PushPlan {
     device: String,
     document: Document,
     baseline: Option<DeviceCopy>,
+    receive_serial: u64,
 }
 impl PushPlan {
     pub fn layout(&self) -> &Layout {
@@ -126,6 +130,7 @@ pub struct Editor {
     path: PathBuf,
     device: String,
     drafts: [Option<Draft>; 2],
+    receive_serial: [u64; 2],
 }
 impl Editor {
     /// Blocking disk read. Corrupt/unsupported storage is reported, never silently overwritten.
@@ -143,6 +148,7 @@ impl Editor {
             path,
             device: device.into(),
             drafts: [None, None],
+            receive_serial: [0, 0],
         };
         match std::fs::read(&editor.path) {
             Ok(bytes) => {
@@ -176,14 +182,15 @@ impl Editor {
                         if field(&edit).is_none() {
                             return Err(bad_storage("invalid rejected edit").into());
                         }
-                        if let Err(reason) = restored.document.apply(&edit) {
-                            if field(&edit)
-                                .is_some_and(|(tile, _)| restored.effective_tile(tile).is_some())
-                            {
-                                remember(&mut restored.rejected, Rejected { edit, reason });
+                        match restored.document.apply(&edit) {
+                            Err(reason) => {
+                                if field(&edit).is_some_and(|(tile, _)| {
+                                    restored.effective_tile(tile).is_some()
+                                }) {
+                                    remember(&mut restored.rejected, Rejected { edit, reason });
+                                }
                             }
-                        } else {
-                            return Err(bad_storage("saved rejection is now valid").into());
+                            Ok(change) => restored.document = change.document,
                         }
                     }
                     *slot = Some(restored);
@@ -321,6 +328,7 @@ impl Editor {
         let document = Document::admit(layout)?;
         let slot = &mut self.drafts[index(document.layout().orientation)];
         let remote = DeviceCopy { document, revision };
+        self.receive_serial[index(remote.document.layout().orientation)] += 1;
         match slot {
             Some(draft) if draft.document != remote.document || !draft.rejected.is_empty() => {
                 draft.conflict = Some(remote)
@@ -380,6 +388,7 @@ impl Editor {
                 device: self.device.clone(),
                 document: draft.document.clone(),
                 baseline: draft.known.clone(),
+                receive_serial: self.receive_serial[index(orientation)],
             }),
             Compatibility::Unknown => Err(EditorError::UnknownCapabilities),
             Compatibility::Unsupported(problems) => Err(EditorError::Incompatible(problems)),
@@ -395,12 +404,23 @@ impl Editor {
         if plan.device != self.device {
             return Err(EditorError::StalePush);
         }
+        let received_since =
+            self.receive_serial[index(plan.layout().orientation)] != plan.receive_serial;
         let draft = self.draft_mut(plan.layout().orientation)?;
-        if draft.known != plan.baseline || draft.conflict.is_some() {
+        let identical_receive = received_since
+            && draft
+                .known
+                .as_ref()
+                .is_some_and(|known| known.document == plan.document)
+            && draft.known != plan.baseline;
+        if (draft.known != plan.baseline && !identical_receive) || draft.conflict.is_some() {
             return Err(EditorError::StalePush);
         }
         if Document::admit(displayed)? != plan.document {
             return Err(EditorError::PushMismatch);
+        }
+        if identical_receive {
+            return Ok(());
         }
         draft.known = Some(DeviceCopy {
             document: plan.document,

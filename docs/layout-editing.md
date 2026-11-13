@@ -1,3 +1,37 @@
+# Native editor session design (M3 foundation)
+
+Three shapes were considered for the native UI:
+
+- A td-app controller could compose the existing Editor and Device operations,
+  but would put persistence, transfer and conflict policy beside UI code.
+- A Handle-owned shared editor registry could broadcast snapshots, but adds
+  locking and ownership rules before there is a second native editor consumer.
+- A Companion Session opened through Handle can own one Device editor and expose
+  drafts and selection directly to a single native adapter.
+
+The third shape is chosen: `Handle::open_editor(device)` returns an
+`editor::Session`. Its small interface starts/imports a Layout, selects an
+orientation/Page/Tile, applies validated commands, loads, sends and resolves a
+conflict. The UI renders `draft()` and `selection()` after each operation. There
+was no undo/redo in the reference editor. The existing pure Document and persisted
+Editor remain the lower layers. The Session hides conditional push, Job completion,
+readback and checkpoints. This belongs in td-companion because persisted drafts
+and Device revision decisions must have the same owner regardless of UI toolkit.
+Keep a single Session owner for each Device. Async calls currently borrow it
+exclusively; UI work should run these away from the Slint event loop.
+
+This is a foundation, not the complete M3 port. Still required: Tile-bound GIF
+preparation (queue, cancel/retry, refit after geometry/capability changes, source
+retention and stale-result suppression); automatic Asset replacement observation;
+Add Tile defaults/target/new-Page placement and Preset placement; numeric stream
+picker queries; every remaining TypeScript test mapped through the public Session
+against the mock Device. The UI itself remains a separate task.
+
+`placed_appearance` owns Preset renderer fallback: graphs require numeric streams
+and graph Firmware, bars and now-playing retain their renderer even when Firmware
+needs updating, invalid declarations fall back to a plain value. Placement must
+still validate the Preset action through Document.
+
 # Rust Layout editing
 
 Three interface shapes were considered:
@@ -33,8 +67,7 @@ separate from `Unsupported`; Bluetooth consumer usages above 1023 are unsupporte
 even without diagnostics. This reuses Layout's transfer-time sink validation.
 
 The Companion module holds one Device's two orientation drafts. A native adapter
-keeps one `Editor` owner per Device under the Companion data directory. Selection,
-window state, dialogs and Device I/O belong to adapters. The lifecycle is:
+keeps one `Editor` owner per Device under the Companion data directory. The Session owns native selection and Device I/O; window state and dialogs belong to adapters. The lifecycle is:
 
 1. `Editor::open(data_dir, device_id)` reads the Device's drafts. `start(layout)`
    admits an import or a newly built Layout without losing a known Device revision.
@@ -68,7 +101,6 @@ drafts, preserving the last known Device copies. Replacement keys and values use
 full `sha256:` wire references. The Asset owner supplies replacement notifications.
 
 The M3 UI must connect this lifecycle to the Device lane and schedule persistence.
-Further transformations (Layout/Page names, grid size and full-screen settings),
-Preset fallback policy, asynchronous GIF preparation and migration of browser
-local-storage drafts remain follow-ups. Firmware enforcement and schema format
+Layout/Page names, grid size and full-screen settings are validated Edit commands.
+Asynchronous GIF preparation and migration of browser local-storage drafts remain follow-ups. Firmware enforcement and schema format
 fixtures remain independent.
