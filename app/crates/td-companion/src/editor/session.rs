@@ -1,5 +1,12 @@
+#[path = "templates.rs"]
+mod templates;
+pub use templates::NewLayout;
+#[path = "sending.rs"]
+mod sending;
+pub use sending::{PendingSend, SaveState, SendReceipt};
 #[path = "gifs.rs"]
 mod gifs;
+pub use gifs::GifProblem as Notice;
 pub(crate) use gifs::GifSource;
 pub use gifs::{GifEdit, GifPreview, GifProblem, GifWork};
 #[path = "streams.rs"]
@@ -10,11 +17,7 @@ mod placement;
 pub use placement::{AddKind, AddTarget};
 // Device-coupled editor facade. Keep one owner per Device; render its draft and selection.
 use super::{Decision, Draft, Editor, EditorError};
-use crate::{
-    companion::Handle,
-    jobs::JobState,
-    layouts::{IfMatch, LayoutError},
-};
+use crate::{companion::Handle, layouts::LayoutError};
 use td_core::{
     Layout, Orientation,
     editing::{Capabilities, Edit},
@@ -47,6 +50,9 @@ pub struct Session {
     page: Option<String>,
     tile: Option<String>,
     last_job: Option<crate::jobs::Job>,
+    send_owner: std::sync::Arc<()>,
+    sending: Option<u64>,
+    send_serial: u64,
     gifs: gifs::GifState,
     changes: tokio::sync::broadcast::Receiver<crate::events::Change>,
     replacements: std::collections::BTreeMap<String, String>,
@@ -67,6 +73,9 @@ impl Session {
             page: None,
             tile: None,
             last_job: None,
+            send_owner: std::sync::Arc::new(()),
+            sending: None,
+            send_serial: 0,
             gifs: Default::default(),
             changes,
             replacements: Default::default(),
@@ -173,6 +182,11 @@ impl Session {
         };
         self.refresh_assets()?;
         self.sync_gifs()?;
+        if let crate::events::Change::JobUpdated(update) = &change
+            && update.0.scope == crate::jobs::JobScope::Device(self.device.clone())
+        {
+            self.last_job = Some(update.0.clone());
+        }
         Ok(change)
     }
     fn refresh_assets(&mut self) -> Result<(), EditorError> {
@@ -220,7 +234,10 @@ impl Session {
                 return serde_json::from_value(latest.result.unwrap_or_default())
                     .map_err(|e| SessionError::Send(e.to_string()));
             }
-            let _ = changes.recv().await;
+            match changes.recv().await {
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => return Err(SessionError::Send("Companion stopped".into())),
+            }
         }
     }
     pub async fn load(&mut self) -> Result<(), SessionError> {
@@ -247,79 +264,10 @@ impl Session {
         self.model.persist()?;
         Ok(())
     }
-    /// Runs the conditional send and checks the Device readback before marking the draft sent.
-    /// A conflict is captured for resolve(); the caller can render draft().conflict().
+    /// Convenience for callers that do not need to edit during the transfer.
     pub async fn send(&mut self, capabilities: Capabilities<'_>) -> Result<(), SessionError> {
-        let plan = match self.model.prepare_push(self.orientation, capabilities) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.select_first_problem();
-                return Err(error.into());
-            }
-        };
-        let operations = self.handle.layout_operations();
-        let mut changes = self.handle.observe();
-        let pushed = operations
-            .push(
-                self.device.clone(),
-                self.orientation,
-                plan.layout().to_canonical_json(),
-                plan.expected_revision().map(|r| IfMatch(vec![r.into()])),
-            )
-            .await;
-        let job = match pushed {
-            Ok(job) => job,
-            Err(error @ LayoutError::Changed { .. }) => {
-                match operations.read(self.device.clone(), self.orientation).await {
-                    Ok(read) => self.model.receive(read.layout, read.revision)?,
-                    Err(LayoutError::NotFound) => self.model.receive_missing(self.orientation)?,
-                    Err(error) => return Err(error.into()),
-                }
-                self.model.persist()?;
-                return Err(error.into());
-            }
-            Err(error) => return Err(error.into()),
-        };
-        loop {
-            let latest = self
-                .handle
-                .jobs()
-                .get(&job.id)
-                .ok_or_else(|| SessionError::Send("Job expired".into()))?;
-            self.last_job = Some(latest.clone());
-            if latest.state.finished() {
-                if latest.state != JobState::Succeeded {
-                    if latest
-                        .error
-                        .as_ref()
-                        .is_some_and(|e| e.code == "layout.changed")
-                    {
-                        match operations.read(self.device.clone(), self.orientation).await {
-                            Ok(read) => self.model.receive(read.layout, read.revision)?,
-                            Err(LayoutError::NotFound) => {
-                                self.model.receive_missing(self.orientation)?
-                            }
-                            Err(error) => return Err(error.into()),
-                        }
-                        self.model.persist()?;
-                    }
-                    return Err(latest.error.map(SessionError::Job).unwrap_or_else(|| {
-                        SessionError::Send("Sending stopped. The Device keeps its Layout.".into())
-                    }));
-                }
-                break;
-            }
-            match changes.recv().await {
-                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(_) => return Err(SessionError::Send("Companion stopped".into())),
-            }
-        }
-        let read = operations
-            .read(self.device.clone(), self.orientation)
-            .await?;
-        self.model.finish_push(plan, read.layout, read.revision)?;
-        self.model.persist()?;
-        Ok(())
+        let pending = self.begin_send(capabilities)?;
+        self.finish_send(pending.wait().await)
     }
     fn select_first_problem(&mut self) {
         let target = self.draft().and_then(|d| d.layout().pages.iter().find_map(|p| match p {

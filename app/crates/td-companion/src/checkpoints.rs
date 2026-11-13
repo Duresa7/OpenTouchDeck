@@ -8,6 +8,8 @@ use std::sync::Arc;
 pub enum Checkpoint {
     /// A Layout push wrote the Device and has not yet written the pushed copy.
     LayoutPut,
+    /// A native editor send completed; its readback has not begun.
+    BeforeEditorReadback,
     /// An orientation change is about to send `SettingsPut`.
     BeforeOrientationPut,
     /// An orientation change sent `SettingsPut` and has more steps to run.

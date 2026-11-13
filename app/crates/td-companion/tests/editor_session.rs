@@ -1343,3 +1343,497 @@ async fn gif_store_failure_and_animation_push_limit_use_real_companion_refusals(
             .contains("too many animations")
     );
 }
+
+#[tokio::test]
+async fn split_send_allows_edits_progress_orientation_changes_and_preserves_newer_unsent_values() {
+    use td_companion::editor::{NewLayout, SaveState};
+    use td_core::editing::Capabilities;
+    let (td, mut s) = session().await;
+    assert_eq!(s.save_state(), SaveState::None);
+    s.new_layout(NewLayout::Starter).unwrap();
+    assert_eq!(s.save_state(), SaveState::Unsent);
+    td.hold_jobs();
+    let pending = s.begin_send(Capabilities::default()).unwrap();
+    assert_eq!(s.save_state(), SaveState::Sending);
+    td.until(|td| !td.handle().snapshot().jobs.is_empty()).await;
+    s.edit(Edit::Label {
+        tile: "prev".into(),
+        label: "Newer edit".into(),
+    })
+    .unwrap();
+    assert!(s.begin_send(Capabilities::default()).is_err());
+    td.release_jobs();
+    let receipt = pending.wait().await;
+    s.finish_send(receipt).unwrap();
+    assert_eq!(s.save_state(), SaveState::Unsent);
+    assert_eq!(
+        s.draft().unwrap().effective_tile("prev").unwrap().label,
+        "Newer edit"
+    );
+    let report = s.push_report().unwrap();
+    assert_eq!(report.state.pages, 2);
+    assert_eq!(report.state.tiles, 16);
+    assert!(s.push_progress().is_some());
+    s.send(Capabilities::default()).await.unwrap();
+    assert_eq!(s.save_state(), SaveState::Saved);
+    td.hold_jobs();
+    let pending = s.begin_send(Capabilities::default()).unwrap();
+    s.select_orientation(Orientation::Portrait);
+    s.new_layout(NewLayout::Blank).unwrap();
+    td.release_jobs();
+    s.finish_send(pending.wait().await).unwrap();
+    assert_eq!(s.orientation(), Orientation::Portrait);
+    assert_eq!(s.save_state(), SaveState::Unsent);
+    s.select_orientation(Orientation::Landscape);
+    assert_eq!(s.save_state(), SaveState::Saved);
+}
+#[tokio::test]
+async fn native_send_readback_mismatch_never_marks_the_draft_as_saved() {
+    use td_companion::{checkpoints::Checkpoint, editor::SaveState};
+    use td_core::editing::Capabilities;
+    let (td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    s.send(Capabilities::default()).await.unwrap();
+    td.checkpoints().hold(Checkpoint::BeforeEditorReadback);
+    let pending = s.begin_send(Capabilities::default()).unwrap();
+    td.until(|td| td.checkpoints().waiting(Checkpoint::BeforeEditorReadback))
+        .await;
+    let mut remote = blank();
+    remote.name = "Different copy".into();
+    td.write_layout_unseen(
+        &td_companion::devices::DeviceId::parse("mock0001").unwrap(),
+        &remote,
+    )
+    .await;
+    td.checkpoints()
+        .release(Checkpoint::BeforeEditorReadback, false);
+    assert!(matches!(
+        s.finish_send(pending.wait().await),
+        Err(td_companion::editor::SessionError::Editor(
+            td_companion::editor::EditorError::PushMismatch
+        ))
+    ));
+    assert_eq!(s.save_state(), SaveState::Unsent);
+    assert!(s.draft().unwrap().conflict().is_some());
+    let reopened = td.handle().open_editor("mock0001").unwrap();
+    assert_eq!(reopened.save_state(), SaveState::Unsent);
+    assert!(reopened.draft().unwrap().conflict().is_some());
+}
+#[tokio::test]
+async fn starter_geometry_duplicate_navigation_and_page_toolbar_rules_cross_session() {
+    use td_companion::editor::NewLayout;
+    let (_td, mut s) = session().await;
+    s.new_layout(NewLayout::Starter).unwrap();
+    assert_eq!(s.draft().unwrap().layout().name, "Starter");
+    assert_eq!(s.selection(), (Some("media"), None));
+    assert!(
+        s.edit(Edit::Duplicate {
+            tile: "next".into()
+        })
+        .is_err()
+    );
+    assert_eq!(tiles(&s).len(), 16);
+    s.edit(Edit::GridSize {
+        page: "media".into(),
+        rows: 3,
+        cols: 3,
+    })
+    .unwrap();
+    s.edit(Edit::Move {
+        tile: "prev".into(),
+        row: 2,
+        col: 2,
+    })
+    .unwrap();
+    assert!(
+        s.edit(Edit::Move {
+            tile: "prev".into(),
+            row: 0,
+            col: 1
+        })
+        .is_err()
+    );
+    assert_eq!(s.draft().unwrap().effective_tile("prev").unwrap().row, 2);
+    s.edit(Edit::Move {
+        tile: "prev".into(),
+        row: 0,
+        col: 0,
+    })
+    .unwrap();
+    for id in ["playpause", "mute", "voldown"] {
+        s.edit(Edit::RemoveTile { tile: id.into() }).unwrap();
+    }
+    s.edit(Edit::Resize {
+        tile: "prev".into(),
+        row_span: 2,
+        col_span: 2,
+    })
+    .unwrap();
+    assert!(
+        s.edit(Edit::Resize {
+            tile: "prev".into(),
+            row_span: 2,
+            col_span: 4
+        })
+        .is_err()
+    );
+    let copy = s
+        .edit(Edit::Duplicate {
+            tile: "next".into(),
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(s.selection().1, Some(copy.as_str()));
+    assert_eq!(
+        s.draft().unwrap().effective_tile(&copy).unwrap().label,
+        "Next"
+    );
+    let before = s.export().unwrap();
+    assert!(
+        s.edit(Edit::GridSize {
+            page: "media".into(),
+            rows: 1,
+            cols: 1
+        })
+        .is_err()
+    );
+    assert_eq!(s.export().unwrap(), before);
+    s.edit(Edit::AddPage {
+        page: Page::Grid {
+            id: "extra".into(),
+            title: "Games".into(),
+            rows: 3,
+            cols: 4,
+            tiles: vec![],
+        },
+    })
+    .unwrap();
+    s.select("extra", None);
+    s.edit(Edit::PageTitle {
+        page: "extra".into(),
+        title: "Renamed".into(),
+    })
+    .unwrap();
+    assert!(
+        s.edit(Edit::PageTitle {
+            page: "extra".into(),
+            title: "".into()
+        })
+        .is_err()
+    );
+    s.select("media", Some("next"));
+    s.edit(Edit::Action {
+        tile: "next".into(),
+        action: Action::Page {
+            page: "extra".into(),
+        },
+    })
+    .unwrap();
+    s.edit(Edit::RemovePage {
+        page: "extra".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        s.draft().unwrap().effective_tile("next").unwrap().action,
+        Action::None
+    );
+    s.new_layout(NewLayout::Blank).unwrap();
+    assert!(
+        s.edit(Edit::RemovePage {
+            page: "page1".into()
+        })
+        .is_err()
+    );
+}
+#[tokio::test]
+async fn rejected_actions_labels_fields_duplicate_clear_new_layout_and_graph_bindings_match_reference()
+ {
+    use td_companion::editor::NewLayout;
+    use td_core::editing::{Capabilities, EditError};
+    let (_td, mut s) = session().await;
+    s.new_layout(NewLayout::Starter).unwrap();
+    s.edit(Edit::GridSize {
+        page: "media".into(),
+        rows: 3,
+        cols: 3,
+    })
+    .unwrap();
+    let command = Action::Command {
+        program: "".into(),
+        args: vec![],
+        cwd: "".into(),
+        shell: false,
+    };
+    assert!(
+        s.edit(Edit::Action {
+            tile: "next".into(),
+            action: command.clone()
+        })
+        .is_err()
+    );
+    assert_eq!(
+        s.draft().unwrap().effective_tile("next").unwrap().action,
+        command
+    );
+    let mut refused = s.draft().unwrap().rejected()[0].clone();
+    assert_eq!(refused.action_field(), Some("program"));
+    if let EditError::Invalid(problems) = &mut refused.reason {
+        problems[0].message = "Reworded".into();
+    }
+    assert_eq!(refused.action_field(), Some("program"));
+    if let EditError::Invalid(problems) = &mut refused.reason {
+        problems[0].path = "/pages/1/tiles/0/action/args/2".into();
+    }
+    assert_eq!(refused.action_field(), Some("args"));
+    if let EditError::Invalid(problems) = &mut refused.reason {
+        problems[0].path = "".into();
+    }
+    assert_eq!(refused.action_field(), None);
+    assert!(
+        s.edit(Edit::Action {
+            tile: "next".into(),
+            action: Action::Open { target: "".into() }
+        })
+        .is_err()
+    );
+    assert!(s.send(Capabilities::default()).await.is_err());
+    s.edit(Edit::Action {
+        tile: "next".into(),
+        action: Action::Open {
+            target: "https://example.com".into(),
+        },
+    })
+    .unwrap();
+    assert!(s.draft().unwrap().rejected().is_empty());
+    s.send(Capabilities::default()).await.unwrap();
+    assert!(s.draft().unwrap().is_sent());
+    assert!(
+        s.edit(Edit::Label {
+            tile: "next".into(),
+            label: "   ".into()
+        })
+        .is_err()
+    );
+    assert_eq!(
+        s.draft().unwrap().effective_tile("next").unwrap().label,
+        "   "
+    );
+    s.edit(Edit::Label {
+        tile: "next".into(),
+        label: "Skip".into(),
+    })
+    .unwrap();
+    assert!(s.draft().unwrap().rejected().is_empty());
+    assert!(
+        s.edit(Edit::Action {
+            tile: "next".into(),
+            action: Action::Launch {
+                path: "".into(),
+                args: vec![],
+                cwd: "".into()
+            }
+        })
+        .is_err()
+    );
+    let copy = s
+        .edit(Edit::Duplicate {
+            tile: "next".into(),
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(s.draft().unwrap().rejected().len(), 2);
+    for id in ["next", copy.as_str()] {
+        s.edit(Edit::RemoveTile { tile: id.into() }).unwrap();
+    }
+    assert!(s.draft().unwrap().rejected().is_empty());
+    assert!(
+        s.edit(Edit::Label {
+            tile: "prev".into(),
+            label: "".into()
+        })
+        .is_err()
+    );
+    s.new_layout(NewLayout::Starter).unwrap();
+    assert!(s.draft().unwrap().rejected().is_empty());
+    for stream in ["ram_pct", "cpu_pct"] {
+        s.edit(Edit::Renderer {
+            tile: "prev".into(),
+            appearance: Appearance::Live {
+                render: TileRender::Graph,
+                streams: BTreeMap::from([("value".into(), StreamType::Number)]),
+                input: false,
+                action: Action::Widget {
+                    source: "this_pc".into(),
+                    field: stream.into(),
+                    account: "".into(),
+                },
+            },
+        })
+        .unwrap();
+        assert!(
+            matches!(s.draft().unwrap().effective_tile("prev").unwrap().action,Action::Widget{field,..} if field==stream)
+        );
+    }
+    s.edit(Edit::Renderer {
+        tile: "prev".into(),
+        appearance: Appearance::Plain {
+            icon: None,
+            asset: None,
+            action: Some(Action::Widget {
+                source: "this_pc".into(),
+                field: "cpu_pct".into(),
+                account: "".into(),
+            }),
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        s.draft().unwrap().effective_tile("prev").unwrap().render,
+        None
+    );
+    assert!(
+        s.draft()
+            .unwrap()
+            .effective_tile("prev")
+            .unwrap()
+            .streams
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn parameterized_gif_refusals_and_bounded_inspection_cases_match_typescript() {
+    let (_td, s) = session().await;
+    for field in [
+        "gif_frames",
+        "source_frames",
+        "decoded_rgba",
+        "asset_bytes",
+        "gif_pixels",
+        "source_bytes",
+        "source_width",
+        "device_limit",
+    ] {
+        let error = td_companion::api::ErrorBody {
+            code: "asset.too_large".into(),
+            message: "raw message".into(),
+            details: Some(serde_json::json!({"field":field,"limit":1,"actual":2,"unit":"frames"})),
+        };
+        let problem = s.gif_problem(&error, false).unwrap();
+        assert!(
+            problem
+                .text
+                .contains(if ["gif_frames", "source_frames"].contains(&field) {
+                    "too long"
+                } else if field == "decoded_rgba" {
+                    "64 MiB"
+                } else {
+                    "too large"
+                })
+        );
+        assert!(problem.detail.contains(field));
+    }
+    for reason in [
+        "not_gif",
+        "corrupt",
+        "timed_out",
+        "invalid_limits",
+        "invalid",
+    ] {
+        let error = td_companion::api::ErrorBody {
+            code: "asset.render_failed".into(),
+            message: "raw".into(),
+            details: Some(serde_json::json!({"reason":reason})),
+        };
+        assert_eq!(
+            s.gif_problem(&error, false).unwrap().text,
+            "Couldn't prepare this GIF. Choose another GIF."
+        );
+    }
+    for (code, part) in [
+        ("request.too_large", "too large"),
+        ("request.media_type", "Choose another GIF"),
+        ("something.new", "Choose another GIF"),
+        ("limits.exceeded", "Other Assets"),
+        ("client.unreachable", "running in the tray"),
+        ("device.not_connected", "plugged in"),
+    ] {
+        let error = td_companion::api::ErrorBody {
+            code: code.into(),
+            message: "raw".into(),
+            details: None,
+        };
+        assert!(s.gif_problem(&error, false).unwrap().text.contains(part));
+    }
+    let bytes = gif_bytes();
+    let read = s.inspect_gif(&bytes).unwrap();
+    let head = 13 + 3 * (1usize << ((read.poster[10] & 7) + 1));
+    let block = &read.poster[head..read.poster.len() - 1];
+    let mut many = read.poster[..head].to_vec();
+    for _ in 0..5000 {
+        many.extend_from_slice(block);
+    }
+    many.push(0x3b);
+    assert_eq!(s.inspect_gif(&many).unwrap().frames, 5000);
+    let mut no_frame = read.poster[..head].to_vec();
+    no_frame.push(0x3b);
+    assert!(s.inspect_gif(&no_frame).is_none());
+    let mut overrun = read.poster[..head].to_vec();
+    overrun.extend_from_slice(&[0x21, 0xfe, 0xff, 0x41]);
+    assert!(s.inspect_gif(&overrun).is_none());
+    let mut info = read.clone();
+    info.width = 64;
+    info.height = 64;
+    info.frames = 3;
+    info.duration_ms = 900;
+    assert!(s.fitted_text(&info).ends_with("64 × 64, 3.3 fps."));
+    let error = td_companion::editor::SessionError::Job(td_companion::api::ErrorBody {
+        code: "asset.refused".into(),
+        message: "raw".into(),
+        details: Some(serde_json::json!({"reason":"storage"})),
+    });
+    assert!(
+        s.send_problem(&error)
+            .text
+            .contains("Check that it's plugged in")
+    );
+    let invalid = td_companion::editor::SessionError::Job(td_companion::api::ErrorBody {
+        code: "layout.invalid".into(),
+        message: "raw".into(),
+        details: Some(
+            serde_json::json!({"issues":[{"rule":"label.too-long","path":"/pages/0/tiles/0/label","message":"too long"}]}),
+        ),
+    });
+    let problem = s.send_problem(&invalid);
+    assert_eq!(problem.text, "Tile labels can be up to 16 characters.");
+    assert!(problem.detail.contains("label.too-long"));
+}
+
+#[tokio::test]
+async fn gif_queue_prepares_all_tiles_serially_and_cancelling_one_keeps_the_others() {
+    use td_companion::editor::{GifEdit, GifWork};
+    let (td, mut s) = session().await;
+    gif_caps(&td, "mock0001");
+    s.start(blank()).unwrap();
+    td.hold_jobs();
+    let a = s
+        .add_gif("a.gif".into(), gif_bytes(), AddTarget::Auto)
+        .unwrap();
+    let b = s
+        .add_gif("b.gif".into(), gif_bytes(), AddTarget::Auto)
+        .unwrap();
+    let c = s
+        .add_gif("c.gif".into(), gif_bytes(), AddTarget::Auto)
+        .unwrap();
+    assert!(matches!(s.gif_work(&b), Some(GifWork::Queued { .. })));
+    assert!(matches!(s.gif_work(&c), Some(GifWork::Queued { .. })));
+    s.gif(&b, GifEdit::Cancel).unwrap();
+    td.release_jobs();
+    settle_gif(&mut s, &a).await;
+    settle_gif(&mut s, &c).await;
+    assert_eq!(s.draft().unwrap().effective_tile(&b).unwrap().render, None);
+    assert_eq!(
+        s.draft().unwrap().effective_tile(&c).unwrap().render,
+        Some(TileRender::Gif)
+    );
+}

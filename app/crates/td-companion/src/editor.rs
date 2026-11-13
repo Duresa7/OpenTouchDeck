@@ -7,8 +7,8 @@ mod session;
 use serde::{Deserialize, Serialize};
 pub(crate) use session::GifSource;
 pub use session::{
-    AddKind, AddTarget, GifEdit, GifPreview, GifProblem, GifWork, Session, SessionError,
-    StreamChoice,
+    AddKind, AddTarget, GifEdit, GifPreview, GifProblem, GifWork, NewLayout, Notice, PendingSend,
+    SaveState, SendReceipt, Session, SessionError, StreamChoice,
 };
 use std::{collections::BTreeMap, io, path::PathBuf};
 use td_core::{
@@ -23,6 +23,10 @@ pub enum EditorError {
     InvalidDevice,
     #[error("no draft for this orientation")]
     NoDraft,
+    #[error("a Layout send is already running")]
+    Sending,
+    #[error("Device work requires a running Tokio runtime")]
+    RuntimeUnavailable,
     #[error(transparent)]
     Edit(#[from] EditError),
     #[error(transparent)]
@@ -45,6 +49,17 @@ pub enum EditorError {
 pub struct Rejected {
     pub edit: Edit,
     pub reason: EditError,
+}
+impl Rejected {
+    /// The form field a refused action names, independent of its message wording.
+    pub fn action_field(&self) -> Option<&str> {
+        let EditError::Invalid(problems) = &self.reason else {
+            return None;
+        };
+        let path = &problems.first()?.path;
+        let (_, suffix) = path.split_once("/action/")?;
+        suffix.split('/').next().filter(|field| !field.is_empty())
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceCopy {
@@ -266,7 +281,11 @@ impl Editor {
                 }
                 if let Edit::Renderer {
                     tile,
-                    appearance: td_core::editing::Appearance::Live { .. },
+                    appearance:
+                        td_core::editing::Appearance::Live { .. }
+                        | td_core::editing::Appearance::Plain {
+                            action: Some(_), ..
+                        },
                 } = &edit
                 {
                     draft
