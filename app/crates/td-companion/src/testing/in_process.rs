@@ -39,6 +39,10 @@ impl InProcessCompanion {
     pub fn device(&self, id: &DeviceId) -> Option<DeviceSummary> {
         self.handle.devices().get(id)
     }
+    /// Points where a test holds the Companion's work.
+    pub fn checkpoints(&self) -> &crate::checkpoints::Checkpoints {
+        &self.handle.checkpoints
+    }
     pub fn deck(&self, id: &str) -> td_link::MockDeck {
         self.ports.deck(id).unwrap()
     }
