@@ -32,3 +32,6 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 td-link = { path = ".", features = ["fake"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
