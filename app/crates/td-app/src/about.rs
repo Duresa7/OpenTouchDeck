@@ -86,7 +86,14 @@ mod tests {
     use serde_json::Value;
     use std::collections::{BTreeMap, BTreeSet};
 
-    const OWN: [&str; 5] = ["td-app", "td-companion", "td-core", "td-host", "td-link"];
+    const OWN: [&str; 6] = [
+        "td-app",
+        "td-companion",
+        "td-core",
+        "td-host",
+        "td-link",
+        "td-updater",
+    ];
 
     fn metadata(args: &[&str]) -> Value {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
