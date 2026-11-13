@@ -260,6 +260,8 @@ def build(args):
     shutil.copyfile(ROOT / "LICENSE", payload / "LICENSE.txt")
     (payload / "licenses").mkdir()
     shutil.copyfile(ROOT / "app/icons/builtin/LICENSE-lucide.txt", payload / "licenses/LICENSE-lucide.txt")
+    # The bridge to 2.0: the updater copies it next to a verified 2.0 MSI and runs it (docs/packaging.md).
+    shutil.copyfile(ELECTRON / "installer/bridge.ps1", payload / "bridge.ps1")
     write_json(payload / "install-manifest.json", {"source_revision": revision, "version": version, "firmware": fw,
                                                    "radio_firmware": radio and {**radio, "embedded_in": "td-companion.exe"}})
 

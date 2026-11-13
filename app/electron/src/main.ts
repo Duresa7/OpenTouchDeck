@@ -1,9 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { spawn } from 'node:child_process';
+import { readFile, rm } from 'node:fs/promises';
+import { release as osRelease } from 'node:os';
 import { dirname, join } from 'node:path';
 import { connect, devUiOrigin, restartMessage, revoke, runtimePath, type WindowSession } from './companion';
 
-import { Updater, feedSettings } from './updates';
+import { Updater, feedSettings, type BridgeOptions } from './updates';
+import { HELPER, POWERSHELL, bridgeNotice, windowsBuild } from './updates/bridge';
 import { UPDATER_PUBLIC_KEY } from './updates/key.gen';
 import { trustedSender } from './trusted-sender';
 import { menuTemplate } from './menu';
@@ -103,11 +106,32 @@ for (const action of ['check', 'download', 'install'] as const) {
   });
 }
 
+/** The move to 2.0 (updates/bridge.ts) needs the installed app on Windows: bridge.ps1 replaces its folder. */
+function bridgeOptions(dataDir: string): BridgeOptions | undefined {
+  if (process.platform !== 'win32' || !app.isPackaged) return undefined;
+  return {
+    windowsBuild: windowsBuild(osRelease(), process.platform), installDir: dirname(app.getPath('exe')), dataDir,
+    helper: join(process.resourcesPath, HELPER),
+    powershell: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', POWERSHELL), pid: process.pid,
+  };
+}
+
+/** Says once why a move to 2.0 didn't happen. bridge.ps1 put 1.x back and left its result for this start. */
+async function reportBridge(dataDir: string) {
+  const path = join(dataDir, 'bridge', 'result.json');
+  let notice: { message: string; detail: string } | null = null;
+  try { notice = bridgeNotice(JSON.parse(await readFile(path, 'utf8')), join(dataDir, 'bridge')); }
+  catch { return; }
+  await rm(path, { force: true }).catch(() => {});
+  if (notice && window && !window.isDestroyed()) await dialog.showMessageBox(window, { type: 'warning', title: 'Open TouchDeck', ...notice });
+}
+
 async function openWindow() {
   current = await connect(runtimePath(), startCompanion);
+  const dataDir = dirname(dirname(runtimePath()));
   updater = new Updater({
     publicKey: UPDATER_PUBLIC_KEY, current: app.getVersion(), runtimeDir: dirname(runtimePath()),
-    ...feedSettings(app.isPackaged),
+    ...feedSettings(app.isPackaged), bridge: bridgeOptions(dataDir),
     system: () => {
       const session = current;
       if (!session) throw new Error('Companion unavailable');
@@ -157,6 +181,7 @@ async function openWindow() {
     })();
   });
   await window.loadURL(pageOrigin(current));
+  void reportBridge(dataDir).catch(() => {});
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();

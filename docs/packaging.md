@@ -13,6 +13,7 @@ The installer is built with [electron-builder](https://www.electron.build/nsis) 
 | `resources\app.asar` | The window's code |
 | `resources\firmware\touchdeck.tdfw` | The same normal-build bundle the Companion carries, for picking by hand. The radio build has no copy here. |
 | `resources\install-manifest.json` | Source revision, version, and each Firmware bundle's hash; a radio build is recorded as embedded in `td-companion.exe` |
+| `resources\bridge.ps1` | The bridge to 2.0 (see [The bridge to 2.0](#the-bridge-to-20)) |
 | `resources\LICENSE.txt`, `resources\licenses\` | Licenses |
 | `Uninstall Open TouchDeck.exe` | The uninstaller |
 
@@ -25,6 +26,7 @@ User data stays outside the install folder: `%LOCALAPPDATA%\io.github.duresa7.to
 - **Install or reinstall.** Before it replaces files, the installer stops a running Companion through its own shutdown route: it reads the runtime file, checks the Companion's HMAC proof before it sends the pairing token, takes `system.lock` and calls `system.shutdown`. It waits up to 15 seconds, then ends only processes whose path is exactly the installed `td-companion.exe`. If a Device is busy with a Job such as a Firmware update, the installer stops and says so. It then closes the window.
 - **Downgrade.** An installer older than the installed version refuses to run (exit code 5). Uninstall first to go back.
 - **Update.** Open TouchDeck checks `latest.json`, downloads the installer, and checks its signature with the updater key built into the app (ADR 0005) before and right before running it. It takes `system.lock`, stops the Companion, starts the installer with `/S --updated --force-run` and quits. The installer replaces the files silently and starts Open TouchDeck again.
+- **Update to 2.0.** On Windows 11, once 1.x is up to date, the update offered is Open TouchDeck 2.0. See [The bridge to 2.0](#the-bridge-to-20).
 - **Uninstall.** Stops the Companion and the window the same way, removes the files, shortcuts, the uninstall entry, the Run value (only when it points at this install) and the startup marker, so a later install turns startup at sign-in back on. It **keeps user data** unless you answer Yes when it asks, or pass `--delete-app-data` to a silent uninstall. The prompt reads "Also delete your Open TouchDeck Layouts and settings, including Integration settings, from this PC?" and adds that Integration secrets such as API keys stay in Windows Credential Manager; Forget in Open TouchDeck removes them first. Integration secrets stay either way.
 
 Installers are not Authenticode-signed: there's no certificate, so Windows SmartScreen may warn. The update signature is separate from Authenticode and is always checked.
@@ -74,6 +76,37 @@ What protects each Firmware bundle:
 
 `latest.json` holds the version, notes, date and, for `windows-x86_64`, the installer URL, its signature and its size. Installed apps read `https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/latest.json`.
 
+## The bridge to 2.0
+
+Open TouchDeck 2.0 is a native app that ships as a per-user MSI for Windows 11 only ([ADR 0011](https://github.com/Duresa7/OpenTouchDeck/blob/main/docs/adr/0011-native-windows-app-in-rust-and-slint.md)). Its source and release pipeline are on `main`. 1.x moves to it in two steps: 1.x copies update to this release, 1.3.0, through `latest.json` as usual, and 1.3.0 then offers 2.0.
+
+**What 1.3.0 checks.** The updater checks `latest.json` first, so a newer 1.x, such as a fix to the bridge itself, always comes before 2.0. When 1.x is up to date, it reads the repository's release list from `api.github.com` with the same rules as 2.0's own updater: the newest release whose tag is a stable `v2.x.y`, not a draft or pre-release, with exactly one `OpenTouchDeck-X.Y.Z-windows-x64.msi` and one `.msi.sig` at that release's own download URLs. The request carries the app's name as its User-Agent and nothing about the PC. A failed lookup never hides the 1.x result.
+
+- **Windows 11** (build 22000 or later) is offered 2.0. The dialog says it replaces the app and that Layouts, settings, Devices and Pairings stay.
+- **Windows 10** is never offered 2.0. Settings → About says 2.0 needs Windows 11 and that this PC keeps 1.x, which still gets updates. The 2.0 MSI refuses Windows 10 too.
+
+**Verifying the MSI.** The download checks the MSI against the `.sig` with the updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)), and the signature's trusted comment must name this file and this version. Right before the hand-off it checks again, in one pass that also takes the file's SHA-256.
+
+**The hand-off.** The updater takes `system.lock` and stops the Companion through its shutdown route, as for any update. It copies `resources\bridge.ps1` next to the verified MSI in its staging folder, starts it with the MSI's SHA-256, and quits. `bridge.ps1`:
+
+1. Refuses, changing nothing, unless the PC runs Windows 11, 1.x is installed in `%LOCALAPPDATA%\Programs\Open TouchDeck`, the MSI still has the SHA-256 the signature check read and 1.x has exited. It waits for 1.x to exit, then ends any 1.x process still running from the install folder: the Companion already stopped, so nothing is lost.
+2. Moves the 1.x Start menu shortcut into its bridge folder and renames the install folder to `Open TouchDeck.1x-backup`. The MSI installs to the same folder and refuses to run beside 1.x.
+3. Runs the MSI with Windows Installer's progress bar (`msiexec /i ... /passive /norestart`), which has a Cancel button.
+4. If the MSI fails or is cancelled, renames the folder back and restores the shortcut, and 1.x starts again exactly as it was. At its next start 1.x says the update to 2.0 didn't happen and that Layouts and settings are still there.
+5. If the MSI succeeds, removes what 1.x left, each item only when it points at 1.x: its uninstall entry, its install record under `HKCU\Software`, its Start menu and desktop shortcuts, its Run value, the Electron window's profile (`%APPDATA%\Open TouchDeck`, which holds no user data because the window's session lives in memory) and the renamed folder. It then starts 2.0 with `--packaged` and removes the staging folder.
+
+It never runs the 1.x uninstaller: that one always removes `%LOCALAPPDATA%\Programs\Open TouchDeck` and the Start menu shortcut named Open TouchDeck, which are the 2.0 MSI's folder and shortcut too.
+
+**User data stays where it is.** 2.0 reads the same app data folders and the same Credential Manager entries as 1.x; `bridge.ps1` never touches them. [`docs/packaging.md` on `main`](https://github.com/Duresa7/OpenTouchDeck/blob/main/docs/packaging.md) maps each kind of data. Start at sign-in carries over: 1.x and 2.0 share the Run value's name and the `startup-initialized` marker, so when 1.x started at sign-in the bridge removes its value and the marker and 2.0 turns start at sign-in on at its first start. When 1.x had it off, the marker stays and 2.0 leaves it off.
+
+**Where it reports.** `bridge.ps1` writes `bridge.log` and `result.json` to `%LOCALAPPDATA%\io.github.duresa7.touchdeck\bridge`, plus `msi.log` when the MSI failed. Its exit code is 0 when 2.0 is installed, 1 when it refused and changed nothing, 2 when the MSI failed or was cancelled and 1.x is back, and 3 when 1.x could not be put back; the log then says where it is.
+
+**What it can't undo.** A power cut between the rename and the end of the MSI leaves 1.x in `Open TouchDeck.1x-backup` with no shortcut. User data is untouched; installing 1.x or 2.0 again fixes it. A taskbar pin of 1.x points at the old program afterwards and needs pinning again.
+
+**Proof.** The **bridge upgrade** workflow on `main` installs a 1.x build from this branch, seeds user data, refuses a tampered MSI, rolls back from an MSI that fails, then moves to a 2.0 MSI built from `main` and checks that 2.0 finds the data and that nothing of 1.x is left.
+
+**Releasing it.** 1.3.0 is published as the latest release like any 1.x. Once a 2.x release is the latest, `releases/latest/download/latest.json` is the 2.x release's. A 2.x release therefore carries a copy of the newest 1.x `latest.json`, so 1.x copies that never reached 1.3.0 still find the bridge. A later 1.x fix for Windows 10 is published without "Set as the latest release".
+
 ## Shipping an update
 
 1. Bump every app version in one command (Python 3.11+), open a pull request with the result and merge it. `check` fails when `app/package.json` and `app/electron/package.json` disagree.
@@ -83,10 +116,10 @@ What protects each Firmware bundle:
    python app/scripts/release_version.py check
    ```
 
-2. Tag the merged commit on `main` with an annotated tag. Its message becomes the release notes.
+2. Tag the merged commit on `release/1.x` with an annotated tag. Its message becomes the release notes. 1.x releases come only from `release/1.x` ([ADR 0012](https://github.com/Duresa7/OpenTouchDeck/blob/main/docs/adr/0012-electron-and-react-leave-main-before-cutover.md)); the build job refuses a tag on any other branch.
 
    ```sh
-   git switch main
+   git switch release/1.x
    git pull --ff-only
    git tag -a vX.Y.Z -m "<notes>"
    git push origin vX.Y.Z
@@ -94,12 +127,12 @@ What protects each Firmware bundle:
 
 3. The tag push runs **windows release** (`.github/workflows/release-windows.yml`). It runs the app, Firmware and installer lifecycle checks on the tagged commit without secrets, builds without secrets, signs on a separate runner, and verifies the signed installer through the real updater against local HTTPS fixtures. The draft job uploads every asset, checks the uploaded list and sizes, then stops.
 
-4. Review the draft and its assets on the Releases page, then publish it as the latest release. The workflow never publishes it automatically.
+4. Review the draft and its assets on the Releases page, then publish it. Publish it as the latest release only while no 2.x release is published (see [The bridge to 2.0](#the-bridge-to-20)). The workflow never publishes it automatically.
 
-To rehearse without publishing, run **windows release** by hand on a commit on `main`. It builds and signs with the durable key and keeps the assets as a workflow artifact:
+To rehearse without publishing, run **windows release** by hand on a commit on `release/1.x`. It builds and signs with the durable key and keeps the assets as a workflow artifact. The `release` environment must allow the `release/1.x` branch for this; a tag push needs only its `v*` tag rule:
 
 ```sh
-gh workflow run release-windows.yml --ref main -f ref=main
+gh workflow run release-windows.yml --ref release/1.x -f ref=release/1.x
 ```
 
 If a tag's run fails for a transient reason, re-run it; the draft job reuses its own draft. If the source needs a fix, ship the next patch version instead of moving the tag.

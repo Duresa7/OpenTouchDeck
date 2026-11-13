@@ -22,6 +22,8 @@ export interface UpdatesState {
   supported: boolean;
   check: CheckState;
   update: { offer: UpdateOffer; step: UpdateStep } | null;
+  /** A 2.x release this PC can't run because it needs Windows 11, from the last check that found nothing newer. */
+  needsWindows11: string | null;
   /** The version Later was chosen for. */
   laterFor: string | null;
   dialogOpen: boolean;
@@ -43,14 +45,15 @@ function afterCheck(state: UpdatesState, found: UpdateCheck): Partial<UpdatesSta
   const { update } = state;
   switch (found.state) {
     case 'available': {
-      if (update && !downloadable(update.step)) return { check: 'found' };
+      if (update && !downloadable(update.step)) return { check: 'found', needsWindows11: null };
       const step = update?.offer.version === found.version ? update.step : { kind: 'offer' as const };
-      return { check: 'found', update: { offer: found, step } };
+      return { check: 'found', needsWindows11: null, update: { offer: found, step } };
     }
     case 'none':
     case 'disabled': {
       const keep = found.state === 'none' && update && !downloadable(update.step);
-      return { check: found.state === 'none' ? 'current' : 'disabled', ...(keep ? {} : { update: null, dialogOpen: false }) };
+      const needsWindows11 = found.state === 'none' ? (found.needsWindows11 ?? null) : null;
+      return { check: found.state === 'none' ? 'current' : 'disabled', needsWindows11, ...(keep ? {} : { update: null, dialogOpen: false }) };
     }
     case 'offline':
     case 'failed':
@@ -106,6 +109,7 @@ export function createUpdatesStore(bridge: UpdatesBridge | undefined) {
       supported: bridge !== undefined,
       check: 'idle',
       update: null,
+      needsWindows11: null,
       laterFor: null,
       dialogOpen: false,
 

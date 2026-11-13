@@ -2,8 +2,8 @@
 // window gets its session" and "How a browser pairs").
 
 export type UpdateCheck =
-  | { state: 'none' }                                    // up to date
-  | { state: 'available'; version: string; current: string; notes: string | null; date: string | null }
+  | { state: 'none'; needsWindows11?: string }          // up to date; needsWindows11 names a 2.x this PC can't run
+  | { state: 'available'; version: string; current: string; notes: string | null; date: string | null; bridge?: true } // bridge: 2.x replaces this app
   | { state: 'disabled' }                                // source build: no public key was built in
   | { state: 'offline' }
   | { state: 'failed' };

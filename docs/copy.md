@@ -198,6 +198,11 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | Failed button | Retry |
 | Offline | You're offline. Connect to the internet, then retry. |
 | Install failed | Couldn't start the installer. Retry, or download it from the releases page. |
+| Dialog subtitle, update to 2.x | You have {current}. Open TouchDeck {version} is the new app for Windows 11 and replaces this one. Layouts, settings, Devices and Pairings stay. |
+| Ready hint, update to 2.x | Open TouchDeck closes, installs {version} and opens it. Layouts, settings, Devices and Pairings stay. |
+| Settings → About, Windows 10 once 2.x exists | Open TouchDeck {version} needs Windows 11. This PC keeps Open TouchDeck 1.x, which still gets updates. |
+| Next start after a cancelled update to 2.x | The update to Open TouchDeck 2.0 was cancelled. / Open TouchDeck 1.x is still installed, with your Layouts and settings. Update again from Settings → About when you're ready. |
+| Next start after a failed update to 2.x | Couldn't update to Open TouchDeck 2.0. / Open TouchDeck 1.x is still installed, with your Layouts and settings. Retry from Settings → About. The log is in {folder}. |
 
 ### Device panel
 

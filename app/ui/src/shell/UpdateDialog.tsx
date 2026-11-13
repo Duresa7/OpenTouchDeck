@@ -3,7 +3,7 @@ import { Dialog } from '@base-ui/react/dialog';
 import { useDevices } from '../lib/companion/devices.ts';
 import { useUpdates, type UpdateOffer, type UpdateStep } from '../state/updates.ts';
 import { button } from './button.ts';
-import { changeLines, downloadingText, failureText, percent, sizeText, waitText } from './update-text.ts';
+import { bridgeReadyText, bridgeText, changeLines, downloadingText, failureText, percent, sizeText, waitText } from './update-text.ts';
 
 type Downloading = Extract<UpdateStep, { kind: 'downloading' }>;
 
@@ -13,7 +13,7 @@ function Offer({ offer }: { offer: UpdateOffer }) {
   return (
     <>
       <Dialog.Title className="dialog-title">Open TouchDeck {offer.version}</Dialog.Title>
-      <Dialog.Description className="update-text">You have {offer.current}.</Dialog.Description>
+      <Dialog.Description className="update-text">{offer.bridge ? bridgeText(offer) : `You have ${offer.current}.`}</Dialog.Description>
       <h3 className="update-changes-heading" id={`${ids}-changes`}>
         What's new
       </h3>
@@ -61,10 +61,10 @@ function useDeviceName(device: string | null): string | null {
   });
 }
 
-function readyText(step: UpdateStep, deviceName: string | null): string {
+function readyText(step: UpdateStep, deviceName: string | null, offer: UpdateOffer): string {
   if (step.kind === 'busy') return waitText(deviceName);
   if (step.kind === 'installing') return 'Restarting to install…';
-  return 'Open TouchDeck restarts to install. Your Layouts and settings stay.';
+  return offer.bridge ? bridgeReadyText(offer.version) : 'Open TouchDeck restarts to install. Your Layouts and settings stay.';
 }
 
 function useKeepFocusInDialog(popup: RefObject<HTMLDivElement | null>, stepKind: UpdateStep['kind']) {
@@ -124,7 +124,7 @@ export function UpdateDialog({ update }: { update: { offer: UpdateOffer; step: U
           <>
             <Dialog.Title className="dialog-title">Ready to restart</Dialog.Title>
             <Dialog.Description className="update-text" aria-live="polite">
-              {readyText(step, deviceName)}
+              {readyText(step, deviceName, offer)}
             </Dialog.Description>
             <div className="update-actions">
               {laterButton}

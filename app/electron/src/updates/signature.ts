@@ -1,4 +1,4 @@
-import { createPublicKey, verify } from 'node:crypto';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
@@ -10,6 +10,14 @@ function base64(value: string): Buffer {
 
 /** Tauri minisign-verify: Ed (legacy) or ED (BLAKE2b-512), plus global signature. */
 export async function verifyInstaller(path: string, wrappedSignature: string, wrappedKey: string): Promise<string> {
+  return (await verifyFile(path, wrappedSignature, wrappedKey)).comment;
+}
+
+/**
+ * Like verifyInstaller, and also returns the SHA-256 of the bytes the signature check read, from the same pass over
+ * the file. The bridge hands that hash to bridge.ps1, which refuses an MSI with any other hash.
+ */
+export async function verifyFile(path: string, wrappedSignature: string, wrappedKey: string): Promise<{ comment: string; sha256: string }> {
   const keyLines = base64(wrappedKey).toString('utf8').split(/\r?\n/);
   const lines = base64(wrappedSignature).toString('utf8').split(/\r?\n/);
   const key = base64(keyLines[1] ?? '');
@@ -25,17 +33,19 @@ export async function verifyInstaller(path: string, wrappedSignature: string, wr
   const comment = lines[2].slice(17);
   if (!verify(null, Buffer.concat([signature, Buffer.from(comment)]), publicKey, global)) throw new Error('Invalid comment signature');
   let data: Uint8Array;
+  const sha256 = createHash('sha256');
   if (packet[1] === 0x44) {
     const { blake2b } = await import('@noble/hashes/blake2.js');
     const hash = blake2b.create({ dkLen: 64 });
-    for await (const chunk of createReadStream(path)) hash.update(chunk);
+    for await (const chunk of createReadStream(path)) { hash.update(chunk); sha256.update(chunk); }
     data = hash.digest();
   } else {
     // Legacy Ed25519 needs the whole message; the downloader caps the file at 256 MiB.
     data = await readFile(path);
+    sha256.update(data);
   }
   if (!verify(null, data, publicKey, signature)) throw new Error('Invalid installer signature');
-  return comment;
+  return { comment, sha256: sha256.digest('hex') };
 }
 
 export function compareVersions(a: string, b: string): number {

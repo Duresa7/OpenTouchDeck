@@ -1,6 +1,6 @@
-import { useCheckForUpdates } from '../../state/updates.ts';
+import { useCheckForUpdates, useUpdates } from '../../state/updates.ts';
 import { button } from '../button.ts';
-import { checkText } from '../update-text.ts';
+import { checkText, needsWindows11Text } from '../update-text.ts';
 import { useSystemInfo } from './system.ts';
 
 export function About() {
@@ -8,6 +8,7 @@ export function About() {
   const { supported, check, checkForUpdates } = useCheckForUpdates();
   const version = info === null ? '' : info === 'unknown' ? ' Unknown' : ` ${info.version}`;
   const status = checkText(check);
+  const needsWindows11 = useUpdates((s) => s.needsWindows11);
   return (
     <div className="row">
       <span className="row-text">
@@ -16,6 +17,7 @@ export function About() {
         <span className="row-sub" aria-live="polite">
           {status}
         </span>
+        {needsWindows11 !== null && <span className="row-sub">{needsWindows11Text(needsWindows11)}</span>}
       </span>
       {supported && check !== 'disabled' && (
         <button

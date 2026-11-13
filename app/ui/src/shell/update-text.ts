@@ -61,6 +61,19 @@ export function iconLabel(step: UpdateStep): string {
   }
 }
 
+/** What moving to 2.x means, under the offer's title. 2.x replaces this app; nothing the person made is lost. */
+export function bridgeText(offer: { version: string; current: string }): string {
+  return `You have ${offer.current}. Open TouchDeck ${offer.version} is the new app for Windows 11 and replaces this one. Layouts, settings, Devices and Pairings stay.`;
+}
+
+/** The Restart step of a move to 2.x. */
+export const bridgeReadyText = (version: string) =>
+  `Open TouchDeck closes, installs ${version} and opens it. Layouts, settings, Devices and Pairings stay.`;
+
+/** Settings → About on Windows 10, once a 2.x release exists. */
+export const needsWindows11Text = (version: string) =>
+  `Open TouchDeck ${version} needs Windows 11. This PC keeps Open TouchDeck 1.x, which still gets updates.`;
+
 export const waitText = (device: string | null) => `Wait for ${device ?? 'the Device'} to finish sending.`;
 
 /** The line Settings → About shows for a check, or null when it shows nothing. */

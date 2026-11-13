@@ -225,3 +225,21 @@ describe('the dialog and Later', () => {
     expect(state().laterFor).not.toBe('1.2.0');
   });
 });
+
+describe('the move to 2.x', () => {
+  const bridgeOffer = { ...sampleOffer, version: '2.0.0', current: '1.3.0', bridge: true } as const;
+
+  it('offers 2.x on Windows 11 like any update', async () => {
+    const { state } = await offered({ check: bridgeOffer });
+    expect(state().update).toEqual({ offer: bridgeOffer, step: { kind: 'offer' } });
+    expect(state().needsWindows11).toBeNull();
+  });
+
+  it('remembers a 2.x that needs Windows 11 while 1.x is up to date, and forgets it when one is offered', async () => {
+    const { fake, state } = await offered({ check: { state: 'none', needsWindows11: '2.0.0' } });
+    expect(state()).toMatchObject({ check: 'current', update: null, needsWindows11: '2.0.0' });
+    fake.script({ check: sampleOffer });
+    await state().checkForUpdates();
+    expect(state()).toMatchObject({ check: 'found', needsWindows11: null });
+  });
+});

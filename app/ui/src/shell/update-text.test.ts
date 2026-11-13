@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changeLines, checkText, downloadingText, iconLabel, percent, sizeText, waitText } from './update-text.ts';
+import { bridgeReadyText, bridgeText, changeLines, checkText, downloadingText, iconLabel, needsWindows11Text, percent, sizeText, waitText } from './update-text.ts';
 
 const MB = 1024 * 1024;
 
@@ -58,5 +58,15 @@ describe('labels', () => {
     expect(checkText('found')).toBeNull();
     expect(checkText('idle')).toBeNull();
     expect(checkText('disabled')).toBeNull();
+  });
+});
+
+describe('the move to 2.x', () => {
+  it('says what changes and what stays', () => {
+    expect(bridgeText({ version: '2.0.0', current: '1.3.0' })).toBe(
+      'You have 1.3.0. Open TouchDeck 2.0.0 is the new app for Windows 11 and replaces this one. Layouts, settings, Devices and Pairings stay.',
+    );
+    expect(bridgeReadyText('2.0.0')).toBe('Open TouchDeck closes, installs 2.0.0 and opens it. Layouts, settings, Devices and Pairings stay.');
+    expect(needsWindows11Text('2.0.0')).toBe('Open TouchDeck 2.0.0 needs Windows 11. This PC keeps Open TouchDeck 1.x, which still gets updates.');
   });
 });
