@@ -19,7 +19,7 @@
 //! # Ok(())
 //! # }
 //! ```
-use slint::ComponentHandle;
+use slint::{ComponentHandle, winit_030::WinitWindowAccessor};
 use std::{path::PathBuf, rc::Rc};
 use td_companion::companion::Handle;
 
@@ -94,8 +94,17 @@ impl App {
 
         window::restore(&self.ui, &self.state);
         self.ui.show()?;
-        window::shown(&self.ui, &self.state);
-        look::shown(&self.ui);
+        // Slint creates the platform window once the event loop runs, so what needs its handle
+        // (the saved monitor check, the app icon, Mica) waits for it here.
+        let (weak, state) = (self.ui.as_weak(), self.state.clone());
+        slint::spawn_local(async move {
+            let Some(ui) = weak.upgrade() else { return };
+            // An error means the backend is not winit; the rest still applies.
+            let _ = ui.window().winit_window().await;
+            window::shown(&ui, &state);
+            look::shown(&ui);
+        })
+        .map_err(|error| slint::PlatformError::Other(error.to_string()))?;
 
         let result = slint::run_event_loop_until_quit();
         self.state.remember(self.ui.window());

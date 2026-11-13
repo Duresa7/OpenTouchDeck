@@ -13,7 +13,7 @@ use slint::winit_030::{
 };
 use windows::{
     Foundation::TypedEventHandler,
-    UI::ViewManagement::{AccessibilitySettings, UISettings},
+    UI::ViewManagement::UISettings,
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::HWND,
@@ -210,22 +210,21 @@ pub(super) fn read() -> Look {
 /// Keeps the change subscriptions; dropping it unsubscribes.
 pub(super) struct Watch {
     settings: UISettings,
-    accessibility: AccessibilitySettings,
     text_scale: i64,
     colors: i64,
-    contrast: i64,
 }
 impl Drop for Watch {
     fn drop(&mut self) {
         let _ = self.settings.RemoveTextScaleFactorChanged(self.text_scale);
         let _ = self.settings.RemoveColorValuesChanged(self.colors);
-        let _ = self.accessibility.RemoveHighContrastChanged(self.contrast);
     }
 }
 
-/// Rereads everything when the text size, the system colours or the contrast theme change.
-/// The events arrive on a background thread, so the look reaches the window through its event
-/// loop.
+/// Rereads everything when the text size or the system colours change. A contrast theme changes
+/// the system colours, so the colour event covers it; `AccessibilitySettings.HighContrastChanged`
+/// would name it directly, but it needs a UWP view and fails in a desktop program with
+/// "Element not found". The events arrive on a background thread, so the look reaches the window
+/// through its event loop.
 pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Result<Watch, String> {
     let changed = move || {
         let look = read();
@@ -240,8 +239,6 @@ pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Result<Watch, String> {
     let mut step = "UISettings";
     let watch = (|| -> windows::core::Result<Watch> {
         let settings = UISettings::new()?;
-        step = "AccessibilitySettings";
-        let accessibility = AccessibilitySettings::new()?;
         step = "TextScaleFactorChanged";
         let on_text = changed.clone();
         let text_scale =
@@ -250,23 +247,14 @@ pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Result<Watch, String> {
                 Ok(())
             }))?;
         step = "ColorValuesChanged";
-        let on_colors = changed.clone();
         let colors = settings.ColorValuesChanged(&TypedEventHandler::new(move |_, _| {
-            on_colors();
+            changed();
             Ok(())
         }))?;
-        step = "HighContrastChanged";
-        let contrast =
-            accessibility.HighContrastChanged(&TypedEventHandler::new(move |_, _| {
-                changed();
-                Ok(())
-            }))?;
         Ok(Watch {
             settings,
-            accessibility,
             text_scale,
             colors,
-            contrast,
         })
     })();
     watch.map_err(|error| format!("{step}: {error}"))
