@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: Commit or tag on main to check (empty means the triggering ref)
+        description: Commit or tag on release/1.x to check (empty means the triggering ref)
         type: string
         default: ""
       os:
@@ -44,9 +44,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$EXPLICIT_REF" ]; then
-            git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-            git merge-base --is-ancestor HEAD origin/main || {
-              echo '::error::An explicit app ref must be a commit on origin/main.'
+            git fetch --no-tags origin '+refs/heads/release/1.x:refs/remotes/origin/release/1.x'
+            git merge-base --is-ancestor HEAD origin/release/1.x || {
+              echo '::error::An explicit app ref must be a commit on origin/release/1.x.'
               exit 1
             }
           fi
@@ -115,7 +115,7 @@ jobs:
         with:
           # On Windows, cache the Dev Drive folder itself, not the app/target junction that points at it.
           workspaces: ${{ runner.os == 'Windows' && 'app -> ../../dev-drive/target' || 'app' }}
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/release/1.x' }}
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:

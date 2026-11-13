@@ -3,7 +3,7 @@ name: main
 # Run it by hand from the Actions tab to check a branch on every OS before it merges.
 on:
   push:
-    branches: [main]
+    branches: [release/1.x]
   workflow_dispatch:
 
 permissions:

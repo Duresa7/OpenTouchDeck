@@ -58,18 +58,18 @@ runs:
         if ($env:RELEASE_MODE -eq 'publish') {
           python app/scripts/release_version.py check --tag $env:RELEASE_TAG
           if ($LASTEXITCODE) { throw 'The tag must be v plus the app version, and every app version must agree.' }
-          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git fetch --no-tags origin '+refs/heads/release/1.x:refs/remotes/origin/release/1.x'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          git merge-base --is-ancestor HEAD origin/main
-          if ($LASTEXITCODE) { throw "Tagged commit $(git rev-parse HEAD) is not on origin/main." }
+          git merge-base --is-ancestor HEAD origin/release/1.x
+          if ($LASTEXITCODE) { throw "Tagged commit $(git rev-parse HEAD) is not on origin/release/1.x." }
         } else {
           python app/scripts/release_version.py check
           if ($LASTEXITCODE) { throw 'Every app version must agree.' }
           if ($env:RELEASE_MODE -eq 'dry-run') {
-            git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+            git fetch --no-tags origin '+refs/heads/release/1.x:refs/remotes/origin/release/1.x'
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            git merge-base --is-ancestor HEAD origin/main
-            if ($LASTEXITCODE) { throw "Dry-run commit $(git rev-parse HEAD) is not on origin/main." }
+            git merge-base --is-ancestor HEAD origin/release/1.x
+            if ($LASTEXITCODE) { throw "Dry-run commit $(git rev-parse HEAD) is not on origin/release/1.x." }
           }
         }
         if ($env:RELEASE_MODE -ne 'test-signing') {
