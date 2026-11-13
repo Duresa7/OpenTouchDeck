@@ -71,7 +71,7 @@ impl Updates {
             state.status = Status::Installing;
             ready
         };
-        let result = (|| {
+        let result: Result<(), td_updater::Failure> = (|| {
             ready.verify()?;
             let system = std::env::var_os("SystemRoot")
                 .ok_or_else(|| std::io::Error::other("missing SystemRoot"))?;
