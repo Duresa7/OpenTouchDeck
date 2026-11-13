@@ -70,10 +70,14 @@ pub struct WindowPrefs {
     /// The one-time notice that closing keeps the app in the tray has been shown.
     pub close_notice_shown: bool,
     pub appearance: Appearance,
+    /// The person folded the editor's Page filmstrip in a wide window.
+    pub filmstrip_folded: bool,
+    /// The Device the editor showed last, so it opens there next time.
+    pub editor_device: Option<String>,
 }
 
 /// The preferences and the file they came from.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Prefs {
     path: PathBuf,
     pub value: WindowPrefs,
@@ -185,6 +189,23 @@ mod tests {
         let prefs = Prefs::load(dir.path());
         assert!(prefs.value.close_notice_shown);
         assert_eq!(prefs.value.placement, None);
+    }
+
+    #[test]
+    fn the_editor_choices_survive_a_restart_and_older_files_lack_them() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(FILE), br#"{"close_notice_shown": true}"#).unwrap();
+        let mut prefs = Prefs::load(dir.path());
+        assert!(!prefs.value.filmstrip_folded);
+        assert_eq!(prefs.value.editor_device, None);
+
+        prefs.value.filmstrip_folded = true;
+        prefs.value.editor_device = Some("mock0002".into());
+        prefs.save().unwrap();
+        let again = Prefs::load(dir.path()).value;
+        assert!(again.filmstrip_folded);
+        assert_eq!(again.editor_device.as_deref(), Some("mock0002"));
+        assert!(again.close_notice_shown);
     }
 
     #[test]

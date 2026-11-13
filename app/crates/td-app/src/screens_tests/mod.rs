@@ -184,6 +184,7 @@ fn settle(app: &App) {
     });
 }
 
+mod editor;
 mod firmware;
 mod settings;
 mod setup;

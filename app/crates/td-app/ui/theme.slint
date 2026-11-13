@@ -28,6 +28,8 @@ export global Theme {
     // Segoe UI Variable on Windows. Empty picks the desktop's UI font.
     in property <string> text-font: "";
     in property <string> display-font: "";
+    // The system asks for less motion: fades stay, movement and resizing don't animate.
+    in property <bool> reduce-motion: false;
 
     // The resolved scheme. Settings > Appearance may set `Palette.color-scheme` to `unknown`,
     // which follows the system, so the palette's own background says which it is.

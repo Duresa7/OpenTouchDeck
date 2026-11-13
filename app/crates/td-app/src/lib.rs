@@ -24,7 +24,7 @@
 //! # }
 //! ```
 use slint::{ComponentHandle, winit_030::WinitWindowAccessor};
-use std::{path::PathBuf, rc::Rc};
+use std::{path::PathBuf, rc::Rc, time::Duration};
 use td_companion::companion::Handle;
 
 slint::include_modules!();
@@ -98,10 +98,12 @@ impl App {
             .clone()
     }
 
-    /// Opens `setup`, `settings` or `device:<id>` (that Device's settings), for screenshots.
+    /// Opens `layout`, `setup`, `settings` or `device:<id>` (that Device's settings), for
+    /// screenshots.
     #[cfg(feature = "mock")]
     pub fn open_page(&self, page: &str) {
         match page {
+            "layout" => self.ui.set_page(Page::Layout),
             "setup" => self.ui.set_page(Page::Setup),
             "settings" => self.ui.set_page(Page::Settings),
             "about" => self.ui.set_page(Page::About),
@@ -161,7 +163,7 @@ impl App {
         runtime: &tokio::runtime::Handle,
     ) -> Result<(), slint::PlatformError> {
         let feed = home::follow(companion.clone(), runtime, self.ui.as_weak());
-        let _screens = self.connect(companion, runtime);
+        let screens = self.connect(companion, runtime);
         let stopping = companion.clone();
         let stop = runtime.spawn(async move {
             stopping.stopping().await;
@@ -196,8 +198,25 @@ impl App {
         self.state.save();
         feed.abort();
         stop.abort();
+        close_editors(&screens, runtime, screens::CLOSE_LIMIT);
         result
     }
+}
+
+/// Waits until every editor has saved its queued edits, at most `limit` each, so the caller
+/// can then shut the Companion down without losing them. A Device read that never returns
+/// can't hold quitting up for longer.
+fn close_editors(screens: &screens::Screens, runtime: &tokio::runtime::Handle, limit: Duration) {
+    let workers = screens.editor_workers();
+    runtime.block_on(async {
+        for worker in workers {
+            if tokio::time::timeout(limit, worker.close()).await.is_err() {
+                eprintln!(
+                    "Open TouchDeck: an editor didn't stop in time; its last edits may be unsaved"
+                );
+            }
+        }
+    });
 }
 
 /// Writes RGBA pixels as a PNG.
