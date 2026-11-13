@@ -34,12 +34,42 @@ impl Placement {
     }
 }
 
+/// Light or dark, as Settings > Appearance chooses it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    Light,
+    Dark,
+    /// Follow the system's light or dark setting. Also what an unknown value reads as.
+    #[default]
+    #[serde(other)]
+    System,
+}
+impl Appearance {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "system" => Some(Self::System),
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowPrefs {
     pub placement: Option<Placement>,
     /// The one-time notice that closing keeps the app in the tray has been shown.
     pub close_notice_shown: bool,
+    pub appearance: Appearance,
 }
 
 /// The preferences and the file they came from.

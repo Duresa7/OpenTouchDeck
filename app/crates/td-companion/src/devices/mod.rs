@@ -4,16 +4,26 @@
 //! probes run on the scan thread and requests on each Device's actor thread.
 mod actor;
 mod error;
+mod name;
 mod operations;
+mod pairings_session;
 mod settings;
+mod settings_session;
 pub use error::DeviceError;
+pub use name::{NAME_BYTES, NameProblem, name_problem};
 pub use operations::Operations;
 pub use pairings::{
     DevicePairing, DevicePairings, DevicePairingsError, PairingPhase, PairingSnapshot,
 };
+pub use pairings_session::{Forgetting, PairingsSession, PairingsView, offers_pairings, over_usb};
 pub use settings::{
     DeviceSettings, DeviceSettingsPatch, PhotoFramePatch, PhotoFrameSettings, SettingsField,
     SettingsOutcome, SettingsPatched,
+};
+pub use settings_session::{
+    Field, Load, Needs, Notice, NoticeKind, RESTART_TIMEOUT, Restart, START_AFTER_S,
+    SettingsSession, SettingsView, duration_label, orientation_name, orientation_of,
+    start_after_choices,
 };
 pub mod console;
 mod pairings;
@@ -1192,3 +1202,5 @@ mod wait_stopped_tests {
 
 #[cfg(test)]
 mod operations_tests;
+#[cfg(test)]
+mod sessions_tests;

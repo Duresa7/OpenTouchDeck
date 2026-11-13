@@ -265,6 +265,7 @@ impl Firmware {
                     emit(UpdateState::Recovering { pct: 100 });
                     if install {
                         hold.installed();
+                        work.skips.unskip(&id);
                     }
                     return Ok(FirmwareResult {
                         message: "Firmware installed".into(),
@@ -295,6 +296,7 @@ impl Firmware {
             result.map_err(FirmwareError::Failed)?;
             if install {
                 hold.installed();
+                work.skips.unskip(&id);
             }
             Ok(FirmwareResult {
                 message: "Firmware updated".into(),

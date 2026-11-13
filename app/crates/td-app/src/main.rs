@@ -1,6 +1,12 @@
 //! Open TouchDeck 2.0: the Companion and its native window in one program.
 //!
-//! Usage: `td-app`, or `td-app --mock-devices N` in a build with the `mock` feature.
+//! Usage: `td-app`, or in a build with the `mock` feature `td-app --mock-devices N` or
+//! `td-app --mock KIND,KIND…`, where a KIND is `device`, `radio` (the radio build, with two
+//! paired apps), `v1` (Firmware too old to keep a name), `board` (a New board) or `fresh` (a New
+//! board whose Firmware install starts at once, so setup opens). Mock builds accept every
+//! Firmware install on their own. For screenshots, `TOUCHDECK_MOCK_PAGE` opens `setup`,
+//! `settings` or `device:<id>` first, `TOUCHDECK_TEXT_SCALE` sets the text size, and
+//! `TOUCHDECK_SNAPSHOT_DIR` saves the window to `<dir>/<name>` when `<dir>/request` names a file.
 //! `--packaged` marks an installed copy, as Start at sign-in runs it.
 //! `TOUCHDECK_APP_DATA_DIR` moves the app data folder, as it does for the Companion.
 //!
@@ -27,8 +33,8 @@ fn main() -> ExitCode {
 struct Args {
     /// An installed copy started by the installer or at sign-in.
     packaged: bool,
-    /// How many mock Devices to plug in, if any.
-    mock_devices: Option<usize>,
+    /// The mock Devices and boards to plug in, if any.
+    mock: Option<Vec<String>>,
 }
 
 fn parse(args: &[String]) -> Result<Args, Box<dyn std::error::Error>> {
@@ -37,13 +43,27 @@ fn parse(args: &[String]) -> Result<Args, Box<dyn std::error::Error>> {
         // Start at sign-in registers this command line (td-companion's startup.rs).
         [flag] if flag == "--packaged" => Ok(Args {
             packaged: true,
-            mock_devices: None,
+            mock: None,
         }),
         #[cfg(feature = "mock")]
         [flag, count] if flag == "--mock-devices" => Ok(Args {
             packaged: false,
-            mock_devices: Some(count.parse()?),
+            mock: Some(vec!["device".into(); count.parse()?]),
         }),
+        #[cfg(feature = "mock")]
+        [flag, kinds] if flag == "--mock" => {
+            let kinds: Vec<String> = kinds.split(',').map(str::to_owned).collect();
+            if let Some(unknown) = kinds
+                .iter()
+                .find(|k| !["device", "radio", "v1", "board", "fresh"].contains(&k.as_str()))
+            {
+                return Err(format!("unknown mock kind {unknown:?}").into());
+            }
+            Ok(Args {
+                packaged: false,
+                mock: Some(kinds),
+            })
+        }
         _ => Err("unknown argument. Run td-app with no arguments.".into()),
     }
 }
@@ -53,10 +73,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     td_companion::tray::set_app_identity()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let Args {
-        packaged,
-        mock_devices: mock,
-    } = parse(&args)?;
+    let Args { packaged, mock } = parse(&args)?;
     let data = td_core::app_dirs::data_dir().ok_or("no app data folder")?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -78,12 +95,43 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let companion = runtime.block_on(Companion::start(config))?;
     let handle = companion.handle();
     #[cfg(feature = "mock")]
-    if let (Some(count), Some((ports, _))) = (mock, handle.devices().mock()) {
-        for n in 1..=count {
-            ports.plug(
-                &format!("mock{n:04}"),
-                td_companion::devices::BoardKind::Device,
-            );
+    if let (Some(kinds), Some((ports, _))) = (&mock, handle.devices().mock()) {
+        use td_companion::{devices::BoardKind, features::firmware::ConsentAnswer};
+        handle.firmware().script(vec![ConsentAnswer::Accept; 1024]);
+        for (n, kind) in kinds.iter().enumerate() {
+            let serial = format!("mock{:04}", n + 1);
+            let board = match kind.as_str() {
+                "radio" => BoardKind::DeviceRadio,
+                "v1" => BoardKind::DeviceV1,
+                "board" | "fresh" => BoardKind::Silent,
+                _ => BoardKind::Device,
+            };
+            if kind == "radio" {
+                let deck = ports.board(&serial, board);
+                deck.add_net_pairing([0x21; 16], "Laptop");
+                deck.add_net_pairing([0x42; 16], "Studio PC");
+            }
+            ports.plug(&serial, board);
+            if kind == "fresh" {
+                let install = td_companion::features::firmware::FirmwareTask::new(
+                    handle.clone(),
+                    td_companion::features::firmware::Target::NewBoard(
+                        td_companion::devices::DeviceId::parse(&serial).expect("a mock serial"),
+                    ),
+                );
+                let devices = handle.devices().clone();
+                let id = td_companion::devices::DeviceId::parse(&serial).expect("a mock serial");
+                runtime.spawn(async move {
+                    // Once the scan has found the board.
+                    for _ in 0..100 {
+                        if devices.new_boards().iter().any(|b| b.id == id) {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    install.start().await;
+                });
+            }
         }
     }
 
@@ -163,12 +211,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|()| {
             td_app::App::new(td_app::Options {
                 data_dir: data,
+                config: td_core::app_dirs::Dirs::current(),
                 // The tray brings a hidden window back. Without one, closing the window ends
                 // the program.
                 close_to_tray: cfg!(windows),
             })
         })
         .and_then(|app| {
+            #[cfg(feature = "mock")]
+            if let Ok(page) = std::env::var("TOUCHDECK_MOCK_PAGE") {
+                app.open_page(&page);
+            }
+            #[cfg(feature = "mock")]
+            let _snapshots =
+                std::env::var_os("TOUCHDECK_SNAPSHOT_DIR").map(|dir| app.snapshots(dir.into()));
             #[cfg(windows)]
             {
                 let opener = app.opener();
@@ -220,7 +276,7 @@ mod tests {
             parse(&args(&["--packaged"])).unwrap(),
             Args {
                 packaged: true,
-                mock_devices: None
+                mock: None
             }
         );
         assert!(parse(&args(&["--packaged", "extra"])).is_err());
