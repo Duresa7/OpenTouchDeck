@@ -2,11 +2,10 @@
 
 The 2.0 updater lives in [`td-updater`](../app/crates/td-updater/README.md). On
 Windows, `td-app` checks after it starts and then about once a day, unless the
-user turned checks off. It selects a stable 2.x GitHub release, downloads its MSI
+user turned checks off. It selects the newest stable 2.x GitHub release, skipping drafts and pre-releases, downloads its MSI
 and verifies it with the existing updater key. Installing re-verifies the MSI, runs
 Windows Installer and quits the app. The opt-out preference and what a check sends
-are described in [PRIVACY](PRIVACY.md). The update UI and the 1.x bridge remain M5
-work.
+are described in [PRIVACY](PRIVACY.md). The update UI remains M5 work.
 
 The updater defends against a network attacker and against a release asset that
 the updater key did not sign. Code already running as the same Windows user is
@@ -17,15 +16,24 @@ because the staging folder is in the user's own `%TEMP%`.
 
 End users download the [Windows x64 installer](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the latest GitHub release and run it. It installs for the current user only and needs no administrator rights, Node, Rust, Python or ESP-IDF.
 
-The installer on Releases today is the 1.x installer. Its source, recipe and release workflows are not on `main`: they live on the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/blob/release/1.x/docs/packaging.md), whose copy of this page describes what the installer holds, how its update is signed and how a 1.x release is made ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). A `vX.Y.Z` tag pushed on that branch runs its **windows release** workflow from the tagged commit. The bridge release that moves 1.x to 2.0 is built there too.
+The installer on Releases today is the 1.x installer. Its source, recipe and release workflows are not on `main`: they live on the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/blob/release/1.x/docs/packaging.md), whose copy of this page describes what the installer holds, how its update is signed and how a 1.x release is made ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). A `vX.Y.Z` tag pushed on that branch runs its **windows release** workflow from the tagged commit.
 
 The rest of this page describes Open TouchDeck 2.0, which ships as an MSI.
+
+## Replacing the maintainer's 1.x install
+
+The maintainer has the only 1.x app install ([ADR 0013](adr/0013-replace-1x-by-hand-for-2x.md)). On Windows 11, replace it in this order:
+
+1. Quit Open TouchDeck, then uninstall 1.x from Windows **Installed apps**. When the uninstaller asks whether to delete Layouts and settings, choose **No**. Do not pass its `--delete-app-data` option.
+2. Download the 2.0 MSI from its GitHub release and run it as the same Windows user. The MSI refuses to install while the 1.x uninstaller remains in the shared `%LOCALAPPDATA%\Programs\Open TouchDeck` folder.
+
+The 1.x uninstaller keeps the app's local and roaming data folders when deletion is declined. The 2.0 Companion uses the same `io.github.duresa7.touchdeck` folders for its data and configuration, so the saved files remain in place; there is no copy or conversion step. Integration secrets and Pairing keys use the same `touchdeck` entries in Windows Credential Manager and stay there when 1.x is uninstalled. The uninstaller removes the old start at sign-in marker, so 2.0 sets up its own startup preference on first packaged launch. This replacement has no automatic updater path. Windows 10 users stay on 1.x because the MSI requires Windows 11.
 
 ## The 2.0 release pipeline
 
 Open TouchDeck 2.0 is one Rust program, installed on Windows 11 by an MSI. Its releases come from **release** (`.github/workflows/release.yml`), which a `v2` tag on `main` starts. A 1.x tag starts the 1.x workflow on `release/1.x`.
 
-The MSI ships `td-app.exe`, which runs the Companion in-process; the standalone Companion is not needed. Its Start menu shortcut passes `--packaged` and carries `io.github.duresa7.touchdeck` as its AUMID. The app registers start at sign-in on its first packaged start. Uninstall removes its Run and StartupApproved values and leaves user data alone. The existing 1.x uninstaller guard still refuses coexistence in the shared installation folder; the separate bridge must remove 1.x first.
+The MSI ships `td-app.exe`, which runs the Companion in-process; the standalone Companion is not needed. Its Start menu shortcut passes `--packaged` and carries `io.github.duresa7.touchdeck` as its AUMID. The app registers start at sign-in on its first packaged start. Uninstall removes its Run and StartupApproved values and leaves user data alone. The MSI refuses coexistence with 1.x in the shared installation folder.
 
 ### Stages
 
@@ -65,6 +73,8 @@ git push origin v2.0.0
 
 Approve the `release` environment when the run asks, then review the draft on the Releases page. If the source needs a fix, ship the next version instead of moving the tag.
 
+A **pre-release** is the same, with a tag such as `v2.0.0-preview.1` after `python app/scripts/release_version.py bump 2.0.0-preview.1` has merged. When you publish its draft, tick **Set as a pre-release** and untick **Set as the latest release**. The 1.x updater reads `releases/latest/download/latest.json`, and GitHub's latest release never points at a pre-release; a 2.0 release has no `latest.json` anyway. The 2.0 updater skips pre-releases, so nobody is moved onto one, while a copy running a pre-release is offered the final: `2.0.0` is newer than `2.0.0-preview.1`.
+
 A **dry run** runs the same jobs and never publishes. Start one from the Actions tab or with:
 
 ```sh
@@ -93,9 +103,9 @@ With a provider selected, the hook fails unless every program and installer come
 
 - **For the current user.** The package has `Scope="perUser"`: it installs to `%LOCALAPPDATA%\Programs\Open TouchDeck`, registers with Windows Installer for the current user only, needs no administrator rights and shows no elevation prompt.
 - **Windows 11 only.** Windows 11 starts at build 22000. Windows Installer's own version properties report Windows 8.1 on every later Windows, so the package reads `CurrentBuildNumber` from the registry and refuses a lower build with "Open TouchDeck needs Windows 11, and this PC runs an older Windows. Open TouchDeck 1.x works on Windows 10: download it from the Releases page."
-- **Not beside 1.x.** Open TouchDeck 1.x installs to the same folder with its own installer. Until 2.0 can replace it, the package refuses to install when it finds the 1.x uninstaller there, and says to uninstall 1.x first.
-- **One name and version.** The product name is `Open TouchDeck`, the manufacturer `Duresa Kadi` and the version the version of `td-app`: the same values as the program's version resource (`app/crates/td-app/build.rs`). An MSI version is three numbers, so a version such as `2.0.0-rc.1` installs as `2.0.0`.
-- **Updates.** A newer package removes the older one first, and an older package refuses to install over a newer one. Windows finds the installed copy by the package's `UpgradeCode`. Never change it.
+- **Not beside 1.x.** Open TouchDeck 1.x installs to the same folder with its own installer. The package refuses to install when it finds the 1.x uninstaller there, and says to uninstall 1.x first.
+- **One name and version.** The product name is `Open TouchDeck`, the manufacturer `Duresa Kadi` and the version the version of `td-app`: the same values as the program's version resource (`app/crates/td-app/build.rs`). An MSI version is three numbers, so a version such as `2.0.0-preview.1` installs as `2.0.0`.
+- **Updates.** A newer package removes the older one first, and an older package refuses to install over a newer one. A package of the same MSI version replaces the installed one too (`AllowSameVersionUpgrades`), so `2.0.0` replaces `2.0.0-preview.1`. Windows finds the installed copy by the package's `UpgradeCode`. Never change it.
 
 ### WiX version and licence
 
@@ -123,8 +133,7 @@ The public half of the updater key is committed at `.github/release-signer/updat
 
 ### Not done yet
 
-- **The 1.x to 2.0 update.** A 2.0 release has no `latest.json`. Installed 1.x copies read that file and run what it names as the 1.x installer, so publishing one for an MSI would break their updates. The bridge from 1.x to 2.0 is its own piece of work.
+- **The 1.x to 2.0 move.** A 2.0 release has no `latest.json`. Installed 1.x copies read that file and run what it names as the 1.x installer, so publishing one for an MSI would break their updates. The maintainer replaces 1.x by hand as described above.
 - **Update UI.** The native host checks after startup and about daily on Windows, with status in the Companion snapshot. `updates().install_now(&handle)` reverifies the staged MSI, launches Windows Installer and requests the normal bounded shutdown. The update UI is separate work.
 - **Firmware.** The 1.x release builds the Firmware and ships `touchdeck.tdfw`. The 2.0 pipeline doesn't yet.
-- **Pre-release versions.** Two release candidates of one version get the same MSI version, so one does not replace the other.
 - **A signing provider.** Apply to one, then set `CODE_SIGNING_PROVIDER`. Once files are signed, remove the draft notice from the [code signing policy](code-signing.md) and link the policy from the release notes.

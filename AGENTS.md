@@ -28,16 +28,18 @@
 
 - **App.** Main is Rust only. From `app/`: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace`. `cargo run -p td-app --features mock -- --mock-devices 2` runs the 2.0 window with mock Devices. The 1.x Electron app and React UI live on the `release/1.x` branch ([ADR 0012](docs/adr/0012-electron-and-react-leave-main-before-cutover.md)). PR CI runs the Linux checks; `app/scripts/linux-check.sh` runs them on `HEAD` in Docker when you chase a Linux-only failure. See [app/README.md](app/README.md) and [docs/setup.md](docs/setup.md).
 - **Firmware.** See [docs/firmware.md](docs/firmware.md).
-- **Proof on the real hardware.** The `verify-touchdeck` skill builds, flashes and drives the Device. `verify-touchdeck-app` drives the 1.x app on `release/1.x` against the mock or real Device.
+- **Proof on the real hardware.** The `verify-touchdeck` skill builds, flashes and drives the Device. `verify-touchdeck-app` verifies the 2.0 Rust and Slint app on main with mock Devices, headless tests, snapshots and td-link on Windows or Linux. Verify 1.x from `release/1.x` with that branch's skill.
 - Each ticket that changes these commands updates this section in the same PR.
 
 ## Resume notes
 
-- On a branch you work on for more than one session, keep `.verify/<branch>/NOTES.md` (git-ignored) current: the goal, the ticket or PR, what is done, what is next, and any open question. Update it before you stop, and read it first when you resume, so a new session or a different model can pick up where you left off.
+- On a branch you work on for more than one session, keep `.verify/<branch>/NOTES.md` (git-ignored) current: the goal, the ticket or PR, what is done, what is next, and any open question. Update it at every commit and each finished step, because a usage or credit limit can end a turn without warning. When told to resume from notes, read the note, `git status` and `git log origin/main..HEAD` first, then continue.
 
 ## Agent skills
 
 `.agents/skills/` is the canonical copy and Claude Code reads the copy in `.claude/skills/`. Edit a skill in `.agents/skills/`, then run `python .github/scripts/skills_mirror.py sync`; CI fails when the two differ. [.agents/skills/README.md](.agents/skills/README.md) lists each third-party set with its source and license.
+
+If `.claude/skills` can't be read (some sandboxes block it), read `.agents/skills/<name>/SKILL.md`, which is the canonical copy.
 
 ### Issue tracker
 

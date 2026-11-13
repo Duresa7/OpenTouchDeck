@@ -16,7 +16,12 @@
   <Package Name="Open TouchDeck" Manufacturer="Duresa Kadi" Version="$(Version)"
            UpgradeCode="FA97B489-E1B1-43CA-97AA-6D5FEE4A9836" Scope="perUser" Language="1033">
     <SummaryInformation Description="Open TouchDeck installer" />
-    <MajorUpgrade DowngradeErrorMessage="A newer Open TouchDeck is installed on this PC. Uninstall it first to go back." />
+    <!--
+      AllowSameVersionUpgrades: an MSI version is three numbers, so 2.0.0-preview.1 and 2.0.0 both install as 2.0.0.
+      Without it the final would install beside the preview instead of replacing it.
+    -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer Open TouchDeck is installed on this PC. Uninstall it first to go back." />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="AppIcon" SourceFile="$(AppIcon)" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
@@ -38,7 +43,7 @@
 
     <!--
       Open TouchDeck 1.x owns this same folder. Refuse coexistence even though the native
-      payload has a different filename; the separate bridge must remove 1.x first.
+      payload has a different filename. Uninstall 1.x before installing the MSI.
     -->
     <Property Id="OPENTOUCHDECK1">
       <DirectorySearch Id="OpenTouchDeck1Folder" Path="[LocalAppDataFolder]Programs\Open TouchDeck">
