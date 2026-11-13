@@ -17,7 +17,8 @@ bool td_netlink_hint(const uint8_t ltk[TD_NETLINK_KEY_LEN], const uint8_t nonce[
     uint8_t key[TD_NETLINK_KEY_LEN], mac[TD_NETLINK_H_LEN];
     const td_netlink_part_t parts[] = { { "hint", 4 }, { nonce, TD_NETLINK_ADVERT_NONCE_LEN } };
     const bool ok = td_netlink_derive(ltk, "discovery", key) && td_netlink_hmac(key, sizeof key, parts, 2, mac);
-    memcpy(hint, mac, TD_NETLINK_HINT_LEN);
+    if (ok) memcpy(hint, mac, TD_NETLINK_HINT_LEN);
+    else memset(hint, 0, TD_NETLINK_HINT_LEN);
     td_netlink_wipe(key, sizeof key);
     td_netlink_wipe(mac, sizeof mac);
     return ok;
@@ -87,4 +88,41 @@ size_t td_netlink_advert_txt(const td_netlink_advert_t *advert, td_netlink_txt_t
         txt[count++] = (td_netlink_txt_t){ "paired", advert->paired };
     }
     return count;
+}
+
+bool td_netlink_ble_hint(const uint8_t ltk[TD_NETLINK_KEY_LEN], const uint8_t nonce[TD_NETLINK_BLE_NONCE_LEN],
+                        uint8_t hint[TD_NETLINK_BLE_HINT_LEN])
+{
+    uint8_t key[TD_NETLINK_KEY_LEN], mac[TD_NETLINK_H_LEN];
+    const td_netlink_part_t parts[] = { { "ble-hint", 8 }, { nonce, TD_NETLINK_BLE_NONCE_LEN } };
+    const bool ok = td_netlink_derive(ltk, "discovery", key) && td_netlink_hmac(key, sizeof key, parts, 2, mac);
+    if (ok) memcpy(hint, mac, TD_NETLINK_BLE_HINT_LEN);
+    else memset(hint, 0, TD_NETLINK_BLE_HINT_LEN);
+    td_netlink_wipe(key, sizeof key);
+    td_netlink_wipe(mac, sizeof mac);
+    return ok;
+}
+
+bool td_netlink_ble_advert_build(const td_netlink_deck_t *deck,
+                                const uint8_t nonce[TD_NETLINK_BLE_NONCE_LEN],
+                                const uint8_t filler[TD_NETLINK_BLE_HINT_LEN], unsigned slot,
+                                uint8_t out[TD_NETLINK_BLE_DISCOVERY_LEN])
+{
+    memset(out, 0, TD_NETLINK_BLE_DISCOVERY_LEN);
+    if (slot >= TD_NETLINK_HINT_SLOTS || deck->pairings.count > TD_NETLINK_PAIRINGS_MAX) return false;
+    if (td_netlink_pairing_mode(deck)) {
+        out[0] = 0x82;
+        memcpy(out + 1, deck->device_id, TD_NETLINK_DEVICE_ID_LEN);
+        out[7] = deck->pairings.count;
+        memcpy(out + 8, filler, 5);
+        return true;
+    }
+    out[0] = 2;
+    memcpy(out + 1, nonce, TD_NETLINK_BLE_NONCE_LEN);
+    memcpy(out + 7, filler, TD_NETLINK_BLE_HINT_LEN);
+    if (slot < deck->pairings.count && !td_netlink_ble_hint(deck->pairings.entries[slot].ltk, nonce, out + 7)) {
+        memset(out, 0, TD_NETLINK_BLE_DISCOVERY_LEN);
+        return false;
+    }
+    return true;
 }
