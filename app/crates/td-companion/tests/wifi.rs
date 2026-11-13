@@ -142,13 +142,17 @@ async fn discovery_finds_the_device_and_a_typed_address_pairs_it() {
     // Paired, out of pairing mode: the record carries only hints, and this Companion
     // recognises its own.
     td.wifi_network().announce(&fake);
-    let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
-    assert_eq!(found.len(), 1);
-    assert_eq!(found[0].device, SERIAL);
-    assert!(found[0].paired_here);
-    assert!(!found[0].pairing);
-    assert_eq!(found[0].paired, None);
-    assert_eq!(found[0].name, "Mock Device 020000000001");
+    // The fake draws a fresh nonce on every browse. The stored Pairing must keep
+    // recognizing it across rotations without a discovery-key storage migration.
+    for _ in 0..3 {
+        let found = td.call::<Discover>((), NoQuery, ()).await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].device, SERIAL);
+        assert!(found[0].paired_here);
+        assert!(!found[0].pairing);
+        assert_eq!(found[0].paired, None);
+        assert_eq!(found[0].name, "Mock Device 020000000001");
+    }
 }
 
 #[tokio::test]

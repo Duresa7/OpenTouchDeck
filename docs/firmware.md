@@ -1011,7 +1011,8 @@ typed. Its compiler and cJSON needs are those of the carrier test.
 
 `python -B firmware/tools/test_netlink.py` compiles `td_netlink_core` and
 ESP-IDF's TF-PSA-Crypto for the host and runs every vector and negative in
-[net-v2-vectors.json](../schema/protocol/net-v2-vectors.json), then pairing with
+[net-v2-vectors.json](../schema/protocol/net-v2-vectors.json), including the compact BLE discovery payloads (all four slots, fillers, rotation
+and pairing mode), then pairing with
 the right and the wrong code, the lockout and its persistence, records, the
 per-peer backoff, idle connections against a paired Companion, and the USB
 rules. It runs the `management` vector's USB steps through `net.list`,

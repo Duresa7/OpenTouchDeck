@@ -970,3 +970,57 @@ fn management_over_usb() {
     assert_eq!(ran, 8, "eight steps run over USB");
     assert!(deck.net_pairings().is_empty());
 }
+
+#[test]
+fn ble_discovery_recognizes_only_paired_devices_across_rotation() {
+    use td_link::net::ble_discovery::{self, Advert};
+    let v = vectors();
+    let ltk: [u8; 32] = bytes(&v["inputs"]["ltk"]).try_into().unwrap();
+    let key = wire::discovery_key(&ltk);
+    let wrong = wire::discovery_key(&[0x99; 32]);
+    let d = &v["ble_discovery"];
+    for (slot, data) in d["slots"].as_array().unwrap().iter().enumerate() {
+        let advert = ble_discovery::read(&bytes(data)).unwrap();
+        assert_eq!(advert.matches(&key), slot == 0);
+        assert!(!advert.matches(&wrong));
+    }
+    for (slot, data) in d["full"].as_array().unwrap().iter().enumerate() {
+        let advert = ble_discovery::read(&bytes(data)).unwrap();
+        for (index, ltk) in d["full_ltks"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(
+                advert.matches(&wire::discovery_key(&array(ltk))),
+                index == slot
+            );
+        }
+    }
+    assert!(
+        ble_discovery::read(&bytes(&d["rotated"]))
+            .unwrap()
+            .matches(&key)
+    );
+    assert!(
+        !ble_discovery::read(&bytes(&d["unpaired"]))
+            .unwrap()
+            .matches(&key)
+    );
+    let pairing = bytes(&d["pairing"]);
+    assert!(matches!(
+        ble_discovery::read(&pairing),
+        Some(Advert::Pairing { paired: 1, .. })
+    ));
+    let mut bad = bytes(&d["slots"][0]);
+    bad[1] ^= 1;
+    assert!(!ble_discovery::read(&bad).unwrap().matches(&key));
+    for marker in [0, 1, 3, 0x83] {
+        bad[0] = marker;
+        assert!(ble_discovery::read(&bad).is_none());
+    }
+    for len in 0..13 {
+        assert!(ble_discovery::read(&pairing[..len]).is_none());
+    }
+    let mut bad = pairing;
+    bad[7] = 5;
+    assert!(ble_discovery::read(&bad).is_none());
+    bad.push(0);
+    assert!(ble_discovery::read(&bad).is_none());
+}

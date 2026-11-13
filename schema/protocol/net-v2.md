@@ -67,14 +67,10 @@ service and its characteristics use these 128-bit UUIDs:
 
 The Device advertises the service UUID in its advertising data while it can
 accept a carrier connection. Its scan response carries service data for the
-same UUID: `proto:u8` (2), `device_id[6]`, `paired:u8`. The Companion matches
-Devices by `device_id`, never by BLE address, because a Device MAY use a random
-address. Both Windows (WinRT) and Linux (BlueZ, for example through btleplug)
-report service data per UUID. This scan response still carries a stable
-identifier, so it isn't private yet. No Device may ship the BLE Carrier until
-it follows the pairing-mode rule of [Discovery privacy](#discovery-privacy).
-A scan response has no room for the TCP nonce and hints, so BLE needs its own
-layout.
+same UUID, using the compact format below. The Companion MUST NOT identify a
+Device by its BLE address. Both Windows and Linux expose service data by UUID.
+No Device may ship the BLE Carrier until its radio integration follows the
+pairing-mode and rotation rules of [Discovery privacy](#discovery-privacy).
 
 The link service needs no BLE pairing, bonding or link-layer encryption, and
 the Companion MUST NOT start BLE pairing for it. net-v2 authenticates and
@@ -131,8 +127,9 @@ Pairing count or any other value that outlives one nonce.
 **Rotation.** The Device draws a new nonce, new fillers and so a new label at
 boot, every 900000 ms of uptime, when a pairing window opens or closes, and
 when a Pairing is added or removed. Each change withdraws the old record and
-announces the new one. An observer can link what it sees within one nonce, at
-most 15 minutes, and not across nonces. A shorter period would churn mDNS
+announces the new one. The payload supplies a linkable value within one nonce,
+at most 15 minutes. Timing and network addresses can still correlate observations
+across rotations. A shorter period would churn mDNS
 caches for little gain, because a Companion browses only when the person asks.
 
 **Why a nonce and not the time.** A time-window hint needs the Device and the
@@ -160,6 +157,56 @@ A later discovery may set a new trial. A record that matches no Pairing and has 
 Device, and the Companion drops it. A record with `id` is a Device in pairing
 mode, which the Companion may list for pairing. A record without `n` and `h`
 is malformed and dropped.
+
+**BLE legacy scan response.** Service data has exactly 13 bytes after the
+128-bit service UUID (31 bytes including AD length, type and UUID):
+
+* Outside pairing: `0x02 || nonce[6] || hint[6]`.
+* In pairing mode: `0x82 || device_id[6] || paired:u8 || padding[5]`.
+  Padding is fresh random data at each rotation. No name is included.
+
+For BLE only, `hint = first 6 bytes of MAC(K_disc, "ble-hint" || nonce)`.
+The domain separates BLE from TCP. Use independent random nonces for the two
+Carriers. Draw one BLE nonce and four random six-byte fillers at boot, every
+900000 ms, and on every pairing-window or Pairing-store change. Replace each
+occupied slot's filler with its hint. Cycle all four slots, one per second,
+including empty slots, with the same cadence regardless of Pairing count.
+Never transmit a slot number. Do not reuse the old nonce after reboot.
+
+The six-byte nonce and hint fit legacy advertisements without requiring
+extended-advertising support. For one key, ten years of uninterrupted
+15-minute rotations gives a nonce collision probability about 0.00022;
+additional restarts and Pairing changes increase this bound. A repeat can
+link two epochs. This is a deliberate privacy trade-off for legacy BLE.
+For four stored Companion keys and 32 Devices with four slots each, accidental
+hint matching has probability at most 512 / 2^48 per complete browse. Hints
+are routing hints, never authentication tags: a session still needs its full
+proofs and pinned identity. A malicious advertiser can replay hints.
+
+A Companion scans actively for at least five seconds, processes changed
+service data even at an already-seen BLE address, compares hints in constant
+time against every stored discovery key, and deduplicates matched Devices by
+pinned identity. Unknown hints are omitted. Reject every other length or
+marker and Pairing counts above four; do not fall back to the old id format.
+An address is only a temporary endpoint. Rotation MUST replace cached scan
+response data and rotate the private BLE address together; a fixed address
+would defeat payload privacy. Closing pairing mode MUST immediately remove the id
+payload. The separate Bluetooth keyboard role MUST NOT supply a stable name
+to these advertisements outside its explicit pairing window.
+
+**Existing Pairings.** Deriving `K_disc` from the stored LTK is the migration:
+no extra key exchange, credential-store field, NVS rewrite or re-pairing is
+needed. The Companion derives and caches it in memory when loading an older
+Pairing, just as for a new Pairing, and never logs or serializes that cache.
+A missing LTK cannot recognize hints and requires re-pairing. Old firmware
+that broadcasts ids must be upgraded; neither side falls back to public ids
+outside pairing mode.
+
+**Implementation boundary.** The portable Firmware advertisement builders
+and Rust matchers implement these formats. Firmware mDNS publishing and the
+BLE net-v2 advertiser/scanner must wire their rotation and matching lifecycles
+when those radio integrations land; the existing BLE HID service is separate.
+A codec test alone does not establish real-radio discovery or address privacy.
 
 **Passive privacy only.** Someone who records a valid `session.open` can
 send it to a Device later: the paired Device answers with a challenge, while
@@ -1069,6 +1116,8 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
   hint, the label, instance and host names, and the TXT record out of and in
   pairing mode. `other_record` is a record with another nonce and only
   fillers, which matches no Pairing.
+* `ble_discovery`: the compact service data for an occupied slot, three fillers,
+  rotation, an unpaired Device, pairing mode and a full four-Pairing store.
 * `records`: the discovery and selected link-v2 hellos, two records each way,
   built from [golden-frames-v2.json](golden-frames-v2.json). The selected
   reply carries the fixture `device_id` as its `id`. The two selected records
