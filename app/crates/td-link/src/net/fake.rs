@@ -121,7 +121,6 @@ struct State {
     skip: Option<u64>,
     /// An error item every `session.open` gets, as a Device that can't take the session.
     session_refusal: Option<Refusal>,
-    unreachable: bool,
     lose_stored: bool,
 }
 
@@ -253,11 +252,6 @@ impl FakeNetDevice {
         locked(&self.state()).unwrap_or_default()
     }
 
-    /// Ends the lockout, as if its time ran out.
-    pub fn end_lockout(&self) {
-        self.state().locked_until = None;
-    }
-
     /// `net.forget` over USB: every Pairing, the counter and the lockout go.
     pub fn forget_all(&self) {
         self.inner.forget_all();
@@ -277,14 +271,6 @@ impl FakeNetDevice {
     pub fn drop_connection(&self) {
         if let Some((_, stream)) = self.state().owner.as_ref() {
             let _ = stream.shutdown(Shutdown::Both);
-        }
-    }
-
-    /// While on, the Device drops every new connection at once, as if it had left the network.
-    pub fn set_unreachable(&self, unreachable: bool) {
-        self.state().unreachable = unreachable;
-        if unreachable {
-            self.drop_connection();
         }
     }
 
@@ -605,7 +591,7 @@ impl Inner {
     }
 
     fn serve(&self, stream: TcpStream) {
-        if self.stopped.load(Ordering::Acquire) || self.state().unreachable {
+        if self.stopped.load(Ordering::Acquire) {
             return;
         }
         let mut items = Items::new(stream);

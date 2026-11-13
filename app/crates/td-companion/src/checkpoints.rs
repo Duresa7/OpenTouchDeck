@@ -10,6 +10,8 @@ pub enum Checkpoint {
     LayoutPut,
     /// A native editor send completed; its readback has not begun.
     BeforeEditorReadback,
+    /// A native editor Load is about to read the Device's Layout.
+    BeforeEditorLoad,
     /// An orientation change is about to send `SettingsPut`.
     BeforeOrientationPut,
     /// An orientation change sent `SettingsPut` and has more steps to run.

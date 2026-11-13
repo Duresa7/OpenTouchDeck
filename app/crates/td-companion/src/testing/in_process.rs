@@ -33,9 +33,6 @@ impl InProcessCompanion {
             companion.shutdown().await;
         }
     }
-    pub fn drop_owner(&mut self) {
-        self.companion.take();
-    }
     pub fn device(&self, id: &DeviceId) -> Option<DeviceSummary> {
         self.handle.devices().get(id)
     }
