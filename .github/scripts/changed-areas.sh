@@ -11,7 +11,8 @@
 # the changes job alone. test-changed-areas.sh holds one example per rule; add one with every rule you add.
 #
 # The 2.0 installer has no area here: release.yml lists its own paths and starts a release dry run for a pull
-# request that changes them.
+# request that changes them. CodeQL has no area either: codeql.yml skips a pull request whose paths all match its
+# paths-ignore list (docs, images, agent skills).
 set -euo pipefail
 
 rust=false
