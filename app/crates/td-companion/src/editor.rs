@@ -4,6 +4,7 @@
 mod presets;
 pub use presets::placed_appearance;
 mod session;
+mod worker;
 use serde::{Deserialize, Serialize};
 pub(crate) use session::GifSource;
 pub use session::{
@@ -15,6 +16,10 @@ use td_core::{
     Layout, Orientation,
     editing::{Capabilities, Compatibility, Document, Edit, EditError},
     layout::{Page, Tile},
+};
+pub use worker::{
+    Command, CommandKind, ConflictView, Done, EditorView, Failure, LayoutView, OpenState, Outcome,
+    PageView, TileView, Worker,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +44,8 @@ pub enum EditorError {
     UnknownCapabilities,
     #[error("Layout is incompatible: {0:?}")]
     Incompatible(Vec<td_core::editing::Problem>),
+    #[error("the editor stopped before this ran")]
+    Stopped,
     #[error("the Device did not show the sent Layout")]
     PushMismatch,
     #[error("push belongs to another Device or its baseline changed")]

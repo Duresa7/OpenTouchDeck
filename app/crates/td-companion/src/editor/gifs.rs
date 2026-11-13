@@ -471,7 +471,8 @@ impl Session {
         }
         Ok(())
     }
-    pub(super) fn device_name(&self) -> String {
+    /// The Device's name, or "the Device" before it has one.
+    pub fn device_name(&self) -> String {
         self.handle
             .devices()
             .get(&crate::devices::DeviceId::parse(&self.device).unwrap())

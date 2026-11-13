@@ -234,11 +234,21 @@ impl Handle {
     pub fn devices(&self) -> &crate::devices::DeviceManager {
         &self.devices
     }
+    /// Blocking: reads the saved drafts, and the Session writes them on every change. A window
+    /// uses `open_editor_worker` instead, which keeps that disk work off the UI thread.
     pub fn open_editor(
         &self,
         device: &str,
     ) -> Result<crate::editor::Session, crate::editor::EditorError> {
         crate::editor::Session::open(self.clone(), self.editor_root.clone(), device)
+    }
+    /// One Device's editor on its own thread, for a window. Never blocks; call it inside the
+    /// Tokio runtime (`runtime.enter()` on the UI thread). The view reports a failed open.
+    pub fn open_editor_worker(
+        &self,
+        device: &str,
+    ) -> Result<crate::editor::Worker, crate::editor::EditorError> {
+        crate::editor::Worker::open(self.clone(), device)
     }
     pub fn layout_operations(&self) -> crate::layouts::Operations {
         crate::layouts::Operations::new(self.clone())

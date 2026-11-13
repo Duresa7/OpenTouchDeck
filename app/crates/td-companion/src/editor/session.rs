@@ -42,6 +42,8 @@ pub enum SessionError {
     Asset(#[from] crate::features::assets::AssetError),
 }
 
+/// Blocking: `edit`, `resolve`, `begin_send` and the other changes write the drafts file before
+/// they return. Run it on the editor [`Worker`](super::Worker)'s thread, never on a UI thread.
 pub struct Session {
     handle: Handle,
     device: String,
@@ -171,6 +173,11 @@ impl Session {
         self.model.persist()?;
         result
     }
+    /// Drops this orientation's refused Label and Action values; admitted values stay.
+    pub fn discard_rejected(&mut self) -> Result<(), EditorError> {
+        self.model.discard_rejected(self.orientation)?;
+        self.model.persist()
+    }
     pub fn resolve(&mut self, decision: Decision) -> Result<(), EditorError> {
         let replacing = matches!(decision, Decision::UseDevice)
             && self.draft().is_some_and(|draft| draft.conflict().is_some());
@@ -264,6 +271,16 @@ impl Session {
         }
     }
     pub async fn load(&mut self) -> Result<(), SessionError> {
+        #[cfg(any(test, feature = "test-hooks"))]
+        {
+            let checkpoints = self.handle.checkpoints.clone();
+            tokio::task::spawn_blocking(move || {
+                checkpoints.pass(crate::checkpoints::Checkpoint::BeforeEditorLoad)
+            })
+            .await
+            .map_err(|e| SessionError::Send(e.to_string()))?
+            .map_err(|_| LayoutError::Device(crate::link::DeviceLinkError::Timeout))?;
+        }
         // Numbered at issue, like a send's readback: see `sending::execute`.
         let observation = self.next_observation();
         let read = match self
