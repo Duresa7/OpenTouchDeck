@@ -35,14 +35,18 @@ impl Updates {
         &self,
         updater: &mut Updater<H, C>,
         dirs: &td_core::app_dirs::Dirs,
+        cancelled: &dyn Fn() -> bool,
     ) {
+        if cancelled() {
+            return;
+        }
         let result = match td_core::settings::AppSettings::load(dirs) {
-            Ok(settings) => updater.poll(&settings),
+            Ok(settings) => updater.poll(&settings, cancelled),
             Err(error) => Some(UpdateResult::Failed(td_updater::Failure::Io(error))),
         };
         let Some(result) = result else { return };
         let mut state = self.0.lock();
-        if matches!(state.status, Status::Installing) {
+        if cancelled() || matches!(state.status, Status::Installing) {
             return;
         }
         state.ready = None;
@@ -134,15 +138,66 @@ mod tests {
         }
         .save(&dirs)
         .unwrap();
-        updates.poll(&mut updater, &dirs);
+        updates.poll(&mut updater, &dirs, &|| false);
         assert!(matches!(updates.snapshot(), Status::Idle));
         td_core::settings::AppSettings::default()
             .save(&dirs)
             .unwrap();
-        updates.poll(&mut updater, &dirs);
+        updates.poll(&mut updater, &dirs, &|| false);
         assert!(matches!(updates.snapshot(), Status::UpToDate));
         std::fs::write(dirs.app_settings(), b"invalid").unwrap();
-        updates.poll(&mut updater, &dirs);
+        updates.poll(&mut updater, &dirs, &|| false);
         assert!(matches!(updates.snapshot(), Status::Failed { .. }));
+    }
+
+    #[tokio::test]
+    async fn shutdown_during_poll_does_not_publish_a_result() {
+        use crate::companion::{Companion, Config};
+        use std::sync::mpsc;
+
+        struct BlockingHttp {
+            entered: mpsc::Sender<()>,
+            release: mpsc::Receiver<()>,
+        }
+        impl HttpClient for BlockingHttp {
+            fn get(&self, _: &str, _: &str) -> Result<Box<dyn std::io::Read>, td_updater::Failure> {
+                self.entered.send(()).unwrap();
+                self.release.recv().unwrap();
+                Ok(Box::new(std::io::Cursor::new(b"[]")))
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let companion = Companion::start(Config::mock(temp.path().to_owned()))
+            .await
+            .unwrap();
+        let handle = companion.handle();
+        let poll_handle = handle.clone();
+        let dirs = td_core::app_dirs::Dirs {
+            config: temp.path().to_owned(),
+        };
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = tokio::task::spawn_blocking(move || {
+            let mut updater = Updater::new(
+                BlockingHttp {
+                    entered: entered_tx,
+                    release: release_rx,
+                },
+                Time,
+                semver::Version::new(2, 0, 0),
+            );
+            poll_handle
+                .updates()
+                .poll(&mut updater, &dirs, &|| poll_handle.shutdown_requested());
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        handle.request_shutdown();
+        release_tx.send(()).unwrap();
+        worker.await.unwrap();
+        assert!(matches!(handle.updates().snapshot(), Status::Idle));
+        companion.shutdown().await;
     }
 }

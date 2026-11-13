@@ -101,9 +101,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if work.shutdown_requested() {
                     break;
                 }
-                let updates = work.updates().clone();
+                let poll_handle = work.clone();
                 updater = match tokio::task::spawn_blocking(move || {
-                    updates.poll(&mut updater, &td_core::app_dirs::Dirs::current());
+                    poll_handle.updates().poll(
+                        &mut updater,
+                        &td_core::app_dirs::Dirs::current(),
+                        &|| poll_handle.shutdown_requested(),
+                    );
                     updater
                 })
                 .await
@@ -161,12 +165,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             app.run(&handle, runtime.handle())
         });
+    handle.request_shutdown();
     runtime.block_on(companion.shutdown());
     #[cfg(windows)]
-    update_worker.abort();
-    #[cfg(windows)]
     drop(tray);
-    runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+    let shutdown_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    #[cfg(windows)]
+    {
+        let mut update_worker = update_worker;
+        runtime.block_on(async {
+            if tokio::time::timeout(
+                shutdown_deadline.saturating_duration_since(std::time::Instant::now()),
+                &mut update_worker,
+            )
+            .await
+            .is_err()
+            {
+                update_worker.abort();
+            }
+        });
+    }
+    // Joining the cancelled poll and stopping the runtime share the existing limit.
+    runtime
+        .shutdown_timeout(shutdown_deadline.saturating_duration_since(std::time::Instant::now()));
     Ok(shown?)
 }
 

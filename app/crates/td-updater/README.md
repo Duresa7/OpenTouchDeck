@@ -14,7 +14,8 @@ when this foundation is written. `build.rs` requires the two files to match once
 the release pipeline is in the checkout. No environment override can replace the
 trust anchor. Never regenerate the production key (ADR 0005).
 
-The native caller should load `AppSettings` and poll on a worker thread:
+The native caller should use its Companion `handle`, load `AppSettings`, and poll
+on a worker thread:
 
 ```rust,ignore
 use td_core::{app_dirs::Dirs, settings::AppSettings};
@@ -28,7 +29,7 @@ let mut updater = Updater::new(
 // On each periodic wakeup, reload the preference; surface load errors and skip
 // polling on error, rather than defaulting to enabled.
 let settings = AppSettings::load(&dirs)?;
-if let Some(result) = updater.poll(&settings) {
+if let Some(result) = updater.poll(&settings, &|| handle.shutdown_requested()) {
     // Handle UpToDate, UpdateReady (owns the temporary files), or Failed.
 }
 // A native Settings control can persist the opt-out with:
@@ -37,8 +38,13 @@ settings.automatic_update_checks = false;
 settings.save(&dirs)?;
 ```
 
-`None` means disabled or not due; no request was sent. Enabled polling checks
-immediately and then at most every six hours per updater instance, including
+`None` means disabled, not due, or cancelled. The native caller supplies the
+Companion shutdown signal through the cancellation callback. Cancellation is
+checked before each request and staging operation, and between MSI reads and
+writes; partial staging is removed when the worker returns. A blocking request or
+read must return before the worker can observe cancellation. Shutdown waits for
+the worker within the runtime shutdown limit. Enabled polling checks
+immediately and then at most every 24 hours per updater instance, including
 failures. Keep one instance alive for the app's lifetime. The injected clock is
 monotonic; the signed timestamp is authenticated metadata, not a freshness policy.
 Unsigned GitHub feed metadata cannot authorize a downgrade or relabel an older
