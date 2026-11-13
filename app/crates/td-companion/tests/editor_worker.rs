@@ -175,11 +175,11 @@ async fn a_conflict_publishes_and_resolves() {
 }
 
 /// A failed assertion releases the held send, so the test fails instead of hanging.
-struct ReleaseOnPanic(td_companion::checkpoints::Checkpoints);
+struct ReleaseOnPanic(td_companion::checkpoints::Checkpoints, Checkpoint);
 impl Drop for ReleaseOnPanic {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            self.0.release(Checkpoint::BeforeEditorReadback, true);
+            self.0.release(self.1, true);
         }
     }
 }
@@ -191,7 +191,7 @@ async fn a_send_held_at_a_checkpoint_leaves_edits_live_then_its_receipt_lands() 
     worker.dispatch(Command::NewLayout(NewLayout::Starter));
     after(&mut view, 1).await;
     td.checkpoints().hold(Checkpoint::BeforeEditorReadback);
-    let _release = ReleaseOnPanic(td.checkpoints().clone());
+    let _release = ReleaseOnPanic(td.checkpoints().clone(), Checkpoint::BeforeEditorReadback);
     worker.dispatch(Command::Send);
     td.until(|td| td.checkpoints().waiting(Checkpoint::BeforeEditorReadback))
         .await;
@@ -325,4 +325,48 @@ async fn dropping_the_handle_cancels_gif_work() {
     .expect("the worker stops when its last handle drops");
     td.release_jobs();
     assert_eq!(td.wait(&job).await.state, JobState::Cancelled);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_queued_behind_a_load_is_saved_when_the_companion_stops() {
+    let (td, worker) = worker().await;
+    let mut view = worker.subscribe();
+    worker.dispatch(Command::NewLayout(NewLayout::Blank));
+    worker.dispatch(Command::Add {
+        kind: AddKind::Key,
+        target: AddTarget::Cell { row: 0, col: 0 },
+    });
+    let id = created(&after(&mut view, 2).await);
+    worker.dispatch(Command::Send);
+    assert_eq!(after(&mut view, 3).await.save_state, SaveState::Saved);
+
+    // A slow Device read holds the queue; a rename waits behind it.
+    td.checkpoints().hold(Checkpoint::BeforeEditorLoad);
+    let _release = ReleaseOnPanic(td.checkpoints().clone(), Checkpoint::BeforeEditorLoad);
+    worker.dispatch(Command::Load);
+    td.until(|td| td.checkpoints().waiting(Checkpoint::BeforeEditorLoad))
+        .await;
+    worker.dispatch(Command::Edit(Edit::Label {
+        tile: id.clone(),
+        label: "Renamed".into(),
+    }));
+    worker.dispatch(Command::Load);
+    // Quit from the tray while the read is still out.
+    td.handle().request_shutdown();
+    td.checkpoints()
+        .release(Checkpoint::BeforeEditorLoad, false);
+    tokio::time::timeout(Duration::from_secs(10), worker.close())
+        .await
+        .expect("close returns once the Session has dropped");
+
+    let reopened = td.handle().open_editor("mock0001").unwrap();
+    let tile = reopened.draft().unwrap().effective_tile(&id).unwrap();
+    assert_eq!(tile.label, "Renamed");
+    // The second Load needed the Device, so it was skipped and says so.
+    let stopped = worker.view().outcome.unwrap();
+    assert_eq!(stopped.command, CommandKind::Load);
+    assert!(matches!(
+        *stopped.result.unwrap_err().error,
+        SessionError::Editor(EditorError::Stopped)
+    ));
 }

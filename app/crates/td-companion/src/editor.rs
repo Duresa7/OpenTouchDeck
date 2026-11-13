@@ -44,6 +44,8 @@ pub enum EditorError {
     UnknownCapabilities,
     #[error("Layout is incompatible: {0:?}")]
     Incompatible(Vec<td_core::editing::Problem>),
+    #[error("the editor stopped before this ran")]
+    Stopped,
     #[error("the Device did not show the sent Layout")]
     PushMismatch,
     #[error("push belongs to another Device or its baseline changed")]

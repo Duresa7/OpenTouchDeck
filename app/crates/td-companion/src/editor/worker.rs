@@ -224,6 +224,8 @@ impl EditorView {
 struct Inner {
     commands: mpsc::UnboundedSender<Command>,
     view: watch::Receiver<EditorView>,
+    close: watch::Sender<bool>,
+    thread: parking_lot::Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 /// A window's handle to one Device's editor. Clone it freely; the last clone's drop ends it.
 #[derive(Clone)]
@@ -237,13 +239,37 @@ impl Worker {
             tokio::runtime::Handle::try_current().map_err(|_| EditorError::RuntimeUnavailable)?;
         let (commands, queue) = mpsc::unbounded_channel();
         let (publish, view) = watch::channel(EditorView::opening(device));
+        let (close, closing) = watch::channel(false);
         let device = device.to_owned();
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("editor-worker".into())
-            .spawn(move || runtime.block_on(run(handle, device, queue, publish)))?;
+            .spawn(move || runtime.block_on(run(handle, device, queue, closing, publish)))?;
         Ok(Self {
-            inner: Arc::new(Inner { commands, view }),
+            inner: Arc::new(Inner {
+                commands,
+                view,
+                close,
+                thread: parking_lot::Mutex::new(Some(thread)),
+            }),
         })
+    }
+    /// Stops the worker for every clone and waits until its Session has dropped. Queued edits
+    /// that only change the draft are applied and saved first; a queued `Send` or `Load` is
+    /// skipped with `EditorError::Stopped`, and GIF work is cancelled. The window calls this
+    /// before the Companion shuts down, so the process can't exit ahead of that last save.
+    pub async fn close(&self) {
+        self.inner.close.send_replace(true);
+        let thread = self.inner.thread.lock().take();
+        match thread {
+            Some(thread) => {
+                let _ = tokio::task::spawn_blocking(move || thread.join()).await;
+            }
+            // Another clone is joining it; the view closes once the Session has dropped.
+            None => {
+                let mut view = self.inner.view.clone();
+                while view.changed().await.is_ok() {}
+            }
+        }
     }
     /// Queues a command. Commands run in the order they were dispatched; never blocks.
     pub fn dispatch(&self, command: Command) {
@@ -271,6 +297,7 @@ async fn run(
     handle: Handle,
     device: String,
     mut queue: mpsc::UnboundedReceiver<Command>,
+    mut closing: watch::Receiver<bool>,
     publish: watch::Sender<EditorView>,
 ) {
     let mut session = match handle.open_editor(&device) {
@@ -288,14 +315,29 @@ async fn run(
         outcome: None,
         sending: None,
     };
-    let stopping = handle.stopping();
+    // The Companion's shutdown request, or `Worker::close`.
+    let stopping = async {
+        tokio::select! {
+            () = handle.stopping() => {}
+            closed = closing.wait_for(|close| *close) => {
+                // Every handle dropped: the queue closes too, and its end stops the loop.
+                if closed.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+    };
     tokio::pin!(stopping);
     let mut listening = true;
     loop {
         state.show(&session);
         tokio::select! {
             biased;
-            () = &mut stopping => break,
+            () = &mut stopping => {
+                // Edits queued behind a slow command still reach the drafts file.
+                state.drain(&mut session, &mut queue).await;
+                break;
+            }
             command = queue.recv() => match command {
                 Some(command) => state.apply(&mut session, command).await,
                 None => break,
@@ -312,7 +354,7 @@ async fn run(
                 state.record(CommandKind::Send, result);
             }
             change = session.changed(), if listening => {
-                // The Companion is stopping; keep serving commands until the handles go.
+                // The change stream closed; commands still run until a stop or the handles go.
                 if let Err(SessionError::Send(_)) = change {
                     listening = false;
                 }
@@ -325,6 +367,23 @@ async fn run(
     drop(state);
 }
 impl Loop {
+    /// Applies the queued commands that only change the draft. Those that need the Device are
+    /// skipped and say so; an orientation still switches, so later edits land where meant.
+    async fn drain(&mut self, session: &mut Session, queue: &mut mpsc::UnboundedReceiver<Command>) {
+        while let Ok(command) = queue.try_recv() {
+            let kind = command.kind();
+            match command {
+                Command::Send | Command::Load => {}
+                Command::Orientation(orientation) => session.select_orientation(orientation),
+                command => {
+                    self.apply(session, command).await;
+                    continue;
+                }
+            }
+            self.record(kind, Err(Failure::plain(EditorError::Stopped.into())));
+        }
+        self.show(session);
+    }
     async fn apply(&mut self, session: &mut Session, command: Command) {
         let kind = command.kind();
         let result: Result<Done, SessionError> = match command {
