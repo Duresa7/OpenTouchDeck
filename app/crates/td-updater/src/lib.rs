@@ -7,7 +7,7 @@ mod signature;
 
 use std::{
     fs::File,
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -25,9 +25,18 @@ const MAX_PAGES: usize = 10;
 const MAX_FEED: u64 = 2 * 1024 * 1024;
 const MAX_SIGNATURE: u64 = 16 * 1024;
 const MAX_MSI: u64 = 256 * 1024 * 1024;
+/// Every staging folder is `<temp>/touchdeck-update-<random>`, so a later run can find
+/// folders that a killed process left behind.
+const STAGING_PREFIX: &str = "touchdeck-update-";
+/// Longest wait for any single read. TCP retransmits a lost segment within about 7 s
+/// (1 + 2 + 4 s), so a healthy slow link still makes progress, while a stalled body
+/// read fails in seconds rather than holding the worker for the 5-minute global limit.
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Failure {
+    #[error("update check cancelled")]
+    Cancelled,
     #[error("update request failed: {0}")]
     Http(String),
     #[error("invalid release feed: {0}")]
@@ -99,6 +108,7 @@ impl Default for GitHubClient {
                 .https_only(true)
                 .max_redirects(5)
                 .timeout_global(Some(Duration::from_secs(5 * 60)))
+                .timeout_per_read(Some(READ_TIMEOUT))
                 .build()
                 .into(),
         )
@@ -153,6 +163,7 @@ pub struct Updater<H, C> {
     current: Version,
     last_check: Option<Duration>,
     public_key: &'static str,
+    staging_root: PathBuf,
 }
 
 impl<H: HttpClient, C: Clock> Updater<H, C> {
@@ -164,14 +175,37 @@ impl<H: HttpClient, C: Clock> Updater<H, C> {
             current,
             last_check: None,
             public_key: PUBLIC_KEY,
+            staging_root: std::env::temp_dir(),
         }
     }
 
+    /// Removes staging folders that an earlier run left behind, for example when the
+    /// process exited while a download was still blocked in a read. Call it once at
+    /// startup, before the first poll, while holding the single-instance lock: it
+    /// assumes no other staging folder of this app is in use. Only folders named with
+    /// this app's prefix that hold nothing but this app's MSI and signature files are
+    /// touched. Returns how many were removed; a folder that cannot be removed is skipped.
+    pub fn remove_stale_staging(&self) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.staging_root) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .filter(|entry| is_stale_staging(&entry.path()))
+            .filter(|entry| std::fs::remove_dir_all(entry.path()).is_ok())
+            .count()
+    }
+
     /// First enabled poll checks immediately; later attempts are 24 hours apart,
-    /// including failures. None means disabled or not due, with no HTTP request.
+    /// including failures. None means disabled, not due, or cancelled.
+    /// Cancellation is cooperative: an in-flight request/read must return first.
     /// This is a polling API, not a background scheduler.
-    pub fn poll(&mut self, settings: &AppSettings) -> Option<UpdateResult> {
-        if !settings.automatic_update_checks {
+    pub fn poll(
+        &mut self,
+        settings: &AppSettings,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<UpdateResult> {
+        if cancelled() || !settings.automatic_update_checks {
             return None;
         }
         let now = self.clock.now();
@@ -182,31 +216,45 @@ impl<H: HttpClient, C: Clock> Updater<H, C> {
             return None;
         }
         self.last_check = Some(now);
-        Some(match self.check() {
+        let result = self.check(cancelled);
+        if cancelled() {
+            return None;
+        }
+        Some(match result {
             Ok(Some(ready)) => UpdateResult::UpdateReady(ready),
             Ok(None) => UpdateResult::UpToDate,
+            Err(Failure::Cancelled) => return None,
             Err(error) => UpdateResult::Failed(error),
         })
     }
 
-    fn small(&self, url: &str, limit: u64) -> Result<Vec<u8>, Failure> {
+    fn small(
+        &self,
+        url: &str,
+        limit: u64,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<u8>, Failure> {
+        check_cancelled(cancelled)?;
+        let response = self
+            .http
+            .get(url, &format!("OpenTouchDeck/{}", self.current))?;
+        check_cancelled(cancelled)?;
         let mut bytes = Vec::new();
-        self.http
-            .get(url, &format!("OpenTouchDeck/{}", self.current))?
-            .take(limit + 1)
-            .read_to_end(&mut bytes)?;
+        response.take(limit + 1).read_to_end(&mut bytes)?;
+        check_cancelled(cancelled)?;
         if bytes.len() as u64 > limit {
             return Err(Failure::Feed("response too large".into()));
         }
         Ok(bytes)
     }
 
-    fn newest(&self) -> Result<Option<(Version, Release)>, Failure> {
+    fn newest(&self, cancelled: &dyn Fn() -> bool) -> Result<Option<(Version, Release)>, Failure> {
         let mut newest: Option<(Version, Release)> = None;
         for page in 1..=MAX_PAGES {
             let bytes = self.small(
                 &format!("{RELEASES}?per_page={PAGE_SIZE}&page={page}"),
                 MAX_FEED,
+                cancelled,
             )?;
             let releases: Vec<Release> =
                 serde_json::from_slice(&bytes).map_err(|error| Failure::Feed(error.to_string()))?;
@@ -241,8 +289,8 @@ impl<H: HttpClient, C: Clock> Updater<H, C> {
         Err(Failure::Feed("release pagination limit exceeded".into()))
     }
 
-    fn check(&self) -> Result<Option<UpdateReady>, Failure> {
-        let Some((version, release)) = self.newest()? else {
+    fn check(&self, cancelled: &dyn Fn() -> bool) -> Result<Option<UpdateReady>, Failure> {
+        let Some((version, release)) = self.newest(cancelled)? else {
             return Ok(None);
         };
         match version.cmp_precedence(&self.current) {
@@ -274,39 +322,97 @@ impl<H: HttpClient, C: Clock> Updater<H, C> {
                 return Err(Failure::Feed("unexpected asset URL".into()));
             }
         }
-        let wrapped = self.small(&signature.browser_download_url, MAX_SIGNATURE)?;
+        let wrapped = self.small(&signature.browser_download_url, MAX_SIGNATURE, cancelled)?;
         if wrapped.len() as u64 != signature.size {
             return Err(Failure::Signature);
         }
+        check_cancelled(cancelled)?;
+        let mut response = self
+            .http
+            .get(
+                &msi.browser_download_url,
+                &format!("OpenTouchDeck/{}", self.current),
+            )?
+            .take(msi.size + 1);
+        check_cancelled(cancelled)?;
+        // TempDir removes partial staging on cancellation or any other error.
         let directory = tempfile::Builder::new()
-            .prefix("touchdeck-update-")
-            .tempdir()?;
+            .prefix(STAGING_PREFIX)
+            .tempdir_in(&self.staging_root)?;
         let path = directory.path().join(&filename);
         let signature_path = directory.path().join(format!("{filename}.sig"));
+        check_cancelled(cancelled)?;
         std::fs::write(&signature_path, &wrapped)?;
+        check_cancelled(cancelled)?;
         let mut file = File::options().write(true).create_new(true).open(&path)?;
-        let copied = io::copy(
-            &mut self
-                .http
-                .get(
-                    &msi.browser_download_url,
-                    &format!("OpenTouchDeck/{}", self.current),
-                )?
-                .take(msi.size + 1),
-            &mut file,
-        )?;
+        let mut copied = 0;
+        let mut buffer = [0; 64 * 1024];
+        loop {
+            check_cancelled(cancelled)?;
+            let count = match response.read(&mut buffer) {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                result => result?,
+            };
+            // A read can block while shutdown is requested. Never write its bytes then.
+            check_cancelled(cancelled)?;
+            if count == 0 {
+                break;
+            }
+            file.write_all(&buffer[..count])?;
+            copied += count as u64;
+        }
         if copied != msi.size {
             return Err(Failure::Signature);
         }
+        check_cancelled(cancelled)?;
         file.sync_all()?;
         drop(file);
         signature::verify(&path, &wrapped, self.public_key, &filename, &version)?;
+        check_cancelled(cancelled)?;
         Ok(Some(UpdateReady {
             directory,
             path,
             signature_path,
             version,
         }))
+    }
+}
+
+/// A real directory (not a link) named like this app's staging folders, containing only
+/// regular files named like this app's installer or its signature.
+fn is_stale_staging(path: &Path) -> bool {
+    let named = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix(STAGING_PREFIX))
+        .is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+        });
+    if !named
+        || !std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
+    {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return false;
+    };
+    entries.into_iter().all(|entry| {
+        entry.is_ok_and(|entry| {
+            let ours = entry.file_name().to_str().is_some_and(|name| {
+                name.strip_prefix("OpenTouchDeck-").is_some_and(|rest| {
+                    rest.ends_with("-windows-x64.msi") || rest.ends_with("-windows-x64.msi.sig")
+                })
+            });
+            ours && entry.file_type().is_ok_and(|kind| kind.is_file())
+        })
+    })
+}
+
+fn check_cancelled(cancelled: &dyn Fn() -> bool) -> Result<(), Failure> {
+    if cancelled() {
+        Err(Failure::Cancelled)
+    } else {
+        Ok(())
     }
 }
 

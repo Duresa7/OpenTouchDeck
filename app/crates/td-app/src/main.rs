@@ -145,13 +145,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 td_updater::SystemClock::default(),
                 semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("package version"),
             );
+            // A download still blocked in a read when an earlier run hit the shutdown limit
+            // leaves its staging folder behind. This process holds the single-instance lock,
+            // so no other run is using one now.
+            updater = match tokio::task::spawn_blocking(move || {
+                updater.remove_stale_staging();
+                updater
+            })
+            .await
+            {
+                Ok(updater) => updater,
+                Err(_) => return,
+            };
             loop {
                 if work.shutdown_requested() {
                     break;
                 }
-                let updates = work.updates().clone();
+                let poll_handle = work.clone();
                 updater = match tokio::task::spawn_blocking(move || {
-                    updates.poll(&mut updater, &td_core::app_dirs::Dirs::current());
+                    poll_handle.updates().poll(
+                        &mut updater,
+                        &td_core::app_dirs::Dirs::current(),
+                        &|| poll_handle.shutdown_requested(),
+                    );
                     updater
                 })
                 .await
@@ -219,12 +235,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             app.run(&handle, runtime.handle())
         });
+    handle.request_shutdown();
     runtime.block_on(companion.shutdown());
     #[cfg(windows)]
-    update_worker.abort();
-    #[cfg(windows)]
     drop(tray);
-    runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+    let shutdown_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    #[cfg(windows)]
+    {
+        let mut update_worker = update_worker;
+        runtime.block_on(async {
+            if tokio::time::timeout(
+                shutdown_deadline.saturating_duration_since(std::time::Instant::now()),
+                &mut update_worker,
+            )
+            .await
+            .is_err()
+            {
+                update_worker.abort();
+            }
+        });
+    }
+    // Joining the cancelled poll and stopping the runtime share the existing limit.
+    runtime
+        .shutdown_timeout(shutdown_deadline.saturating_duration_since(std::time::Instant::now()));
     Ok(shown?)
 }
 

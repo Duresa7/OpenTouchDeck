@@ -33,7 +33,8 @@ from this repository's GitHub Releases download URLs. GitHub can redirect downlo
 to its release asset hosting. These requests disclose which release and installer
 you download and use the same User-Agent. The updater verifies the MSI and its
 signed filename and version with the public key built into the app. Temporary
-downloads are removed when the update result is dropped. It refuses unsigned,
+downloads are removed when the update result is dropped, and any left by a quit
+during a download are removed the next time the app starts. It refuses unsigned,
 altered, differently signed or older updates.
 
 ## Turn checks off
