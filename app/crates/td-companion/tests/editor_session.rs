@@ -656,3 +656,173 @@ async fn pruning_keeps_assets_used_by_both_orientation_drafts() {
     assert!(td.deck(&device).icons().contains(ids[0]));
     assert!(td.deck(&device).icons().contains(ids[1]));
 }
+
+#[tokio::test]
+async fn stream_picker_lists_numeric_streams_in_order_with_preset_names_units_and_empty_fallback() {
+    let (td, s) = session().await;
+    let mut fixture = td.handle().integrations().summaries()[0].clone();
+    fixture.id = "hub".into();
+    fixture.name = "Hub".into();
+    fixture.presets = vec![preset(Some(TileRender::Graph))];
+    fixture.presets[0].action =
+        serde_json::json!({"type":"widget","source":"hub","field":"level","account":""});
+    fixture.streams = vec![
+        DataStream {
+            id: "title".into(),
+            kind: "text".into(),
+            unit: None,
+            settable: false,
+        },
+        streams()[0].clone(),
+        DataStream {
+            id: "network_send_bytes_s".into(),
+            kind: "numeric".into(),
+            unit: Some("B/s".into()),
+            settable: false,
+        },
+    ];
+    td.handle()
+        .integrations()
+        .set_summary_fixture(vec![fixture.clone()]);
+    let choices = s.numeric_streams();
+    assert_eq!(choices.len(), 2);
+    assert_eq!(
+        (
+            &choices[0].integration,
+            &choices[0].stream,
+            &choices[0].name
+        ),
+        (
+            &"hub".to_string(),
+            &"level".to_string(),
+            &"Five hour pct".to_string()
+        )
+    );
+    assert_eq!(choices[0].unit.as_deref(), Some("%"));
+    assert_eq!(choices[1].name, "Network send");
+    assert_eq!(choices[1].unit.as_deref(), Some("B/s"));
+    fixture.streams.retain(|s| s.kind != "numeric");
+    td.handle()
+        .integrations()
+        .set_summary_fixture(vec![fixture]);
+    assert!(s.numeric_streams().is_empty());
+    td.handle().integrations().set_summary_fixture(vec![]);
+    assert!(s.numeric_streams().is_empty());
+}
+#[tokio::test]
+async fn bar_lookup_requires_matching_integration_stream_and_valid_renderer_declarations() {
+    let (td, s) = session().await;
+    let mut fixture = td.handle().integrations().summaries()[0].clone();
+    fixture.id = "volume".into();
+    fixture.streams = streams();
+    let mut p = preset(Some(TileRender::Bar));
+    p.input = true;
+    fixture.presets = vec![p];
+    td.handle()
+        .integrations()
+        .set_summary_fixture(vec![fixture.clone()]);
+    let action = Action::Widget {
+        source: "volume".into(),
+        field: "level".into(),
+        account: "".into(),
+    };
+    assert!(matches!(
+        s.bar_appearance(&action),
+        Some(Appearance::Live {
+            render: TileRender::Bar,
+            input: true,
+            ..
+        })
+    ));
+    for action in [
+        Action::None,
+        Action::Widget {
+            source: "other".into(),
+            field: "level".into(),
+            account: "".into(),
+        },
+        Action::Widget {
+            source: "volume".into(),
+            field: "muted".into(),
+            account: "".into(),
+        },
+    ] {
+        assert!(s.bar_appearance(&action).is_none());
+    }
+    fixture.presets[0].streams = Some(BTreeMap::from([("value".into(), StreamType::Series)]));
+    td.handle()
+        .integrations()
+        .set_summary_fixture(vec![fixture]);
+    assert!(s.bar_appearance(&action).is_none());
+}
+
+#[tokio::test]
+async fn preset_renderer_fallback_validates_streams_source_input_and_numeric_binding() {
+    let (_td, s) = session().await;
+    let mut p = preset(Some(TileRender::Graph));
+    assert_eq!(
+        s.preset_tile(&p, "other", &streams(), true).unwrap().render,
+        None
+    );
+    let mut text_stream = streams();
+    text_stream[0].kind = "text".into();
+    assert_eq!(
+        s.preset_tile(&p, "volume", &text_stream, true)
+            .unwrap()
+            .render,
+        None
+    );
+    p.streams = Some(BTreeMap::from([("value".into(), StreamType::Series)]));
+    assert_eq!(
+        s.preset_tile(&p, "volume", &streams(), true)
+            .unwrap()
+            .streams
+            .unwrap()["value"],
+        StreamType::Number
+    );
+    p.render = Some(TileRender::Bar);
+    for declared in [
+        BTreeMap::from([("value".into(), StreamType::Series)]),
+        BTreeMap::from([
+            ("value".into(), StreamType::Number),
+            ("level".into(), StreamType::Number),
+        ]),
+    ] {
+        p.streams = Some(declared);
+        assert_eq!(
+            s.preset_tile(&p, "volume", &streams(), true)
+                .unwrap()
+                .render,
+            None
+        );
+    }
+    p.render = Some(TileRender::NowPlaying);
+    p.streams = None;
+    assert_eq!(
+        s.preset_tile(&p, "volume", &streams(), true)
+            .unwrap()
+            .render,
+        None
+    );
+    p.streams = Some(BTreeMap::from([
+        ("title".into(), StreamType::Number),
+        ("artist".into(), StreamType::Text),
+        ("cover".into(), StreamType::Image),
+        ("state".into(), StreamType::Number),
+    ]));
+    assert_eq!(
+        s.preset_tile(&p, "volume", &streams(), true)
+            .unwrap()
+            .render,
+        None
+    );
+    p.render = Some(TileRender::Graph);
+    p.streams = None;
+    p.input = true;
+    assert_eq!(
+        s.preset_tile(&p, "volume", &streams(), true)
+            .unwrap()
+            .render,
+        None
+    );
+}

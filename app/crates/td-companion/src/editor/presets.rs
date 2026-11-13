@@ -24,7 +24,7 @@ pub fn placed_appearance(
     if render == TileRender::Gif || (preset.input && render != TileRender::Bar) {
         return None;
     }
-    let declared = preset
+    let mut declared = preset
         .streams
         .clone()
         .unwrap_or_else(|| BTreeMap::from([("value".into(), StreamType::Number)]));
@@ -38,14 +38,16 @@ pub fn placed_appearance(
         ],
         TileRender::Gif => return None,
     };
-    if required
-        .iter()
-        .any(|(key, kind)| declared.get(*key) != Some(kind))
-        || declared.iter().any(|(key, kind)| {
-            !required.iter().any(|(k, t)| key == k && kind == t)
-                && !(render == TileRender::Bar && key == "muted" && *kind == StreamType::Number)
-        })
-    {
+    if required.iter().any(|(key, kind)| {
+        declared.get(*key) != Some(kind)
+            && !(render == TileRender::Graph
+                && *key == "value"
+                && declared.get(*key) == Some(&StreamType::Series))
+    }) || declared.iter().any(|(key, kind)| {
+        !required.iter().any(|(k, t)| {
+            key == k && (kind == t || (render == TileRender::Graph && *kind == StreamType::Series))
+        }) && !(render == TileRender::Bar && key == "muted" && *kind == StreamType::Number)
+    }) {
         return None;
     }
     if render == TileRender::Graph
@@ -55,6 +57,9 @@ pub fn placed_appearance(
                 .any(|s| s.id == *field && s.kind == "numeric"))
     {
         return None;
+    }
+    if render == TileRender::Graph {
+        declared.insert("value".into(), StreamType::Number);
     }
     Some(Appearance::Live {
         render,

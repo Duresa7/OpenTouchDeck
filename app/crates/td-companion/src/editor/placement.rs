@@ -234,7 +234,7 @@ fn plain_tile(id: String, label: String, action: Action, row: u8, col: u8) -> Ti
         input: false,
     }
 }
-fn preset_label(name: &str) -> String {
+pub(super) fn preset_label(name: &str) -> String {
     let name = name.trim();
     let mut chars = name.chars();
     let sentence = chars

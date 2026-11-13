@@ -1,3 +1,6 @@
+#[path = "streams.rs"]
+mod streams;
+pub use streams::StreamChoice;
 #[path = "placement.rs"]
 mod placement;
 pub use placement::{AddKind, AddTarget};
