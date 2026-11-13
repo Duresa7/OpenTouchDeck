@@ -474,6 +474,12 @@ function Hide-OtherWindows {
 # Starts td-app with its own app data folder. Its stderr goes to $Log.
 function Start-App([string]$Exe, [string[]]$Arguments, [string]$DataDir, [string]$Log) {
     New-Item -ItemType Directory -Force -Path $DataDir, (Split-Path -Parent $Log) | Out-Null
+    # A first run opens where Windows cascades it, which hangs off a small screen. Start as a
+    # user who had already put the window at the top left: the app restores this placement.
+    $prefs = Join-Path $DataDir 'window.json'
+    if (-not (Test-Path -LiteralPath $prefs)) {
+        Write-Utf8 $prefs '{"placement":{"x":20,"y":20,"width":960.0,"height":640.0,"maximized":false},"close_notice_shown":false}'
+    }
     $env:TOUCHDECK_APP_DATA_DIR = $DataDir
     $process = Start-Process -FilePath $Exe -ArgumentList $Arguments -RedirectStandardError $Log -PassThru
     # Keeps the handle open, so the exit code can be read after the process ends.
@@ -492,10 +498,6 @@ function Stop-App($Process) {
 function Wait-AppWindow($Process, [double]$Seconds = 30) {
     $hwnd = Wait-Until { $found = Get-AppWindow $Process.Id; if ($null -ne $found -and (Test-Shown $found)) { $found } } $Seconds
     if ($null -eq $hwnd) { throw 'The app window did not appear.' }
-    # Windows places a new window by cascade, which hangs off a small screen. Put all of it on
-    # screen: SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE.
-    [void][TouchDeckEvidence.Native]::SetWindowPos($hwnd, [IntPtr]::Zero, 20, 20, 0, 0, 0x15)
-    Start-Sleep -Milliseconds 500
     $hwnd
 }
 

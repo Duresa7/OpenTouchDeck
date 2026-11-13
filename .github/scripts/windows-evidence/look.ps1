@@ -189,6 +189,10 @@ try {
     $facts.mica = "td-app reported: $(if ($said) { ($said -replace '^.*\(mock\): Mica: ', '') } else { 'nothing' }). " +
         "DWM reports DWMWA_SYSTEMBACKDROP_TYPE = $backdrop (2 is Mica; HRESULT $('0x{0:x8}' -f $read)). " +
         "Navigation pane pixel in light: $($facts.captures['light-home'].pixels.navigationPaneLow)."
+    # #f3f3f3 is the flat colour DWM draws in place of light Mica when it cannot blend the wallpaper.
+    if ($backdrop -eq 2 -and $facts.captures['light-home'].pixels.navigationPaneLow -eq '#f3f3f3') {
+        $facts.mica += ' DWM accepted Mica and drew its flat fallback colour, with no wallpaper tint: this machine has no GPU, so it cannot show the Mica look.'
+    }
 
     # ---- dark -----------------------------------------------------------------------------------
     Set-ColorMode $false

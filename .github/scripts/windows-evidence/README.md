@@ -40,10 +40,21 @@ Each part also runs alone with the same `-Exe` and `-Out`.
 - **The tray.** A notification icon gets its events as a window message, so the scripts post
   the message the Shell would send (`WM_APP+1` with `NIN_SELECT`, `NIN_KEYSELECT` or
   `WM_CONTEXTMENU`) to the hidden `OpenTouchDeckTray` window. The popup menu that follows is the
-  real one: its items are read through UI Automation and chosen with a mouse click.
+  real one: its items are read through the accessibility interface and chosen with a mouse
+  click.
+- **The window's place.** Each run starts with a `window.json` that puts the window at the top
+  left, as if the user had left it there, because a first run's default place hangs off the
+  runner's 1024x768 screen.
 
 ## What a GitHub-hosted runner can and cannot prove
 
-`windows-latest` is Windows Server 2025, not Windows 11. `environment.json` and the job summary
-record what each run found. See the comment at the top of
-[`windows-evidence.yml`](../../workflows/windows-evidence.yml).
+`windows-latest` is Windows Server 2025, not Windows 11. The comment at the top of
+[`windows-evidence.yml`](../../workflows/windows-evidence.yml) lists what that allows. Each run
+records what it found in `environment.json` and the job summary. In short:
+
+- The tray, the themes, the text size, Segoe UI Variable and the accessibility tree are real.
+- Mica is requested and accepted, but the runner has no GPU, so DWM draws a flat colour.
+- The popup menu's items are read through MSAA (`IAccessible`). UI Automation shows the menu
+  window as an empty pane on the runner; `uia/tray-menu.txt` keeps what it showed.
+- td-app's mock builds write a line to stderr about Mica and about each settings change they
+  hear. The summary quotes them.

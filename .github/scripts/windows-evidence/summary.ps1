@@ -135,6 +135,8 @@ if ($look) {
     }
     $lines.Add('')
     $lines.Add("App restarts needed to show a setting: $($look.restarts).")
+    $lines.Add('')
+    $lines.Add('A change marked "no" was made the way the table says, not through the Settings app. It shows that this method did not reach the running window; it does not show what Settings itself does. The look at startup is in the screenshots either way.')
 }
 
 if ($tray) {
