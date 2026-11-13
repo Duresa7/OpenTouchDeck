@@ -17,6 +17,7 @@ Read these rules before implementing or reviewing a change. Apply each relevant 
 
 - Compare secret bytes and MACs with a constant-time primitive, including truncated MACs. Ordinary equality may reveal the matching prefix through timing. Example: [`subtle::ConstantTimeEq` in net-v2](app/crates/td-link/src/net/wire.rs).
 - Keep key material out of logs, error messages, UI views and `Debug` output. Implement redacted formatting for secret-bearing types rather than deriving `Debug`. Diagnostics must not become a second credential store. Example: [`Credential`'s custom `Debug`](app/crates/td-link/src/net/mod.rs).
+- A claim that the Device sends no stable identifier covers every emitter on that radio or transport, including discovery, the keyboard role, the GAP Device Name and mDNS. The PR lists each emitter and its address type.
 
 ## Module boundaries and errors
 
@@ -30,5 +31,6 @@ Read these rules before implementing or reviewing a change. Apply each relevant 
 - Include a regression test with every bug fix. Demonstrate that it fails with the fix removed and passes with the fix applied. A passing test alone may never have exercised the defect. Example: [#386's failure proofs](https://github.com/Duresa7/OpenTouchDeck/pull/386).
 - Put private-unit tests in a `#[cfg(test)]` module beside the implementation or a sibling `tests.rs`; put public-contract tests in the crate's `tests/` directory. Keep mock hooks behind their test feature or test configuration. This tests the intended interface without shipping test controls. Examples: [updater unit tests](app/crates/td-updater/src/tests.rs), [Companion contract tests](app/crates/td-companion/tests/companion.rs) and [test-hook exports](app/crates/td-companion/src/lib.rs).
 - Coordinate concurrency tests with channels or checkpoints that hold the contested operation, then assert the observable result and cleanup. Timing sleeps alone do not prove the race occurred. Example: [#389's staged-read regression](https://github.com/Duresa7/OpenTouchDeck/pull/389).
+- Test a timeout, deadline or shutdown budget with an operation that never returns; assert the bound and the cleanup.
 - Before a merge, inspect every check on the latest head and wait for all scheduled checks to finish successfully, including non-required checks. Account for intentional skips and neutral reporting checks; treat failures, cancellation and pending work as unresolved. The required gate can omit other workflows. Example: [#386's merge history](docs/wiki/review-and-merge.md).
 - Triage review findings against the intended behaviour. Fix blockers in the PR and log non-blocking improvements as follow-up issues with evidence and a reason for deferral. This preserves useful findings without expanding every patch. Examples: [#376](https://github.com/Duresa7/OpenTouchDeck/issues/376) and [#401](https://github.com/Duresa7/OpenTouchDeck/issues/401).
