@@ -56,6 +56,37 @@ pub(crate) fn valid(folder: &str) -> bool {
     path.is_absolute() && path.is_dir()
 }
 
+/// Asks the person for a picture folder with the system's folder dialog. Blocking: run it off
+/// the UI thread. `Ok(None)` when they cancel.
+pub fn pick() -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    let output = {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-STA",
+                "-Command",
+                r#"Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose a folder of pictures'; $d.UseDescriptionForTitle = $true; if ($d.ShowDialog() -eq 'OK') { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Write($d.SelectedPath) }; $d.Dispose()"#,
+            ])
+            // CREATE_NO_WINDOW: no console flashes up behind the dialog.
+            .creation_flags(0x08000000)
+            .output()
+    };
+    #[cfg(not(windows))]
+    let output = std::process::Command::new("zenity")
+        .args([
+            "--file-selection",
+            "--directory",
+            "--title=Choose a folder of pictures",
+        ])
+        .output();
+    let output = output.map_err(|_| "Could not open the folder dialog.".to_string())?;
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((output.status.success() && !path.is_empty()).then_some(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

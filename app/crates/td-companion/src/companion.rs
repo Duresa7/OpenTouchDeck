@@ -98,6 +98,7 @@ pub struct Handle {
     pub(crate) clock: Clock,
     pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
     stopped: Arc<std::sync::atomic::AtomicBool>,
+    skips: crate::setup::Skips,
     pub(crate) mock: bool,
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) checkpoints: crate::checkpoints::Checkpoints,
@@ -145,12 +146,14 @@ impl Handle {
             Arc::new(move |id| turned_on.enabled(id)),
         );
         let jobs = crate::jobs::Jobs::new(events.clone(), clock.clone());
+        let skips = crate::setup::Skips::load(data);
         let firmware = crate::features::firmware::Firmware::new(
             mock,
             devices.clone(),
             links.clone(),
             jobs.clone(),
             clock.clone(),
+            skips.clone(),
         );
         let photos = crate::photos::PhotoFrames::new(
             Some(data.join("photo-frame.json")),
@@ -204,6 +207,7 @@ impl Handle {
             clock,
             shutdown: tokio::sync::watch::channel(false).0,
             stopped: Default::default(),
+            skips,
             mock,
             #[cfg(any(test, feature = "test-hooks"))]
             checkpoints,
@@ -251,6 +255,18 @@ impl Handle {
     }
     pub fn jobs(&self) -> &crate::jobs::Jobs {
         &self.jobs
+    }
+    /// The setups the person skipped on this PC.
+    pub fn setup_skips(&self) -> &crate::setup::Skips {
+        &self.skips
+    }
+    /// Whether Windows starts the app at sign-in. Blocking: it reads the registry.
+    pub fn start_at_sign_in(&self) -> Result<bool, crate::api::CommonError> {
+        self.desktop.startup.get()
+    }
+    /// Turns Start at sign-in on or off. Blocking: it writes the registry.
+    pub fn set_start_at_sign_in(&self, on: bool) -> Result<(), crate::api::CommonError> {
+        self.desktop.startup.set(on)
     }
     pub fn request_shutdown(&self) {
         self.shutdown.send_replace(true);

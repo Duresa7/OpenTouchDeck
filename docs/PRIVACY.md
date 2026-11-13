@@ -12,7 +12,8 @@ Automatic update checks default to on. The Rust updater checks on its first enab
 poll, then at most once every 24 hours while the Windows app runs. Linux never checks. Failed checks count
 toward that interval. Restarting the app resets the interval. The Windows host starts the updater on a blocking worker after startup and reloads
 the preference before every poll. Checks download and verify available updates;
-installation requires an explicit install operation. No update UI is included yet.
+installation requires an explicit install operation. No update UI is included yet;
+Settings > This PC > Check for updates turns the checks on and off.
 
 An enabled check sends HTTPS GET requests to
 `https://api.github.com/repos/Duresa7/OpenTouchDeck/releases?per_page=100&page=1`.
@@ -39,8 +40,10 @@ altered, differently signed or older updates.
 ## Turn checks off
 
 The native preference is `automatic_update_checks` in `app-settings.json` in the
-app's configuration folder. Until the native Settings screen is connected, close
-the app and create or edit that file, preserving any other fields:
+app's configuration folder. Turn off Settings > This PC > Check for updates; the
+switch writes that field and keeps any other fields in the file. If the file is
+damaged, the switch is off and says so, and nothing rewrites the file. You can also
+close the app and create or edit that file, preserving any other fields:
 
 ```json
 { "automatic_update_checks": false }

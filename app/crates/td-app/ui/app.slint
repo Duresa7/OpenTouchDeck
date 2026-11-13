@@ -1,13 +1,16 @@
 // The Open TouchDeck window: a navigation pane, the current page, and the one-time close notice.
+import { Palette } from "std-widgets.slint";
 import { Theme, ContrastColors } from "theme.slint";
 import { NavItem } from "controls.slint";
 import { HomePage, DeviceRow, Tone } from "home.slint";
 import { AboutPage, Component } from "about.slint";
+import { SetupPage, BoardCard, SetupLater, Wizard } from "setup.slint";
+import { SettingsPage, PcSettings, DeviceEntry, DevicePage, PairedApp } from "settings.slint";
 import { CloseNotice } from "close-notice.slint";
 
-export { Theme, ContrastColors, DeviceRow, Tone, Component }
+export { Theme, ContrastColors, DeviceRow, Tone, Component, BoardCard, SetupLater, Wizard, PcSettings, DeviceEntry, DevicePage, PairedApp }
 
-export enum Page { home, about }
+export enum Page { home, setup, settings, about }
 
 export component AppWindow inherits Window {
     title: "Open TouchDeck";
@@ -25,12 +28,66 @@ export component AppWindow inherits Window {
     in property <string> version;
     in property <[Component]> components;
     in-out property <bool> close-notice-open;
+    // The app's own light or dark choice; `unknown` follows the system.
+    in property <ColorScheme> appearance: ColorScheme.unknown;
+
+    // Setup.
+    in property <[BoardCard]> boards;
+    in property <[string]> ignored-boards;
+    in property <bool> wizard-open;
+    in property <Wizard> wizard;
+    in property <[SetupLater]> setup-later;
+    // How many things wait in Setup, shown beside its name.
+    in property <int> setup-count;
+    callback install-board(string);
+    callback ignore-board(string);
+    callback restore-board(string);
+    callback cancel-board(string);
+    callback wizard-name-edited(string);
+    callback wizard-next();
+    callback wizard-back();
+    callback wizard-close();
+    callback wizard-orientation(string);
+    callback wizard-update();
+    callback wizard-skip();
+    callback start-setup(string);
+
+    // Settings.
+    in property <PcSettings> pc;
+    in property <[DeviceEntry]> settings-devices;
+    in-out property <string> settings-device;
+    in property <DevicePage> device-page;
+    in property <[PairedApp]> paired-apps;
+    in property <[string]> after-choices;
+    in-out property <bool> confirming-forget-all;
+    callback set-start(bool);
+    callback set-updates(bool);
+    callback set-appearance(string);
+    callback open-device(string);
+    callback rename-device(string);
+    callback choose-orientation(string);
+    callback cancel-orientation();
+    callback confirm-orientation();
+    callback set-photo(bool);
+    callback set-after(int);
+    callback choose-folder();
+    callback forget-app(string);
+    callback forget-all();
+    callback update-firmware();
+    callback restart-device();
 
     callback open-url(string);
     callback keep-running();
     callback quit();
     // The light or dark scheme changed, so Windows can draw Mica to match.
     callback dark-changed(bool);
+
+    changed appearance => {
+        Palette.color-scheme = self.appearance;
+    }
+    init => {
+        Palette.color-scheme = self.appearance;
+    }
 
     property <bool> dark: Theme.dark;
     changed dark => {
@@ -57,6 +114,23 @@ export component AppWindow inherits Window {
                 }
 
                 NavItem {
+                    text: root.setup-count > 0 ? "Setup (" + root.setup-count + ")" : "Setup";
+                    label: "Setup";
+                    selected: root.page == Page.setup;
+                    activated => {
+                        root.page = Page.setup;
+                    }
+                }
+
+                NavItem {
+                    text: "Settings";
+                    selected: root.page == Page.settings;
+                    activated => {
+                        root.page = Page.settings;
+                    }
+                }
+
+                NavItem {
                     text: "About";
                     selected: root.page == Page.about;
                     activated => {
@@ -76,6 +150,109 @@ export component AppWindow inherits Window {
 
             if root.page == Page.home: HomePage {
                 devices: root.devices;
+            }
+            if root.page == Page.setup: SetupPage {
+                boards: root.boards;
+                ignored: root.ignored-boards;
+                wizard-open: root.wizard-open;
+                wizard: root.wizard;
+                later: root.setup-later;
+                install(id) => {
+                    root.install-board(id);
+                }
+                ignore(id) => {
+                    root.ignore-board(id);
+                }
+                restore(id) => {
+                    root.restore-board(id);
+                }
+                cancel-board(id) => {
+                    root.cancel-board(id);
+                }
+                name-edited(text) => {
+                    root.wizard-name-edited(text);
+                }
+                next => {
+                    root.wizard-next();
+                }
+                back => {
+                    root.wizard-back();
+                }
+                close => {
+                    root.wizard-close();
+                }
+                choose-orientation(value) => {
+                    root.wizard-orientation(value);
+                }
+                update => {
+                    root.wizard-update();
+                }
+                skip => {
+                    root.wizard-skip();
+                }
+                start-setup(id) => {
+                    root.start-setup(id);
+                }
+            }
+            if root.page == Page.settings: SettingsPage {
+                pc: root.pc;
+                devices: root.settings-devices;
+                device-id: root.settings-device;
+                device: root.device-page;
+                paired: root.paired-apps;
+                after-choices: root.after-choices;
+                confirming-forget-all <=> root.confirming-forget-all;
+                set-start(on) => {
+                    root.set-start(on);
+                }
+                set-updates(on) => {
+                    root.set-updates(on);
+                }
+                set-appearance(value) => {
+                    root.set-appearance(value);
+                }
+                open-device(id) => {
+                    root.confirming-forget-all = false;
+                    root.settings-device = id;
+                    root.open-device(id);
+                }
+                close-device => {
+                    root.settings-device = "";
+                    root.open-device("");
+                }
+                rename(text) => {
+                    root.rename-device(text);
+                }
+                choose-orientation(value) => {
+                    root.choose-orientation(value);
+                }
+                cancel-orientation => {
+                    root.cancel-orientation();
+                }
+                confirm-orientation => {
+                    root.confirm-orientation();
+                }
+                set-photo(on) => {
+                    root.set-photo(on);
+                }
+                set-after(index) => {
+                    root.set-after(index);
+                }
+                choose-folder => {
+                    root.choose-folder();
+                }
+                forget(app) => {
+                    root.forget-app(app);
+                }
+                forget-all => {
+                    root.forget-all();
+                }
+                update-firmware => {
+                    root.update-firmware();
+                }
+                restart => {
+                    root.restart-device();
+                }
             }
             if root.page == Page.about: AboutPage {
                 version: root.version;

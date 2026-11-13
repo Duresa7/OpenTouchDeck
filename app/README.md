@@ -46,13 +46,29 @@ Linux. The [packaging guide](../docs/packaging.md) describes the 2.0 MSI and its
 `crates/td-app` is the Open TouchDeck 2.0 program from
 [ADR 0011](../docs/adr/0011-native-windows-app-in-rust-and-slint.md): the Companion and a
 Slint window in one process. It is not released yet; the 1.x app on `release/1.x` is what people
-install until the cutover. It has Home and About so far. Linux builds need `libfontconfig-dev` as well.
+install until the cutover. It has Home, Setup, Settings and About so far. Linux builds need `libfontconfig-dev` as well.
 
 ```sh
 cargo run -p td-app                                    # with your real Devices
 cargo run -p td-app --features mock -- --mock-devices 2 # with mock Devices
+cargo run -p td-app --features mock -- --mock fresh,device,radio,board
 cargo test -p td-app                                   # includes headless UI tests
 ```
+
+`--mock` takes a list of mock kinds: `device`, `radio` (the radio build, with two paired apps),
+`v1` (Firmware too old to keep a name), `board` (a New
+board) and `fresh` (a New board whose Firmware install starts at once, so setup opens). Mock
+builds accept every Firmware install on their own. For screenshots, `TOUCHDECK_MOCK_PAGE` opens
+`setup`, `settings` or `device:<id>` first, `TOUCHDECK_TEXT_SCALE` sets the text size, so the
+desktop's own settings stay as they are, and `TOUCHDECK_SNAPSHOT_DIR` saves the window as drawn
+to `<dir>/<name>` whenever `<dir>/request` holds a file name. Settings > Appearance chooses light
+or dark.
+
+Setup and Settings follow the Companion through typed sessions in `td-companion`
+(`devices::SettingsSession`, `devices::PairingsSession`, `setup::SetupSession`,
+`features::firmware::FirmwareTask`); the window only turns their views into properties. Skipped
+setups are kept in `setup-skipped.json` in the app data folder, and the Appearance choice in
+`window.json`.
 
 `TOUCHDECK_APP_DATA_DIR` moves the app data folder, as it does for the Companion; the window
 keeps its place and the close-notice flag in `window.json` there. `SLINT_BACKEND=winit-software`
