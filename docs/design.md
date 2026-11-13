@@ -171,6 +171,8 @@ A few places change where the ring is drawn. All of them keep the token's color 
 
 ## Window frame
 
+> Note added 2026-11-13: this section describes the 1.x Electron window. The 2.0 window is drawn by `td-app` in Slint and has no browser tab; on Windows 11 22H2 and later it uses Mica through DWM (`app/crates/td-app/src/look/win.rs`, [the Windows 11 guide](research/windows-11-native.md)). Rewrite this section when the 2.0 frame is final.
+
 The Electron window draws the desk mat to the top edge on Windows and Linux,
 using a hidden title bar and Window Controls Overlay. The system owns the caption
 buttons and their hover behaviour (including Windows Snap layouts). The window

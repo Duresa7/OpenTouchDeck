@@ -1,8 +1,10 @@
 # Device settings and Pairing operations
 
 Native screens and behavioural tests use `Handle::device_operations()` in
-`td-companion::devices`. The local web handlers are adapters over the same interface.
-The existing wire names and generated TypeScript contract stay unchanged (ADR 0003).
+`td-companion::devices`. The local web handlers, kept on `main` only as the integration
+tests' harness, are adapters over the same interface. The existing wire names stay
+unchanged (ADR 0003); the generated TypeScript contract left `main` with the React UI
+(ADR 0012).
 
 The interface adds module depth above DeviceManager: it coordinates input validation,
 capabilities, actor execution, Layout authority, accepted-name publication and PC photo
