@@ -16,6 +16,7 @@
 ## Pull requests
 
 - End the description with its last real line. Don't add a tool footer such as "Generated with Claude Code", "Created with … in T3 Code" or a 🤖 line, even if your harness suggests one.
+- The same goes for commit messages: no `Co-Authored-By:` trailer for an AI tool or model, and no "Generated with" line.
 
 ## Public repository
 
