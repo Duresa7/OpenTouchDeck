@@ -304,8 +304,12 @@ async fn run(
                 if state.sending.is_some() =>
             {
                 state.sending = None;
-                let result = session.finish_send(receipt).map(|()| Done::Changed);
-                state.record(&session, CommandKind::Send, result);
+                // A failed transfer gets the Device-facing copy; refusals before it don't.
+                let result = session.finish_send(receipt).map(|()| Done::Changed).map_err(|error| {
+                    let notice = session.send_problem(&error);
+                    Failure::new(error, notice)
+                });
+                state.record(CommandKind::Send, result);
             }
             change = session.changed(), if listening => {
                 // The Companion is stopping; keep serving commands until the handles go.
@@ -315,7 +319,10 @@ async fn run(
             }
         }
     }
-    // `session` drops here, after the queue closed: its `Drop` cancels GIF work.
+    // The Session's `Drop` cancels GIF work. Drop it before the view's sender, so a closed
+    // view means that cleanup already happened.
+    drop(session);
+    drop(state);
 }
 impl Loop {
     async fn apply(&mut self, session: &mut Session, command: Command) {
@@ -379,7 +386,7 @@ impl Loop {
             Command::Export => session.export().map(Done::Export).map_err(Into::into),
             Command::Load => session.load().await.map(|()| Done::Changed),
         };
-        self.record(session, kind, result);
+        self.record(kind, result.map_err(Failure::plain));
     }
     /// The worker, not the screen, reads what the Device supports.
     fn begin_send(&self, session: &mut Session) -> Result<PendingSend, EditorError> {
@@ -391,20 +398,8 @@ impl Loop {
             sinks: sinks.as_deref(),
         })
     }
-    fn record(
-        &mut self,
-        session: &Session,
-        command: CommandKind,
-        result: Result<Done, SessionError>,
-    ) {
+    fn record(&mut self, command: CommandKind, result: Result<Done, Failure>) {
         self.outcomes += 1;
-        let result = result.map_err(|error| match command {
-            CommandKind::Send => {
-                let notice = session.send_problem(&error);
-                Failure::new(error, notice)
-            }
-            _ => Failure::plain(error),
-        });
         self.outcome = Some(Outcome {
             number: self.outcomes,
             command,
