@@ -184,6 +184,15 @@ cadence nor the payloads say how many Pairings there are. No slot number is
 sent. Pairing mode carries no name and no nonce; its padding is fresh random
 bytes at each rotation. `paired` is at most 4.
 
+All nonces, fillers and pairing padding MUST come from a cryptographic RNG
+with its entropy source ready. A timer, counter or ordinary PRNG is not a
+substitute. Clear the full temporary MAC after copying the truncated hint.
+
+Outside pairing mode the discovery advertising data MUST contain only Flags
+and the net-v2 service UUID. The scan response MUST contain only the service
+data above, including its UUID and AD header. No local name, manufacturer
+data or other fields may occupy the remaining advertising space.
+
 Two rules belong to the radio code that drives this builder:
 
 * Each rotation replaces the scan response and the Device's resolvable or
@@ -194,13 +203,32 @@ Two rules belong to the radio code that drives this builder:
 
 The Bluetooth keyboard role advertises separately, under its own rules; it
 doesn't add its name or any other stable value to these advertisements.
-Its own advertising address is still public; see
-[What stays visible](#discovery-privacy) below.
+Its address is an RPA in every advertising phase, including pairing, fast
+reconnect and indefinite slow reconnect. NimBLE retains the existing identity
+and local IRK, distributes the IRK during bonding and rotates the RPA every
+900 seconds. Existing keyboard hosts retain their bonds and can resolve that
+RPA; no identity or key migration is performed. Address selection failure
+prevents advertising, with no application fallback to a public address.
+Keyboard advertising contains Flags, the HID UUID and the generic keyboard
+appearance; the scan response is empty outside its pairing window. Only that
+window may carry the chosen Device name. GAP Device Name (0x2A00) is always
+`Open TouchDeck`, including on an unauthenticated connection. The PnP ID is
+common to a Firmware version, not a per-Device serial number.
+
+When #278 combines discovery with the keyboard role, it MUST coordinate
+address and payload rotation across both roles, including pairing-window
+transitions. The keyboard alone has no private discovery payload to correlate.
 
 **Why 15 minutes on BLE too.** One period for both Carriers keeps one rotation
 rule in the Firmware, and the linkable window is the same whichever radio an
 observer listens to. A shorter period would buy little: a person who sits near
-the Device for longer than a period can see it anyway.
+the Device for longer than a period can see it anyway. We retain the fixed
+900000 ms uptime boundaries and 1000 ms slot boundaries rather than adding
+jitter or a random slot phase in this change. Their phase can fingerprint
+uptime and correlate rotations, especially across radios; this scheme removes
+stable per-Device identifiers, not traffic-analysis correlation. Jitter would
+reduce that signal but requires coordinated timers in the future #278 radio
+integration and is not a privacy guarantee of this version.
 
 **Why a 6-byte nonce and a 6-byte hint.** They are what fits beside the
 marker, and they keep BLE discovery on legacy advertising, which every
@@ -222,10 +250,24 @@ can replay one. The session still proves the LTK and pins `device_id`.
 every slot, and handles changed service data even from an address it has
 already seen. For each payload it computes the BLE hint for each of its
 Pairings with that payload's nonce and compares it with the payload's hint in
-constant time, checking every Pairing, and it merges matches by Pairing. A
+constant time, checking every Pairing, and it merges matches by (Pairing,
+observed address), retaining competing candidates instead of letting the first
+or last advertisement win. A
 matching Device answered at that address for now; the Companion never pins a
 BLE address. A pairing-mode payload is a Device the Companion may list for
-pairing. A payload with any other length or marker, or with `paired` above 4,
+pairing. For an existing Pairing, it also matches the payload's `device_id`
+against the stored pinned Device id, so opening a window does not hide that
+Device from its Companion. Neither an id nor a hint authenticates a candidate.
+
+A replay at another address must not replace the last working endpoint. Try
+each candidate with a bounded session timeout; after authentication failure,
+timeout, or two consecutive `busy` replies, abandon that trial and immediately
+try the last working address. A later discovery may propose a fresh trial.
+Only a successful LTK-authenticated session with the pinned `device_id` may
+replace the last working endpoint. #278 owns these connection attempts; the
+pure matcher returns candidates and performs no I/O.
+
+A payload with any other length or marker, or with `paired` above 4,
 is dropped. In particular, the earlier draft's `proto || device_id || paired`
 payload is never read, so neither side falls back to a stable id outside
 pairing mode.
@@ -257,17 +299,31 @@ every frame, whatever mDNS says. Hiding it needs a random station address,
 which this document doesn't yet require. The TCP port, the service type and
 the fact that a TouchDeck is present stay visible too.
 
-The Bluetooth keyboard role's address is visible on BLE in the same way. While
-no bonded host is connected, the keyboard role advertises with no time limit
-from the Device's public Bluetooth address, which the ESP32-S3 derives from
-the factory MAC (`device_id` + 2). Anyone in radio range can follow the Device
-by that address, whatever the net-v2 discovery advertisements carry, so BLE
-does not yet meet the rule that nothing stable is advertised outside pairing
-mode. The address is still public because the keyboard role was built and
-bonded with its hosts before this rule existed. Moving it to a resolvable
-private address changes how the Device bonds with its hosts, so that change
-is tracked separately in
-[#401](https://github.com/Duresa7/OpenTouchDeck/issues/401).
+**Emitters**
+
+| Emitter / production call site | Address type | Outside pairing mode | Inside pairing mode |
+|---|---|---|---|
+| Keyboard advertising, `firmware/components/td_ble/td_ble_nimble.c:port_adv_start` | RPA, 900-second rotation | Flags, HID UUID, generic keyboard appearance | Same fields; general discoverable flag |
+| Keyboard scheduling, `firmware/components/td_ble/td_ble_core.c:kick` | Same RPA via adapter | Fast then indefinite slow reconnect, bonded-host filter | Timed open window |
+| Keyboard scan response, `td_ble_nimble.c:port_adv_start` | Same advertising RPA | Empty | Chosen Device name |
+| GAP Device Name (0x2A00), `td_ble_nimble.c:port_stack_start` | Connection established through RPA | Generic `Open TouchDeck`, readable | Same generic name |
+| Device Information PnP ID, `td_ble_hid.c:td_ble_pnp_id` | Connection established through RPA | Common vendor/product/version, no serial | Same |
+| HID / Battery / GATT services, `td_ble_nimble.c:build_services` | Connection established through RPA | Common report map, battery constant, handles and Service Changed; HID requires authenticated encryption | Same access rules |
+| SMP identity distribution, `td_ble_nimble.c:port_stack_start` | Connection established through RPA | Existing bonds reconnect using stored keys; no new pairing | Identity address and IRK distributed inside encrypted authenticated bonding |
+| net-v2 discovery advertiser (#278, not implemented) | RPA or NRPA coordinated with payload rotation | Only Flags and net-v2 UUID | Pairing discovery; no additional per-Device advertising fields |
+| net-v2 scan response builder, `td_netlink_advert.c:td_netlink_ble_advert_build` (no radio caller yet) | Future advertiser's RPA or NRPA | Only UUID service data: nonce and hint/filler | Only UUID service data: Device id, Pairing count, random padding |
+
+The CI BLE address guard inventories production advertising-start calls against
+this table and rejects public-address selection. Its pairing-only exception
+list is empty. It is a lexical tripwire, not a proof of SDK behavior or a
+replacement for reviewing new APIs, aliases, payload builders and radio traces.
+
+BLE exposes the generic service and keyboard appearance, packet timing and
+an address within its RPA lifetime. A previously bonded keyboard host can
+resolve the RPA using its IRK; privacy does not hide the Device from that host.
+An uninterrupted connection and nearby continuous observation can still link
+activity across rotations. No public identity address or per-Device plaintext
+identifier is intentionally advertised outside pairing mode.
 
 ## Device identity
 
