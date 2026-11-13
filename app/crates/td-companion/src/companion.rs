@@ -63,6 +63,7 @@ impl Config {
 /// A typed view of the state sent to every new UI.
 #[derive(Clone, serde::Serialize)]
 pub struct Snapshot {
+    pub update: crate::updates::Status,
     pub devices: Vec<crate::devices::DeviceSummary>,
     pub new_boards: Vec<crate::devices::NewBoard>,
     pub integrations: Vec<crate::integrations::IntegrationSummary>,
@@ -76,6 +77,7 @@ pub struct Handle {
     editor_root: PathBuf,
     pub(crate) editor_gif_sources:
         Arc<parking_lot::Mutex<std::collections::BTreeMap<String, crate::editor::GifSource>>>,
+    updates: crate::updates::Updates,
     pub(crate) actions: crate::actions::Actions,
     pub(crate) integrations: crate::integrations::Service,
     pub(crate) desktop: Arc<crate::tray::Desktop>,
@@ -167,6 +169,7 @@ impl Handle {
         Self {
             editor_root: data.to_path_buf(),
             editor_gif_sources: Default::default(),
+            updates: Default::default(),
             actions,
             integrations,
             live,
@@ -208,12 +211,16 @@ impl Handle {
     }
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
+            update: self.updates.snapshot(),
             devices: self.devices.summaries(),
             new_boards: self.devices.new_boards(),
             integrations: self.integrations.summaries(),
             jobs: self.jobs.list(),
             approvals: self.actions.pending(),
         }
+    }
+    pub fn updates(&self) -> &crate::updates::Updates {
+        &self.updates
     }
     pub fn observe(&self) -> tokio::sync::broadcast::Receiver<Change> {
         self.events.subscribe()

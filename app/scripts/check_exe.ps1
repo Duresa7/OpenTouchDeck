@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-Reads the version resource and the Windows subsystem of a built td-companion.exe, prints them as JSON, and fails
-when they are not what the build must carry.
+Reads the version resource and the Windows subsystem of a built program (td-app.exe or td-companion.exe), prints
+them as JSON, and fails when they are not what the build must carry. The resource must name the file it is in.
 
 .DESCRIPTION
 build.rs writes the version resource and main.rs picks the subsystem: GUI for a release build, console for a
@@ -14,7 +14,7 @@ pwsh app/scripts/check_exe.ps1 -Path app/target/release/td-companion.exe -Subsys
 param(
     [Parameter(Mandatory)][string]$Path,
     [Parameter(Mandatory)][ValidateSet('gui', 'console')][string]$Subsystem,
-    # The Cargo version of td-companion. Read from its Cargo.toml when omitted.
+    # The Cargo version of the workspace crates. Read from td-companion's Cargo.toml when omitted.
     [string]$Version
 )
 $ErrorActionPreference = 'Stop'
@@ -64,8 +64,8 @@ $expected = [ordered]@{
     ProductName          = 'Open TouchDeck'
     FileDescription      = 'Open TouchDeck'
     CompanyName          = 'Duresa Kadi'
-    OriginalFilename     = 'td-companion.exe'
-    InternalName         = 'td-companion'
+    OriginalFilename     = $facts.file
+    InternalName         = [IO.Path]::GetFileNameWithoutExtension($facts.file)
     LegalCopyright       = 'Copyright Duresa Kadi'
     ProductVersion       = $Version
     FileVersion          = $Version
