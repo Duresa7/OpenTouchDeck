@@ -23,6 +23,8 @@ while IFS= read -r -d '' path; do
   case "$path" in
     # The Windows evidence scripts run only in windows-evidence.yml, after a merge or by hand.
     .github/scripts/windows-evidence/*) ;;
+    # The bridge upgrade check's scripts run only in bridge-upgrade.yml, which has its own pull request trigger.
+    .github/scripts/bridge-upgrade/*) ;;
     .github/workflows/pr.yml|.github/scripts/*) rust=true; scripts=true; firmware=true ;;
   esac
   case "$path" in

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A per-user MSI that always fails, for the bridge upgrade check's rollback scenario. It puts td-app.exe in the
+  2.0 install folder, then a deferred action fails, so Windows Installer rolls back and exits with 1603, as a real
+  failed install would. Never shipped.
+
+  Build variables: Payload, the file to install as td-app.exe.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Open TouchDeck bridge check (always fails)" Manufacturer="Open TouchDeck CI" Version="2.0.0"
+           UpgradeCode="5C0B3B76-2F4B-4B0E-9E55-0E61C2B1A7D3" Scope="perUser" Language="1033">
+    <MediaTemplate EmbedCab="yes" />
+
+    <CustomAction Id="FailAfterFiles" Directory="SystemFolder" Execute="deferred" Impersonate="yes" Return="check"
+                  ExeCommand='&quot;[SystemFolder]cmd.exe&quot; /c exit 1' />
+    <InstallExecuteSequence>
+      <Custom Action="FailAfterFiles" After="InstallFiles" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="UserProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Open TouchDeck" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <Component Id="Payload" Directory="INSTALLFOLDER" Guid="0A6F4F0E-6C1D-4A51-B1B4-3C1E7E9D2F11">
+        <File Id="Payload" Source="$(Payload)" Name="td-app.exe" />
+        <RegistryValue Root="HKCU" Key="Software\Open TouchDeck bridge check" Name="Installed" Type="integer"
+                       Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RemoveUserProgramsFolder" Directory="UserProgramsFolder" On="uninstall" />
+      </Component>
+    </Feature>
+  </Package>
+</Wix>

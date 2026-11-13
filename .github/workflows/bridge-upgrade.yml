@@ -1,0 +1,206 @@
+name: bridge upgrade
+
+# Proves the move from Open TouchDeck 1.x to 2.0 on a GitHub-hosted Windows runner (#357): installs the published
+# 1.2.0, seeds user data, updates it to the bridge release built from release/1.x, then has the bridge refuse a
+# tampered 2.0 MSI, roll back from one that fails, and install a 2.0 MSI built from this commit. It checks that 2.0
+# finds the user's data and that nothing of 1.x is left. .github/scripts/bridge-upgrade/README.md says what each
+# step proves and what it can't.
+#
+# It runs on a pull request that changes the check, the MSI or the report it reads 2.0's data with, and by hand.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/bridge-upgrade.yml
+      - .github/scripts/bridge-upgrade/**
+      - app/installer/**
+      - app/crates/td-companion/examples/bridge_data.rs
+  workflow_dispatch:
+    inputs:
+      bridge-ref:
+        description: The release/1.x branch, tag or commit to build the bridge from
+        required: false
+        default: release/1.x
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-upgrade-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The bridge is built from release/1.x. Until its pull request merges there, from that pull request's branch.
+  BRIDGE_REF: ${{ inputs.bridge-ref || 'release-1.x/bridge' }}
+  # The published 1.x release the check starts from. The bridge build reuses its Firmware bundle.
+  OLD_TAG: v1.2.0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bridge:
+    name: build the 1.x bridge release (test-signed)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # Python on Windows decodes tool output with the ANSI code page unless told to use UTF-8.
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BRIDGE_REF }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: app/package.json
+      - name: Install the Rust toolchain and the locked app dependencies
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustc --version
+          pnpm --dir app install --frozen-lockfile
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      # The published Firmware bundle stands in for an ESP-IDF build, as the 1.x recipe allows for a test-signed build.
+      - name: Fetch the published Firmware bundle
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download $env:OLD_TAG --repo $env:GITHUB_REPOSITORY --pattern touchdeck.tdfw --pattern SHA256SUMS --dir "$env:RUNNER_TEMP/old"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $expected = (Get-Content "$env:RUNNER_TEMP/old/SHA256SUMS" | Where-Object { $_ -match '\s+touchdeck\.tdfw$' }) -split '\s+' | Select-Object -First 1
+          $actual = (Get-FileHash "$env:RUNNER_TEMP/old/touchdeck.tdfw" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if (-not $expected -or $actual -ne $expected) { throw "touchdeck.tdfw does not match the $env:OLD_TAG SHA256SUMS." }
+      - name: Build the test-signed bridge release
+        shell: pwsh
+        run: |
+          python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/bridge" --test-signing --firmware-bundle "$env:RUNNER_TEMP/old/touchdeck.tdfw"
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bridge-release
+          path: ${{ runner.temp }}/bridge/release-assets
+          if-no-files-found: error
+          retention-days: 3
+
+  msi:
+    name: build the 2.0 MSI
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # 7.0.1 is free for this project under the WiX maintenance fee terms: see docs/packaging.md before changing it.
+      WIX_VERSION: 7.0.1
+      # The version the bridge is offered. main's td-app keeps its 1.x version until 2.0's release bumps it.
+      NEXT_VERSION: 2.0.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+      - name: Build td-app and the data report
+        working-directory: app
+        run: |
+          cargo build --release --locked --package td-app
+          cargo build --release --locked --package td-companion --example bridge_data
+      - name: Install WiX
+        shell: pwsh
+        run: |
+          dotnet tool install wix --version $env:WIX_VERSION --tool-path "$env:RUNNER_TEMP/wix"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      # -acceptEula wix7 accepts the WiX Open Source Maintenance Fee EULA. This project owes no fee under it.
+      - name: Build the 2.0 MSI and one that always fails
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/twox"
+          $exe = Resolve-Path app/target/release/td-app.exe
+          & "$env:RUNNER_TEMP/wix/wix.exe" build -acceptEula wix7 -arch x64 `
+            -d "AppIcon=$(Resolve-Path app/icons/app/open-touchdeck.ico)" -d "Version=$env:NEXT_VERSION" -d "AppExe=$exe" `
+            -o "$out/OpenTouchDeck.msi" app/installer/OpenTouchDeck.wxs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/wix/wix.exe" build -acceptEula wix7 -arch x64 -d "Payload=$exe" `
+            -o "$out/failing.msi" .github/scripts/bridge-upgrade/failing.wxs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item app/target/release/examples/bridge_data.exe $out
+          Get-ChildItem -LiteralPath $out -Filter *.wixpdb | Remove-Item -Force
+          Get-ChildItem -LiteralPath $out | Format-Table Name, Length
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: twox
+          path: ${{ runner.temp }}/twox
+          if-no-files-found: error
+          retention-days: 3
+
+  upgrade:
+    name: upgrade 1.x to 2.0 through the bridge
+    needs: [bridge, msi]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The 1.x updater the check drives, from the same commit as the bridge build.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BRIDGE_REF }}
+          path: onex
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: onex/app/package.json
+      - name: Build the 1.x updater
+        shell: pwsh
+        env:
+          # The updater runs in Node here, not in Electron.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: |
+          pnpm --dir onex/app install --frozen-lockfile
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          pnpm --dir onex/app --filter @touchdeck/electron build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bridge-release
+          path: ${{ runner.temp }}/bridge
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: twox
+          path: ${{ runner.temp }}/twox
+      - name: Fetch the published 1.x installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download $env:OLD_TAG --repo $env:GITHUB_REPOSITORY --pattern OpenTouchDeck-windows-x64-setup.exe --pattern SHA256SUMS --dir "$env:RUNNER_TEMP/old"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $expected = (Get-Content "$env:RUNNER_TEMP/old/SHA256SUMS" | Where-Object { $_ -match '\s+OpenTouchDeck-windows-x64-setup\.exe$' }) -split '\s+' | Select-Object -First 1
+          $actual = (Get-FileHash "$env:RUNNER_TEMP/old/OpenTouchDeck-windows-x64-setup.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if (-not $expected -or $actual -ne $expected) { throw "The $env:OLD_TAG installer does not match its SHA256SUMS." }
+      # Windows PowerShell 5.1: it ships the UI Automation client the check reads 2.0's window with.
+      - name: Upgrade through the bridge
+        shell: powershell
+        run: |
+          ./.github/scripts/bridge-upgrade/upgrade.ps1 `
+            -OldInstaller "$env:RUNNER_TEMP/old/OpenTouchDeck-windows-x64-setup.exe" -OldVersion $env:OLD_TAG.TrimStart('v') `
+            -BridgeAssets "$env:RUNNER_TEMP/bridge" -OneXCheckout "$env:GITHUB_WORKSPACE/onex" `
+            -Msi "$env:RUNNER_TEMP/twox/OpenTouchDeck.msi" -FailingMsi "$env:RUNNER_TEMP/twox/failing.msi" `
+            -BridgeData "$env:RUNNER_TEMP/twox/bridge_data.exe" -ArtifactDir "$env:RUNNER_TEMP/bridge-upgrade"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bridge-upgrade
+          # Written by upgrade.ps1 with the runner's user name, PC name and profile folder removed.
+          path: ${{ runner.temp }}/bridge-upgrade
+          if-no-files-found: warn
+          retention-days: 14

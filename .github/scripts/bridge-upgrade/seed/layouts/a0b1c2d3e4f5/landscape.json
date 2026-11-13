@@ -1,0 +1,230 @@
+{
+  "schema": 1,
+  "name": "Bridge test layout",
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "shortcuts",
+      "title": "Shortcuts",
+      "kind": "grid",
+      "rows": 3,
+      "cols": 4,
+      "tiles": [
+        {
+          "id": "chord",
+          "label": "Ctrl+Shift+F13",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 2,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 104,
+            "mods": [
+              "ctrl",
+              "shift"
+            ]
+          }
+        },
+        {
+          "id": "shift",
+          "label": "Shift",
+          "row": 0,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "mod",
+            "mod": "shift"
+          }
+        },
+        {
+          "id": "quiet",
+          "label": "Mute",
+          "row": 0,
+          "col": 3,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": "lv:mute",
+          "action": {
+            "type": "consumer",
+            "usage": 226
+          }
+        },
+        {
+          "id": "accounts_jump",
+          "label": "Accounts",
+          "row": 1,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "page",
+            "page": "accounts"
+          }
+        },
+        {
+          "id": "spacer",
+          "label": "Unused",
+          "row": 1,
+          "col": 1,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "f5",
+          "label": "F5",
+          "row": 1,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 62,
+            "mods": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "desktop",
+      "title": "Desktop",
+      "kind": "grid",
+      "rows": 2,
+      "cols": 3,
+      "tiles": [
+        {
+          "id": "launch",
+          "label": "Terminal",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 2,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "launch",
+            "path": "wt.exe",
+            "args": [],
+            "cwd": ""
+          }
+        },
+        {
+          "id": "open",
+          "label": "Project",
+          "row": 0,
+          "col": 1,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "open",
+            "target": "https://github.com/Duresa7/OpenTouchDeck"
+          }
+        },
+        {
+          "id": "command",
+          "label": "Echo",
+          "row": 0,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "command",
+            "program": "cmd",
+            "args": [
+              "/c",
+              "echo",
+              "TouchDeck"
+            ],
+            "cwd": "",
+            "shell": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "usage",
+      "title": "Usage",
+      "kind": "grid",
+      "rows": 2,
+      "cols": 3,
+      "tiles": [
+        {
+          "id": "five_hour",
+          "label": "5h usage",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "widget",
+            "source": "cliproxyapi",
+            "field": "five_hour_pct",
+            "account": ""
+          }
+        },
+        {
+          "id": "seven_day",
+          "label": "7d usage",
+          "row": 0,
+          "col": 1,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "widget",
+            "source": "cliproxyapi",
+            "field": "seven_day_pct",
+            "account": ""
+          }
+        },
+        {
+          "id": "proxy",
+          "label": "Proxy status",
+          "row": 0,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "widget",
+            "source": "cliproxyapi",
+            "field": "status",
+            "account": ""
+          }
+        },
+        {
+          "id": "claude_5h",
+          "label": "Claude 5h",
+          "row": 1,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "widget",
+            "source": "cliproxyapi",
+            "field": "five_hour_pct",
+            "account": "claude:alice@example.com"
+          }
+        }
+      ]
+    },
+    {
+      "id": "accounts",
+      "title": "Accounts",
+      "kind": "dashboard",
+      "source": "cliproxyapi"
+    }
+  ]
+}

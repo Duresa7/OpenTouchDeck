@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "companion_id": "0123456789abcdef0123456789abcdef",
+  "pairings": [
+    {
+      "device": "a0b1c2d3e4f5",
+      "address": "192.0.2.10:47820",
+      "name": "Bridge Desk",
+      "confirmed": true,
+      "paired_ms": 1767225600000
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "devices": [
+    {
+      "id": "a0b1c2d3e4f5",
+      "name": "Bridge Desk",
+      "setup": "ready"
+    }
+  ]
+}
