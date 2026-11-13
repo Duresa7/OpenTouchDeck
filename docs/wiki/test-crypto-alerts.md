@@ -1,0 +1,9 @@
+# Cryptographic test fixtures and CodeQL
+
+On 2026-11-07, CodeQL alerts for deterministic nonces in `td-link/src/wifi.rs` were dismissed as `used in tests`. [Alert #114](https://github.com/Duresa7/OpenTouchDeck/security/code-scanning/114) and [alert #135](https://github.com/Duresa7/OpenTouchDeck/security/code-scanning/135) record examples of those dispositions.
+
+On 2026-11-13, [PR #390](https://github.com/Duresa7/OpenTouchDeck/pull/390) encountered the same "Hard-coded cryptographic value" finding in `#[cfg(test)]` cases. At [OpenTouchDeck commit e4a4559](https://github.com/Duresa7/OpenTouchDeck/blob/e4a455997eb5a662f5f92471db985447e00f8768/app/crates/td-link/src/net/ble_discovery.rs), fixed nonce inputs made discovery tests reproducible. [Alerts #152](https://github.com/Duresa7/OpenTouchDeck/security/code-scanning/152), [#153](https://github.com/Duresa7/OpenTouchDeck/security/code-scanning/153), [#154](https://github.com/Duresa7/OpenTouchDeck/security/code-scanning/154), [#155](https://github.com/Duresa7/OpenTouchDeck/security/code-scanning/155) and [#156](https://github.com/Duresa7/OpenTouchDeck/security/code-scanning/156) were dismissed as `used in tests` that day. The [PR review annotation](https://github.com/Duresa7/OpenTouchDeck/pull/390#discussion_r4559941519) also links the first finding.
+
+On 2026-11-13, the recorded resolution for [#390](https://github.com/Duresa7/OpenTouchDeck/pull/390) was scoped alert dismissal after checking the test-only code, rather than a production nonce change or disabling the query. The separate production privacy defect remained tracked in [#401](https://github.com/Duresa7/OpenTouchDeck/issues/401).
+
+Related: [Bluetooth keyboard privacy](ble-keyboard-privacy.md), [review and merge gates](review-and-merge.md), [secret-handling standards](../../CODING_STANDARDS.md#secrets).
