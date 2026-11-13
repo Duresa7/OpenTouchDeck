@@ -55,7 +55,7 @@ impl DeviceCopy {
         &self.revision
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Draft {
     document: Document,
     known: Option<DeviceCopy>,

@@ -208,6 +208,9 @@ impl Session {
                 },
             );
         }
+        let mut replacements = self.replacements.clone();
+        replacements.extend(self.handle.brandfetch.replacements());
+        model.replace_assets(replacements)?;
         model.persist()?;
         self.model = model;
         self.page = Some(page);

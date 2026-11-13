@@ -28,6 +28,8 @@ pub enum SessionError {
     Send(String),
     #[error("{0:?}")]
     Job(crate::api::ErrorBody),
+    #[error(transparent)]
+    Asset(#[from] crate::features::assets::AssetError),
 }
 
 pub struct Session {
@@ -38,6 +40,8 @@ pub struct Session {
     page: Option<String>,
     tile: Option<String>,
     last_job: Option<crate::jobs::Job>,
+    changes: tokio::sync::broadcast::Receiver<crate::events::Change>,
+    replacements: std::collections::BTreeMap<String, String>,
 }
 impl Session {
     pub(crate) fn open(
@@ -46,6 +50,7 @@ impl Session {
         device: &str,
     ) -> Result<Self, EditorError> {
         let model = Editor::open(root, device)?;
+        let changes = handle.observe();
         let mut session = Self {
             handle,
             device: device.into(),
@@ -54,7 +59,10 @@ impl Session {
             page: None,
             tile: None,
             last_job: None,
+            changes,
+            replacements: Default::default(),
         };
+        session.refresh_assets()?;
         session.reconcile_selection();
         Ok(session)
     }
@@ -111,11 +119,14 @@ impl Session {
     pub fn start(&mut self, layout: Layout) -> Result<(), EditorError> {
         let orientation = layout.orientation;
         self.model.start(layout)?;
+        self.refresh_assets()?;
         self.select_orientation(orientation);
         self.model.persist()
     }
     pub fn edit(&mut self, edit: Edit) -> Result<Option<String>, EditorError> {
+        self.refresh_assets()?;
         let result = self.model.edit(self.orientation, edit);
+        self.refresh_assets()?;
         self.reconcile_selection();
         if let Ok(Some(id)) = &result {
             self.tile = Some(id.clone());
@@ -125,6 +136,7 @@ impl Session {
     }
     pub fn resolve(&mut self, decision: Decision) -> Result<(), EditorError> {
         self.model.resolve(self.orientation, decision)?;
+        self.refresh_assets()?;
         self.reconcile_selection();
         self.model.persist()
     }
@@ -132,8 +144,70 @@ impl Session {
         &mut self,
         replacements: std::collections::BTreeMap<String, String>,
     ) -> Result<(), EditorError> {
-        self.model.replace_assets(replacements)?;
+        self.model.replace_assets(replacements.clone())?;
+        self.replacements.extend(replacements);
         self.model.persist()
+    }
+    /// Await a Companion change, updating drafts before the UI renders the next snapshot.
+    /// Lagged receivers reread durable replacement state rather than losing notifications.
+    pub async fn changed(&mut self) -> Result<crate::companion::Change, SessionError> {
+        let change = match self.changes.recv().await {
+            Ok(change) => change,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                crate::events::Change::AssetsReplaced
+            }
+            Err(_) => return Err(SessionError::Send("Companion stopped".into())),
+        };
+        self.refresh_assets()?;
+        Ok(change)
+    }
+    fn refresh_assets(&mut self) -> Result<(), EditorError> {
+        let mut replacements = self.replacements.clone();
+        replacements.extend(self.handle.brandfetch.replacements());
+        if replacements.is_empty() {
+            return Ok(());
+        }
+        let before = self.model.drafts.clone();
+        self.model.replace_assets(replacements)?;
+        if self.model.drafts != before {
+            self.model.persist()?;
+        }
+        Ok(())
+    }
+    /// The draft owns the keep-set, including both orientations and legacy file icons.
+    pub async fn prune_assets(
+        &mut self,
+    ) -> Result<crate::features::assets::PruneResult, SessionError> {
+        self.refresh_assets()?;
+        let mut keep = std::collections::BTreeSet::new();
+        for orientation in [Orientation::Landscape, Orientation::Portrait] {
+            if let Some(draft) = self.model.draft(orientation) {
+                keep.extend(td_host::icons::file_ids(draft.layout()));
+                keep.extend(td_host::icons::asset_ids(draft.layout()));
+            }
+        }
+        let mut changes = self.handle.observe();
+        let job = crate::features::assets::start_prune(
+            &self.handle,
+            self.device.clone(),
+            keep.into_iter().collect(),
+        )?;
+        loop {
+            let latest = self
+                .handle
+                .jobs()
+                .get(&job.id)
+                .ok_or_else(|| SessionError::Send("Job expired".into()))?;
+            self.last_job = Some(latest.clone());
+            if latest.state.finished() {
+                if let Some(error) = latest.error {
+                    return Err(SessionError::Job(error));
+                }
+                return serde_json::from_value(latest.result.unwrap_or_default())
+                    .map_err(|e| SessionError::Send(e.to_string()));
+            }
+            let _ = changes.recv().await;
+        }
     }
     pub async fn load(&mut self) -> Result<(), SessionError> {
         let read = match self
@@ -153,6 +227,7 @@ impl Session {
             Err(error) => return Err(error.into()),
         };
         self.model.receive(read.layout, read.revision)?;
+        self.refresh_assets()?;
         self.reconcile_selection();
         self.model.persist()?;
         Ok(())
@@ -258,6 +333,7 @@ impl SessionError {
         match self {
             Self::Layout(error) => Some(error.body()),
             Self::Job(error) => Some(error.clone()),
+            Self::Asset(error) => Some(error.body()),
             Self::Editor(EditorError::Edit(td_core::editing::EditError::Invalid(problems))) => {
                 Some(crate::api::ErrorBody {
                     code: "layout.invalid".into(),

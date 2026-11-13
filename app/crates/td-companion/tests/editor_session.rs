@@ -555,3 +555,104 @@ async fn companion_422_and_rejected_fields_keep_structured_rules_and_paths() {
             .ends_with("/label")
     );
 }
+
+#[tokio::test]
+async fn asset_replacement_notifications_update_open_stored_and_recent_drafts_and_next_send() {
+    use td_core::editing::Capabilities;
+    let (td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    let id = s.add(AddKind::None, AddTarget::Auto).unwrap();
+    let old = td_link::asset::asset_id(&td_host::icons::builtin()[0].file);
+    let new = td_link::asset::asset_id(&td_host::icons::builtin()[1].file);
+    let assets = td.data_dir().join("assets");
+    std::fs::create_dir_all(&assets).unwrap();
+    for (id, icon) in [
+        (&old, &td_host::icons::builtin()[0]),
+        (&new, &td_host::icons::builtin()[1]),
+    ] {
+        std::fs::write(assets.join(format!("{id}.bin")), &icon.file).unwrap();
+    }
+    let appearance = |asset: &str| Edit::Renderer {
+        tile: id.clone(),
+        appearance: Appearance::Plain {
+            icon: None,
+            asset: Some(format!("sha256:{asset}")),
+            action: None,
+        },
+    };
+    s.edit(appearance(&old)).unwrap();
+    s.send(Capabilities::default()).await.unwrap();
+    let path = td.data_dir().join("brandfetch/provenance.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&serde_json::json!({"replaced_by": {old.clone(): new.clone()}}))
+            .unwrap(),
+    )
+    .unwrap();
+    td.notify_asset_replacements();
+    s.changed().await.unwrap();
+    assert_eq!(tiles(&s)[0].asset, Some(format!("sha256:{new}")));
+    assert!(!s.draft().unwrap().is_sent());
+    let mut reopened = td.handle().open_editor("mock0001").unwrap();
+    assert_eq!(tiles(&reopened)[0].asset, Some(format!("sha256:{new}")));
+    reopened.edit(appearance(&old)).unwrap();
+    assert_eq!(tiles(&reopened)[0].asset, Some(format!("sha256:{new}")));
+    reopened.send(Capabilities::default()).await.unwrap();
+    assert!(reopened.draft().unwrap().is_sent());
+    let device = td
+        .handle()
+        .layout_operations()
+        .read("mock0001".into(), Orientation::Landscape)
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8(device.layout.to_canonical_json())
+            .unwrap()
+            .contains(&new)
+    );
+    let unchanged = reopened.export().unwrap();
+    reopened
+        .replace_assets(BTreeMap::from([(
+            format!("sha256:{}", "c".repeat(64)),
+            format!("sha256:{}", "d".repeat(64)),
+        )]))
+        .unwrap();
+    assert_eq!(reopened.export().unwrap(), unchanged);
+}
+#[tokio::test]
+async fn pruning_keeps_assets_used_by_both_orientation_drafts() {
+    let (td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    let device = td_companion::devices::DeviceId::parse("mock0001").unwrap();
+    let ids = ["00000000000000aa", "00000000000000bb", "00000000000000cc"];
+    td.deck(&device)
+        .add_icons(ids.iter().map(|id| (*id).into()).collect::<Vec<String>>());
+    let id = s.add(AddKind::None, AddTarget::Auto).unwrap();
+    s.edit(Edit::Renderer {
+        tile: id,
+        appearance: Appearance::Plain {
+            icon: Some(format!("file:{}", ids[0])),
+            asset: None,
+            action: None,
+        },
+    })
+    .unwrap();
+    let mut tall = blank();
+    tall.orientation = Orientation::Portrait;
+    s.start(tall).unwrap();
+    let id = s.add(AddKind::None, AddTarget::Auto).unwrap();
+    s.edit(Edit::Renderer {
+        tile: id,
+        appearance: Appearance::Plain {
+            icon: Some(format!("file:{}", ids[1])),
+            asset: None,
+            action: None,
+        },
+    })
+    .unwrap();
+    let result = s.prune_assets().await.unwrap();
+    assert_eq!(result.removed, vec![ids[2].to_string()]);
+    assert!(td.deck(&device).icons().contains(ids[0]));
+    assert!(td.deck(&device).icons().contains(ids[1]));
+}

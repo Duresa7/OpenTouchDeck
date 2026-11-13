@@ -504,17 +504,24 @@ impl Endpoint for Prune {
     type Error = AssetError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
         let device = req.path.device.as_str().to_owned();
-        ctx.links.connected(&device)?;
-        let keep: BTreeSet<String> = req.body.also_keep.into_iter().collect();
-        let scope = JobScope::Device(device.clone());
-        let work = ctx.clone();
-        Ok(ctx
-            .jobs
-            .start::<PruneJob>(scope, true, move |job| prune(&work, &device, keep, job))?)
+        start_prune(&ctx, device, req.body.also_keep)
     }
 }
+pub(crate) fn start_prune(
+    ctx: &crate::companion::Handle,
+    device: String,
+    keep: Vec<String>,
+) -> Result<Job, AssetError> {
+    ctx.links.connected(&device)?;
+    let scope = JobScope::Device(device.clone());
+    let work = ctx.clone();
+    Ok(ctx.jobs.start::<PruneJob>(scope, true, move |job| {
+        prune(&work, &device, keep.into_iter().collect(), job)
+    })?)
+}
+
 fn prune(
-    ctx: &Ctx,
+    ctx: &crate::companion::Handle,
     device: &str,
     mut keep: BTreeSet<String>,
     job: &JobHandle<PruneJob>,
