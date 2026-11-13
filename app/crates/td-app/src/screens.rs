@@ -930,6 +930,7 @@ impl Screens {
         };
         PcSettings {
             start_shown: cfg!(any(windows, feature = "mock", test)),
+            update_shown: cfg!(any(windows, feature = "mock", test)),
             start_on,
             start_enabled,
             start_problem: start_problem.unwrap_or_default().into(),

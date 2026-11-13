@@ -12,6 +12,8 @@ export struct PcSettings {
     start-on: bool,
     start-enabled: bool,
     start-problem: string,
+    // Only Windows checks for updates.
+    update-shown: bool,
     update-on: bool,
     update-enabled: bool,
     update-problem: string,
@@ -292,10 +294,10 @@ export component SettingsPage inherits ScrollingPage {
                     root.set-start(on);
                 }
             }
-            SwitchRow {
+            if root.pc.update-shown: SwitchRow {
                 first: !root.pc.start-shown;
                 title: "Check for updates";
-                description: "Asks GitHub for a newer Open TouchDeck every few hours. Nothing about you or your Devices is sent.";
+                description: "Asks GitHub once a day whether a newer Open TouchDeck exists. Nothing about you or your Devices is sent.";
                 problem: root.pc.update-problem;
                 checked: root.pc.update-on;
                 enabled: root.pc.update-enabled;
@@ -305,6 +307,7 @@ export component SettingsPage inherits ScrollingPage {
             }
 
             SettingBlock {
+                first: !root.pc.start-shown && !root.pc.update-shown;
                 title: "Appearance";
                 appearance-choices := Choices {
                     label: "Appearance";

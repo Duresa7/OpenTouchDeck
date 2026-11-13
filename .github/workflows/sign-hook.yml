@@ -73,7 +73,7 @@ jobs:
       #   variable SIGNPATH_ORGANIZATION_ID      the SignPath organization id
       #   variable SIGNPATH_PROJECT_SLUG         the SignPath project, such as open-touchdeck
       #   variable SIGNPATH_SIGNING_POLICY_SLUG  the signing policy, such as release-signing
-      # Each caller names its artifact configuration: a zip that holds td-companion.exe, or a zip that holds the
+      # Each caller names its artifact configuration: a zip that holds td-app.exe, or a zip that holds the
       # MSI. Both must restrict the product name to "Open TouchDeck" and the product version to the release's.
       #
       # - name: Sign with SignPath

@@ -135,6 +135,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Only Windows starts update checks. Blocking HTTP never runs on the UI/runtime thread.
+    #[cfg(windows)]
+    let update_worker = {
+        let work = handle.clone();
+        runtime.spawn(async move {
+            let mut updater = td_updater::Updater::new(
+                td_updater::GitHubClient::default(),
+                td_updater::SystemClock::default(),
+                semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("package version"),
+            );
+            loop {
+                if work.shutdown_requested() {
+                    break;
+                }
+                let updates = work.updates().clone();
+                updater = match tokio::task::spawn_blocking(move || {
+                    updates.poll(&mut updater, &td_core::app_dirs::Dirs::current());
+                    updater
+                })
+                .await
+                {
+                    Ok(updater) => updater,
+                    Err(_) => break,
+                };
+                tokio::select! {
+                    _ = work.stopping() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
+                }
+            }
+        })
+    };
+
     // Ctrl+C asks the Companion to stop, which also closes the window.
     let interrupted = handle.clone();
     runtime.spawn(async move {
@@ -146,7 +178,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if packaged {
         // On by default the first time an installed copy runs, unless Windows already says off.
         let (first, folder) = (handle.clone(), data.clone());
-        let initialized = runtime.block_on(tokio::task::spawn_blocking(move || {
+        let initialized = runtime.block_on(runtime.spawn_blocking(move || {
             td_companion::tray::initialize_start_at_sign_in(&first, &folder)
         }))?;
         if let Err(error) = initialized {
@@ -187,7 +219,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     runtime.block_on(companion.shutdown());
     #[cfg(windows)]
+    update_worker.abort();
+    #[cfg(windows)]
     drop(tray);
+    runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     Ok(shown?)
 }
 

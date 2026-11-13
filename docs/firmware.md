@@ -920,7 +920,7 @@ Validate the examples or your own layout with Node.js:
 npm ci --prefix schema
 node schema/check-layouts.mjs
 node schema/check-layouts.mjs path/to/layout.json
-node --test schema/
+node --test "schema/*.test.mjs"
 ```
 
 Every failure the validator prints starts with a stable rule key, such as
