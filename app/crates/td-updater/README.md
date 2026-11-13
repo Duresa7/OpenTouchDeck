@@ -14,7 +14,8 @@ when this foundation is written. `build.rs` requires the two files to match once
 the release pipeline is in the checkout. No environment override can replace the
 trust anchor. Never regenerate the production key (ADR 0005).
 
-The native caller should load `AppSettings` and poll on a worker thread:
+The native caller should use its Companion `handle`, load `AppSettings`, and poll
+on a worker thread:
 
 ```rust,ignore
 use td_core::{app_dirs::Dirs, settings::AppSettings};
@@ -28,7 +29,7 @@ let mut updater = Updater::new(
 // On each periodic wakeup, reload the preference; surface load errors and skip
 // polling on error, rather than defaulting to enabled.
 let settings = AppSettings::load(&dirs)?;
-if let Some(result) = updater.poll(&settings) {
+if let Some(result) = updater.poll(&settings, &|| handle.shutdown_requested()) {
     // Handle UpToDate, UpdateReady (owns the temporary files), or Failed.
 }
 // A native Settings control can persist the opt-out with:
@@ -37,8 +38,19 @@ settings.automatic_update_checks = false;
 settings.save(&dirs)?;
 ```
 
-`None` means disabled or not due; no request was sent. Enabled polling checks
-immediately and then at most every six hours per updater instance, including
+`None` means disabled, not due, or cancelled. The native caller supplies the
+Companion shutdown signal through the cancellation callback. Cancellation is
+checked before each request and staging operation, and between MSI reads and
+writes; partial staging is removed when the worker returns. A blocking request or
+read must return before the worker can observe cancellation, so `GitHubClient`
+fails any single read that waits more than 10 seconds. Shutdown waits for the
+worker within the runtime shutdown limit; if a read is still blocked when that
+limit ends, the process exits and leaves its staging folder. Call
+`remove_stale_staging` once at startup, before the first poll and while holding the
+single-instance lock, to remove such folders. It only removes real folders named
+`touchdeck-update-<random>` that hold nothing but `OpenTouchDeck-*-windows-x64.msi`
+files and their `.sig` files. Enabled polling checks
+immediately and then at most every 24 hours per updater instance, including
 failures. Keep one instance alive for the app's lifetime. The injected clock is
 monotonic; the signed timestamp is authenticated metadata, not a freshness policy.
 Unsigned GitHub feed metadata cannot authorize a downgrade or relabel an older
@@ -50,11 +62,11 @@ Only stable 2.x releases are eligible. An older selected version returns a typed
 failure; an equal version (ignoring build metadata) or no eligible release returns
 up to date. Missing/duplicate assets, oversized responses, download errors and
 signature failures fail closed. The transport enforces HTTPS across redirects and
-a five-minute request deadline. Limits are 10 pages, 2 MiB per feed page, 16 KiB per
+a five-minute request deadline with a 10-second limit per read. Limits are 10 pages, 2 MiB per feed page, 16 KiB per
 signature and 256 MiB per MSI.
 
 `UpdateReady` owns a unique temporary directory and exposes the MSI path, signature
 path and version; dropping it cleans up. Installation, verification immediately
 before launch, startup scheduling, native Settings UI, update presentation and the
 1.x migration bridge remain later M5 work. An abrupt process termination can leave
-temporary files for the OS's temporary-folder cleanup. See [privacy](../../../../docs/PRIVACY.md).
+temporary files until the next start removes them. See [privacy](../../../../docs/PRIVACY.md).

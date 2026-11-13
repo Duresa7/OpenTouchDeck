@@ -103,7 +103,7 @@ fn fixture() -> Updater<FakeHttp, FakeClock> {
 }
 
 fn poll(updater: &mut Updater<FakeHttp, FakeClock>) -> UpdateResult {
-    updater.poll(&AppSettings::default()).unwrap()
+    updater.poll(&AppSettings::default(), &|| false).unwrap()
 }
 
 fn edit_release(updater: &mut Updater<FakeHttp, FakeClock>, edit: impl FnOnce(&mut Value)) {
@@ -333,13 +333,13 @@ fn checks_off_makes_no_requests_even_when_due() {
     let off = AppSettings {
         automatic_update_checks: false,
     };
-    assert!(updater.poll(&off).is_none());
+    assert!(updater.poll(&off, &|| false).is_none());
     updater.clock.0.set(CHECK_INTERVAL * 2);
-    assert!(updater.poll(&off).is_none());
+    assert!(updater.poll(&off, &|| false).is_none());
     assert_eq!(updater.http.requests.get(), 0);
     assert!(matches!(poll(&mut updater), UpdateResult::UpdateReady(_)));
     updater.clock.0.set(CHECK_INTERVAL * 4);
-    assert!(updater.poll(&off).is_none());
+    assert!(updater.poll(&off, &|| false).is_none());
     assert_eq!(updater.http.requests.get(), 3);
 }
 
@@ -355,7 +355,7 @@ fn waits_24_hours_between_attempts_including_failures() {
         UpdateResult::Failed(Failure::Http(_))
     ));
     updater.clock.0.set(CHECK_INTERVAL - Duration::from_secs(1));
-    assert!(updater.poll(&AppSettings::default()).is_none());
+    assert!(updater.poll(&AppSettings::default(), &|| false).is_none());
     updater.clock.0.set(CHECK_INTERVAL);
     assert!(matches!(
         poll(&mut updater),
@@ -380,8 +380,248 @@ fn app_preference_defaults_on_and_persists_an_opt_out() {
     let loaded = AppSettings::load(&dirs).unwrap();
     assert_eq!(loaded, off);
     let mut updater = fixture();
-    assert!(updater.poll(&loaded).is_none());
+    assert!(updater.poll(&loaded, &|| false).is_none());
     assert_eq!(updater.http.requests.get(), 0);
     std::fs::write(dirs.app_settings(), b"broken").unwrap();
     assert!(AppSettings::load(&dirs).is_err());
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BlockAt {
+    Request(usize),
+    MsiBody,
+}
+
+struct BlockingHttp {
+    inner: FakeHttp,
+    block_at: BlockAt,
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl HttpClient for BlockingHttp {
+    fn get(&self, url: &str, user_agent: &str) -> Result<Box<dyn Read>, Failure> {
+        let response = self.inner.get(url, user_agent)?;
+        if matches!(self.block_at, BlockAt::Request(n) if n == self.inner.requests.get()) {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+        }
+        if matches!(self.block_at, BlockAt::MsiBody) && url.ends_with(".msi") {
+            Ok(Box::new(BlockingBody {
+                inner: response,
+                reads: 0,
+                entered: self.entered.clone(),
+                release: self.release.clone(),
+            }))
+        } else {
+            Ok(response)
+        }
+    }
+}
+
+struct BlockingBody {
+    inner: Box<dyn Read>,
+    reads: usize,
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl Read for BlockingBody {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.reads += 1;
+        if self.reads == 2 {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+        }
+        // Stage one byte first so cancellation also exercises partial-file cleanup.
+        let limit = bytes.len().min(1);
+        self.inner.read(&mut bytes[..limit])
+    }
+}
+
+#[test]
+fn shutdown_during_requests_or_download_stops_and_removes_staging() {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+
+    for block_at in [
+        BlockAt::Request(1),
+        BlockAt::Request(2),
+        BlockAt::Request(3),
+        BlockAt::MsiBody,
+    ] {
+        let staging = tempfile::tempdir().unwrap();
+        let fixture = fixture();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let worker_stop = stopped.clone();
+        let mut updater = Updater::new(
+            BlockingHttp {
+                inner: fixture.http,
+                block_at,
+                entered: entered_tx,
+                release: Arc::new(Mutex::new(release_rx)),
+            },
+            fixture.clock,
+            fixture.current,
+        );
+        updater.public_key = fixture.public_key;
+        updater.staging_root = staging.path().to_owned();
+        let worker = std::thread::spawn(move || {
+            let result = updater.poll(&AppSettings::default(), &|| {
+                worker_stop.load(Ordering::SeqCst)
+            });
+            (result, updater.http.inner.requests.get())
+        });
+        // The response cannot return until shutdown has been signalled: no timing race.
+        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let staged: Vec<_> = std::fs::read_dir(staging.path()).unwrap().collect();
+        if matches!(block_at, BlockAt::MsiBody) {
+            assert_eq!(staged.len(), 1);
+            let msi = staged[0]
+                .as_ref()
+                .unwrap()
+                .path()
+                .join(format!("OpenTouchDeck-{VERSION}-windows-x64.msi"));
+            assert_eq!(std::fs::metadata(msi).unwrap().len(), 1);
+        } else {
+            assert!(staged.is_empty(), "staged while blocked at {block_at:?}");
+        }
+        stopped.store(true, Ordering::SeqCst);
+        release_tx.send(()).unwrap();
+        let (result, requests) = worker.join().unwrap();
+        assert!(result.is_none(), "published a result after {block_at:?}");
+        let expected = match block_at {
+            BlockAt::Request(n) => n,
+            BlockAt::MsiBody => 3,
+        };
+        assert_eq!(requests, expected, "requested again after {block_at:?}");
+        assert_eq!(std::fs::read_dir(staging.path()).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn shutdown_before_poll_makes_no_request_or_staging_directory() {
+    let staging = tempfile::tempdir().unwrap();
+    let mut updater = fixture();
+    updater.staging_root = staging.path().to_owned();
+    assert!(updater.poll(&AppSettings::default(), &|| true).is_none());
+    assert_eq!(updater.http.requests.get(), 0);
+    assert_eq!(std::fs::read_dir(staging.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn startup_sweep_removes_staging_left_by_a_read_blocked_through_shutdown() {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+
+    let staging = tempfile::tempdir().unwrap();
+    let root = staging.path();
+    // Folders and files the sweep must leave alone.
+    let foreign = root.join(format!("{STAGING_PREFIX}keep"));
+    std::fs::create_dir(&foreign).unwrap();
+    std::fs::write(foreign.join("notes.txt"), b"not ours").unwrap();
+    let nested = root.join(format!("{STAGING_PREFIX}nest"));
+    std::fs::create_dir_all(nested.join("OpenTouchDeck-2.1.0-windows-x64.msi")).unwrap();
+    let unsuffixed = root.join(STAGING_PREFIX);
+    std::fs::create_dir(&unsuffixed).unwrap();
+    let other_app = root.join("other-app-update-abc123");
+    std::fs::create_dir(&other_app).unwrap();
+    std::fs::write(other_app.join("OpenTouchDeck-2.1.0-windows-x64.msi"), b"x").unwrap();
+    let plain_file = root.join(format!("{STAGING_PREFIX}file"));
+    std::fs::write(&plain_file, b"a file, not a folder").unwrap();
+    #[cfg(unix)]
+    let link = {
+        let target = tempfile::tempdir().unwrap();
+        let link = root.join(format!("{STAGING_PREFIX}link"));
+        std::os::unix::fs::symlink(target.path(), &link).unwrap();
+        (target, link)
+    };
+    let unrelated: Vec<_> = {
+        let mut names: Vec<_> = std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+
+    // First run: the MSI body read stalls after one byte is staged and stays blocked
+    // through shutdown, so the process would exit before TempDir could clean up.
+    let first = fixture();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let worker_stop = stopped.clone();
+    let mut updater = Updater::new(
+        BlockingHttp {
+            inner: first.http,
+            block_at: BlockAt::MsiBody,
+            entered: entered_tx,
+            release: Arc::new(Mutex::new(release_rx)),
+        },
+        first.clock,
+        first.current,
+    );
+    updater.public_key = first.public_key;
+    updater.staging_root = root.to_owned();
+    let worker = std::thread::spawn(move || {
+        updater.poll(&AppSettings::default(), &|| {
+            worker_stop.load(Ordering::SeqCst)
+        })
+    });
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    stopped.store(true, Ordering::SeqCst);
+    // Shutdown gives up here; the read is still blocked and the staging folder remains.
+    let leftover: Vec<_> = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| is_stale_staging(path))
+        .collect();
+    assert_eq!(leftover.len(), 1);
+    let msi = leftover[0].join(format!("OpenTouchDeck-{VERSION}-windows-x64.msi"));
+    assert_eq!(std::fs::metadata(msi).unwrap().len(), 1);
+    assert!(
+        leftover[0]
+            .join(format!("OpenTouchDeck-{VERSION}-windows-x64.msi.sig"))
+            .exists()
+    );
+
+    // Next run: the startup sweep removes only the leftover.
+    let mut next = fixture();
+    next.staging_root = root.to_owned();
+    assert_eq!(next.remove_stale_staging(), 1);
+    assert!(!leftover[0].exists());
+    let mut remaining: Vec<_> = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    remaining.sort();
+    assert_eq!(remaining, unrelated);
+    assert_eq!(
+        std::fs::read(foreign.join("notes.txt")).unwrap(),
+        b"not ours"
+    );
+    assert!(nested.join("OpenTouchDeck-2.1.0-windows-x64.msi").is_dir());
+    #[cfg(unix)]
+    assert!(link.0.path().is_dir());
+    assert_eq!(next.remove_stale_staging(), 0);
+    assert_eq!(next.http.requests.get(), 0);
+
+    // Let the old worker finish so the test owns no thread; it publishes nothing.
+    release_tx.send(()).unwrap();
+    assert!(worker.join().unwrap().is_none());
+    let mut remaining: Vec<_> = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    remaining.sort();
+    assert_eq!(remaining, unrelated);
 }

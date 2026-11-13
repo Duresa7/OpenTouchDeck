@@ -13,7 +13,7 @@ use slint::winit_030::{
 };
 use windows::{
     Foundation::TypedEventHandler,
-    UI::ViewManagement::{AccessibilitySettings, UISettings},
+    UI::ViewManagement::UISettings,
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::HWND,
@@ -118,9 +118,16 @@ pub(super) fn app_icon(window: &slint::Window) {
 /// keeps a solid background.
 pub(super) fn backdrop(window: &slint::Window, dark: bool) -> bool {
     if !mica_supported() {
+        #[cfg(feature = "mock")]
+        eprintln!(
+            "Open TouchDeck (mock): Mica: not asked for on build {}",
+            build()
+        );
         return false;
     }
     let Some(hwnd) = hwnd(window) else {
+        #[cfg(feature = "mock")]
+        eprintln!("Open TouchDeck (mock): Mica: the window has no handle");
         return false;
     };
     set_attribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &BOOL::from(dark));
@@ -131,12 +138,17 @@ pub(super) fn backdrop(window: &slint::Window, dark: bool) -> bool {
         cyTopHeight: -1,
         cyBottomHeight: -1,
     };
-    unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) }.is_ok()
+    let extended = unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) };
+    let backdrop = extended.is_ok()
         && set_attribute::<DWM_SYSTEMBACKDROP_TYPE>(
             hwnd,
             DWMWA_SYSTEMBACKDROP_TYPE,
             &DWMSBT_MAINWINDOW,
-        )
+        );
+    // The Windows evidence scripts read this line (.github/scripts/windows-evidence).
+    #[cfg(feature = "mock")]
+    eprintln!("Open TouchDeck (mock): Mica: frame extended {extended:?}, backdrop set {backdrop}");
+    backdrop
 }
 
 /// Light or dark Mica and title bar.
@@ -198,54 +210,52 @@ pub(super) fn read() -> Look {
 /// Keeps the change subscriptions; dropping it unsubscribes.
 pub(super) struct Watch {
     settings: UISettings,
-    accessibility: AccessibilitySettings,
     text_scale: i64,
     colors: i64,
-    contrast: i64,
 }
 impl Drop for Watch {
     fn drop(&mut self) {
         let _ = self.settings.RemoveTextScaleFactorChanged(self.text_scale);
         let _ = self.settings.RemoveColorValuesChanged(self.colors);
-        let _ = self.accessibility.RemoveHighContrastChanged(self.contrast);
     }
 }
 
-/// Rereads everything when the text size, the system colours or the contrast theme change.
-/// The events arrive on a background thread, so the look reaches the window through its event
-/// loop.
-pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Option<Watch> {
+/// Rereads everything when the text size or the system colours change. A contrast theme changes
+/// the system colours, so the colour event covers it; `AccessibilitySettings.HighContrastChanged`
+/// would name it directly, but it needs a UWP view and fails in a desktop program with
+/// "Element not found". The events arrive on a background thread, so the look reaches the window
+/// through its event loop.
+pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Result<Watch, String> {
     let changed = move || {
         let look = read();
+        #[cfg(feature = "mock")]
+        eprintln!(
+            "Open TouchDeck (mock): settings changed: text scale {}, contrast theme {}",
+            look.text_scale, look.high_contrast
+        );
         let _ = ui.upgrade_in_event_loop(move |ui| super::apply(&ui, &look));
     };
-    let settings = UISettings::new().ok()?;
-    let accessibility = AccessibilitySettings::new().ok()?;
-    let on_text = changed.clone();
-    let text_scale = settings
-        .TextScaleFactorChanged(&TypedEventHandler::new(move |_, _| {
-            on_text();
-            Ok(())
-        }))
-        .ok()?;
-    let on_colors = changed.clone();
-    let colors = settings
-        .ColorValuesChanged(&TypedEventHandler::new(move |_, _| {
-            on_colors();
-            Ok(())
-        }))
-        .ok()?;
-    let contrast = accessibility
-        .HighContrastChanged(&TypedEventHandler::new(move |_, _| {
+    // The step that failed goes into the error, so a log line names it.
+    let mut step = "UISettings";
+    let watch = (|| -> windows::core::Result<Watch> {
+        let settings = UISettings::new()?;
+        step = "TextScaleFactorChanged";
+        let on_text = changed.clone();
+        let text_scale =
+            settings.TextScaleFactorChanged(&TypedEventHandler::new(move |_, _| {
+                on_text();
+                Ok(())
+            }))?;
+        step = "ColorValuesChanged";
+        let colors = settings.ColorValuesChanged(&TypedEventHandler::new(move |_, _| {
             changed();
             Ok(())
-        }))
-        .ok()?;
-    Some(Watch {
-        settings,
-        accessibility,
-        text_scale,
-        colors,
-        contrast,
-    })
+        }))?;
+        Ok(Watch {
+            settings,
+            text_scale,
+            colors,
+        })
+    })();
+    watch.map_err(|error| format!("{step}: {error}"))
 }
