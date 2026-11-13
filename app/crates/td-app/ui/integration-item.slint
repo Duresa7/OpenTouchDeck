@@ -1,0 +1,191 @@
+// The pieces every Integrations page shares: one row with its switch, the status words with their
+// coloured box, and the way back to the list.
+import { Theme } from "theme.slint";
+import { ActionButton, Link, ToggleSwitch } from "controls.slint";
+
+// The status words with a box in front: green works, red doesn't, amber is on its way or waits
+// for you. A contrast theme keeps the text colour, so the words carry the state.
+export component StatusText inherits HorizontalLayout {
+    in property <string> text;
+    // ok, bad, wait, or "" for none.
+    in property <string> tone;
+    spacing: 6px;
+    if root.tone != "": VerticalLayout {
+        alignment: start;
+        horizontal-stretch: 0;
+        padding-top: max(0, (words.preferred-height - 10px) / 2);
+        Rectangle {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            background: root.tone == "ok" ? Theme.good : root.tone == "bad" ? Theme.critical : Theme.caution;
+        }
+    }
+    words := Text {
+        horizontal-stretch: 1;
+        accessible-role: AccessibleRole.text;
+        accessible-label: self.text;
+        text: root.text;
+        font-size: Theme.caption;
+        color: Theme.secondary-text;
+        wrap: word-wrap;
+    }
+}
+
+// The letter that stands in for an Integration's icon.
+component Monogram inherits Rectangle {
+    in property <string> name;
+    width: 32px;
+    height: self.width;
+    border-radius: 6px;
+    background: Theme.high-contrast ? Theme.contrast.window : Theme.subtle-selected;
+    border-width: 1px;
+    border-color: Theme.card-stroke;
+    Text {
+        accessible-role: none;
+        text: root.name;
+        font-size: Theme.body;
+        font-weight: Theme.semibold;
+        color: Theme.text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// One Integration in a card: what it is, where its settings are, and whether it's on. The row
+// itself isn't a button. With large text or a narrow window the buttons go under the words.
+export component IntegrationItem inherits Rectangle {
+    in property <string> name;
+    // The first letter, standing in for the icon.
+    in property <string> monogram;
+    // What it does, or, while it's on, what's wrong with it.
+    in property <string> line;
+    in property <string> tone;
+    in property <bool> first;
+    // Whether it has a switch, and its state.
+    in property <bool> has-switch: true;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    // Whether it has a settings page, and what its button says.
+    in property <bool> settings;
+    in property <string> settings-text: "Settings";
+    // What screen readers call that button.
+    in property <string> settings-label: self.name + " settings";
+    callback toggled(bool);
+    callback open-settings();
+    property <bool> stacked: root.width < 440px * Theme.text-scale;
+
+    min-height: max(64px, layout.preferred-height);
+
+    layout := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 12px;
+            // Large text needs the room more than the letter does.
+            if !root.stacked: VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                Monogram {
+                    name: root.monogram;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                spacing: 2px;
+                Text {
+                    accessible-role: none;
+                    text: root.name;
+                    font-size: Theme.body;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+
+                StatusText {
+                    text: root.line;
+                    tone: root.tone;
+                }
+            }
+
+            if !root.stacked && root.settings: VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                ActionButton {
+                    text: root.settings-text;
+                    label: root.settings-label;
+                    clicked => {
+                        root.open-settings();
+                    }
+                }
+            }
+            if !root.stacked && root.has-switch: VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                ToggleSwitch {
+                    label: root.name;
+                    description: root.line;
+                    checked: root.checked;
+                    enabled: root.enabled;
+                    toggled(on) => {
+                        root.toggled(on);
+                    }
+                }
+            }
+        }
+
+        if root.stacked && (root.settings || root.has-switch): HorizontalLayout {
+            alignment: space-between;
+            spacing: 12px;
+            if root.settings: ActionButton {
+                text: root.settings-text;
+                label: root.settings-label;
+                clicked => {
+                    root.open-settings();
+                }
+            }
+            if !root.settings: Rectangle { }
+            if root.has-switch: ToggleSwitch {
+                label: root.name;
+                description: root.line;
+                checked: root.checked;
+                enabled: root.enabled;
+                toggled(on) => {
+                    root.toggled(on);
+                }
+            }
+        }
+    }
+
+    if !root.first: Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.card-stroke;
+    }
+}
+
+// "Integrations ›" above a page, the way back to the list.
+export component BackToIntegrations inherits HorizontalLayout {
+    callback back();
+    alignment: start;
+    spacing: 4px;
+    Link {
+        text: "Integrations";
+        url: "integrations";
+        open => {
+            root.back();
+        }
+    }
+
+    Text {
+        accessible-role: none;
+        text: "›";
+        color: Theme.secondary-text;
+        font-size: Theme.body;
+        vertical-alignment: center;
+    }
+}

@@ -178,6 +178,7 @@ fn settle(app: &App) {
     });
 }
 
+mod integrations;
 mod settings;
 mod setup;
 

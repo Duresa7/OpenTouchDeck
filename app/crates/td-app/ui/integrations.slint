@@ -1,0 +1,613 @@
+// Integrations: the list of Integrations with their switches, then the icon sources, and one
+// settings page that each Integration's schema fills. Rust fills the `Integrations` global from
+// the Companion's Integrations session (td-app `screens/integrations.rs`).
+import { Theme } from "theme.slint";
+import { ActionButton, Body, Card, Details, GroupTitle, Hint, InfoBar, MultiLineField, PageTitle, PasswordField, SettingBlock, Severity, StackedRow, SwitchRow, TableCell, TextField } from "controls.slint";
+import { ScrollingPage } from "page.slint";
+import { BackToIntegrations, IntegrationItem, StatusText } from "integration-item.slint";
+import { IconPacksPage, IconPacksRow } from "icon-packs.slint";
+import { BrandfetchPage, BrandfetchRow } from "brandfetch.slint";
+
+// One Integration in the list.
+export struct IntegrationRow {
+    id: string,
+    name: string,
+    monogram: string,
+    line: string,
+    // ok, bad, wait, or "".
+    tone: string,
+    checked: bool,
+    // A write is on its way, so the switch can't flip.
+    locked: bool,
+    // It has a settings page.
+    settings: bool,
+}
+
+// One setting on an Integration's page, as its schema describes it.
+export struct IntegrationField {
+    name: string,
+    // text, integer, number, json or boolean.
+    kind: string,
+    label: string,
+    placeholder: string,
+    unit: string,
+    value: string,
+    on: bool,
+    error: string,
+    // Where a key would travel unsafely, or "".
+    warning: string,
+}
+
+// A write-only secret: "Saved" with Replace and Forget, or a field to type a new one.
+export struct IntegrationSecret {
+    name: string,
+    label: string,
+    set: bool,
+    // The field shows: nothing is saved yet, or Replace was chosen.
+    typing: bool,
+    error: string,
+}
+
+// A Device that didn't take the last values.
+export struct DeliveryProblem {
+    text: string,
+    detail: string,
+}
+
+// One account a CLIProxyAPI hub reads.
+export struct UsageAccount {
+    title: string,
+    cells: [TableCell],
+}
+
+// The open Integration's page.
+export struct IntegrationPage {
+    id: string,
+    name: string,
+    monogram: string,
+    line: string,
+    // loading, ready or failed.
+    load: string,
+    // The words beside the status box, and its tone (ok, bad, wait or "").
+    header: string,
+    tone: string,
+    // The Companion's reason, for Details.
+    status-detail: string,
+    checked: bool,
+    switch-locked: bool,
+    settings-title: string,
+    // It has settings or secrets, so a Save.
+    has-form: bool,
+    dirty: bool,
+    can-save: bool,
+    saving: bool,
+    // Where secrets are kept on this PC.
+    keychain: string,
+    // Check now.
+    has-refresh: bool,
+    refresh-usable: bool,
+    refresh-line: string,
+    checking: bool,
+    // The command waiting for its approval dialog, or "".
+    approval: string,
+    // The last outcome, and the part of the page it belongs under: page, settings, secret or
+    // status.
+    notice: string,
+    notice-kind: string,
+    notice-detail: string,
+    notice-at: string,
+}
+
+export global Integrations {
+    in property <[IntegrationRow]> rows;
+    // What the last switch flip said, when it failed.
+    in property <string> notice;
+    in property <string> notice-detail;
+    // The page shown: "" for the list, "icon-packs", "brandfetch", or an Integration's id.
+    in-out property <string> page-id;
+    in property <IntegrationPage> page;
+    in property <[IntegrationField]> fields;
+    in property <[IntegrationSecret]> secrets;
+    in property <[DeliveryProblem]> deliveries;
+    in property <[UsageAccount]> accounts;
+    // The secret whose Forget waits for an answer, or "".
+    in-out property <string> confirming-forget;
+    callback flip(string, bool);
+    callback open(string);
+    callback close();
+    callback set-text(string, string);
+    callback set-flag(string, bool);
+    callback type-secret(string, string);
+    callback replace-secret(string);
+    callback keep-secret(string);
+    callback forget-secret(string);
+    callback save();
+    callback check();
+    callback show-approval();
+}
+
+// The last outcome, shown under the part of the page it came from. Show it only when
+// `Integrations.page.notice-at` names that part.
+component Outcome inherits InfoBar {
+    text: Integrations.page.notice;
+    severity: Integrations.page.notice-kind == "error" ? Severity.error : Integrations.page.notice-kind == "ok" ? Severity.success : Severity.info;
+    details: Integrations.page.notice-kind == "error" ? Integrations.page.notice-detail : "";
+}
+
+// The question before a secret is forgotten.
+component ForgetQuestion inherits Rectangle {
+    in property <IntegrationSecret> secret;
+
+    accessible-role: groupbox;
+    accessible-label: "Forget the " + self.secret.label.to-lowercase() + "?";
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.high-contrast ? Theme.contrast.window-text : Theme.card-stroke;
+    background: Theme.high-contrast ? Theme.contrast.window : Theme.subtle-selected;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        Text {
+            accessible-role: none;
+            text: root.accessible-label;
+            font-size: Theme.body;
+            font-weight: Theme.semibold;
+            color: Theme.text;
+            wrap: word-wrap;
+        }
+
+        Hint {
+            text: Integrations.page.name + " stops until you add it again.";
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            padding-top: 4px;
+            ActionButton {
+                text: "Cancel";
+                clicked => {
+                    Integrations.confirming-forget = "";
+                }
+                init => {
+                    self.focus();
+                }
+            }
+
+            ActionButton {
+                text: "Forget";
+                primary: true;
+                enabled: !Integrations.page.saving && !Integrations.page.switch-locked;
+                clicked => {
+                    Integrations.confirming-forget = "";
+                    Integrations.forget-secret(root.secret.name);
+                }
+            }
+        }
+    }
+}
+
+// The list: every Integration with its switch, then the icon sources.
+component List inherits VerticalLayout {
+    spacing: 12px;
+    PageTitle {
+        text: "Integrations";
+    }
+
+    if Integrations.notice != "": InfoBar {
+        text: Integrations.notice;
+        severity: Severity.error;
+        details: Integrations.notice-detail;
+    }
+
+    Card {
+        accessible-role: list;
+        accessible-label: "Integrations";
+        accessible-item-count: Integrations.rows.length;
+        VerticalLayout {
+            for row[index] in Integrations.rows: IntegrationItem {
+                first: index == 0;
+                name: row.name;
+                monogram: row.monogram;
+                line: row.line;
+                tone: row.tone;
+                checked: row.checked;
+                enabled: !row.locked;
+                settings: row.settings;
+                toggled(on) => {
+                    Integrations.flip(row.id, on);
+                }
+                open-settings => {
+                    Integrations.open(row.id);
+                }
+            }
+        }
+    }
+
+    VerticalLayout {
+        spacing: 8px;
+        padding-top: 8px;
+        GroupTitle {
+            text: "Icons";
+        }
+
+        Card {
+            accessible-role: list;
+            accessible-label: "Icons";
+            accessible-item-count: 2;
+            VerticalLayout {
+                IconPacksRow {
+                    first: true;
+                    open-settings => {
+                        Integrations.open("icon-packs");
+                    }
+                }
+
+                BrandfetchRow {
+                    open-settings => {
+                        Integrations.open("brandfetch");
+                    }
+                }
+            }
+        }
+    }
+}
+
+// One setting the schema describes.
+component Field inherits SettingBlock {
+    in property <IntegrationField> field;
+    in property <bool> enabled;
+    title: self.field.kind == "boolean" ? "" : self.field.label;
+    problem: self.field.error;
+
+    if root.field.kind == "boolean": SwitchRow {
+        first: true;
+        title: root.field.label;
+        checked: root.field.on;
+        enabled: root.enabled;
+        toggled(on) => {
+            Integrations.set-flag(root.field.name, on);
+        }
+    }
+    if root.field.kind == "json": MultiLineField {
+        label: root.field.label;
+        value: root.field.value;
+        placeholder: root.field.placeholder;
+        description: root.field.error != "" ? root.field.error : "Ctrl+Enter saves.";
+        invalid: root.field.error != "";
+        enabled: root.enabled;
+        commit-on-leave: false;
+        lines: 8;
+        edited(text) => {
+            Integrations.set-text(root.field.name, text);
+        }
+        accepted => {
+            Integrations.save();
+        }
+    }
+    if root.field.kind != "boolean" && root.field.kind != "json": HorizontalLayout {
+        spacing: 8px;
+        TextField {
+            label: root.field.label;
+            value: root.field.value;
+            placeholder: root.field.placeholder;
+            description: root.field.error != "" ? root.field.error : root.field.warning;
+            invalid: root.field.error != "";
+            enabled: root.enabled;
+            commit-on-leave: false;
+            edited(text) => {
+                Integrations.set-text(root.field.name, text);
+            }
+            accepted => {
+                Integrations.save();
+            }
+        }
+
+        if root.field.unit != "": Text {
+            accessible-role: none;
+            horizontal-stretch: 0;
+            text: root.field.unit;
+            font-size: Theme.body;
+            color: Theme.secondary-text;
+            vertical-alignment: center;
+        }
+    }
+    if root.field.warning != "": Text {
+        accessible-role: AccessibleRole.text;
+        accessible-label: self.text;
+        text: root.field.warning;
+        font-size: Theme.caption;
+        color: Theme.caution;
+        wrap: word-wrap;
+    }
+}
+
+// "Saved", for a secret that is stored.
+component SavedWords inherits Text {
+    in property <IntegrationSecret> secret;
+    accessible-role: AccessibleRole.text;
+    accessible-label: self.secret.label + ": Saved";
+    text: "Saved";
+    font-size: Theme.body;
+    color: Theme.text;
+    vertical-alignment: center;
+}
+
+// Replace and Forget, for a secret that is stored.
+component SecretButtons inherits HorizontalLayout {
+    in property <IntegrationSecret> secret;
+    in property <bool> enabled;
+    alignment: start;
+    spacing: 8px;
+    ActionButton {
+        text: "Replace";
+        label: "Replace the " + root.secret.label.to-lowercase();
+        enabled: root.enabled;
+        clicked => {
+            Integrations.replace-secret(root.secret.name);
+        }
+    }
+
+    ActionButton {
+        text: "Forget";
+        label: "Forget the " + root.secret.label.to-lowercase();
+        enabled: root.enabled;
+        clicked => {
+            Integrations.confirming-forget = root.secret.name;
+        }
+    }
+}
+
+// One write-only secret.
+component Secret inherits SettingBlock {
+    in property <IntegrationSecret> secret;
+    in property <bool> enabled;
+    // Room for "Saved" and both buttons on one line.
+    property <bool> wide: self.width >= 400px * Theme.text-scale;
+    title: self.secret.label;
+    description: "Stored in " + Integrations.page.keychain + ", never in a file.";
+    problem: self.secret.error;
+
+    if !root.secret.typing: Rectangle {
+        accessible-role: none;
+        min-height: saved.preferred-height;
+        saved := VerticalLayout {
+            if root.wide: HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+                SavedWords {
+                    secret: root.secret;
+                }
+
+                SecretButtons {
+                    secret: root.secret;
+                    enabled: root.enabled;
+                }
+            }
+            if !root.wide: VerticalLayout {
+                spacing: 8px;
+                SavedWords {
+                    secret: root.secret;
+                }
+
+                SecretButtons {
+                    secret: root.secret;
+                    enabled: root.enabled;
+                }
+            }
+        }
+    }
+    if root.secret.typing: PasswordField {
+        label: root.secret.label;
+        description: root.secret.error != "" ? root.secret.error : "Goes with the next Save.";
+        invalid: root.secret.error != "";
+        enabled: root.enabled;
+        commit-on-leave: false;
+        edited(text) => {
+            Integrations.type-secret(root.secret.name, text);
+        }
+        accepted => {
+            Integrations.save();
+        }
+    }
+    if root.secret.typing && root.secret.set: HorizontalLayout {
+        alignment: start;
+        ActionButton {
+            text: "Keep the saved one";
+            enabled: root.enabled;
+            clicked => {
+                Integrations.keep-secret(root.secret.name);
+            }
+        }
+    }
+    if Integrations.confirming-forget == root.secret.name: ForgetQuestion {
+        secret: root.secret;
+    }
+}
+
+// One Integration's settings page: its switch and status, its settings and secrets with one
+// Save, its checks and its accounts.
+component Detail inherits VerticalLayout {
+    property <bool> ready: Integrations.page.load == "ready";
+    property <bool> editable: self.ready && !Integrations.page.saving && !Integrations.page.switch-locked;
+    spacing: 12px;
+    BackToIntegrations {
+        back => {
+            Integrations.close();
+        }
+    }
+
+    PageTitle {
+        text: Integrations.page.name;
+    }
+
+    Hint {
+        text: Integrations.page.line;
+    }
+
+    Card {
+        IntegrationItem {
+            first: true;
+            name: Integrations.page.name;
+            monogram: Integrations.page.monogram;
+            line: Integrations.page.header;
+            tone: Integrations.page.tone;
+            checked: Integrations.page.checked;
+            enabled: !Integrations.page.switch-locked;
+            toggled(on) => {
+                Integrations.flip(Integrations.page.id, on);
+            }
+        }
+    }
+
+    if Integrations.page.status-detail != "": Details {
+        text: Integrations.page.status-detail;
+    }
+
+    for problem in Integrations.deliveries: InfoBar {
+        text: problem.text;
+        severity: Severity.error;
+        details: problem.detail;
+    }
+
+    if Integrations.page.approval != "": InfoBar {
+        text: "Waiting for approval on this PC: " + Integrations.page.approval;
+        severity: Severity.info;
+    }
+    if Integrations.page.approval != "": HorizontalLayout {
+        alignment: start;
+        ActionButton {
+            text: "Show again";
+            label: "Show the approval again";
+            clicked => {
+                Integrations.show-approval();
+            }
+        }
+    }
+
+    if Integrations.page.load == "loading": Hint {
+        text: "Loading…";
+    }
+
+    if Integrations.page.notice != "" && Integrations.page.notice-at == "page": Outcome { }
+
+    if root.ready && Integrations.page.has-form: VerticalLayout {
+        spacing: 8px;
+        padding-top: 8px;
+        GroupTitle {
+            text: Integrations.page.settings-title;
+        }
+
+        Card {
+            VerticalLayout {
+                for field[index] in Integrations.fields: Field {
+                    first: index == 0;
+                    field: field;
+                    enabled: root.editable;
+                }
+                for secret[index] in Integrations.secrets: Secret {
+                    first: index == 0 && Integrations.fields.length == 0;
+                    secret: secret;
+                    enabled: root.editable;
+                }
+                SettingBlock {
+                    if Integrations.page.notice != "" && Integrations.page.notice-at == "secret": Outcome { }
+
+                    if Integrations.page.notice != "" && Integrations.page.notice-at == "settings": Outcome { }
+
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 12px;
+                        if Integrations.page.dirty && !Integrations.page.saving: Text {
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: self.text;
+                            text: "Unsaved changes";
+                            font-size: Theme.body;
+                            color: Theme.secondary-text;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                        }
+                        ActionButton {
+                            text: Integrations.page.saving ? "Saving…" : "Save";
+                            primary: true;
+                            enabled: Integrations.page.can-save;
+                            clicked => {
+                                Integrations.save();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.ready && Integrations.page.has-refresh: VerticalLayout {
+        spacing: 8px;
+        padding-top: 8px;
+        GroupTitle {
+            text: "Status";
+        }
+
+        Card {
+            SettingBlock {
+                first: true;
+                description: Integrations.page.refresh-line;
+                HorizontalLayout {
+                    alignment: start;
+                    ActionButton {
+                        text: Integrations.page.checking ? "Checking…" : "Check now";
+                        enabled: Integrations.page.refresh-usable && !Integrations.page.checking;
+                        clicked => {
+                            Integrations.check();
+                        }
+                    }
+                }
+
+                if Integrations.page.notice != "" && Integrations.page.notice-at == "status": Outcome { }
+            }
+        }
+    }
+
+    if Integrations.accounts.length > 0: VerticalLayout {
+        spacing: 8px;
+        padding-top: 8px;
+        GroupTitle {
+            text: "Accounts";
+        }
+
+        Card {
+            accessible-role: list;
+            accessible-label: "Accounts";
+            accessible-item-count: Integrations.accounts.length;
+            VerticalLayout {
+                for account[index] in Integrations.accounts: StackedRow {
+                    first: index == 0;
+                    title: account.title;
+                    cells: account.cells;
+                }
+            }
+        }
+
+        Hint {
+            text: "Limits show the share used. Gemini and some other services report request counts only.";
+        }
+    }
+}
+
+export component IntegrationsPage inherits ScrollingPage {
+    title: Integrations.page-id == "" ? "Integrations" : Integrations.page-id == "icon-packs" ? "Icon packs" : Integrations.page-id == "brandfetch" ? "Brandfetch logos" : Integrations.page.name;
+
+    if Integrations.page-id == "": List { }
+    if Integrations.page-id == "icon-packs": IconPacksPage {
+        back => {
+            Integrations.close();
+        }
+    }
+    if Integrations.page-id == "brandfetch": BrandfetchPage {
+        back => {
+            Integrations.close();
+        }
+    }
+    if Integrations.page-id != "" && Integrations.page-id != "icon-packs" && Integrations.page-id != "brandfetch": Detail { }
+}

@@ -1,0 +1,40 @@
+// Brandfetch logos: their row in the Integrations list and their page. Rust fills the
+// `Brandfetch` global from its session (td-app `screens/brandfetch.rs`), so this file and that
+// one are all the Brandfetch work touches.
+import { Hint, PageTitle } from "controls.slint";
+import { BackToIntegrations, IntegrationItem } from "integration-item.slint";
+
+export global Brandfetch {
+    // The line under its name in the list.
+    in property <string> line: "Brand logos in the icon picker, with your own Brandfetch keys.";
+}
+
+// Its row in the Icons group.
+export component BrandfetchRow inherits IntegrationItem {
+    name: "Brandfetch logos";
+    monogram: "B";
+    line: Brandfetch.line;
+    has-switch: false;
+    settings: true;
+    settings-text: "Open";
+    settings-label: "Open Brandfetch logos";
+}
+
+// Its page.
+export component BrandfetchPage inherits VerticalLayout {
+    callback back();
+    spacing: 12px;
+    BackToIntegrations {
+        back => {
+            root.back();
+        }
+    }
+
+    PageTitle {
+        text: "Brandfetch logos";
+    }
+
+    Hint {
+        text: "Adding your Brandfetch keys comes in a later 2.0 preview.";
+    }
+}

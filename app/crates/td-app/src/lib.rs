@@ -98,15 +98,21 @@ impl App {
             .clone()
     }
 
-    /// Opens `setup`, `settings` or `device:<id>` (that Device's settings), for screenshots.
+    /// Opens `setup`, `settings`, `integrations`, `device:<id>` (that Device's settings) or
+    /// `integration:<id>` (that Integration's page), for screenshots.
     #[cfg(feature = "mock")]
     pub fn open_page(&self, page: &str) {
         match page {
             "setup" => self.ui.set_page(Page::Setup),
             "settings" => self.ui.set_page(Page::Settings),
+            "integrations" => self.ui.set_page(Page::Integrations),
             "about" => self.ui.set_page(Page::About),
             _ => {
-                if let Some(id) = page.strip_prefix("device:") {
+                if let Some(id) = page.strip_prefix("integration:") {
+                    // Opened once the window is wired to the Companion.
+                    self.ui.set_page(Page::Integrations);
+                    self.ui.global::<Integrations>().set_page_id(id.into());
+                } else if let Some(id) = page.strip_prefix("device:") {
                     self.ui.set_page(Page::Settings);
                     self.ui.set_settings_device(id.into());
                     self.ui.invoke_open_device(id.into());
