@@ -3,7 +3,7 @@
 // not Slint, holds the selection. Only a drag in progress and keyboard focus live here.
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ActionButton, Body, InfoBar, ProgressBar, SectionTitle, Severity } from "controls.slint";
+import { ActionButton, Body, Details, InfoBar, ProgressBar, SectionTitle, Severity } from "controls.slint";
 
 // One Page in the filmstrip.
 export struct FilmPage {
@@ -104,6 +104,7 @@ export struct EditorState {
     selected-row: int,
     selected-col: int,
     notice: string,
+    // The raw error behind the notice or the empty state, shown only under Details.
     notice-detail: string,
     conflict: bool,
     conflict-title: string,
@@ -712,7 +713,9 @@ component DeviceCanvas inherits Rectangle {
                         }
                     }
 
-                    // The corner handle resizes the selected Tile.
+                    // The corner handle resizes the selected Tile. Its drag reports where the
+                    // handle rests (the Tile's undragged corner, less half the handle and 2 px),
+                    // since `drag` adds the distance already dragged itself.
                     if tile.selected: Rectangle {
                         x: parent.width - self.width / 2 - 2px;
                         y: parent.height - self.height / 2 - 2px;
@@ -736,7 +739,7 @@ component DeviceCanvas inherits Rectangle {
                             }
                             moved => {
                                 if self.pressed {
-                                    root.drag(tile.id, true, tile-box.base-x + parent.x, tile-box.base-y + parent.y, self.pressed-x, self.pressed-y, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
+                                    root.drag(tile.id, true, tile-box.base-x + tile.w * root.sw - 9px, tile-box.base-y + tile.h * root.sh - 9px, self.pressed-x, self.pressed-y, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
                                 }
                             }
                         }
@@ -1159,6 +1162,9 @@ export component EditorScreen inherits Rectangle {
 
             if root.editor.detail != "": Body {
                 text: root.editor.detail;
+            }
+            if root.editor.notice-detail != "": Details {
+                text: root.editor.notice-detail;
             }
             if root.editor.state == "empty" || root.editor.state == "unreadable": HorizontalLayout {
                 alignment: start;

@@ -299,15 +299,13 @@ impl Screens {
             self.open_editor(&id);
         }
         let Some(worker) = editor.worker.borrow().clone() else {
-            let (message, detail) = match editor.open_error.borrow().as_ref() {
+            let (message, detail, raw) = match editor.open_error.borrow().as_ref() {
                 Some(error) => (
-                    "Couldn't open the editor.".to_owned(),
-                    format!("Restart Open TouchDeck, then retry. ({error})"),
+                    "Couldn't open the editor.",
+                    "Restart Open TouchDeck, then retry.",
+                    error.clone(),
                 ),
-                None => (
-                    "Plug in your Device to edit its Layout.".to_owned(),
-                    String::new(),
-                ),
+                None => ("Plug in your Device to edit its Layout.", "", String::new()),
             };
             self.show_editor(
                 ui,
@@ -320,6 +318,7 @@ impl Screens {
                     .into(),
                     message: message.into(),
                     detail: detail.into(),
+                    notice_detail: raw.into(),
                     aspect: aspect(DEFAULT_SCREEN),
                     ..Default::default()
                 }),
@@ -444,10 +443,12 @@ pub(crate) fn map(view: &EditorView, screen: ScreenSize, name: &str, reading: bo
         aspect: aspect(screen),
         ..Default::default()
     };
-    let state = |state: &str, message: String, detail: String| EditorState {
+    // `detail` is body text for people; the raw error goes only under Details (`notice_detail`).
+    let state = |state: &str, message: String, detail: &str, raw: String| EditorState {
         state: state.into(),
         message: message.into(),
         detail: detail.into(),
+        notice_detail: raw.into(),
         ..base.clone()
     };
     let named = opening(name);
@@ -456,6 +457,7 @@ pub(crate) fn map(view: &EditorView, screen: ScreenSize, name: &str, reading: bo
             return Mapped::empty(state(
                 "opening",
                 "Opening the editor…".into(),
+                "",
                 String::new(),
             ));
         }
@@ -463,10 +465,8 @@ pub(crate) fn map(view: &EditorView, screen: ScreenSize, name: &str, reading: bo
             return Mapped::empty(state(
                 "failed",
                 "Couldn't open the Layout you were editing.".into(),
-                format!(
-                    "Open TouchDeck keeps your unsent changes on this PC and couldn't read them. Nothing was changed. ({})",
-                    failure.error
-                ),
+                "Open TouchDeck keeps your unsent changes on this PC and couldn't read them. Nothing was changed.",
+                failure.error.to_string(),
             ));
         }
         OpenState::Ready => {}
@@ -483,20 +483,20 @@ pub(crate) fn map(view: &EditorView, screen: ScreenSize, name: &str, reading: bo
                 state(
                     "empty",
                     format!("{named} has no Layout yet."),
-                    format!("Start one here, then send it to {name}."),
+                    &format!("Start one here, then send it to {name}."),
+                    String::new(),
                 )
             }
             Some(Err(failure)) => state(
                 "unreadable",
                 format!("Couldn't read the Layout from {name}."),
-                format!(
-                    "Check that it's plugged in, then retry. You can also start a new Layout here. ({})",
-                    failure.error
-                ),
+                "Check that it's plugged in, then retry. You can also start a new Layout here.",
+                failure.error.to_string(),
             ),
             _ => state(
                 "reading",
                 format!("Reading the Layout from {name}…"),
+                "",
                 String::new(),
             ),
         });
@@ -726,12 +726,14 @@ fn notice(outcome: &Outcome, view: &EditorView, name: &str) -> Option<(String, S
 }
 
 /// Words for a refused command. The Session's own copy is used where it was written for
-/// people: a send that failed on its way to the Device, and an Import.
+/// people: a send that failed on its way to the Device.
 pub(crate) fn failure_text(failure: &Failure, command: CommandKind, name: &str) -> String {
     let named = opening(name);
     match &*failure.error {
         SessionError::Editor(error) => editor_text(error, name),
-        SessionError::Import { .. } => failure.error.to_string(),
+        SessionError::Import { file, .. } => {
+            format!("{file} isn't a Layout file. Nothing changed.")
+        }
         SessionError::Layout(_)
             if matches!(command, CommandKind::Load | CommandKind::Orientation) =>
         {

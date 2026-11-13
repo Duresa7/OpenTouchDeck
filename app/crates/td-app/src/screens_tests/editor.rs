@@ -265,6 +265,13 @@ fn a_view_without_a_layout_says_why() {
     let state = map(&shown, SCREEN, "desk", false).state;
     assert_eq!(state.state, "unreadable");
     assert_eq!(state.message, "Couldn't read the Layout from desk.");
+    // The raw error stays under Details, out of the body text.
+    assert!(
+        !state.detail.contains("Companion stopped"),
+        "{}",
+        state.detail
+    );
+    assert!(state.notice_detail.contains("Companion stopped"));
     shown.open = OpenState::Opening;
     assert_eq!(map(&shown, SCREEN, "desk", false).state.state, "opening");
 }
@@ -690,4 +697,53 @@ fn at_the_largest_text_size_the_editor_fits_the_narrowest_window() {
         .invoke_accessible_default_action();
     rig.until("the Device menu", |r| r.has("Mock Device mock0002"));
     assert_fits(&rig, 500.0, "the Device menu");
+}
+
+#[test]
+fn the_corner_handle_follows_the_pointer_one_to_one() {
+    use slint::{LogicalPosition, platform::PointerEventButton};
+    let rig = Rig::start(960.0);
+    rig.plug("mock0001", BoardKind::Device);
+    start_blank(&rig);
+    rig.one("Add Tile, row 1, column 1", AccessibleRole::Button)
+        .invoke_accessible_default_action();
+    rig.until("the new Tile, selected", |r| {
+        r.app.ui.get_editor().tile_selected
+    });
+    let tile = rig.one("Tile, row 1, column 1, 1 by 1", AccessibleRole::Button);
+    let (at, size) = (tile.absolute_position(), tile.size());
+    // The handle's centre sits 2 px inside the Tile's bottom-right corner.
+    let start = LogicalPosition::new(at.x + size.width - 2.0, at.y + size.height - 2.0);
+    // One cell to the right: the distance between two neighbouring cells.
+    let next = rig
+        .one("Add Tile, row 1, column 2", AccessibleRole::Button)
+        .absolute_position();
+    let pitch = next.x - at.x;
+    let window = rig.app.ui.window();
+    window.dispatch_event(WindowEvent::PointerPressed {
+        position: start,
+        button: PointerEventButton::Left,
+    });
+    for step in 1..=10 {
+        window.dispatch_event(WindowEvent::PointerMoved {
+            position: LogicalPosition::new(start.x + pitch * step as f32 / 10.0, start.y),
+        });
+    }
+    window.dispatch_event(WindowEvent::PointerReleased {
+        position: LogicalPosition::new(start.x + pitch, start.y),
+        button: PointerEventButton::Left,
+    });
+    rig.until("the resize", |r| {
+        tiles(r).first().is_some_and(|t| t.w > 0.3)
+            || r.has("Tile, row 1, column 1, 1 by 2")
+            || r.has("Tile, row 1, column 1, 1 by 3")
+    });
+    assert!(
+        rig.has("Tile, row 1, column 1, 1 by 2"),
+        "one cell of pointer travel is one more column: {:?}",
+        tiles(&rig)
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<_>>()
+    );
 }
