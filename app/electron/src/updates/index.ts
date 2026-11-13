@@ -272,6 +272,10 @@ export class Updater {
       await this.validateFolders(dirname(ready.path));
       if ((await stat(ready.path)).size > MAX_DOWNLOAD) throw new Error('Oversized installer');
       await this.verify(ready.path, ready.release);
+      // bridge.ps1 runs from the staging folder, because it moves the install folder. Copy it before the Companion
+      // stops, so a missing helper never stops it for nothing.
+      const script = join(dirname(ready.path), HELPER);
+      if (bridge) await copyFile(bridge.helper, script);
       const acquired = await system('POST', '/system/lock');
       const error = field(acquired.body, 'error');
       if (acquired.status === 409 && field(error, 'code') === 'system.busy') {
@@ -288,10 +292,7 @@ export class Updater {
       await this.validateFolders(dirname(ready.path));
       if ((await stat(ready.path)).size > MAX_DOWNLOAD) throw new Error('Oversized installer');
       if (bridge) {
-        // bridge.ps1 runs from the staging folder, because it moves the install folder, and installs only the
-        // bytes whose SHA-256 the signature check read.
-        const script = join(dirname(ready.path), HELPER);
-        await copyFile(bridge.helper, script);
+        // bridge.ps1 installs only the bytes whose SHA-256 this last signature check read.
         const sha256 = await this.verify(ready.path, ready.release);
         await this.options.launch(bridge.powershell, helperArgs({
           script, msi: ready.path, sha256, installDir: bridge.installDir, dataDir: bridge.dataDir, waitPid: bridge.pid,

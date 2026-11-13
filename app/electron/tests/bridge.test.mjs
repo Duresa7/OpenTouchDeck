@@ -209,6 +209,15 @@ test('hands a verified MSI to bridge.ps1 with its SHA-256 after stopping the Com
   assert.equal(arg('-WaitPid'), '4242');
 });
 
+test('a missing helper is found before the Companion stops', async t => {
+  const f = await fixture(t);
+  await f.updater.check(); await f.updater.download(() => {});
+  await rm(f.options.bridge.helper);
+  assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
+  assert.deepEqual(f.state.calls, []);
+  assert.equal(f.state.launches.length, 0);
+});
+
 test('an MSI changed after the download is refused before the Companion stops', async t => {
   const f = await fixture(t);
   await f.updater.check(); await f.updater.download(() => {});
