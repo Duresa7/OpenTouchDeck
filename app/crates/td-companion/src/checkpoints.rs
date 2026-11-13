@@ -14,6 +14,8 @@ pub enum Checkpoint {
     BeforeOrientationPut,
     /// An orientation change sent `SettingsPut` and has more steps to run.
     AfterOrientationPut,
+    /// The Integrations session rendered a view and has not yet sent it to the window.
+    IntegrationsPublish,
 }
 
 #[derive(Default)]
@@ -21,6 +23,8 @@ struct Point {
     held: bool,
     waiting: bool,
     fail: bool,
+    /// Only the first arrival waits; later ones pass while it does.
+    once: bool,
 }
 
 #[derive(Clone, Default)]
@@ -32,11 +36,20 @@ impl Checkpoints {
         self.0.0.lock().entry(at).or_default().held = true;
     }
 
+    /// Like `hold`, but only the next arrival waits; later work passes while it does.
+    pub fn hold_once(&self, at: Checkpoint) {
+        let mut points = self.0.0.lock();
+        let point = points.entry(at).or_default();
+        point.held = true;
+        point.once = true;
+    }
+
     /// Lets the work at `at` go on. With `fail`, its next step fails as a Device request that timed out would.
     pub fn release(&self, at: Checkpoint, fail: bool) {
         let mut points = self.0.0.lock();
         let point = points.entry(at).or_default();
         point.held = false;
+        point.once = false;
         point.fail = fail;
         self.0.1.notify_all();
     }
@@ -48,6 +61,10 @@ impl Checkpoints {
 
     pub(crate) fn pass(&self, at: Checkpoint) -> Result<(), ()> {
         let mut points = self.0.0.lock();
+        let point = points.entry(at).or_default();
+        if point.held && point.once && point.waiting {
+            return Ok(());
+        }
         loop {
             let point = points.entry(at).or_default();
             if !point.held {
