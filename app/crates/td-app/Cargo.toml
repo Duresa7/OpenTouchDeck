@@ -1,6 +1,6 @@
 [package]
 name = "td-app"
-version = "1.2.0"
+version = "2.0.0-preview.1"
 edition.workspace = true
 # Our own source files are Apache-2.0, like the rest of the repository. This crate links Slint,
 # which we use under GPL-3.0-only, so the program it builds is distributed as GPL-3.0-only

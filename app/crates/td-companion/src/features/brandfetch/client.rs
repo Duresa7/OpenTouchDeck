@@ -23,12 +23,12 @@ const FILE_TRIES: usize = 4;
 /// The user's Brand API key. It prints as `[redacted]`, and leaves this process only as the
 /// `Authorization: Bearer` header of a Brand API call.
 #[derive(Clone)]
-pub struct ApiKey(String);
+pub struct ApiKey(zeroize::Zeroizing<String>);
 impl ApiKey {
     pub fn new(value: String) -> Self {
-        Self(value)
+        Self(zeroize::Zeroizing::new(value))
     }
-    fn expose(&self) -> &str {
+    pub(super) fn expose(&self) -> &str {
         &self.0
     }
     /// Removes the key from text bound for an error, should a transport error ever quote it.
@@ -36,8 +36,13 @@ impl ApiKey {
         if self.0.is_empty() {
             text
         } else {
-            text.replace(&self.0, "[redacted]")
+            text.replace(self.expose(), "[redacted]")
         }
+    }
+}
+impl From<&str> for ApiKey {
+    fn from(value: &str) -> Self {
+        Self::new(value.to_owned())
     }
 }
 impl std::fmt::Debug for ApiKey {

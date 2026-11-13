@@ -226,6 +226,8 @@ When idle, the Device shows pictures sent by the Companion, one at a time. They 
 
 ## Use the browser version
 
+This section covers 1.x. Open TouchDeck 2.0 runs as one native window and has no browser version, browser pairing or **Paired browsers** list.
+
 Keep the Companion running on this PC. Choose **Open in browser** from the tray menu. The default browser opens and pairs automatically. If it asks for a code, enter the code shown on this PC within two minutes. For another browser, use the same address and a fresh pairing code.
 
 Pairing survives refreshes. After the Companion restarts, choose **Open in browser** again. **Settings > Paired browsers > Forget** signs that browser out, including its other tabs. Other paired browsers stay connected.

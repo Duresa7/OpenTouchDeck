@@ -49,7 +49,7 @@ Open TouchDeck has no account, no telemetry, no analytics and no crash reporting
 
 It contacts other computers in these cases only:
 
-- **Update checks.** While the window is open, Open TouchDeck asks GitHub for the latest release's update file, about every six hours and when you choose **Check for updates**. It downloads an update only when you choose **Update**. GitHub sees the request as it sees any download; see the [GitHub privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).
+- **Update checks.** On Windows, Open TouchDeck asks GitHub for its list of releases after it starts and then at most once every 24 hours, unless you turn **Check for updates** off in Settings. When a newer stable 2.x release is there, it downloads that release's installer and checks its signature; it installs only when asked to. [PRIVACY](PRIVACY.md) lists what a check sends. GitHub sees the request as it sees any download; see the [GitHub privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).
 - **Icons you pick.** Picking a catalog icon that isn't on this PC yet, or downloading an Icon pack, fetches it from the [jsDelivr](https://www.jsdelivr.com/terms/privacy-policy-jsdelivr-net) content network or the [npm registry](https://docs.npmjs.com/policies/privacy).
 - **Services you set up.** An Integration, an HTTP value or Brandfetch logos contacts that service, or the address you gave it, with the keys you gave it. Each is off until you turn it on.
 

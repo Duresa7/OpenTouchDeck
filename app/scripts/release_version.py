@@ -2,11 +2,12 @@
 """Check or bump the desktop app version, which must agree everywhere a release reads it.
 
     python app/scripts/release_version.py check [--tag vX.Y.Z]
-    python app/scripts/release_version.py bump X.Y.Z
+    python app/scripts/release_version.py bump X.Y.Z[-PRERELEASE]
 
 check verifies the version of the workspace crate Cargo.toml files and the workspace crates in app/Cargo.lock,
 plus an optional release tag.
 bump changes only those version strings, preserving all other bytes.
+A version is X.Y.Z with an optional SemVer pre-release, such as 2.0.0-preview.1. The MSI installs it as X.Y.Z.
 """
 
 import argparse
@@ -16,7 +17,10 @@ import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+NUMBER = r"(?:0|[1-9][0-9]*)"
+# SemVer pre-release identifiers: numeric without leading zeros, or alphanumerics and hyphens. No build metadata.
+IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+VERSION = re.compile(rf"{NUMBER}\.{NUMBER}\.{NUMBER}(?:-{IDENTIFIER}(?:\.{IDENTIFIER})*)?")
 TOML_VERSION = re.compile(r'(^\[package\]\r?\n(?:(?!\[)[^\n]*\n)*?version\s*=\s*")([^"]*)(")', re.MULTILINE)
 CRATES = ("td-app", "td-companion", "td-core", "td-host", "td-link", "td-updater")
 LOCK = "app/Cargo.lock"
@@ -61,7 +65,7 @@ def check(root, tag=None):
         raise ValueError("App versions disagree")
     version = next(iter(versions.values()))
     if not VERSION.fullmatch(version):
-        raise ValueError(f"App version {version!r} is not X.Y.Z")
+        raise ValueError(f"App version {version!r} is not X.Y.Z[-PRERELEASE]")
     if tag is not None and tag != f"v{version}":
         raise ValueError(f"Tag {tag!r} is not v{version}")
     print(f"ok {version}" + (f" tag {tag}" if tag is not None else ""))
@@ -70,7 +74,7 @@ def check(root, tag=None):
 
 def bump(root, version):
     if not VERSION.fullmatch(version):
-        raise ValueError(f"New version {version!r} is not X.Y.Z")
+        raise ValueError(f"New version {version!r} is not X.Y.Z[-PRERELEASE]")
     read_versions(root)
     for relative, pattern in PATTERNS.items():
         path = root / relative
@@ -94,7 +98,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     checker = commands.add_parser("check", help="fail unless every version agrees (and matches --tag)")
     checker.add_argument("--tag")
-    bumper = commands.add_parser("bump", help="set every version to X.Y.Z")
+    bumper = commands.add_parser("bump", help="set every version to X.Y.Z[-PRERELEASE]")
     bumper.add_argument("version")
     args = parser.parse_args(argv)
     try:
