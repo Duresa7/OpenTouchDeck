@@ -105,4 +105,7 @@ Write-Json (Join-Path $Out 'environment.json') $facts
 $facts | ConvertTo-Json -Depth 6 | Write-Host
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Out 'screenshots') | Out-Null
+# The runner's own terminal fills the screen with its log; minimise it before the picture.
+Hide-OtherWindows
+Start-Sleep -Seconds 1
 Save-Screen (Join-Path $Out 'screenshots/desktop-before.png')
