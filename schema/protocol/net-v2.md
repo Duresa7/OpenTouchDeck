@@ -194,6 +194,8 @@ Two rules belong to the radio code that drives this builder:
 
 The Bluetooth keyboard role advertises separately, under its own rules; it
 doesn't add its name or any other stable value to these advertisements.
+Its own advertising address is still public; see
+[What stays visible](#discovery-privacy) below.
 
 **Why 15 minutes on BLE too.** One period for both Carriers keeps one rotation
 rule in the Firmware, and the linkable window is the same whichever radio an
@@ -254,6 +256,18 @@ which is `device_id` itself on the ESP32-S3. Anyone in radio range sees it in
 every frame, whatever mDNS says. Hiding it needs a random station address,
 which this document doesn't yet require. The TCP port, the service type and
 the fact that a TouchDeck is present stay visible too.
+
+The Bluetooth keyboard role's address is visible on BLE in the same way. While
+no bonded host is connected, the keyboard role advertises with no time limit
+from the Device's public Bluetooth address, which the ESP32-S3 derives from
+the factory MAC (`device_id` + 2). Anyone in radio range can follow the Device
+by that address, whatever the net-v2 discovery advertisements carry, so BLE
+does not yet meet the rule that nothing stable is advertised outside pairing
+mode. The address is still public because the keyboard role was built and
+bonded with its hosts before this rule existed. Moving it to a resolvable
+private address changes how the Device bonds with its hosts, so that change
+is tracked separately in
+[#401](https://github.com/Duresa7/OpenTouchDeck/issues/401).
 
 ## Device identity
 
