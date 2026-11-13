@@ -433,21 +433,29 @@ impl FirmwareTask {
         });
     }
 
-    /// Follows `job` until it finishes. Subscribe before reading, so no update is lost.
+    /// Follows `job` until it finishes. `changes` must be subscribed before `job` was read, so it
+    /// holds every update after `job`. Each update shows in order, even when the Job finished
+    /// before this runs: jumping to the Job's latest copy would drop the steps between from Details.
     async fn follow(&self, job: Job, mut changes: tokio::sync::broadcast::Receiver<Change>) {
         *self.inner.job.lock() = Some(job.id.clone());
         self.inner.view.send_modify(|task| task.log.clear());
-        let latest = self.inner.handle.jobs().get(&job.id).unwrap_or(job);
-        self.show(&latest);
-        if latest.state.finished() {
+        self.show(&job);
+        if job.state.finished() {
             return;
         }
-        let id = latest.id;
+        let Job { id, mut rev, .. } = job;
+        // Shows `job` unless it's older than what shows now. Returns whether it finished.
+        let mut next = |job: &Job| {
+            if job.rev > rev {
+                rev = job.rev;
+                self.show(job);
+            }
+            job.state.finished()
+        };
         loop {
             match changes.recv().await {
                 Ok(Change::JobUpdated(update)) if update.0.id == id => {
-                    self.show(&update.0);
-                    if update.0.state.finished() {
+                    if next(&update.0) {
                         return;
                     }
                 }
@@ -458,8 +466,7 @@ impl FirmwareTask {
                     let Some(job) = self.inner.handle.jobs().get(&id) else {
                         return;
                     };
-                    self.show(&job);
-                    if job.state.finished() {
+                    if next(&job) {
                         return;
                     }
                 }
@@ -527,6 +534,8 @@ impl FirmwareTask {
         }
         *self.inner.context.lock() = self.context();
         let changes = self.inner.handle.observe();
+        // `job` was read before this subscribed, so read it again; a finished Job may be gone.
+        let job = self.inner.handle.jobs().get(&job.id).unwrap_or(job);
         self.follow(job, changes).await;
     }
 
@@ -657,5 +666,82 @@ mod tests {
         assert_eq!(view.text(), "Firmware installed");
         let (view, _) = view_of(&done, &context(), Words::Update);
         assert_eq!(view.text(), "Done. Firmware installed.");
+    }
+
+    /// Waits on `changes` until the Job `id` finishes.
+    async fn finished(changes: &mut tokio::sync::broadcast::Receiver<Change>, id: &str) {
+        loop {
+            if let Change::JobUpdated(update) = changes.recv().await.unwrap()
+                && update.0.id == id
+                && update.0.state.finished()
+            {
+                return;
+            }
+        }
+    }
+
+    // A scripted Accept lets an install run through every step before `start` reads it: Details
+    // still lists each step, in order, once.
+    #[tokio::test]
+    async fn details_keep_every_step_of_a_job_that_finished_before_it_was_read() {
+        use crate::devices::BoardKind;
+        use crate::testing::InProcessCompanion;
+        use std::time::Duration;
+
+        let mut td = InProcessCompanion::start().await;
+        let board = td.plug_board("mock0009", BoardKind::Silent).await;
+        let task = FirmwareTask::new(td.handle.clone(), Target::NewBoard(board.id.clone()));
+        td.handle
+            .firmware()
+            .script(vec![super::super::ConsentAnswer::Accept]);
+        let changes = td.handle.observe();
+        let mut ends = td.handle.observe();
+        let job = td
+            .handle
+            .firmware()
+            .start(
+                Operation::Install,
+                board.id.clone(),
+                FirmwareRequest {
+                    bundle: "bundled".into(),
+                    channel: None,
+                },
+            )
+            .unwrap();
+        // The order the flaky test hit by chance: the Job ends, then `start` follows it.
+        finished(&mut ends, &job.id).await;
+        tokio::time::timeout(Duration::from_secs(10), task.follow(job.clone(), changes))
+            .await
+            .expect("followed to the end");
+        let view = task.view();
+        assert_eq!(view.view.text(), "Firmware installed");
+        let at = |line: &str| view.log.iter().position(|l| l == line);
+        let waiting = at("Waiting for confirmation").unwrap_or_else(|| panic!("{:?}", view.log));
+        assert!(
+            at("Queued").is_some_and(|queued| queued < waiting),
+            "{:?}",
+            view.log
+        );
+        assert_eq!(
+            view.log.last().map(String::as_str),
+            Some("Firmware installed")
+        );
+        assert_eq!(
+            view.log
+                .iter()
+                .filter(|l| *l == "Waiting for confirmation")
+                .count(),
+            1,
+            "{:?}",
+            view.log
+        );
+
+        // A screen that opens later attaches with an old copy of the Job: it shows the end and stops.
+        let late = FirmwareTask::new(td.handle.clone(), Target::NewBoard(board.id.clone()));
+        tokio::time::timeout(Duration::from_secs(10), late.attach(job))
+            .await
+            .expect("attach stops at the end");
+        assert_eq!(late.view().view.text(), "Firmware installed");
+        td.shutdown().await;
     }
 }
