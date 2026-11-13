@@ -279,3 +279,54 @@ async fn bar_and_now_playing_presets_keep_renderers_without_firmware_and_input_o
     assert!(!tile.input);
     assert!(s.edit(Edit::Input { tile: id, on: true }).is_err());
 }
+
+#[tokio::test]
+async fn invalid_import_explains_file_and_preserves_drafts_selection_and_storage() {
+    let (td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    let id = s.add(AddKind::Key, AddTarget::Auto).unwrap();
+    let before = s.export().unwrap();
+    let error = s
+        .import("broken.json", br#"{"schema": 1, "name": "Broken""#)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("broken.json is not a Layout file. Nothing changed")
+    );
+    assert_eq!(s.export().unwrap(), before);
+    assert_eq!(s.selection().1, Some(id.as_str()));
+    let reopened = td.handle().open_editor("mock0001").unwrap();
+    assert_eq!(reopened.export().unwrap(), before);
+}
+#[tokio::test]
+async fn import_opens_its_orientation_and_graph_export_import_round_trips() {
+    let (_td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    s.place_preset(
+        &preset(Some(TileRender::Graph)),
+        "volume",
+        &streams(),
+        true,
+        AddTarget::Auto,
+    )
+    .unwrap();
+    let graph = s.export().unwrap();
+    s.import("graph.json", graph.as_bytes()).unwrap();
+    assert_eq!(tiles(&s)[0].render, Some(TileRender::Graph));
+    assert_eq!(
+        tiles(&s)[0].streams.as_ref().unwrap()["value"],
+        StreamType::Number
+    );
+    assert_eq!(s.export().unwrap(), graph);
+    let mut portrait = blank();
+    portrait.orientation = Orientation::Portrait;
+    portrait.name = "Tall".into();
+    s.import("tall.json", &portrait.to_canonical_json())
+        .unwrap();
+    assert_eq!(s.orientation(), Orientation::Portrait);
+    assert_eq!(s.selection(), (Some("page1"), None));
+    assert_eq!(s.draft().unwrap().layout().name, "Tall");
+    s.select_orientation(Orientation::Landscape);
+    assert_eq!(s.export().unwrap(), graph);
+}

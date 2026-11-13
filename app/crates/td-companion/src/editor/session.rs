@@ -15,6 +15,11 @@ use td_core::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
+    #[error("{file} is not a Layout file. Nothing changed: {reason}")]
+    Import {
+        file: String,
+        reason: td_core::editing::EditError,
+    },
     #[error(transparent)]
     Editor(#[from] EditorError),
     #[error(transparent)]
@@ -77,6 +82,20 @@ impl Session {
         }
         self.page = Some(page.into());
         self.tile = tile.map(str::to_owned);
+    }
+    /// Parse before touching either orientation, selection or persisted state.
+    pub fn import(&mut self, file: &str, bytes: &[u8]) -> Result<(), SessionError> {
+        let document =
+            td_core::editing::Document::parse(bytes).map_err(|reason| SessionError::Import {
+                file: file.into(),
+                reason,
+            })?;
+        self.start(document.layout().clone())?;
+        Ok(())
+    }
+    pub fn export(&self) -> Result<String, EditorError> {
+        let draft = self.draft().ok_or(EditorError::NoDraft)?;
+        Ok(String::from_utf8(draft.layout().to_canonical_json()).expect("Layout JSON is UTF-8"))
     }
     pub fn start(&mut self, layout: Layout) -> Result<(), EditorError> {
         let orientation = layout.orientation;
