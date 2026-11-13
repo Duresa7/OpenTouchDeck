@@ -1,40 +1,20 @@
-# App verification map
+# 2.0 feature map
 
-Run commands from [SKILL.md](../SKILL.md). Fake specs prove client behavior with demo data. Companion specs use the actual API and mock Devices, with fresh data. Read [Companion API coverage](companion-api.md) for feature routes and proof boundaries. Read [device console](device-console.md) to send Firmware console commands through a running Companion, and [board pass tools](board-pass-tools.md) for the Companion log, a newer Firmware bundle and a console flood.
+Paths below are repository-relative. Run the commands in the parent
+[skill](../SKILL.md); the focused session command and workspace run cover the
+model tests listed here. Follow code and tests when extending a lane rather than
+assuming 1.x screen parity.
 
-| Current React spec | Observable checks | Mode |
+| Feature | Code | Evidence and limits |
 | --- | --- | --- |
-| `account-detail.companion.spec.ts` | [account-detail.companion](account-detail.companion.md) | Companion |
-| `break-ui.spec.ts` | [break-ui](break-ui.md) | fake |
-| `companion.spec.ts` | [companion](companion.md) | Companion |
-| `custom.companion.spec.ts` | [custom.companion](custom.companion.md) | Companion |
-| `device-panel.spec.ts` | [device-panel](device-panel.md) | fake |
-| `gif.spec.ts` | [gif](gif.md) | fake |
-| `graph.spec.ts` | [graph](graph.md) | fake |
-| `home.spec.ts` | [home](home.md) | fake |
-| `icon-picker-bench.spec.ts` | [icon-picker-bench](icon-picker-bench.md) | fake |
-| `icon-picker-shots.spec.ts` | [icon-picker-shots](icon-picker-shots.md) | fake |
-| `icon-picker.spec.ts` | [icon-picker](icon-picker.md) | fake |
-| `inspector-shots.spec.ts` | [inspector-shots](inspector-shots.md) | fake |
-| `inspector.spec.ts` | [inspector](inspector.md) | fake |
-| `integrations-shots.spec.ts` | [integrations-shots](integrations-shots.md) | fake |
-| `integrations.companion.spec.ts` | [integrations.companion](integrations.companion.md) | Companion |
-| `integrations.spec.ts` | [integrations](integrations.md) | fake |
-| `layout-shots.spec.ts` | [layout-shots](layout-shots.md) | fake |
-| `layout.spec.ts` | [layout](layout.md) | fake |
-| `media.spec.ts` | [media](media.md) | fake |
-| `motion-shots.spec.ts` | [motion-shots](motion-shots.md) | fake |
-| `motion.spec.ts` | [motion](motion.md) | fake |
-| `new-board.spec.ts` | [new-board](new-board.md) | fake |
-| `onboarding-shots.spec.ts` | [onboarding-shots](onboarding-shots.md) | fake |
-| `onboarding.spec.ts` | [onboarding](onboarding.md) | fake |
-| `pairing.companion.spec.ts` | [pairing.companion](pairing.companion.md) | Companion |
-| `screens.spec.ts` | [screens](screens.md) | fake |
-| `settings-shots.spec.ts` | [settings-shots](settings-shots.md) | fake |
-| `settings.spec.ts` | [settings](settings.md) | fake |
-| `shell.spec.ts` | [shell](shell.md) | fake |
-| `stacking.spec.ts` | [stacking](stacking.md) | fake |
-| `this-pc.spec.ts` | [this-pc](this-pc.md) | fake |
-| `updates.spec.ts` | [updates](updates.md) | fake |
+| Home and About | [app/crates/td-app/ui/home.slint](../../../../app/crates/td-app/ui/home.slint), `ui/about.slint`, `src/home.rs`, `src/about.rs` | [app/crates/td-app/src/ui_tests.rs](../../../../app/crates/td-app/src/ui_tests.rs) checks connected/disconnected Devices, navigation, version/licences, close notice, sizing and contrast. Mock snapshots show content. The Windows evidence suite adds desktop appearance, tray, UI Automation and memory. |
+| Setup | [app/crates/td-app/ui/setup.slint](../../../../app/crates/td-app/ui/setup.slint), `src/screens.rs`; [app/crates/td-companion/src/setup.rs](../../../../app/crates/td-companion/src/setup.rs), `src/features/firmware/task.rs` | [app/crates/td-app/src/screens_tests.rs](../../../../app/crates/td-app/src/screens_tests.rs): `a_new_board_installs_and_setup_names_and_turns_it`, skip/reopen, ignored boards, reinstall and narrow-window states. [app/crates/td-companion/src/devices/sessions_tests.rs](../../../../app/crates/td-companion/src/devices/sessions_tests.rs) tests install consent, old Firmware and repeated orientation failures. A `fresh` mock can open Setup after install. |
+| Settings | [app/crates/td-app/ui/settings.slint](../../../../app/crates/td-app/ui/settings.slint), `src/screens.rs`, `src/prefs.rs`; [app/crates/td-companion/src/devices/settings_session.rs](../../../../app/crates/td-companion/src/devices/settings_session.rs); [app/crates/td-core/src/settings.rs](../../../../app/crates/td-core/src/settings.rs) | `screens_tests.rs`: rename rollback, orientation confirmation/restart, photo-frame folder/switch, update preference, Appearance and damaged settings. `devices/sessions_tests.rs` adds pending fields, restart timeout and repeated failures. The headless Start at sign-in switch uses the mock policy; real registration needs Windows evidence. |
+| Pairings | Paired-app controls in [app/crates/td-app/ui/settings.slint](../../../../app/crates/td-app/ui/settings.slint); [app/crates/td-companion/src/devices/pairings_session.rs](../../../../app/crates/td-companion/src/devices/pairings_session.rs), `src/devices/pairings.rs` | `screens_tests::pairings_retry_cancel_and_reconcile` and `a_device_without_pairings_has_no_wireless_group`; `devices/sessions_tests.rs` covers reload after USB returns and ambiguous Forget reconciliation. [app/crates/td-companion/tests/device_pairings.rs](../../../../app/crates/td-companion/tests/device_pairings.rs) covers Device operations. Capture `device:mock0001` with a `radio` mock for the paired-app list. This is not the 1.x browser-pairing flow. |
+| Layout editor model | [app/crates/td-core/src/editing.rs](../../../../app/crates/td-core/src/editing.rs); [app/crates/td-companion/src/editor.rs](../../../../app/crates/td-companion/src/editor.rs), `src/editor/session.rs` and its sibling modules | `td-core` editing unit tests; [app/crates/td-companion/tests/editor.rs](../../../../app/crates/td-companion/tests/editor.rs) and `tests/editor_session.rs` cover atomic edits, placement, Pages, actions, presets/streams, GIF work, selection, dirty state, conflicts and send/readback receipts. Exercise `Handle::open_editor` and `editor::Session`. There is no Slint Layout editor page in `ui/app.slint` yet, so screenshots cannot prove editor interactions. |
+| Integrations so far | [app/crates/td-companion/src/integrations.rs](../../../../app/crates/td-companion/src/integrations.rs), `src/integrations/session.rs`; [app/crates/td-host/src/integrations/](../../../../app/crates/td-host/src/integrations/) | [app/crates/td-companion/tests/integration_setup.rs](../../../../app/crates/td-companion/tests/integration_setup.rs) and `tests/integrations_session.rs` prove CLIProxyAPI and Custom setup, settings/secrets, enable/disable, cancellation, stale forms, refresh floors, delivery errors, command approval and ordered publication. This PC, Media and Volume have switch-only session tests. `app/crates/td-host/tests/{integrations,custom,this_pc,media,volume}.rs` cover providers. Use `IntegrationsSession` through the typed Handle; no Slint Integrations page exists yet. Mock tests do not prove live credentials, media playback or OS approval dialogs. |
 
-Electron tests live in `app/electron/tests` and its Playwright config; run its own e2e script for shell session trust, navigation guards, window lifecycle and updater behavior. Native frame and physical feel need separate observation.
+[app/crates/td-app/src/ui_tests.rs](../../../../app/crates/td-app/src/ui_tests.rs) owns the testing-backend initialization;
+`screens_tests.rs` connects the actual Slint controls to typed Companion sessions.
+They require neither a desktop nor an HTTP client. Model tests exercise their
+public Rust contracts even where a screen is still pending.
