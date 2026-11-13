@@ -115,6 +115,6 @@ Each identifier is stable so later issues can link to `#implementation-checklist
 - [ ] W20: Publish a truthful code signing policy and PRIVACY page; allow opting out of update checks during installation and in Settings.
 - [ ] W21: Build release artifacts only on GitHub-hosted runners and retain verifiable source/build origin for future signing.
 - [ ] W22: Prepare signing inside-out with SHA-256, RFC 3161 timestamps and verification of owned binaries and MSI.
-- [ ] W23: Keep the minisign key and prove the 1.x updater bridge, data migration and Windows 10 exclusion.
+- [ ] W23: Keep the minisign key and prove Windows 10 exclusion. The 1.x updater bridge and data migration were dropped on 2026-11-13 (ADR 0013); the maintainer replaces 1.x by hand.
 - [ ] W24: Capture Windows screenshots and RAM on GitHub-hosted Windows runners with OS/build, workload, build mode and memory metric recorded.
 - [ ] W25: Complete M0–M5 before deleting Electron, React and the browser/local web API at M6; update GLOSSARY.md at that cutover. (ADR 0012 moved Electron and React to `release/1.x` early and updated GLOSSARY.md; the local web API still goes at M6.)

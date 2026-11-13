@@ -2,6 +2,8 @@
 
 Decided 2026-11-12. Supersedes ADR 0001 and ADR 0002. ADR 0012 supersedes the Electron and React timing below: the lines it changes are marked.
 
+Amended by ADR 0013 on 2026-11-13: the automatic 1.x to 2.0 bridge described below was dropped.
+
 Open TouchDeck 2.0 is one Rust program: the Companion and a Slint UI run in the same process. Use Slint's Fluent style and AccessKit for Narrator, muda for native menus, and the winit backend for the HWND. The Microsoft `windows` crate handles DWM Mica, toasts, taskbar integration and a fixed AppUserModelID (AUMID). File and folder dialogs use `rfd`.
 
 The reasons are memory use, a Windows 11 look and feel, and one implementation language for the app and Companion. The maintainer's measurements put the Electron window at about 300 MB PSS across nine processes and the Rust Companion alone at about 42 MB in a debug build. These are starting measurements, not a benchmark of the new UI or a promised saving. Slint's Fluent style, accessibility integration and expected memory use motivated the choice; we have not established a comparative ranking of Rust toolkits.

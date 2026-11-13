@@ -67,6 +67,6 @@ signature and 256 MiB per MSI.
 
 `UpdateReady` owns a unique temporary directory and exposes the MSI path, signature
 path and version; dropping it cleans up. Installation, verification immediately
-before launch, startup scheduling, native Settings UI, update presentation and the
-1.x migration bridge remain later M5 work. An abrupt process termination can leave
+before launch, startup scheduling, native Settings UI and update presentation
+remain later M5 work. An abrupt process termination can leave
 temporary files until the next start removes them. See [privacy](../../../../docs/PRIVACY.md).

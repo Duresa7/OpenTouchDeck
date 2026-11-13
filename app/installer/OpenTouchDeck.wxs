@@ -38,7 +38,7 @@
 
     <!--
       Open TouchDeck 1.x owns this same folder. Refuse coexistence even though the native
-      payload has a different filename; the separate bridge must remove 1.x first.
+      payload has a different filename. Uninstall 1.x before installing the MSI.
     -->
     <Property Id="OPENTOUCHDECK1">
       <DirectorySearch Id="OpenTouchDeck1Folder" Path="[LocalAppDataFolder]Programs\Open TouchDeck">

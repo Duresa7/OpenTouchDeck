@@ -1,5 +1,5 @@
 //! Native 2.x update groundwork. Blocking: call from a worker, never the UI thread.
-//! The caller loads AppSettings before every poll. No task, installer or 1.x bridge
+//! The caller loads AppSettings before every poll. No task or installer
 //! is started here. Keep UpdateReady alive while using its temporary files, and
 //! reverify immediately before any future installer launch.
 
