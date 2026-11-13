@@ -202,13 +202,13 @@ if ($WaitPid -gt 0) { Wait-Process -Id $WaitPid -Timeout 30 -ErrorAction Silentl
 # The updater already stopped the Companion through its shutdown route, so ending a 1.x process that is still
 # running loses nothing: it is the window or a Companion that did not finish exiting.
 $deadline = [DateTime]::UtcNow.AddSeconds(30)
-while ((Get-ProcessesIn $OneXFolder).Count -gt 0 -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 500 }
-$running = Get-ProcessesIn $OneXFolder
+while (@(Get-ProcessesIn $OneXFolder).Count -gt 0 -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 500 }
+$running = @(Get-ProcessesIn $OneXFolder)
 if ($running.Count -gt 0) {
   Write-Log "Ending 1.x processes that are still running: $(($running | ForEach-Object { $_.ProcessName }) -join ', ')."
   $running | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
-  if ((Get-ProcessesIn $OneXFolder).Count -gt 0) { Stop-Refused 'Open TouchDeck 1.x is still running.' }
+  if (@(Get-ProcessesIn $OneXFolder).Count -gt 0) { Stop-Refused 'Open TouchDeck 1.x is still running.' }
 }
 
 # 2. Move 1.x aside.
