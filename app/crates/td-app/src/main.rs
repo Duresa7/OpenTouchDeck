@@ -130,7 +130,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if packaged {
         // On by default the first time an installed copy runs, unless Windows already says off.
         let (first, folder) = (handle.clone(), data.clone());
-        let initialized = runtime.block_on(tokio::task::spawn_blocking(move || {
+        let initialized = runtime.block_on(runtime.spawn_blocking(move || {
             td_companion::tray::initialize_start_at_sign_in(&first, &folder)
         }))?;
         if let Err(error) = initialized {
