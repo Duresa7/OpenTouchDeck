@@ -233,11 +233,13 @@ fn custom_sets_up_switches_and_is_removed() {
             .contains('\n')
     );
 
+    // Each flip waits for the switch too: it sends the opposite of what it shows.
     back(&rig);
+    rig.until("the switch on", |r| checked(r, "Custom"));
     flip(&rig, "Custom");
-    rig.until("off", |r| !enabled(r, "custom"));
+    rig.until("off", |r| !enabled(r, "custom") && !checked(r, "Custom"));
     flip(&rig, "Custom");
-    rig.until("on", |r| enabled(r, "custom"));
+    rig.until("on", |r| enabled(r, "custom") && checked(r, "Custom"));
 
     rig.press("Custom settings");
     rig.until("the page", |r| r.has("Auth: Saved"));
