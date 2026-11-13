@@ -734,3 +734,13 @@ export function matchRecord(record, pairings) {
   }
   return matched;
 }
+
+// Legacy BLE service data after the 128-bit UUID. Synthetic reference encoder.
+export const bleHint = (key, nonce) => mac(fixed(key, 32, 'discovery key'), ascii('ble-hint'), fixed(nonce, 6, 'BLE nonce')).subarray(0, 6);
+export function bleAdvertisement({ nonce, ltks, fillers, slot, pairing }) {
+  fixed(nonce, 6, 'BLE nonce');
+  if (!Number.isInteger(slot) || slot < 0 || slot >= 4 || ltks.length > 4) throw new Error('slots');
+  const filler = fixed(fillers[slot], 6, 'BLE filler');
+  if (pairing) return concat(Buffer.from([0x82]), fixed(pairing.deviceId, 6, 'device id'), Buffer.from([ltks.length]), filler.subarray(0, 5));
+  return concat(Buffer.from([2]), nonce, slot < ltks.length ? bleHint(discoveryKey(ltks[slot]), nonce) : filler);
+}
