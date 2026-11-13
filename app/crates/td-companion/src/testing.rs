@@ -1,3 +1,6 @@
+mod in_process;
+pub use in_process::InProcessCompanion;
+
 use crate::{
     actions::{FileGrants, GrantStore},
     api::{Ctx, Endpoint},
@@ -17,8 +20,44 @@ enum Ports {
     Mock,
     Real { device_console: bool },
 }
+/// How [`TestCompanion::start_router`] sets up a Companion. The default is what
+/// [`TestCompanion::start`] runs.
+struct StartOptions {
+    limits: crate::Limits,
+    asset_store_bytes: u64,
+    /// Serve the release router instead of the one with test routes.
+    release: bool,
+    /// Grants kept here instead of in a file.
+    grants: Option<Arc<dyn GrantStore>>,
+    /// The desktop to keep, as a restart does.
+    desktop: Option<Arc<crate::tray::Desktop>>,
+    /// Where catalog images are fetched from.
+    catalog: Box<dyn td_host::catalog::Fetcher>,
+    /// The Icon pack list and where its tarballs download from, instead of the bundled list
+    /// with no network.
+    packs: Option<(
+        Vec<td_host::packs::Curated>,
+        Box<dyn td_host::catalog::Fetcher>,
+    )>,
+    ports: Ports,
+}
+impl Default for StartOptions {
+    fn default() -> Self {
+        Self {
+            limits: crate::Limits::default(),
+            asset_store_bytes: crate::store::ASSET_STORE_BYTES,
+            release: false,
+            grants: None,
+            desktop: None,
+            catalog: Box::new(NoCatalogNetwork),
+            packs: None,
+            ports: Ports::Mock,
+        }
+    }
+}
 pub struct TestCompanion {
     ctx: Ctx,
+    companion: Option<crate::companion::Companion>,
     ports: MockPorts,
     input: td_host::FakeSink,
     _data: tempfile::TempDir,
@@ -43,104 +82,90 @@ impl TestCompanion {
     pub async fn start() -> Self {
         Self::start_with(crate::Limits::default()).await
     }
+    pub async fn start_with_asset_quota(asset_store_bytes: u64) -> Self {
+        Self::start_router(StartOptions {
+            asset_store_bytes,
+            ..Default::default()
+        })
+        .await
+    }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
-        Self::start_router(
+        Self::start_router(StartOptions {
             limits,
-            false,
-            None,
-            None,
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Mock,
-        )
+            ..Default::default()
+        })
         .await
     }
     pub async fn start_with_catalog(
         limits: crate::Limits,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
     ) -> Self {
-        Self::start_router(limits, false, None, None, fetcher, None, Ports::Mock).await
+        Self::start_router(StartOptions {
+            limits,
+            catalog: fetcher,
+            ..Default::default()
+        })
+        .await
     }
     /// Starts offering `curated` as the Icon pack list, downloaded through `fetcher`.
     pub async fn start_with_packs(
         curated: Vec<td_host::packs::Curated>,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
     ) -> Self {
-        Self::start_router(
-            crate::Limits::default(),
-            false,
-            None,
-            None,
-            Box::new(NoCatalogNetwork),
-            Some((curated, fetcher)),
-            Ports::Mock,
-        )
+        Self::start_router(StartOptions {
+            packs: Some((curated, fetcher)),
+            ..Default::default()
+        })
         .await
     }
     pub async fn start_release_router() -> Self {
-        Self::start_router(
-            crate::Limits::default(),
-            true,
-            None,
-            None,
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Mock,
-        )
+        Self::start_router(StartOptions {
+            release: true,
+            ..Default::default()
+        })
         .await
     }
     /// Starts on mock ports that the Companion treats as real ones, as a Companion without
     /// `--mock-devices` does, with or without `--test-real-device-console`.
     pub async fn start_on_real_ports(device_console: bool) -> Self {
-        Self::start_router(
-            crate::Limits::default(),
-            false,
-            None,
-            None,
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Real { device_console },
-        )
+        Self::start_router(StartOptions {
+            ports: Ports::Real { device_console },
+            ..Default::default()
+        })
         .await
     }
     /// Starts with grants kept in `grants` instead of a file.
     pub async fn start_with_grants(grants: Arc<dyn GrantStore>) -> Self {
-        Self::start_router(
-            crate::Limits::default(),
-            false,
-            Some(grants),
-            None,
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Mock,
-        )
+        Self::start_router(StartOptions {
+            grants: Some(grants),
+            ..Default::default()
+        })
         .await
     }
-    async fn start_router(
-        limits: crate::Limits,
-        release: bool,
-        grants: Option<Arc<dyn GrantStore>>,
-        desktop: Option<Arc<crate::tray::Desktop>>,
-        fetcher: Box<dyn td_host::catalog::Fetcher>,
-        packs: Option<(
-            Vec<td_host::packs::Curated>,
-            Box<dyn td_host::catalog::Fetcher>,
-        )>,
-        mode: Ports,
-    ) -> Self {
+    async fn start_router(options: StartOptions) -> Self {
+        let StartOptions {
+            limits,
+            asset_store_bytes,
+            release,
+            grants,
+            desktop,
+            catalog: fetcher,
+            packs,
+            ports: mode,
+        } = options;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let data = tempfile::tempdir().unwrap();
         let path = data.path().to_owned();
-        let mut ctx = tokio::task::spawn_blocking(move || {
+        let mut handle = tokio::task::spawn_blocking(move || {
             let grants = grants
                 .unwrap_or_else(|| Arc::new(FileGrants::new(path.join("allowed-actions.json"))));
-            Ctx::new(port, true, None, limits, &path, grants)
+            crate::companion::Handle::new(true, &path, asset_store_bytes, grants)
         })
         .await
         .unwrap();
-        ctx.catalog = std::sync::Arc::new(td_host::catalog::Catalog::new(
+        handle.catalog = std::sync::Arc::new(td_host::catalog::Catalog::new(
             data.path().join("cache/catalog"),
             fetcher,
         ));
@@ -151,21 +176,24 @@ impl TestCompanion {
                 Box::new(NoCatalogNetwork),
             ),
         };
-        ctx.packs = std::sync::Arc::new(td_host::packs::Packs::with_list(
+        handle.packs = std::sync::Arc::new(td_host::packs::Packs::with_list(
             data.path().join("packs"),
             pack_fetcher,
             curated,
         ));
         if let Some(desktop) = desktop {
-            ctx.desktop = desktop;
+            handle.desktop = desktop;
         }
         let mut config = Config::mock(Some(data.path().join("devices.json")));
         let (ports, input) = config.mock.clone().unwrap();
-        if let Ports::Real { device_console } = mode {
+        if let Ports::Real { .. } = mode {
             config.mock = None;
+        }
+        let companion = crate::companion::Companion::launch(handle.clone(), config);
+        let mut ctx = Ctx::new(handle, port, None, limits);
+        if let Ports::Real { device_console } = mode {
             ctx.real_device_console = device_console;
         }
-        ctx.devices.start(config);
         let router = if release {
             crate::api::release_router(ctx.clone())
         } else {
@@ -195,6 +223,7 @@ impl TestCompanion {
             .unwrap();
         Self {
             ctx,
+            companion: Some(companion),
             ports,
             input,
             _data: data,
@@ -208,15 +237,10 @@ impl TestCompanion {
     pub async fn restart(&mut self) {
         let desktop = self.ctx.desktop.clone();
         assert!(self.stop(Duration::from_secs(5)).await);
-        *self = Self::start_router(
-            crate::Limits::default(),
-            false,
-            None,
-            Some(desktop),
-            Box::new(NoCatalogNetwork),
-            None,
-            Ports::Mock,
-        )
+        *self = Self::start_router(StartOptions {
+            desktop: Some(desktop),
+            ..Default::default()
+        })
         .await;
     }
     pub fn pairing_delivery(&self) -> (Option<String>, Option<String>) {
@@ -343,25 +367,40 @@ impl TestCompanion {
         self.ports.deck(id).expect("a plugged mock")
     }
     /// A fake net-v2 Device on loopback in front of the mock with this USB serial, made if
-    /// needed but not plugged in. Mock discovery finds it while `announce` is on. Mock
+    /// needed but not plugged in. While `announce` is on it announces itself through mock
+    /// discovery, with the record a real Device sends: its id only while it is pairing. Mock
     /// Devices report the id `020000000001`, so use that serial for USB and Wi-Fi to merge.
     pub fn wifi_device(&self, serial: &str, announce: bool) -> td_link::net::fake::FakeNetDevice {
-        let deck = self.ports.board(serial, BoardKind::Device);
+        self.wifi_board(serial, BoardKind::Device, announce)
+    }
+    /// [`wifi_device`](Self::wifi_device) with the radio build behind it, as `plug_radio_device` plugs it in.
+    pub fn wifi_radio_device(
+        &self,
+        serial: &str,
+        announce: bool,
+    ) -> td_link::net::fake::FakeNetDevice {
+        self.wifi_board(serial, BoardKind::DeviceRadio, announce)
+    }
+    fn wifi_board(
+        &self,
+        serial: &str,
+        kind: BoardKind,
+        announce: bool,
+    ) -> td_link::net::fake::FakeNetDevice {
+        let deck = self.ports.board(serial, kind);
         let fake = td_link::net::fake::FakeNetDevice::start(deck);
         if announce {
-            self.wifi_network()
-                .announce(td_link::net::mdns::Discovered {
-                    device_id: fake.device_id(),
-                    name: format!("Mock Device {serial}"),
-                    address: fake.addr().into(),
-                    paired: Some(0),
-                });
+            self.wifi_network().announce(&fake);
         }
         fake
     }
     /// The in-memory keychain of Pairing keys.
     pub fn wifi_keys(&self) -> crate::devices::MemoryKeys {
         self.ctx.devices.wifi_mock().expect("mock Wi-Fi").0.clone()
+    }
+    /// Makes the Companion think a paired Device is at `address`, as an unseen DHCP move would.
+    pub fn wifi_move(&self, device: &DeviceId, address: std::net::SocketAddr) {
+        self.ctx.devices.wifi_move(device, address);
     }
     /// What mock discovery finds.
     pub fn wifi_network(&self) -> crate::devices::MockNetwork {
@@ -426,13 +465,25 @@ impl TestCompanion {
     /// Asks the Companion to stop and reports whether its server finished within `within`.
     pub async fn stop(&mut self, within: std::time::Duration) -> bool {
         let _ = self.ctx.shutdown.send(true);
-        tokio::time::timeout(within, &mut self.task).await.is_ok()
+        tokio::time::timeout(within, async {
+            let _ = (&mut self.task).await;
+            if let Some(companion) = self.companion.take() {
+                companion.shutdown().await;
+            }
+        })
+        .await
+        .is_ok()
     }
     /// The Brandfetch settings and provenance, to point it at a local server.
     pub fn brandfetch(&self) -> &crate::features::brandfetch::Brandfetch {
         &self.ctx.brandfetch
     }
     /// This Companion's data directory, a fresh temporary one.
+    /// The same in-process interface used by the native app.
+    pub fn handle(&self) -> crate::companion::Handle {
+        self.ctx.companion_handle()
+    }
+
     pub fn data_dir(&self) -> &std::path::Path {
         self._data.path()
     }
@@ -447,13 +498,16 @@ impl TestCompanion {
     /// [`Self::clock`] moves. It stops when the handle is aborted.
     pub fn start_brandfetch_refresh(&self, tick: Duration) -> tokio::task::JoinHandle<()> {
         tokio::spawn(crate::features::brandfetch::refresh_loop(
-            self.ctx.clone(),
+            self.ctx.companion_handle(),
             tick,
         ))
     }
     /// Runs one 60 s maintenance step now.
     pub async fn maintain(&self) {
-        assert!(crate::process::maintain(&self.ctx).await);
+        // Sweep sessions before yielding to pack eviction, as the process maintenance did.
+        // Otherwise an expired socket can close first and its row is pruned by the sweep.
+        assert!(crate::api::maintain(&self.ctx).await);
+        self.ctx.companion_handle().maintain().await;
     }
     /// Whether anything asked the Companion to stop.
     pub fn shutdown_requested(&self) -> bool {
@@ -470,7 +524,7 @@ impl TestCompanion {
     }
     pub fn flood_state(&self, frames: usize, bytes: usize) {
         for _ in 0..frames {
-            self.ctx.events.publish_frame(
+            self.ctx.web_events.publish_frame(
                 serde_json::json!({"type": "device.updated", "data": "x".repeat(bytes)}),
                 crate::api::Topic::State,
                 None,

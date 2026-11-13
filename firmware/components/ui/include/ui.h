@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_console.h"
+#include "key_sink.h"
 #include "td_layout.h"
 #include "ui_widget_state.h"
 #include "ui_live.h"
@@ -147,6 +148,53 @@ const esp_console_cmd_t *ui_console_commands(size_t *count);
  * name. Call it again to update the time left; ui_pairing_hide takes it down. Any task but the LVGL task. */
 void ui_pairing_show(const char *code, const char *name, uint32_t left_s, void (*on_cancel)(void));
 void ui_pairing_hide(void);
+
+/* Configure the Tile Bluetooth destination before UI start. */
+void ui_set_bluetooth_sink(key_sink_t sink);
+/* Radio build only: Settings on the Device. A gear at the right end of the title strip opens a full-screen panel with
+ * the paired apps, net-v2's Pairings: their names, Forget for one and Forget all, each after a confirmation on the
+ * screen, and Pair new app, which opens a pairing window. With four Pairings it opens none and the panel says how to
+ * free a slot. The net-v2 service owns the Pairings and hands over these hooks, which the panel calls on the LVGL task,
+ * so none of them may block. The gear shows once hooks are set, and never on a full-screen Layout, over the idle face
+ * or in recovery. ui_build starts the timer that draws the gear and the panel. The normal build draws nothing. */
+#define UI_PAIRED_APPS_MAX 4
+#define UI_PAIRED_APP_NAME_MAX 64
+#define UI_PAIRED_APPS_FULL "Four apps are paired. Forget one first."
+
+typedef struct {
+    /* companion_id as 32 lowercase hex characters. */
+    char app_id[33];
+    char name[UI_PAIRED_APP_NAME_MAX + 1];
+} ui_paired_app_t;
+
+typedef struct {
+    /* Changes whenever the list does. */
+    uint32_t version;
+    uint8_t count;
+    /* Oldest first. */
+    ui_paired_app_t apps[UI_PAIRED_APPS_MAX];
+    /* A pairing window is open. */
+    bool pairing;
+    /* Seconds left in a pairing lockout, 0 when none. */
+    uint32_t locked_s;
+    /* A change the panel asked for hasn't finished. */
+    bool busy;
+    /* Why the panel's last change failed, a static sentence, or NULL. */
+    const char *problem;
+} ui_paired_apps_t;
+
+typedef struct {
+    /* Copies the Pairings as the service last published them. */
+    void (*read)(ui_paired_apps_t *out);
+    /* Each asks the service and returns at once; `read` shows the outcome. */
+    void (*pair)(void);
+    void (*forget)(const char *app_id);
+    void (*forget_all)(void);
+} ui_settings_hooks_t;
+
+/* Any task. The hooks must stay valid for good. */
+void ui_settings_set_hooks(const ui_settings_hooks_t *hooks);
+void ui_settings_start(void);
 
 #ifdef __cplusplus
 }

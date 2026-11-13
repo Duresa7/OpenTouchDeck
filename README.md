@@ -46,14 +46,23 @@ These captures show the built-in Layout on a real Device. The app screenshots ab
 
 The packaged app is Windows x64. Linux source builds need a desktop session and Device permissions; see [setup](docs/setup.md).
 
+`main` holds Open TouchDeck 2.0, a native Rust app that is still being built, and the Firmware. The 1.x app on Releases, with its Electron window and React UI, is built from the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/tree/release/1.x).
+
 - [App development](app/README.md)
 - [Firmware](docs/firmware.md)
 - [Layout format](schema/README.md)
 - [Packaging and releases](docs/packaging.md)
+- [Privacy and update checks](docs/PRIVACY.md)
+- [Coding standards](CODING_STANDARDS.md): read before implementing or reviewing changes.
+- [Project wiki](docs/wiki/index.md): read before revisiting a decision or recurring problem; entries record dated history.
 
 ## License
 
 Open TouchDeck is licensed under the [Apache License 2.0](LICENSE).
+
+## Code signing policy
+
+The Windows programs and installers are not Authenticode-signed yet. The [code signing policy](docs/code-signing.md) says what will be signed, who approves it, where signed builds come from and what the app sends over the network.
 
 ## Icon sources
 

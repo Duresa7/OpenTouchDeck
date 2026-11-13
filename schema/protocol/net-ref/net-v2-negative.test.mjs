@@ -6,7 +6,7 @@ import { bytes } from './protocol.mjs';
 import {
   handshake, errorItem, pairKeys, acceptKey, verifyPairProof, share, x25519, rawX25519, canonicalShare,
   DeviceSession, CompanionSession, RecordSender, RecordReceiver, Reassembler, FlowCredit, fragment,
-  P25519, MAX_ITEM, RECORD_LIMIT, SESSION_VERSIONS, onHandshakeError, parseHandshake,
+  P25519, MAX_ITEM, RECORD_LIMIT, SESSION_VERSIONS, onHandshakeError, parseHandshake, openTag,
 } from './net-v2.mjs';
 import { inputs, pairing, session, readVectors } from './vectors-v2.mjs';
 
@@ -34,8 +34,8 @@ test('net-v2 negative: every shared vector has a test here', () => {
   assert.match(negative.notice, /synthetic/);
   assert.deepEqual(Object.keys(negative).sort(), [
     'counter_limit', 'credit_overrun', 'inputs', 'max_record', 'notice', 'oversize_items',
-    'swapped_client_share', 'swapped_device_share', 'tampered_wrapped_key', 'unknown_companion_id',
-    'version_error', 'write_before_credit', 'wrong_code', 'wrong_device_id', 'x25519',
+    'swapped_client_share', 'swapped_device_share', 'tampered_open_tag', 'tampered_wrapped_key',
+    'unknown_open_tag', 'version_error', 'write_before_credit', 'wrong_code', 'x25519',
   ]);
 });
 
@@ -67,11 +67,12 @@ test('net-v2 negative: a tampered wrapped_key never yields an LTK', () => {
   }
 });
 
-test('net-v2 negative: a swapped client share fails the client proof on the Device', () => {
-  const { open, challenge, proof, expected } = negative.swapped_client_share;
+test('net-v2 negative: a swapped client share fails the open tag on the Device', () => {
+  const { open, expected, error } = negative.swapped_client_share;
   const d = device();
-  assert.equal(d.open(bytes(open)).toString('hex'), challenge);
-  assert.equal(outcome(() => d.proof(bytes(proof))), expected);
+  assert.equal(outcome(() => d.open(bytes(open))), expected);
+  assert.equal(d.keys, null);
+  assert.equal(errorItem(5).toString('hex'), error);
 });
 
 test('net-v2 negative: a swapped device share fails the device proof on the Companion', () => {
@@ -82,8 +83,8 @@ test('net-v2 negative: a swapped device share fails the device proof on the Comp
   assert.equal(c.keys, null);
 });
 
-test('net-v2 negative: a wrong device_id or an unknown companion_id gets auth', () => {
-  for (const name of ['wrong_device_id', 'unknown_companion_id']) {
+test('net-v2 negative: an unknown or tampered open tag gets auth', () => {
+  for (const name of ['unknown_open_tag', 'tampered_open_tag']) {
     const { open, expected, error } = negative[name];
     const d = device();
     assert.equal(outcome(() => d.open(bytes(open))), expected, name);
@@ -189,7 +190,7 @@ test('net-v2 negative: every small-order X25519 share closes the handshake', () 
   for (const side of ['device', 'companion']) {
     const peer = bytes(negative.x25519.small_order[2].share);
     if (side === 'device') {
-      assert.equal(outcome(() => device().open(handshake(0x20, inputs.deviceId, inputs.companionId, peer))), 'close');
+      assert.equal(outcome(() => device().open(handshake(0x20, openTag(inputs.ltk, peer), peer))), 'close');
     } else {
       const c = companion();
       assert.equal(outcome(() => c.challenge(handshake(0x21, peer, sess.keys.deckProof))), 'close');
@@ -205,8 +206,8 @@ test('net-v2 negative: a share with bit 255 set closes even where masking would 
   assert.deepEqual(rawX25519(inputs.clientEphemeral, peer), sess.Z);
   assert.equal(outcome(() => x25519(inputs.clientEphemeral, peer)), expected);
   assert.equal(outcome(() => companion().challenge(handshake(0x21, peer, sess.keys.deckProof))), 'close');
-  assert.equal(outcome(() => device().open(handshake(0x20, inputs.deviceId, inputs.companionId,
-    Buffer.from(share(inputs.clientEphemeral)).fill(0xff, 31, 32)))), 'close');
+  const high = Buffer.from(share(inputs.clientEphemeral)).fill(0xff, 31, 32);
+  assert.equal(outcome(() => device().open(handshake(0x20, openTag(inputs.ltk, high), high))), 'close');
 });
 
 test('net-v2 negative: the session ends at the record limit and a new session starts at zero', () => {

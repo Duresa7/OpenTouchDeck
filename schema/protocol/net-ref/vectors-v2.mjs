@@ -13,6 +13,7 @@ import {
   gatt, handshake, errorItem, pairKeys, wrapKey, commitProof, storedProof,
   share, x25519, sessionKeys, recordParameters, RecordSender, fragment, creditValue,
   MIN_INITIAL_CREDIT, FORMAT_RANGES, VERSION, RECORD_LIMIT, PairingStore, manage, onHandshakeError, MAX_HANDSHAKE_BODY, MAX_RECORD_BODY, MIN_RECORD_BODY,
+  openTag, derive, discoveryKey, hint, advertisement, bleAdvertisement,
 } from './net-v2.mjs';
 
 const ramp = (start, length) => Buffer.from(Array.from({ length }, (_, i) => (start + i) & 255));
@@ -24,6 +25,14 @@ export const inputs = {
   code: '123456', salt: ramp(0x30, 16), a: ramp(0x50, 32), b: ramp(0x70, 32),
   windowId: ramp(0x90, 16), clientNonce: ramp(0xa0, 32), deckNonce: ramp(0xc0, 32),
   ltk: ramp(0xe0, 32), clientEphemeral: ramp(0x01, 32), deviceEphemeral: ramp(0x21, 32),
+  discoveryNonce: ramp(0x5a, 16), deviceName: 'Vector deck',
+};
+
+// The three random fillers of the fixture's free slots, and another record's.
+export const discoveryInputs = {
+  fillers: [ramp(0x70, 8), ramp(0x78, 8), ramp(0x80, 8)],
+  otherNonce: ramp(0x9a, 16),
+  otherFillers: [ramp(0xa0, 8), ramp(0xa8, 8), ramp(0xb0, 8), ramp(0xb8, 8)],
 };
 
 export const goldenFrames = JSON.parse(readFileSync(new URL('../golden-frames-v2.json', import.meta.url), 'utf8')).frames;
@@ -63,12 +72,29 @@ export function session(fixture = inputs) {
   const keys = sessionKeys({ ltk: fixture.ltk, deviceId: fixture.deviceId, companionId: fixture.companionId,
     clientShare, deviceShare, Z });
   const wire = {
-    open: handshake(0x20, fixture.deviceId, fixture.companionId, clientShare),
+    open: handshake(0x20, openTag(fixture.ltk, clientShare), clientShare),
     challenge: handshake(0x21, deviceShare, keys.deckProof),
     proof: handshake(0x22, keys.clientProof),
     ready: handshake(0x23, keys.readyProof),
   };
-  return { clientShare, deviceShare, Z, keys, wire };
+  const openKey = derive(fixture.ltk, 'session/open');
+  return { clientShare, deviceShare, Z, keys, wire, openKey, openTag: openTag(fixture.ltk, clientShare) };
+}
+
+export function discovery(fixture = inputs) {
+  const out = advertisement({ nonce: fixture.discoveryNonce, ltks: [fixture.ltk], fillers: discoveryInputs.fillers });
+  const pairingMode = advertisement({ nonce: fixture.discoveryNonce, ltks: [fixture.ltk], fillers: discoveryInputs.fillers,
+    pairing: { deviceId: fixture.deviceId, name: fixture.deviceName, paired: 1 } });
+  const other = advertisement({ nonce: discoveryInputs.otherNonce, ltks: [], fillers: discoveryInputs.otherFillers });
+  const key = discoveryKey(fixture.ltk);
+  return {
+    notice: 'Public synthetic test values only.',
+    K_disc: hex(key), nonce: hex(fixture.discoveryNonce), fillers: discoveryInputs.fillers.map(hex),
+    hint: hex(hint(key, fixture.discoveryNonce)), slot: 0,
+    label: out.label, instance: out.instance, host: out.host,
+    txt: out.txt, pairing_txt: pairingMode.txt,
+    other_record: { note: 'another nonce and only fillers: it matches no Pairing', txt: other.txt },
+  };
 }
 
 export function recordBodies() {
@@ -140,8 +166,7 @@ export const smallOrderShares = [
 export const negativeInputs = {
   wrongCode: '654321',
   otherEphemeral: ramp(0x41, 32),
-  otherDeviceId: bytes('020000000002'),
-  unknownCompanionId: ramp(0x60, 16),
+  unknownLtk: ramp(0x60, 32),
 };
 
 const flip = (wire, index) => {
@@ -163,10 +188,9 @@ export function negativeVectors(pair = pairing(), sess = session()) {
   const wrongKeys = pairKeys(wrong.K, pair.request, pair.offer, pair.start, pair.challenge);
 
   const otherShare = share(negativeInputs.otherEphemeral);
-  const swappedOpen = handshake(0x20, inputs.deviceId, inputs.companionId, otherShare);
-  const swappedZ = x25519(inputs.deviceEphemeral, otherShare);
-  const swappedKeys = sessionKeys({ ltk: inputs.ltk, deviceId: inputs.deviceId, companionId: inputs.companionId,
-    clientShare: otherShare, deviceShare: sess.deviceShare, Z: swappedZ });
+  const swappedOpen = handshake(0x20, sess.openTag, otherShare);
+  const tamperedTag = Buffer.from(sess.openTag);
+  tamperedTag[0] ^= 1;
 
   const v1Error = Buffer.from(errorItem(2));
   v1Error[3] = 1;
@@ -181,7 +205,7 @@ export function negativeVectors(pair = pairing(), sess = session()) {
   return {
     notice: 'Every implementation MUST refuse these inputs. Public synthetic test values only.',
     inputs: { wrong_code: negativeInputs.wrongCode, other_ephemeral: hex(negativeInputs.otherEphemeral),
-      other_device_id: hex(negativeInputs.otherDeviceId), unknown_companion_id: hex(negativeInputs.unknownCompanionId) },
+      unknown_ltk: hex(negativeInputs.unknownLtk) },
     wrong_code: { receiver: 'device', note: 'pairing.wire request, offer, start and challenge, then this proof',
       proof: hex(handshake(0x14, wrongKeys.clientProof)), expected: 'auth', error: hex(errorItem(5)) },
     tampered_wrapped_key: [
@@ -189,16 +213,16 @@ export function negativeVectors(pair = pairing(), sess = session()) {
       { receiver: 'companion', note: 'last tag byte flipped', accept: hex(flip(pair.accept, pair.accept.length - 1)), expected: 'close' },
     ],
     swapped_client_share: { receiver: 'device',
-      note: 'session.open carries another client_share; the Device answers with challenge, then gets the original session.proof',
-      open: hex(swappedOpen), challenge: hex(handshake(0x21, sess.deviceShare, swappedKeys.deckProof)),
-      proof: sess.wire.proof.toString('hex'), expected: 'close' },
+      note: 'session.open carries another client_share under the original open_tag',
+      open: hex(swappedOpen), expected: 'auth', error: hex(errorItem(5)) },
     swapped_device_share: { receiver: 'companion',
       note: 'session.challenge carries another device_share with the original device_proof',
       challenge: hex(handshake(0x21, otherShare, sess.keys.deckProof)), expected: 'close' },
-    wrong_device_id: { receiver: 'device', open: hex(handshake(0x20, negativeInputs.otherDeviceId, inputs.companionId, sess.clientShare)),
+    unknown_open_tag: { receiver: 'device', note: 'tagged with inputs.unknown_ltk, which the Device does not hold',
+      open: hex(handshake(0x20, openTag(negativeInputs.unknownLtk, sess.clientShare), sess.clientShare)),
       expected: 'auth', error: hex(errorItem(5)) },
-    unknown_companion_id: { receiver: 'device', open: hex(handshake(0x20, inputs.deviceId, negativeInputs.unknownCompanionId, sess.clientShare)),
-      expected: 'auth', error: hex(errorItem(5)) },
+    tampered_open_tag: { receiver: 'device', note: 'the fixture session.open with the first tag bit flipped',
+      open: hex(handshake(0x20, tamperedTag, sess.clientShare)), expected: 'auth', error: hex(errorItem(5)) },
     counter_limit: { direction: 'c2d', plaintext: hex(ping), limit: Number(RECORD_LIMIT), at_limit: 'end the session',
       last_counter: Number(last), last: hex(sealAt(sess.keys.c2d, 0, last, ping)), last_expected: 'accept',
       beyond_counter: Number(RECORD_LIMIT), beyond: hex(sealAt(sess.keys.c2d, 0, RECORD_LIMIT, ping)), beyond_expected: 'close' },
@@ -281,14 +305,29 @@ export function buildVectors() {
     fixture_notice: 'Public synthetic test values only. Never use these keys, codes or identities on a real Device.',
     suite: 'SRP-6a-3072-SHA512/X25519/HKDF-SHA256/AES-256-GCM',
     inputs: { ...hexObject(Object.fromEntries(Object.entries(inputs).filter(([, v]) => Buffer.isBuffer(v)))),
-      code: inputs.code, companionName: inputs.companionName },
+      code: inputs.code, companionName: inputs.companionName, deviceName: inputs.deviceName },
     pake: { identity: pair.I.toString('ascii'), ...hexObject({ A: pair.client.A, B: pair.server.B,
       u: pair.client.u, S: pair.client.S, K_srp: pair.client.K }) },
     pairing: { ...hexObject(pair.keys), wrapped_key: hex(pair.wrapped),
       wire: hexObject(Object.fromEntries(['request', 'offer', 'start', 'challenge', 'proof', 'accept', 'commit', 'stored']
         .map((name) => [name, pair[name]]))) },
-    session: { ...hexObject({ client_share: sess.clientShare, device_share: sess.deviceShare, Z: sess.Z }),
+    session: { ...hexObject({ client_share: sess.clientShare, device_share: sess.deviceShare, Z: sess.Z,
+      K_open: sess.openKey, open_tag: sess.openTag }),
       ...hexObject(sess.keys), wire: hexObject(sess.wire) },
+    discovery: discovery(),
+    ble_discovery: (() => {
+      const nonce = ramp(0x40, 6), rotated = ramp(0x50, 6);
+      const fillers = [0, 1, 2, 3].map(i => ramp(0x90 + i * 6, 6));
+      const ltks = [inputs.ltk];
+      const fullKeys = [0, 1, 2, 3].map(i => ramp(0x20 + i * 32, 32));
+      const encode = (n, slot, keys = ltks, pairing) => hex(bleAdvertisement({ nonce: n, slot, ltks: keys, fillers, pairing }));
+      return { nonce: hex(nonce), rotated_nonce: hex(rotated), fillers: fillers.map(hex),
+        slots: fillers.map((_, slot) => encode(nonce, slot)),
+        rotated: encode(rotated, 0), unpaired: encode(nonce, 0, []),
+        pairing: encode(nonce, 0, ltks, { deviceId: inputs.deviceId }),
+        full_ltks: fullKeys.map(hex),
+        full: fillers.map((_, slot) => encode(nonce, slot, fullKeys)) };
+    })(),
     records,
     tampered_record: { direction: 'c2d', counter: 0, wire: hex(tampered), expected: 'close' },
     non_contributory_share: { device_share: hex(Buffer.alloc(32)), expected: 'close' },

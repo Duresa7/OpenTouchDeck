@@ -4,10 +4,15 @@ pub mod api;
 pub mod bindings;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod checkpoints;
+mod clock;
+pub mod companion;
 pub(crate) mod controls;
 pub mod devices;
 mod dialog_text;
+pub mod editor;
+mod events;
 pub mod features;
+pub mod integrations;
 pub mod jobs;
 pub mod layouts;
 pub mod link;
@@ -16,6 +21,7 @@ pub mod photos;
 mod process;
 mod runtime;
 mod serve;
+pub mod setup;
 pub mod startup;
 pub mod store;
 pub mod tray;
@@ -31,3 +37,5 @@ pub fn now_ms() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+
+pub mod updates;

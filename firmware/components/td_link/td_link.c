@@ -48,8 +48,6 @@ static size_t s_carrier_count;
 /* The slot of the frame the link task handles now, or handled last, and that carrier's generation when it arrived. */
 static size_t s_current;
 static uint32_t s_current_generation;
-/* The origin of the open transfer (td_link_transfer_claim), or 0. */
-static uint32_t s_transfer;
 static const td_link_message_t *s_tables[TD_LINK_MESSAGE_TABLES];
 static size_t s_table_counts[TD_LINK_MESSAGE_TABLES];
 /* The storage behind s_frames, which the link owns so it can wipe it (wipe_drained_frames). */
@@ -169,7 +167,8 @@ uint32_t td_link_carrier_generation(const td_link_carrier_t *carrier)
     return generation;
 }
 
-/* The slot in the top byte and the generation in the rest, never 0. Call under s_lock. */
+/* A carrier connection's origin: the slot in the top byte and the generation in the rest, never 0. Call under
+ * s_lock. */
 static uint32_t origin_of(size_t slot, uint32_t generation)
 {
     return (uint32_t)(slot + 1) << 24 | (generation & 0xffffffu);
@@ -181,25 +180,18 @@ static bool origin_live(uint32_t origin)
     return origin && slot < s_carrier_count && origin_of(slot, s_carriers[slot].generation) == origin;
 }
 
-void td_link_transfer_claim(void)
+uint32_t td_link_origin_current(void)
 {
     portENTER_CRITICAL(&s_lock);
-    s_transfer = s_carrier_count ? origin_of(s_current, s_current_generation) : 0;
+    const uint32_t origin = s_carrier_count ? origin_of(s_current, s_current_generation) : 0;
     portEXIT_CRITICAL(&s_lock);
+    return origin;
 }
 
-bool td_link_transfer_ours(void)
+bool td_link_origin_live(uint32_t origin)
 {
     portENTER_CRITICAL(&s_lock);
-    const bool ours = s_carrier_count && s_transfer == origin_of(s_current, s_current_generation);
-    portEXIT_CRITICAL(&s_lock);
-    return ours;
-}
-
-bool td_link_transfer_live(void)
-{
-    portENTER_CRITICAL(&s_lock);
-    const bool live = origin_live(s_transfer);
+    const bool live = origin_live(origin);
     portEXIT_CRITICAL(&s_lock);
     return live;
 }
@@ -543,13 +535,12 @@ static void handle_frame(TickType_t wait)
         s_current_generation = generation;
     }
     portEXIT_CRITICAL(&s_lock);
-    const bool transfer_frame = frame.type == TD_FRAME_CHUNK || frame.type == TD_FRAME_ACK;
-    if (stale || (transfer_frame && !td_link_transfer_ours())) {
-        /* A transfer moves only on the carrier connection that opened it. */
+    if (stale) {
         td_link_count_drop();
     } else if (frame.type == TD_FRAME_MESSAGE && frame.flags == 0) {
         handle_message(&frame, secret);
     } else if (frame.type == TD_FRAME_CHUNK && frame.flags == 0) {
+        /* The transfer drops chunk and ack frames of a connection other than the one that opened it. */
         td_link_files_chunk(frame.seq, frame.payload, frame.len);
     } else if (frame.type == TD_FRAME_ACK && frame.flags == TD_FRAME_RESPONSE) {
         td_link_files_ack(frame.payload, frame.len);

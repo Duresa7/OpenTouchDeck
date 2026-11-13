@@ -28,13 +28,16 @@ fn path(device: &str, orientation: Orientation) -> LayoutPath {
     }
 }
 async fn push(td: &TestCompanion, device: &str, layout: &Layout) -> Job {
-    td.call::<Push>(
-        path(device, layout.orientation),
-        NoQuery,
-        LayoutBody::new(layout),
-    )
-    .await
-    .unwrap()
+    td.handle()
+        .layout_operations()
+        .push(
+            device.into(),
+            layout.orientation,
+            layout.to_canonical_json(),
+            None,
+        )
+        .await
+        .unwrap()
 }
 /// The status and error body of a request that fails.
 async fn failure(request: reqwest::RequestBuilder) -> (u16, Value) {
@@ -122,7 +125,9 @@ async fn an_offline_device_shows_the_layout_this_pc_last_saw() {
     td.unplug("mock0001").await;
 
     let seen = td
-        .call::<LastSeen>(path(id.as_str(), Orientation::Landscape), NoQuery, ())
+        .handle()
+        .layout_operations()
+        .last_seen((id.as_str()).to_string(), Orientation::Landscape)
         .await
         .unwrap();
     assert_eq!(seen.layout, desk);
@@ -165,7 +170,9 @@ async fn revisions_orientation_and_validation_are_checked() {
     let first = layout("First", Orientation::Landscape, None);
     td.wait(&push(&td, &a, &first).await).await;
     let read = td
-        .call::<Get>(path(&a, Orientation::Landscape), NoQuery, ())
+        .handle()
+        .layout_operations()
+        .read(a.to_string(), Orientation::Landscape)
         .await
         .unwrap();
     let put = |layout: &Layout, if_match: &str| {
@@ -275,14 +282,24 @@ async fn a_second_push_gets_the_busy_job() {
     let mut events = td.events().await;
     td.hold_jobs();
     let first = push(&td, &a, &layout("First", Orientation::Landscape, None)).await;
-    let (status, error) = failure(td.request::<Push>(
-        path(&a, Orientation::Landscape),
-        NoQuery,
-        &LayoutBody::new(&layout("Second", Orientation::Landscape, None)),
-    ))
-    .await;
-    assert_eq!((status, error["code"].as_str()), (409, Some("device.busy")));
-    assert_eq!(error["details"]["job"]["id"], first.id.as_str());
+    let error = td
+        .handle()
+        .layout_operations()
+        .push(
+            a.to_string(),
+            Orientation::Landscape,
+            layout("Second", Orientation::Landscape, None).to_canonical_json(),
+            None,
+        )
+        .await
+        .err()
+        .unwrap();
+    let td_companion::features::layouts::LayoutError::Job(td_companion::jobs::JobError::Busy(job)) =
+        error
+    else {
+        panic!("expected busy Job");
+    };
+    assert_eq!(job.id, first.id);
     // A Job on one Device doesn't block another.
     let other = push(&td, &b, &layout("Other", Orientation::Landscape, None)).await;
     td.release_jobs();
@@ -673,7 +690,7 @@ async fn an_orientation_change_that_fails_after_the_put_still_reads_the_layout_a
 }
 
 #[tokio::test]
-async fn control_layout_reports_unsupported_firmware_and_a_failed_read() {
+async fn control_layout_reports_unsupported_firmware_and_recovers_after_an_abandoned_read() {
     use td_companion::devices::{ControlLayout, ControlLayoutUnavailable};
     let unavailable = |reason| ControlLayout::Unavailable { reason };
     let td = TestCompanion::start().await;
@@ -685,24 +702,30 @@ async fn control_layout_reports_unsupported_firmware_and_a_failed_read() {
     .await;
     let id = td.plug_media_device("mock0001").await;
     let layout = Layout::parse(include_bytes!("../../../../schema/examples/media.json")).unwrap();
+    let hellos = || {
+        td.deck(id.as_str())
+            .received()
+            .iter()
+            .filter(|r| r["m"] == "hello")
+            .count()
+    };
+    let before = hellos();
     td.deck(id.as_str()).lose_sent_chunks([0; 5]);
     assert_eq!(
         td.wait(&push(&td, &id, &layout).await).await.state,
         JobState::Succeeded
     );
+    // An abandoned read closes its session; reconnect reads the committed Layout again.
     td.until(|td| {
-        td.device(&id).unwrap().control_layout == unavailable(ControlLayoutUnavailable::ReadFailed)
+        hellos() > before
+            && matches!(
+                td.device(&id).unwrap().control_layout,
+                ControlLayout::Matches { .. }
+            )
     })
     .await;
-    assert_eq!(
-        td.wait(&push(&td, &id, &layout).await).await.state,
-        JobState::Succeeded
+    assert!(
+        hellos() > before,
+        "the abandoned read required a fresh session"
     );
-    td.until(|td| {
-        matches!(
-            td.device(&id).unwrap().control_layout,
-            ControlLayout::Matches { .. }
-        )
-    })
-    .await;
 }

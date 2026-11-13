@@ -1,0 +1,147 @@
+name: sign hook
+
+# The Authenticode step of the 2.0 release (release.yml), used once for the programs and once for the installer.
+# It takes an unsigned artifact, has the selected provider sign every file in it, and uploads the result under a
+# new name for the next stage.
+#
+# No provider is selected today, so the files pass through unsigned. To turn signing on:
+#   1. Set the repository variable CODE_SIGNING_PROVIDER to signpath or azure.
+#   2. Uncomment that provider's block below and add the variables and secrets it names.
+# Signing runs only for a release tag. A dry run never signs, so it needs no secret and no approval.
+# docs/code-signing.md has the policy, and docs/packaging.md describes the pipeline.
+on:
+  workflow_call:
+    inputs:
+      unsigned-artifact:
+        description: Name of the workflow artifact that holds the unsigned files
+        type: string
+        required: true
+      unsigned-artifact-id:
+        description: Id of that artifact, from the upload step that made it. SignPath fetches the files by it
+        type: string
+        required: true
+      signed-artifact:
+        description: Name for the artifact this hook uploads, signed or passed through
+        type: string
+        required: true
+      signpath-artifact-configuration:
+        description: Slug of the SignPath artifact configuration that describes these files
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    name: ${{ inputs.signed-artifact }}
+    runs-on: windows-latest
+    timeout-minutes: 90
+    # The signing secrets live in the release environment, which only main and release tags may use and which
+    # asks the maintainer to approve. A run that does not sign uses no environment.
+    environment: ${{ (github.event_name == 'push' && vars.CODE_SIGNING_PROVIDER != '') && 'release' || '' }}
+    permissions:
+      contents: read
+      # SignPath reads this run's jobs and downloads the unsigned artifact with the workflow token.
+      actions: read
+      # Azure signs in with a short-lived OpenID Connect token. Uncomment with the Azure block, and in both
+      # release.yml jobs that call this workflow.
+      # id-token: write
+    env:
+      PROVIDER: ${{ github.event_name == 'push' && vars.CODE_SIGNING_PROVIDER || '' }}
+      FILES: ${{ github.workspace }}\files
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.unsigned-artifact }}
+          path: files
+
+      - name: Report that the files stay unsigned
+        if: env.PROVIDER == ''
+        shell: pwsh
+        env:
+          ARTIFACT: ${{ inputs.unsigned-artifact }}
+          IS_TAG: ${{ github.event_name == 'push' }}
+        run: |
+          $reason = if ($env:IS_TAG -eq 'true') { 'the repository variable CODE_SIGNING_PROVIDER is not set' } else { 'a dry run never signs' }
+          "Authenticode signing skipped for ``$env:ARTIFACT``: $reason." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      # ---- SignPath Foundation: free for open-source projects (https://signpath.org) ----------------------------
+      # SignPath checks that this run built the artifact on GitHub-hosted runners, waits for the approver named in
+      # docs/code-signing.md, signs, and returns the signed files. It unpacks them over the unsigned ones.
+      #   secret   SIGNPATH_API_TOKEN            API token of a SignPath user who may submit, in the release environment
+      #   variable SIGNPATH_ORGANIZATION_ID      the SignPath organization id
+      #   variable SIGNPATH_PROJECT_SLUG         the SignPath project, such as open-touchdeck
+      #   variable SIGNPATH_SIGNING_POLICY_SLUG  the signing policy, such as release-signing
+      # Each caller names its artifact configuration: a zip that holds td-app.exe, or a zip that holds the
+      # MSI. Both must restrict the product name to "Open TouchDeck" and the product version to the release's.
+      #
+      # - name: Sign with SignPath
+      #   if: env.PROVIDER == 'signpath'
+      #   uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+      #   with:
+      #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+      #     organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+      #     project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+      #     signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+      #     artifact-configuration-slug: ${{ inputs.signpath-artifact-configuration }}
+      #     github-artifact-id: ${{ inputs.unsigned-artifact-id }}
+      #     wait-for-completion: true
+      #     # The approver signs off by hand, so allow an hour instead of the default ten minutes.
+      #     wait-for-completion-timeout-in-seconds: 3600
+      #     output-artifact-directory: files
+
+      # ---- Azure Artifact Signing (https://learn.microsoft.com/azure/artifact-signing/) -------------------------
+      # Signs the files in place with signtool, SHA-256 digests and an RFC 3161 timestamp. It signs in with OpenID
+      # Connect, so no client secret is stored: also uncomment `id-token: write` above.
+      #   variable AZURE_CLIENT_ID                   the app registration with the Artifact Signing Certificate Profile Signer role
+      #   variable AZURE_TENANT_ID                   its tenant
+      #   variable AZURE_SUBSCRIPTION_ID             the subscription that holds the signing account
+      #   variable AZURE_SIGNING_ENDPOINT            the account's regional endpoint, such as https://eus.codesigning.azure.net/
+      #   variable AZURE_SIGNING_ACCOUNT_NAME        the Artifact Signing account
+      #   variable AZURE_CERTIFICATE_PROFILE_NAME    the certificate profile
+      #
+      # - name: Sign in to Azure
+      #   if: env.PROVIDER == 'azure'
+      #   uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+      #   with:
+      #     client-id: ${{ vars.AZURE_CLIENT_ID }}
+      #     tenant-id: ${{ vars.AZURE_TENANT_ID }}
+      #     subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # - name: Sign with Azure Artifact Signing
+      #   if: env.PROVIDER == 'azure'
+      #   uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+      #   with:
+      #     endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      #     signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      #     certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE_NAME }}
+      #     files-folder: ${{ env.FILES }}
+      #     files-folder-filter: exe,msi
+      #     file-digest: SHA256
+      #     timestamp-rfc3161: http://timestamp.acs.microsoft.com
+      #     timestamp-digest: SHA256
+      #     # Use only the Azure CLI sign-in from the step above.
+      #     exclude-environment-credential: true
+      #     exclude-azure-cli-credential: false
+
+      # A selected provider must have signed every file. This fails while that provider's block is still commented
+      # out, so an unsigned file can never pass as signed.
+      - name: Check every file carries a valid signature
+        if: env.PROVIDER != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(Get-ChildItem -LiteralPath $env:FILES -Recurse -File -Include *.exe, *.msi)
+          if (-not $files.Count) { throw 'The artifact holds no program or installer.' }
+          $unsigned = @($files | Where-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne 'Valid' })
+          if ($unsigned.Count) {
+            throw "CODE_SIGNING_PROVIDER is '$env:PROVIDER', but these files carry no valid signature: $($unsigned.Name -join ', '). Uncomment that provider's block in .github/workflows/sign-hook.yml."
+          }
+          $files | ForEach-Object { "$($_.Name): signed by $((Get-AuthenticodeSignature -LiteralPath $_.FullName).SignerCertificate.Subject)" }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.signed-artifact }}
+          path: files
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 90 || 3 }}

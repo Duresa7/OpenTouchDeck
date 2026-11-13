@@ -1,0 +1,55 @@
+name: scripts
+
+# The release and data scripts under app/scripts, the Windows setup script, the release signer, and the check that
+# .claude/skills copies .agents/skills.
+# It always checks the commit that started the run and takes no ref from its caller (ADR 0007).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    env:
+      # Python on Windows decodes tool output with the ANSI code page unless told to use UTF-8.
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      # The release signer runs on Node with no packages.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Check every app version agrees
+        run: python scripts/release_version.py check
+      - name: Test the release version script
+        run: python -B -m unittest discover -s scripts/tests -p "test_release_version.py" -v
+      - name: Test the catalog and Icon pack scripts
+        run: |
+          python -B -m unittest discover -s scripts/tests -p "test_generate_catalog.py" -v
+          python -B -m unittest discover -s scripts/tests -p "test_generate_packs.py" -v
+      - name: Test the release signer
+        working-directory: .
+        run: node --test .github/release-signer-test/signer.test.mjs
+      - name: Check that .claude/skills copies .agents/skills
+        working-directory: .
+        run: python .github/scripts/skills_mirror.py check
+      - name: Test the Windows setup script
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/tests/setup-windows.test.ps1

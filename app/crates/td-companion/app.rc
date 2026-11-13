@@ -1,0 +1,4 @@
+// Keep resource 1 in sync with tray/windows.rs. Reuse the current app icon.
+1 ICON "icon.ico"
+// LoadIconMetric requires Common Controls v6; works with MSVC and MinGW.
+1 24 "app.manifest"

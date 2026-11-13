@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use td_core::frame::{Body, Role};
 use td_core::{Frame, Item};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use zeroize::Zeroize;
@@ -261,9 +260,9 @@ impl NetCarrier {
     ) -> Result<(RecordSender, RecordReceiver), NetError> {
         let secret = EphemeralSecret::random();
         let client_share = PublicKey::from(&secret).to_bytes();
+        // No ids on the wire: the tag lets the Device find this Pairing.
         let open = [
-            &credential.device_id[..],
-            &credential.companion_id,
+            &wire::open_tag(&credential.ltk, &client_share)[..],
             &client_share,
         ]
         .concat();
@@ -338,7 +337,6 @@ impl Carrier for NetCarrier {
                 stream,
                 sender,
                 received,
-                in_transfer: false,
             }),
         ))
     }
@@ -404,53 +402,9 @@ struct NetWriter {
     stream: TcpStream,
     sender: RecordSender,
     received: Arc<AtomicU64>,
-    /// A transfer started and hasn't ended, so the session doesn't end at its next request.
-    in_transfer: bool,
-}
-
-/// Requests that start a transfer: its chunks and its end follow.
-const TRANSFER_BEGINS: [&str; 5] = [
-    "layout.put",
-    "icon.put",
-    "update.begin",
-    "v2.asset.put",
-    "v2.photo.put",
-];
-/// Requests that end a transfer, which belong to the request that began it.
-const TRANSFER_ENDS: [&str; 4] = ["xfer.end", "update.end", "v2.asset.end", "v2.photo.end"];
-
-/// The `m` of a request message.
-fn request_name(frame: &Frame) -> Option<String> {
-    let (Role::Request(_), Body::Message(payload)) = (frame.role, &frame.body) else {
-        return None;
-    };
-    let value: serde_json::Value = serde_json::from_slice(payload).ok()?;
-    Some(value.get("m")?.as_str()?.to_owned())
 }
 
 impl NetWriter {
-    /// Whether `frame` starts a new request, so the session may end before it. Chunks, the
-    /// end of a transfer, and the heartbeat during a transfer never do.
-    fn starts_request(&mut self, frame: &Frame) -> bool {
-        if matches!(frame.body, Body::Chunk { .. }) {
-            self.in_transfer = true;
-            return false;
-        }
-        let Some(name) = request_name(frame) else {
-            return false;
-        };
-        if TRANSFER_ENDS.contains(&name.as_str()) {
-            self.in_transfer = false;
-            return false;
-        }
-        if name == "ping" && self.in_transfer {
-            return false;
-        }
-        // Any other request means a transfer that was open has been given up.
-        self.in_transfer = TRANSFER_BEGINS.contains(&name.as_str());
-        true
-    }
-
     /// Records left in the direction with fewer.
     fn records_left(&self) -> u64 {
         let received = self.received.load(Ordering::Acquire);
@@ -461,6 +415,20 @@ impl NetWriter {
 }
 
 impl FrameWriter for NetWriter {
+    fn start_operation(&mut self) -> io::Result<()> {
+        if self.records_left() < RECORD_RESERVE {
+            // The keys are nearly used up: end the session between requests. A new session
+            // makes fresh keys with counters at zero.
+            self.sender.close();
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
+            return Err(io::Error::new(
+                ErrorKind::ConnectionAborted,
+                "the session used up its record limit; reconnect to go on",
+            ));
+        }
+        Ok(())
+    }
+
     fn send(&mut self, out: Outbound<'_>, window: &SendWindow<'_>) -> io::Result<()> {
         let Outbound::Frame(frame) = out else {
             return Err(io::Error::new(
@@ -472,16 +440,6 @@ impl FrameWriter for NetWriter {
             return Err(ErrorKind::BrokenPipe.into());
         }
         let body = frame.encode_body().map_err(|e| invalid(e.to_string()))?;
-        if self.starts_request(frame) && self.records_left() < RECORD_RESERVE {
-            // The keys are nearly used up: end the session between requests. A new session
-            // makes fresh keys with counters at zero.
-            self.sender.close();
-            let _ = self.stream.shutdown(std::net::Shutdown::Both);
-            return Err(io::Error::new(
-                ErrorKind::ConnectionAborted,
-                "the session used up its record limit; reconnect to go on",
-            ));
-        }
         let item = self.sender.seal(&body).map_err(invalid)?;
         let left = window.deadline().saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -492,85 +450,5 @@ impl FrameWriter for NetWriter {
         self.stream.write_all(&item).inspect_err(|_| {
             let _ = self.stream.shutdown(std::net::Shutdown::Both);
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::TcpListener;
-    use std::sync::atomic::AtomicBool;
-
-    const KEY: [u8; 32] = [0x5a; 32];
-
-    /// A writer whose next record is `counter`, with the far end of its stream.
-    fn writer_at(counter: u64) -> (NetWriter, TcpStream) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (peer, _) = listener.accept().unwrap();
-        let writer = NetWriter {
-            stream,
-            sender: RecordSender::at(&KEY, C2D, counter),
-            received: Arc::new(AtomicU64::new(0)),
-            in_transfer: false,
-        };
-        (writer, peer)
-    }
-
-    fn request(seq: u8, m: &str) -> Frame {
-        Frame::message(Role::Request(seq), format!(r#"{{"m":"{m}"}}"#).into_bytes())
-    }
-
-    fn send(writer: &mut NetWriter, frame: &Frame) -> io::Result<()> {
-        let open = AtomicBool::new(true);
-        let window = SendWindow::new(Instant::now() + Duration::from_secs(2), &open);
-        writer.send(Outbound::Frame(frame), &window)
-    }
-
-    #[test]
-    fn the_session_ends_between_requests_once_fewer_than_1024_records_remain() {
-        let (mut writer, _peer) = writer_at(wire::COUNTER_LIMIT - RECORD_RESERVE);
-        // Exactly 1024 left: a transfer starts, and runs to its end below the reserve.
-        send(&mut writer, &request(1, "layout.put")).unwrap();
-        let chunk = Frame {
-            role: Role::Request(2),
-            body: Body::Chunk {
-                xfer: 1,
-                idx: 0,
-                data: vec![7; 16],
-            },
-        };
-        send(&mut writer, &chunk).unwrap();
-        send(&mut writer, &request(3, "ping")).unwrap();
-        send(&mut writer, &request(4, "xfer.end")).unwrap();
-        // The next request would start below the reserve, so the session ends instead.
-        let error = send(&mut writer, &request(5, "ping")).unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::ConnectionAborted);
-        assert!(
-            send(&mut writer, &request(6, "ping")).is_err(),
-            "nothing goes out after the end"
-        );
-    }
-
-    #[test]
-    fn the_receive_direction_counts_too() {
-        let (mut writer, _peer) = writer_at(0);
-        send(&mut writer, &request(1, "ping")).unwrap();
-        writer
-            .received
-            .store(wire::COUNTER_LIMIT - RECORD_RESERVE + 1, Ordering::Release);
-        let error = send(&mut writer, &request(2, "ping")).unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::ConnectionAborted);
-    }
-
-    #[test]
-    fn a_transfer_given_up_for_another_request_no_longer_holds_the_session() {
-        let (mut writer, _peer) = writer_at(0);
-        send(&mut writer, &request(1, "v2.asset.put")).unwrap();
-        assert!(writer.in_transfer);
-        send(&mut writer, &request(2, "ping")).unwrap();
-        assert!(writer.in_transfer, "a heartbeat belongs to the transfer");
-        send(&mut writer, &request(3, "layout.get")).unwrap();
-        assert!(!writer.in_transfer);
     }
 }

@@ -1,0 +1,75 @@
+name: rust
+
+# The Rust workspace under app/: the Companion today, the native app next.
+# Pull requests and main call this with the build cache on. A release calls it with the cache off.
+# It always checks the commit that started the run and takes no ref from its caller, so no caller can point it
+# at other code (ADR 0007).
+on:
+  workflow_call:
+    inputs:
+      cache:
+        description: Restore the Rust build cache. Pull request and main checks only, never a release
+        type: boolean
+        default: false
+      release-exe:
+        description: Also build the release program in the Windows job and check its version resource and subsystem
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  # One job for each system: fmt, clippy and every test. They share one build, so nothing is compiled twice.
+  rust:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache: ${{ inputs.cache }}
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo test --workspace
+      # cargo test built the debug program next to the tests: a console program with the version resource.
+      - name: Check the debug program's version resource and subsystem
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check_exe.ps1 -Path target/debug/td-companion.exe -Subsystem console
+
+      # Main only: the program a release ships, built with the release profile.
+      - name: Build the release program
+        if: inputs.release-exe && runner.os == 'Windows'
+        run: cargo build --release --locked --package td-companion
+      - name: Check the release program's version resource and subsystem
+        if: inputs.release-exe && runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check_exe.ps1 -Path target/release/td-companion.exe -Subsystem gui
+      # A GUI program has no console, but it still returns its exit code and writes to a redirected stderr.
+      - name: Check a GUI program still reports a failure
+        if: inputs.release-exe && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $errors = Join-Path $env:RUNNER_TEMP 'companion-stderr.txt'
+          $process = Start-Process -FilePath target/release/td-companion.exe -ArgumentList '--not-an-argument' `
+            -RedirectStandardError $errors -Wait -PassThru
+          $text = (Get-Content -LiteralPath $errors -Raw).Trim()
+          "exit code $($process.ExitCode), stderr: $text"
+          if ($process.ExitCode -ne 1) { throw "Expected exit code 1, got $($process.ExitCode)." }
+          if ($text -ne 'Companion: Unknown Companion argument.') { throw "Unexpected stderr: $text" }

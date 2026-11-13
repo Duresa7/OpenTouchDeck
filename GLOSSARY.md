@@ -21,7 +21,7 @@ _Avoid_: deck software
 ### Computer
 
 **Companion**:
-The background program on the user's computer that runs the Devices, Integrations and actions, and serves the app's UI to the desktop window or a browser.
+The background program on the user's computer that runs the Devices, Integrations and actions. In 2.0 it runs in the same program as the app's window. In 1.x it also served the app's UI to the desktop window or a browser.
 _Avoid_: daemon, service, backend, host
 
 **Carrier**:
@@ -74,8 +74,12 @@ The way a Device and the Companion reach each other: USB, Wi-Fi or Bluetooth. A 
 _Avoid_: transport, connection type
 
 **Pairing**:
-A Device's approval of one Companion to reach it over Wi-Fi or Bluetooth, given once by entering the code the Device shows. It lasts until someone removes it.
+A Device's approval of one Companion to reach it over Wi-Fi or Bluetooth, given once by entering the code the Device shows. It lasts until someone removes it. A Device keeps at most four; the UI lists them as its paired apps.
 _Avoid_: bond (see Keyboard host), trust, registration
+
+**Pairing mode**:
+The time a pairing window is open on a Device. Only then does the Device name itself on the network; at other times only the Companions it is paired with can recognise it.
+_Avoid_: discoverable, visible mode
 
 **Bluetooth keyboard**:
 The radio build's way for a Device to type keys and media keys on other computers and phones over Bluetooth, with no Companion involved. It is off until the person turns it on.
@@ -84,3 +88,8 @@ _Avoid_: BLE HID, Bluetooth mode
 **Keyboard host**:
 A computer or phone the Device's Bluetooth keyboard types on. A person adds one by typing on it the 6-digit code the Device shows, and it stays until someone forgets it. The UI says "computer or phone" and uses the verb "add".
 _Avoid_: bond, paired device, Pairing (that is a Companion's approval)
+
+**Action sink**:
+The destination of a Tile's keys or media keys: the Companion (`link`) or the
+Bluetooth keyboard's computer or phone (`bluetooth`). The editor calls it “Send to”.
+Omitting the sink keeps the Companion destination.

@@ -9,6 +9,7 @@
 
 #ifdef ESP_PLATFORM
 #include "esp_heap_caps.h"
+#include "sdkconfig.h"
 #endif
 
 /*
@@ -602,10 +603,25 @@ static bool check_action(const cJSON *a, const char *tile_where, td_layout_error
     if (shape == NULL) {
         return fail(err, "action.type", "%s/type must name one of the nine action types", where);
     }
-    if (!check_members(a, where, shape->members, shape->count, err)) {
+    const bool key_action = strcmp(shape->type, "key") == 0 || strcmp(shape->type, "consumer") == 0;
+    const char *names[6];
+    memcpy(names, shape->members, shape->count * sizeof names[0]);
+    names[shape->count] = "sink";
+    if (!check_some_members(a, where, names, shape->count + (key_action ? 1 : 0), shape->count, err)) {
         return false;
     }
 #define FIELD(name) (snprintf(field, sizeof field, "%s/%s", where, name), field)
+    const cJSON *sink = member(a, "sink");
+    if (sink && (!cJSON_IsString(sink) || (strcmp(sink->valuestring, "link") != 0 && strcmp(sink->valuestring, "bluetooth") != 0))) {
+        return fail(err, "action.sink", "%s must be link or bluetooth", FIELD("sink"));
+    }
+    const bool bluetooth = sink && strcmp(sink->valuestring, "bluetooth") == 0;
+#if !CONFIG_TD_RADIO_BUILD
+    if (bluetooth) return fail(err, "action.sink", "%s is unavailable on this Device", FIELD("sink"));
+#endif
+    if (bluetooth && strcmp(shape->type, "consumer") == 0 && member(a, "usage") && member(a, "usage")->valuedouble > 1023) {
+        return fail(err, "consumer.usage-range", "%s exceeds Bluetooth's consumer range", FIELD("usage"));
+    }
     const char *t = shape->type;
     if (strcmp(t, "key") == 0) {
         return check_int(member(a, "usage"), FIELD("usage"), 1, 255, "key.usage-range", err) &&
@@ -1056,7 +1072,8 @@ static size_t align8(size_t n)
 
 static td_action_t build_action(const cJSON *a, const cJSON *pages, char **strings)
 {
-    td_action_t action = { .type = TD_ACTION_NONE };
+    const cJSON *sink = member(a, "sink");
+    td_action_t action = { .type = TD_ACTION_NONE, .bluetooth = sink && strcmp(sink->valuestring, "bluetooth") == 0 };
     const char *type = member(a, "type")->valuestring;
     if (strcmp(type, "key") == 0) {
         action.type = TD_ACTION_KEY;

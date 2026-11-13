@@ -348,6 +348,15 @@
               "x-rules": {
                 "uniqueItems": "key.mods-duplicate"
               }
+            },
+            "sink": {
+              "enum": [
+                "link",
+                "bluetooth"
+              ],
+              "x-rules": {
+                "enum": "action.sink"
+              }
             }
           }
         },
@@ -385,6 +394,15 @@
               "x-rules": {
                 "minimum": "consumer.usage-range",
                 "maximum": "consumer.usage-range"
+              }
+            },
+            "sink": {
+              "enum": [
+                "link",
+                "bluetooth"
+              ],
+              "x-rules": {
+                "enum": "action.sink"
               }
             }
           }

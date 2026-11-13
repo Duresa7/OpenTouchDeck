@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Open TouchDeck 2.0 installer: an MSI for the current user, built with WiX (docs/packaging.md).
+
+  Installs the native app, including the Companion in-process.
+
+  Build variables, passed as `wix build -d Name=value`:
+    Version       the version of td-app as three numbers, such as 2.0.0
+    AppExe  the path of the built td-app.exe
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!--
+    Name, Manufacturer and Version are the program's version resource too (app/crates/td-app/build.rs).
+    Never change UpgradeCode: Windows finds the installed copy an update replaces by it.
+  -->
+  <Package Name="Open TouchDeck" Manufacturer="Duresa Kadi" Version="$(Version)"
+           UpgradeCode="FA97B489-E1B1-43CA-97AA-6D5FEE4A9836" Scope="perUser" Language="1033">
+    <SummaryInformation Description="Open TouchDeck installer" />
+    <MajorUpgrade DowngradeErrorMessage="A newer Open TouchDeck is installed on this PC. Uninstall it first to go back." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="AppIcon" SourceFile="$(AppIcon)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+
+    <Property Id="ARPCOMMENTS" Value="Open TouchDeck native app and Companion." />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Duresa7/OpenTouchDeck" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!--
+      Windows 11 starts at build 22000. Windows Installer reports the Windows 8.1 version on every later Windows,
+      so the real build number comes from the registry.
+    -->
+    <Property Id="WINDOWSBUILDNUMBER">
+      <RegistrySearch Id="WindowsBuildNumber" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                      Name="CurrentBuildNumber" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="Installed OR WINDOWSBUILDNUMBER &gt;= 22000"
+            Message="Open TouchDeck needs Windows 11, and this PC runs an older Windows. Open TouchDeck 1.x works on Windows 10: download it from the Releases page." />
+
+    <!--
+      Open TouchDeck 1.x owns this same folder. Refuse coexistence even though the native
+      payload has a different filename; the separate bridge must remove 1.x first.
+    -->
+    <Property Id="OPENTOUCHDECK1">
+      <DirectorySearch Id="OpenTouchDeck1Folder" Path="[LocalAppDataFolder]Programs\Open TouchDeck">
+        <FileSearch Id="OpenTouchDeck1Uninstaller" Name="Uninstall Open TouchDeck.exe" />
+      </DirectorySearch>
+    </Property>
+    <Launch Condition="Installed OR NOT OPENTOUCHDECK1"
+            Message="Open TouchDeck 1.x is installed on this PC. Uninstall it, then run this installer again." />
+
+    <!-- These values are app-owned. RemoveRegistryValue only runs on install; use
+         impersonated uninstall actions to delete exactly these two values. Missing values
+         are normal when start at sign-in was disabled. Never delete the shared keys. -->
+    <CustomAction Id="RemoveAppRun" Directory="SystemFolder" Execute="deferred" Impersonate="yes"
+                  ExeCommand='&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v &quot;Open TouchDeck&quot; /f'
+                  Return="ignore" />
+    <CustomAction Id="RemoveAppStartupApproved" Directory="SystemFolder" Execute="deferred" Impersonate="yes"
+                  ExeCommand='&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run&quot; /v &quot;Open TouchDeck&quot; /f'
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RemoveAppRun" Before="RemoveFiles" Condition='REMOVE="ALL"' />
+      <Custom Action="RemoveAppStartupApproved" After="RemoveAppRun" Condition='REMOVE="ALL"' />
+    </InstallExecuteSequence>
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="UserProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Open TouchDeck" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="Open TouchDeck">
+      <Component Id="App" Directory="INSTALLFOLDER" Guid="E874C18B-196D-4333-9219-08CF30B6EFAC">
+        <File Id="AppExe" Source="$(AppExe)" Name="td-app.exe" />
+        <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="Open TouchDeck"
+                  Target="[#AppExe]" Arguments="--packaged" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="io.github.duresa7.touchdeck" />
+        </Shortcut>
+        <!--
+          A component in the user's profile has a registry value under HKCU as its key path, and removes the
+          folders it created. Windows Installer's validation asks for both.
+        -->
+        <RegistryValue Root="HKCU" Key="Software\Open TouchDeck" Name="InstallFolder" Type="string"
+                       Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RemoveUserProgramsFolder" Directory="UserProgramsFolder" On="uninstall" />
+      </Component>
+    </Feature>
+  </Package>
+</Wix>

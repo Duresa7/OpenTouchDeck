@@ -1,5 +1,7 @@
 # Companion local API, v1
 
+> **On `main` this API has no first-party client.** The Electron window and the React UI that used it moved to the `release/1.x` branch ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)), and the 2.0 screens replace the API one feature at a time until it is deleted (ADR 0011, M6). Until then the JSON API below is still the contract, and the Companion's tests still hold it to this page. What this page says about the Electron window, the browser UI and app updates describes 1.x. On `main` the Companion serves no UI: every path outside `/api` is `404 route.not_found`.
+
 This is the contract between the Companion and its clients: the Electron window, a browser tab, and tests. Every Companion, Electron and UI ticket builds against it. When the code and this page disagree, one of them has a bug. The `api_contract_is_documented` test fails the build when an endpoint, event or error code is missing here.
 
 Related decisions: [ADR 0001](adr/0001-rust-companion-behind-electron.md) (Rust Companion behind Electron, loopback only), [ADR 0005](adr/0005-updater-keeps-the-signing-key.md) (updates stay in Electron) and [ADR 0006](adr/0006-command-approval-on-the-pc.md) (command approvals happen on the PC).
@@ -27,7 +29,7 @@ Related decisions: [ADR 0001](adr/0001-rust-companion-behind-electron.md) (Rust 
 | Responses | JSON, or raw bytes with their media type for Asset files. `204` for an empty success |
 | Events | `GET /api/v1/events` upgrades to a WebSocket. The server sends events. The client sends only `subscribe` and `unsubscribe` |
 | Slow work | `202 Accepted` with a `Job`, then `job.updated` events. `GET /jobs/{id}` recovers after a reload |
-| UI | Every other path serves the embedded UI. Unknown non-API paths return `index.html`, so client routes work after a reload |
+| UI | None on `main`: every other path is `404 route.not_found`. In 1.x every other path serves the embedded UI |
 
 We compared three shapes. REST plus one WebSocket won because Firmware bundles, Asset uploads and icon bytes travel as plain request and response bodies, and every route can be tested with `curl` or `reqwest`.
 
@@ -152,7 +154,7 @@ Cross-Origin-Resource-Policy: same-origin
 Cache-Control: no-store
 ```
 
-Hashed static files override `Cache-Control` with `public, max-age=31536000, immutable`. `index.html` keeps `no-store`. The UI makes no third-party requests unless you turn on Brandfetch: the Companion fetches and caches icon catalogs and downloads Icon packs, and the UI shows pack icons through the same-origin `icon_packs.thumbnail` route, so `connect-src` and `img-src` stay on `'self'`. While a Brandfetch client ID is saved, and only then, the policy adds `https://cdn.brandfetch.io https://asset.brandfetch.io` to `img-src` and `https://api.brandfetch.io` to `connect-src`, so the icon picker can search Brandfetch and show its thumbnails (see [Brandfetch](#brandfetch)). The page sets its policy when it loads, so saving or forgetting the client ID reloads the window. Without a client ID the header is byte for byte the one above. The UI never uses `dangerouslySetInnerHTML`.
+In 1.x, hashed static files override `Cache-Control` with `public, max-age=31536000, immutable`, and `index.html` keeps `no-store`. The UI makes no third-party requests unless you turn on Brandfetch: the Companion fetches and caches icon catalogs and downloads Icon packs, and the UI shows pack icons through the same-origin `icon_packs.thumbnail` route, so `connect-src` and `img-src` stay on `'self'`. While a Brandfetch client ID is saved, and only then, the policy adds `https://cdn.brandfetch.io https://asset.brandfetch.io` to `img-src` and `https://api.brandfetch.io` to `connect-src`, so the icon picker can search Brandfetch and show its thumbnails (see [Brandfetch](#brandfetch)). The page sets its policy when it loads, so saving or forgetting the client ID reloads the window. Without a client ID the header is byte for byte the one above. The UI never uses `dangerouslySetInnerHTML`.
 
 ### How the Electron window gets its session
 
@@ -380,16 +382,18 @@ A Device reaches the Companion over USB or Wi-Fi, one Carrier at a time, under o
 - **One Device on both Carriers.** net-v2 pins the factory MAC, which is also the USB serial, so a Device paired over Wi-Fi has the same id as over USB. `DeviceSummary.carrier` is `usb` or `wifi` while connected and `null` otherwise. While connected over Wi-Fi, `link.port` is the `host:port` the Companion reached.
 - **USB wins.** The scan thread still probes the USB port of a Device linked over Wi-Fi. When it answers, the USB link replaces the Wi-Fi one. When the port leaves, the Device goes `lost` with `unplugged` and the Wi-Fi thread tries it at once, so it comes back as `connected` over Wi-Fi without being forgotten.
 - **The Wi-Fi thread.** It tries each paired Device that has no USB port, isn't linked and wasn't disconnected by the person: at once after pairing, a Wi-Fi link loss, an unplug or `devices.connect`; then after 0.25 s, doubling up to 10 s. A Device that answers `busy` (linked over USB or to another app) is `busy` with the address as `port` and is tried again at most every 2 s. A failure leaves the Device `offline` and records `problem` on its Pairing. Two failures stop the retries until the person connects again (`devices.connect`) or plugs the Device in: a `version` refusal, and a Device whose `hello` doesn't offer link-v2 or doesn't carry the paired id. Both mean its Firmware can't take this Companion over Wi-Fi, so `problem` says to update it over USB. The Companion never falls back to anything weaker. An `auth` refusal never deletes the key: `problem` says the Device no longer knows this Companion, and the person can forget the Pairing and pair again.
-- **Discovery** runs only when `wifi.discover` asks: a 3 s DNS-SD browse for `_touchdeck._tcp` with the pure-Rust `mdns-sd` crate, which needs neither Bonjour nor Avahi and works beside an OS responder. Records are hints; the Pairing pins the id. A browse returns at most 32 Devices, drops loopback, link-local, unspecified, broadcast and multicast addresses, drops every character from a name that net-v2 refuses in a name, and ignores a `paired` count above 4. When it finds a paired Device at a new address, as after a DHCP change, the Pairing takes that address and the Wi-Fi thread tries it at once. A session there still needs the Pairing's key, so an answer from something else only fails. Where multicast is blocked it finds nothing, and the person types the address.
-- **Full Devices.** `wifi.pair_start` reads the `paired` count the last discovery saw at that address. With 4, a `full` or `closed` refusal is 409 `wifi.full` with `details.paired: 4` and a message that says to remove one on the Device (paired apps screen) or over USB. With fewer, `full` means the Device still holds this Companion's own Pairing, so it is 409 `wifi.already_paired`. With no count, `wifi.full` says it may be either.
+- **Discovery** runs only when `wifi.discover` asks: a 3 s DNS-SD browse for `_touchdeck._tcp` with the pure-Rust `mdns-sd` crate, which needs neither Bonjour nor Avahi and works beside an OS responder. Records are hints; the Pairing pins the id. A browse returns at most 32 Devices, drops loopback, link-local, unspecified, broadcast and multicast addresses, drops every character from a name that net-v2 refuses in a name, and ignores a `paired` count above 4. Where multicast is blocked it finds nothing, and the person types the address.
+- **What a record says.** Outside pairing mode a Device's record names nothing: it carries a random nonce and four 8-byte hints ([Discovery privacy](../schema/protocol/net-v2.md#discovery-privacy)). The Companion computes each of its Pairings' hints for that nonce, with a discovery key derived from the Pairing's key in the keychain and then kept in memory only, and a match is that paired Device: `paired_here: true`, with the name the Companion knows. A Device in pairing mode also gives its id, name and Pairing count, and is listed with `pairing: true`. Any other record is someone else's Device, and `wifi.discover` leaves it out.
+- **A paired Device at a new address**, as after a DHCP change, is tried there next. The new address replaces the Pairing's only once a session there works; if that try fails, the Wi-Fi thread goes straight back to the address that last worked. So a record someone replays from elsewhere costs one failed try.
+- **Full Devices.** `wifi.pair_start` reads the `paired` count the last discovery saw at that address. Only a Device in pairing mode advertises a count. With 4, a `full` or `closed` refusal is 409 `wifi.full` with `details.paired: 4` and a message that says to remove one on the Device (paired apps screen) or over USB. With fewer, `full` means the Device still holds this Companion's own Pairing, so it is 409 `wifi.already_paired`. With no count, `wifi.full` says it may be either.
 - **Records and unknown outcomes.** A session carries at most 2^24 records per direction. Once fewer than 1024 remain in either direction, the Companion ends the session before the next request, never in the middle of a transfer, and the Wi-Fi thread reconnects with fresh keys. A request whose session ends before its reply fails with 502 `device.unknown_outcome`: the Device may or may not have acted, so the person checks before trying again.
 - **Keys.** The long-term key of each Pairing is in the OS keychain through the `keyring` crate: Credential Manager on Windows, the Secret Service on Linux, under service `touchdeck` and user `net-pairing:<device>`. With no keychain, pairing fails with 503 `wifi.keychain` and a message that says what to install or unlock; the key is never written to a file. `network.json` in the data folder holds the Companion id and each Pairing's Device id, address, name and whether it's confirmed, never a key.
 - **Over Wi-Fi a session has no console.** `console.send` and `devices.restart` fail with `device.link`. Firmware updates need USB: `firmware.update` and `firmware.repair` give 409 `firmware.usb_only` for a Device connected over Wi-Fi. The Device refuses USB-only requests over a network session with `usb-only`.
 
 ```rust
 pub enum Carrier { Usb, Wifi }                 // "usb" | "wifi"
-pub struct WifiDevice { pub device: DeviceId, pub name: String, pub address: String, pub paired: Option<u8>, pub paired_here: bool }
-pub struct WifiPairing { pub device: DeviceId, pub address: String, pub name: Option<String>, pub confirmed: bool, pub paired_ms: u64, pub problem: Option<String> }
+pub struct WifiDevice { pub device: DeviceId, pub name: String, pub address: String, pub paired: Option<u8>, pub paired_here: bool, pub pairing: bool }
+pub struct WifiPairing { pub device: DeviceId, pub address: String, pub name: Option<String>, pub confirmed: bool, pub paired_ms: u64, pub problem: Option<String>, pub removing: bool }
 pub struct PairingStarted { pub attempt: String, pub device: DeviceId, pub address: String, pub remaining_ms: u64, pub attempts_left: u8 }
 ```
 
@@ -536,6 +540,9 @@ Feature modules `devices`, `ports` and `console`.
 | `devices.bluetooth_pairing_close` | `DELETE /devices/{device}/bluetooth/pairing` | → `DeviceBluetooth`. Closes the pairing window |
 | `devices.bluetooth_forget` | `DELETE /devices/{device}/bluetooth/bonds/{address}` | → `BluetoothForgotten {forgotten, bluetooth}`. Forgets the computer or phone at `aa:bb:cc:dd:ee:ff`, in either case; `forgotten` is 0 when the Device kept no such bond |
 | `devices.bluetooth_forget_all` | `DELETE /devices/{device}/bluetooth/bonds` | → `BluetoothForgotten {forgotten, bluetooth}`. Forgets every computer and phone |
+| `devices.pairings_get` | `GET /devices/{device}/pairings` | → `DevicePairings`, below: the apps the Device keeps Pairings with |
+| `devices.pairings_forget` | `DELETE /devices/{device}/pairings/{app}` | → `DevicePairings`, after. Forgets the app with that id on the Device; an app the Device doesn't keep is no error |
+| `devices.pairings_forget_all` | `DELETE /devices/{device}/pairings` | → `DevicePairings`, after. Forgets every app, and clears the Device's count of wrong codes and its lockout |
 | `new_boards.list` | `GET /new-boards` | → `NewBoard[]` |
 | `ports.list` | `GET /ports` | → `PortProbe[]`, today's `Candidate` plus `usb_serial`. Never opens a port that a link holds |
 | `ports.rescan` | `POST /ports/rescan` | → `()` |
@@ -546,6 +553,8 @@ Feature modules `devices`, `ports` and `console`.
 The Wi-Fi routes work only on a Device whose Firmware has a Wi-Fi station, the radio build, which says so with `capabilities.wifi: true`. Any other Device gives 409 `device.needs_firmware` with `details.field` `wifi`, and the Companion sends it nothing. They follow [link-v2.md](../schema/protocol/link-v2.md) "Wi-Fi network", which takes them only over USB. `DeviceWifi` is `{configured, ssid, state, reason, ip, rssi}`: `state` is `off`, `connecting`, `connected` or `failed`, and `reason` is the Device's word for a failure, such as `not-found` or `wrong-password`. Poll `devices.wifi_get` while it says `connecting`. `ssid` is 1 to 32 UTF-8 bytes; `password` is empty for an open network, 8 to 63 printable ASCII characters, or 64 hex digits. Anything else gives 400 `request.invalid` before the Device hears of it, and a body that doesn't parse gets one fixed reason, so no part of it comes back. The password goes to the Device and nowhere else: no response, event, log line or `Debug` output carries it. A Device connected over Wi-Fi takes its network only over USB: the Companion refuses with 409 `device.usb_only` and sends it nothing. Pairing with this app over that network is the Wi-Fi Carrier, above.
 
 The Bluetooth routes work only on a Device whose Firmware has the Bluetooth keyboard, the radio build, which says so with `capabilities.ble_hid`, the most computers and phones it keeps bonded. Any other Device gives 409 `device.needs_firmware` with `details.field` `bluetooth`, and the Companion sends it nothing. They follow [link-v2.md](../schema/protocol/link-v2.md) "Bluetooth keyboard (radio build)", which takes them only over USB: a Device connected over Wi-Fi gives 409 `device.usb_only`, and the Companion sends it nothing. `DeviceBluetooth` is `{enabled, state, pairing, pairing_ms, passkey, advertising, bonds, bonds_max, battery}`. `enabled` is the stored setting, off on a fresh Device. `state` is `off`, `starting`, `on` or `failed`; poll `devices.bluetooth_get` while it says `starting`. `pairing_ms` counts down the open window, and `passkey` says whether the Device shows the six-digit code a computer or phone types to pair; the code itself never leaves the Device. `advertising` is `off`, `pairing`, `fast` or `slow`. `bonds` lists `{address, random, connected}` for each computer or phone. The Device keeps them in every state, and the list may come in any state: the Firmware lists none while `off`, and still lists them while `starting` after a host reset. An address in the path may be in either case; the Device hears it in lower case. `battery` is the level the Device reports to hosts, fixed at 100. A body other than `{enabled: boolean}` or an address other than six hex bytes gives 400 `request.invalid` before the Device hears of it. The Device's own refusals keep their reason: 409 `bluetooth.off` (Bluetooth is off, so there is no window to open and no bond to forget), 409 `bluetooth.starting` (ask again), 409 `bluetooth.full` (`bonds_max` computers and phones are bonded; forget one first), 502 `bluetooth.radio` (Bluetooth did not start; the setting stays on) and 502 `bluetooth.storage` (the Device couldn't save the change). Each of them carries the state after the request in `details.bluetooth` when the Device sent it.
+
+The Pairing routes list and forget the apps that reach the Device over Wi-Fi, from [net-v2.md](../schema/protocol/net-v2.md) "Storage, management and secrets" (`net.list` and `net.forget`). Like the Wi-Fi routes, they need the radio build (`capabilities.wifi: true`), or 409 `device.needs_firmware` with `details.field` `pairings`, and they work only over USB: a Device connected over Wi-Fi gives 409 `device.usb_only`, and the Companion sends it nothing. `DevicePairings` is `{pairings, max, pairing, locked_ms}`. `pairings` lists `{app, name, this_app}` for each app, oldest first: `app` is the app's id, 32 lower-case hex characters, `name` is the name it gave when it paired, and `this_app` marks this Companion. No answer carries a key. `max` is 4, the most Pairings a Device keeps. `pairing` says whether the Device's pairing window is open, and `locked_ms` is the time left in a lockout after wrong codes, 0 when none. An `app` in the path that isn't 32 lower-case hex characters gives 400 `request.invalid` before the Device hears of it. 502 `pairings.storage` when the Device couldn't erase the Pairing from its storage. When the app forgotten is this Companion, its own key for the Device goes too, as with `wifi.pairings_forget`. A forget that times out or loses its link may or may not have reached the Device: the Companion keeps the app marked as being removed, and `WifiPairing.removing` shows it for its own Pairing, whose key stays for now. The next `devices.pairings_get` over USB, or the Device's next USB link, sends the forget again first; once the Device answers, or its list no longer shows the app, the mark goes, and with it this Companion's key when the app was this Companion. The marks are kept in memory only.
 
 While a Device is connected with the photo frame on and a folder set, the Companion sends it one picture per interval while it is idle. It reads JPEG and PNG files at the folder's top level only, skips files it cannot read or decode, follows no links, and fits each picture to the screen as a JPEG within `caps.photo_bytes`. It sets the Device's clock on connect, every 10 minutes, and when the time zone changes.
 
@@ -570,7 +579,7 @@ Feature module `wifi`. See Wi-Fi Carrier above.
 
 | Name | Method and path | Request → Response |
 |---|---|---|
-| `wifi.discover` | `POST /wifi/discover` | → `WifiDevice[]`, after a 3 s browse. 503 `wifi.discovery` when mDNS can't start |
+| `wifi.discover` | `POST /wifi/discover` | → `WifiDevice[]`, after a 3 s browse: this Companion's paired Devices it recognised, and Devices in pairing mode. 503 `wifi.discovery` when mDNS can't start |
 | `wifi.pairings_list` | `GET /wifi/pairings` | → `WifiPairing[]` |
 | `wifi.pair_start` | `POST /wifi/pairings` | `{address}` → `PairingStarted`. `address` is an IPv4 or IPv6 address or a host name, with an optional port that defaults to 47820. The Device must have its pairing window open (Pair new app on the Device), or 409 `wifi.window_closed`. 502 `wifi.unreachable`, 409 `wifi.full`, `wifi.already_paired`, `wifi.busy` or `wifi.version` |
 | `wifi.pair_code` | `POST /wifi/attempts/{attempt}/code` | `{code}`, the six digits on the Device → `WifiPairing`, and the Device then connects over Wi-Fi. A wrong code gives 422 `wifi.wrong_code` with `details.attempts_left`; the third gives 429 `wifi.locked`, and the Device refuses pairing for 30 s, doubling. 409 `wifi.expired` when the window closed, 503 `wifi.keychain`, 404 `wifi.attempt_not_found` |
@@ -678,9 +687,10 @@ Feature module `icon_packs`. An Icon pack is an Iconify JSON set someone install
 
 - **Curated list.** `app/crates/td-host/src/packs.json`, written by `app/scripts/generate_packs.py`, pins each `@iconify-json/<prefix>` npm package by version, tarball URL and `dist.integrity`. It offers logos, devicon, skill-icons, fa6-brands, mdi, tabler and lucide. Simple Icons is left out because it ships as a catalog.
 - **Install.** The Job downloads the pinned tarball from `registry.npmjs.org` only, over HTTPS, following no redirect, and refuses it unless its SHA-512 matches the pinned integrity (`icon_pack.integrity`), and keeps only `icons.json`, `info.json` and the first license file (saved as `LICENSE`) in `<data>/packs/<prefix>/`. Nothing else in the package is unpacked or run. A tarball with a link entry, an absolute path, a drive or `:` in a path, a `..` component, a bad header checksum or no end marker is refused whole (`icon_pack.invalid`), on Linux and Windows alike. A leftover folder at `<data>/packs/<prefix>/` that holds no usable pack is replaced. Installing an installed pack succeeds without a download.
-- **Validation.** Installed and imported files must be Iconify JSON with a valid prefix: lowercase letters and digits in hyphen-separated parts, so a pack's folder name means the same on case-sensitive and case-insensitive file systems. Icons with an invalid name, an out-of-range box or a body that isn't self-contained are dropped. Each body is parsed as XML and checked against an allowlist: SVG-namespace elements only, no `script`, `foreignObject` or `style` element in any namespace, no `on*` attribute, no DTD, every `href` must point at a `#fragment`, and after character references and CSS escapes are decoded every `url()` must too, with no `@import` or `javascript:`. Animations may not retarget an `href`. Pack and catalog SVGs may carry a `DOCTYPE` but no `ENTITY` declaration, and no embedded `data:` image is drawn. A file with no usable icon gets 422 `icon_pack.invalid`.
+- **Validation.** Installed and imported files must be Iconify JSON with a valid prefix: lowercase letters and digits in hyphen-separated parts, so a pack's folder name means the same on case-sensitive and case-insensitive file systems. A prefix that Windows reserves for a device (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) is refused on every OS with 422 `icon_pack.invalid`. Icons with an invalid name, an out-of-range box or a body that isn't self-contained are dropped. Each body is parsed as XML and checked against an allowlist: SVG-namespace elements only, no `script`, `foreignObject` or `style` element in any namespace, no `on*` attribute, no `xml:` attribute but `xml:space`, no DTD, every `href` must point at a `#fragment`, and after character references and CSS escapes are decoded every `url()` must too, with no `@import` or `javascript:`. Animations may not retarget an `href`. Pack and catalog SVGs may carry a `DOCTYPE` but no `ENTITY` declaration, and no embedded `data:` image is drawn. A file with no usable icon gets 422 `icon_pack.invalid`.
 - **Import.** An imported pack's license reads "Custom (you provided it)". A prefix that an installed or curated pack uses gets 409 `icon_pack.exists`. At most 20 imported packs are installed at once; the next import gets 409 `icon_pack.too_many` until one is removed.
-- **Search.** `assets.catalog_search` merges installed packs into the catalog ranking: exact, prefix, then substring matches on icon names and plain aliases, catalog hits first within a rank. A pack hit's `source` is `iconify:<prefix>`, its `id` is the icon name, and its `license`, `license_url` and `attribution` come from the pack. `catalog=iconify:<prefix>` searches one pack. Packs load on first use and stay in memory.
+- **Search.** `assets.catalog_search` merges installed packs into the catalog ranking: exact, prefix, then substring matches on icon names and plain aliases, catalog hits first within a rank. A pack hit's `source` is `iconify:<prefix>`, its `id` is the icon name, and its `license`, `license_url` and `attribution` come from the pack. `catalog=iconify:<prefix>` searches one pack.
+- **Memory.** A pack is parsed into memory on first use. Each search loads every installed pack, so they all stay loaded while the icon picker is in use. A pack not used for 5 minutes is dropped from memory, checked once a minute, so its memory is given back about 6 minutes after its last use. Its next search, thumbnail or render parses it from disk again, which takes about half a second for a pack of the largest size.
 - **Render.** `assets.create` with `{kind: "catalog", catalog: "iconify:<prefix>", id: <name>}` builds a standalone SVG from the pack (box, `left`/`top` viewBox, aliases, rotation and flips) and draws it through the catalog SVG path, then padding, background and tint. Monochrome `currentColor` icons draw in `#f2f5fa`, the built-in Lucide ink.
 
 ### Actions and approvals
@@ -1145,7 +1155,7 @@ The auth module mounts these itself. Features can't import it.
 
 ### Test hooks
 
-Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature and mounted only when the Companion runs on mock ports (`--mock-devices N`). Release builds don't contain it: `package_windows.py` builds `td-companion` without features and refuses a binary that holds a test route or test argument. Its types go into a separate `api.test.gen.ts`, so the product UI can't import them.
+Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature and mounted only when the Companion runs on mock ports (`--mock-devices N`). Release builds don't contain it: a release builds `td-companion` without features.
 
 One exception lets a board pass drive the real Device while the Companion owns its port. A `test-hooks` Companion started with `--test-real-device-console` (the only argument) also serves `test.console` for Devices on real ports. Every other test route stays `route.not_found` there, and without the argument `test.console` is `route.not_found` for real ports too. A release build rejects the argument as unknown.
 
@@ -1158,7 +1168,7 @@ One exception lets a board pass drive the real Device while the Companion owns i
 | `test.record` | `GET /test/devices/{device}/record` | → `{received, lines, settings, reboots, assets, layouts}` |
 | `test.emit` | `POST /test/devices/{device}/emit` | `{events, repeat?, every_ms?}` → `()`. Events: `key.report`, `key.resync`, `press` (with an optional renderer `part`), `v2.input` (`page`, `tile`, `stream`, `phase`, `value`) and `drop` |
 | `test.input_log` | `GET /test/input-log` | → `string[]` |
-| `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "device-radio" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()`. `device-radio` is a v2 Device with a Wi-Fi station and the Bluetooth keyboard |
+| `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "device-radio" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()`. `device-radio` is a v2 Device on the radio build: its hello says `radio`, and it has a Wi-Fi station and the Bluetooth keyboard |
 | `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |
 | `test.clock` | `POST /test/clock` | `{advance_ms}` → `()`. Moves the Companion's clock for expiry tests |
 | `test.firmware_script` | `POST /test/firmware/script` | `{answers: ("accept" \| "decline")[]}` → `()`. Replaces the native Firmware dialogs with a scripted prompter that gives these consent answers in order and waits once they run out. Its file picker returns the test bundle |
@@ -1301,6 +1311,7 @@ Features add codes as they land. This list is the starting set.
 | `bluetooth.full` | 409 | The Device keeps `bonds_max` computers and phones; forget one first. `details.bluetooth` |
 | `bluetooth.radio` | 502 | Bluetooth didn't start on the Device; the setting stays on. `details.bluetooth` when the Device sent it |
 | `bluetooth.storage` | 502 | The Device couldn't save the change. `details.bluetooth` when the Device sent it |
+| `pairings.storage` | 502 | The Device couldn't erase a Pairing from its storage. Try again |
 | `new_board.not_found` | 404 | No New board with that id |
 | `layout.invalid` | 422 | The Layout fails validation. `details.issues` |
 | `layout.live_image_limit` | 422 | The Layout declares more image-stream Tiles than the Device's `live_images`. `details {limit, actual}` |
@@ -1387,16 +1398,12 @@ pub struct Req<E: Endpoint> { pub path: E::Path, pub query: E::Query, pub body: 
 
 `ClientInfo` holds the session id and kind, for the audit log and for routes limited to window sessions.
 
-### Generated TypeScript
+### Types
 
-ts-rs derives each type. The Companion's generator writes `<ui>/src/lib/companion/api.gen.ts` with every type, an endpoint table, typed wrappers `companion.<feature>.<action>()`, the `EventMap`, the `JobMap`, the `ErrorCode` union and `SyncData`. Each wrapper takes optional request headers after the bearer, such as `If-Match`. A response that isn't JSON comes back as a `Blob`. The file starts with `// Generated from td-companion. Do not edit.` and uses LF endings. `pnpm gen:api` runs `cargo run -p td-companion --features test-hooks -- --emit-ts <path>`.
+ts-rs derives a TypeScript declaration for each type, and `td-core` has an optional `ts` feature that adds `#[cfg_attr(feature = "ts", derive(TS))]` to `Layout`, `Hello`, `Settings`, `Orientation` and the other types the API carries. Nothing on `main` writes those declarations to a file: the generated client `api.gen.ts`, `pnpm gen:api` and the test that compared them left with the React UI ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). The route registry still reads each route's path type, so the derives stay until the API goes.
 
-`td-core` gains an optional `ts` feature that adds `#[cfg_attr(feature = "ts", derive(TS))]` to `Layout`, `Hello`, `Settings`, `Orientation` and the other types the API carries.
+### Contract tests
 
-### Freshness rule
-
-- **`api_bindings_are_current`** renders `api.gen.ts` in memory and compares it byte for byte with the committed file. On a difference it fails with "run `pnpm gen:api`". It runs inside `cargo test --workspace`, which CI already runs.
-- **`pnpm typecheck`**, part of `pnpm lint`, compiles the UI against the generated file, so a UI calling a removed or renamed route fails CI.
 - **`api_contract_is_documented`** asserts that every endpoint `NAME`, event type and error code appears in this page.
 - **`test_registry_is_consistent`** fails when an endpoint's `NAME` doesn't start with its feature's name, when two endpoints share a method and path, or when `Path`'s fields don't match the `{params}` in `PATH`.
 
@@ -1461,7 +1468,7 @@ Under the workspace's default release profile the growth is over the 1.5 MB budg
 
 Rejected: actix-web (a second runtime layered on tokio), warp (filter types make per-feature routes and error mapping awkward), poem (a much smaller community, and its OpenAPI story uses the attribute-declared responses rejected above), tiny_http with tungstenite (a thread per connection, and hand-built upgrade, limits and middleware), and raw hyper (every layer above it would be ours).
 
-**Embedded UI.** `build.rs` embeds `<ui>/dist` as an `include_bytes!` table. In development, the Vite dev server proxies `/api`, including the WebSocket, to the Companion and rewrites `Host` and `Origin` to the Companion's origin. The Companion has no dev-only origin exception that could ship.
+**No embedded UI.** In 1.x `build.rs` embeds the built React UI as an `include_bytes!` table. On `main` it embeds no UI. The Companion has no dev-only origin exception that could ship.
 
 ## Test seam
 
@@ -1517,10 +1524,10 @@ Playwright then drives the Electron window and a browser page against `--mock-de
 ## Versioning
 
 - **The path prefix is `/api/v1`.** The runtime file lists supported versions (`"api": ["v1"]`), and `GET /system/ping` returns them without auth.
-- **The UI and API ship together.** The UI is embedded in the Companion binary, so the first-party UI always matches its API. Two boundaries remain:
+- **The UI and API ship together.** In 1.x the UI is embedded in the Companion binary, so the first-party UI always matches its API. Two boundaries remain:
   - A tab left open across an update sees a new `hello.build` and reloads.
   - Electron's preload contract has `openTouchDeck.version = 1`. Electron checks `GET /system/ping` and shows "Restart Open TouchDeck to finish updating" if it doesn't support the Companion's API version.
-- **Inside v1, changes only add.** Allowed: new routes, new optional fields, new event types, new error codes and new Job kinds. Clients ignore unknown fields and event types, and treat an unknown error code as generic. Not allowed: renaming or removing a field, changing a type, or changing what a status code means. The generated file shows such a change in review as a removed or changed line.
+- **Inside v1, changes only add.** Allowed: new routes, new optional fields, new event types, new error codes and new Job kinds. Clients ignore unknown fields and event types, and treat an unknown error code as generic. Not allowed: renaming or removing a field, changing a type, or changing what a status code means. 
 - **A breaking change** adds `/api/v2` next to v1 for one release, but only if third-party clients exist. Otherwise it replaces v1 in the same release, because every first-party client ships with it.
 - **The Firmware protocol version** (Companion to Device, Protocol v2) is separate and never appears in routes. The API shows it only as `DeviceSummary.firmware.protocol` and in `device.needs_firmware` errors.
 
@@ -1531,10 +1538,9 @@ Playwright then drives the Electron window and a browser page against `--mock-de
 3. Write `struct X; impl Endpoint for X` with `NAME` set to `<feature>.<action>`, the method, the path under `/api/v1`, the types and the feature's error enum. Slow Device work returns `JobRef` with `STATUS = 202` and a registered `JobKind`.
 4. Add `.endpoint::<X>()` to the feature's `feature()`. Add `.event::<E>()` for any new event.
 5. Add new error variants to the feature's enum with a `code` and a status.
-6. Run `pnpm gen:api` and commit the changed `api.gen.ts`.
-7. Add the route, its events and its error codes to this page. Changes only add (see Versioning).
-8. Write an integration test through `TestCompanion` that calls the route with `td.call::<X>()` and checks what a caller sees.
-9. Run `cargo test --workspace` and `pnpm lint`. The freshness and contract tests tell you what you missed.
+6. Add the route, its events and its error codes to this page. Changes only add (see Versioning).
+7. Write an integration test through `TestCompanion` that calls the route with `td.call::<X>()` and checks what a caller sees.
+8. Run `cargo test --workspace`. The contract tests tell you what you missed.
 
 Never add a public route, a CORS header, a route that answers approvals, or a route that takes Firmware bytes. Each of those needs a new ADR and a security review.
 
@@ -1564,14 +1570,13 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 
 ### Tray and startup implementation decisions (#79)
 
-The Companion owns the Windows tray on a dedicated message-loop thread. Open starts
-`Open TouchDeck.exe` beside the Companion. Development may point Open elsewhere with
-`TOUCHDECK_WINDOW_BIN`; a Companion started with `--packaged` ignores it.
-Electron's single-instance handler focuses an existing window. Closing that window
-revokes its session and leaves the detached Companion running.
+The 2.0 program, `td-app`, owns the Windows tray on a dedicated message-loop thread.
+Left-click, keyboard activation and Open show the native window through an open hook
+that `td-app` hands the tray (#379); the standalone Companion starts no tray. In 1.x,
+Open started the Electron window beside the Companion instead.
 
-Electron passes `--packaged` only for installed builds. The first packaged start
-registers the current Companion executable with `--packaged` in the per-user Run
+The Run entry starts the program with `--packaged`. The first packaged start
+registers the current executable with `--packaged` in the per-user Run
 value `Open TouchDeck`, then writes a non-secret `startup-initialized` marker.
 Later starts respect the registry, including an absent value after disabling startup.
 Development and mock starts never enable startup automatically.
@@ -1705,3 +1710,16 @@ the target size capped at 128 by 128, eight frames at 10 fps, coloured by the
 upload, target and fit so a refit gets a new id. It does not implement the Rust
 normalizer or Device admission; integration tests run those paths against the
 Companion and mock Device.
+
+### Tile key destinations
+
+Key and consumer Tile actions accept optional `sink: "link" | "bluetooth"`. Omission
+means `link` (the Companion). Device diagnostics expose the Firmware's `sinks`;
+only Devices advertising `bluetooth` offer the Bluetooth destination. Layout push
+checks this before transferring Assets and fails with `layout.invalid`, issue
+`action.sink`, if the destination is unsupported. Bluetooth consumer usages are
+limited to 1–1023 by the existing report map. Other action types have no sink.
+
+Layout read, last-seen lookup and push orchestration live behind
+`Handle::layout_operations()`. The local web API translates headers and responses
+for those same in-process operations; their wire contract is unchanged.

@@ -3,7 +3,7 @@
 //! frame, idle, and clock" defines them.
 pub(crate) mod clock;
 pub(crate) mod encode;
-pub(crate) mod folder;
+pub mod folder;
 mod stream;
 
 use crate::{
@@ -75,6 +75,7 @@ struct State {
 }
 
 struct Inner {
+    stopped: std::sync::atomic::AtomicBool,
     file: Option<PathBuf>,
     devices: DeviceManager,
     links: Links,
@@ -98,6 +99,7 @@ impl PhotoFrames {
             .unwrap_or_default()
             .folders;
         let inner = Arc::new(Inner {
+            stopped: Default::default(),
             file,
             devices,
             links,
@@ -114,6 +116,12 @@ impl PhotoFrames {
         Self { inner }
     }
 
+    pub(crate) fn stop(&self) {
+        self.inner
+            .stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// The Device's picture folder on this PC.
     pub fn folder(&self, id: &DeviceId) -> Option<String> {
         self.inner.state.lock().folders.get(id.as_str()).cloned()
@@ -122,21 +130,22 @@ impl PhotoFrames {
     /// Sets or clears the folder and saves it. Blocking.
     pub fn set_folder(&self, id: &DeviceId, folder: Option<String>) -> std::io::Result<()> {
         let mut state = self.inner.state.lock();
+        let mut folders = state.folders.clone();
         match folder {
-            Some(folder) => state.folders.insert(id.to_string(), folder),
-            None => state.folders.remove(id.as_str()),
+            Some(folder) => folders.insert(id.to_string(), folder),
+            None => folders.remove(id.as_str()),
         };
-        let Some(path) = &self.inner.file else {
-            return Ok(());
-        };
-        let saved = Saved {
-            folders: state.folders.clone(),
-        };
-        drop(state);
-        td_core::app_dirs::write_atomic(
-            path,
-            &serde_json::to_vec_pretty(&saved).expect("folders serialize"),
-        )
+        if let Some(path) = &self.inner.file {
+            let saved = Saved {
+                folders: folders.clone(),
+            };
+            td_core::app_dirs::write_atomic(
+                path,
+                &serde_json::to_vec_pretty(&saved).expect("folders serialize"),
+            )?;
+        }
+        state.folders = folders;
+        Ok(())
     }
 
     /// Records idle settings the Device just reported or stored.
@@ -177,6 +186,9 @@ fn supervise(weak: &Weak<Inner>) {
         let Some(inner) = weak.upgrade() else {
             return;
         };
+        if inner.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         tick(&inner, weak);
     }
 }
@@ -263,6 +275,7 @@ fn tick(inner: &Inner, weak: &Weak<Inner>) {
 fn work(weak: &Weak<Inner>, id: &DeviceId, since_ms: u64, generation: u64) {
     let current = || {
         weak.upgrade()
+            .filter(|inner| !inner.stopped.load(std::sync::atomic::Ordering::SeqCst))
             .and_then(|inner| inner.plan(id, since_ms, generation))
     };
     let mut streamer: Option<Streamer> = None;

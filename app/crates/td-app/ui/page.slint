@@ -1,0 +1,88 @@
+// A page that scrolls with the wheel, the scroll bar and the keyboard, and keeps the focused
+// control in view. Fluent's ScrollView does neither on its own.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+// Where the control that just took focus is on screen, so its page can scroll it into view.
+export global Focus {
+    out property <length> top;
+    out property <length> bottom;
+    out property <int> moves;
+    public function show(top: length, height: length) {
+        self.top = top;
+        self.bottom = top + height;
+        self.moves += 1;
+    }
+}
+
+export component ScrollingPage inherits Rectangle {
+    // What screen readers call the page.
+    in property <string> title;
+
+    property <length> step: 40px * Theme.text-scale;
+    property <length> lowest: min(0, scroll.visible-height - scroll.content-height);
+    property <int> focus-moves: Focus.moves;
+
+    function scroll-to(y: length) {
+        scroll.content-y = max(root.lowest, min(0, y));
+    }
+
+    // Scrolls just enough to show the focused control, with a little room around it.
+    changed focus-moves => {
+        let top = Focus.top - scroll.absolute-position.y;
+        let bottom = Focus.bottom - scroll.absolute-position.y;
+        if top < 0 {
+            root.scroll-to(scroll.content-y - top + 12px);
+        } else if bottom > scroll.visible-height {
+            root.scroll-to(scroll.content-y - (bottom - scroll.visible-height) - 12px);
+        }
+    }
+
+    keys := FocusScope {
+        accessible-role: tab-panel;
+        accessible-label: root.title;
+        // Keys a focused link doesn't use arrive here too.
+        key-pressed(event) => {
+            if event.text == Key.DownArrow {
+                root.scroll-to(scroll.content-y - root.step);
+            } else if event.text == Key.UpArrow {
+                root.scroll-to(scroll.content-y + root.step);
+            } else if event.text == Key.PageDown || (event.text == " " && self.has-focus) {
+                root.scroll-to(scroll.content-y - scroll.visible-height + root.step);
+            } else if event.text == Key.PageUp {
+                root.scroll-to(scroll.content-y + scroll.visible-height - root.step);
+            } else if event.text == Key.Home {
+                root.scroll-to(0);
+            } else if event.text == Key.End {
+                root.scroll-to(root.lowest);
+            } else {
+                return reject;
+            }
+            return accept;
+        }
+
+        scroll := ScrollView {
+            content-width: scroll.visible-width;
+            content-height: max(scroll.visible-height, column.preferred-height);
+            column := VerticalLayout {
+                width: scroll.visible-width;
+                alignment: start;
+                padding: 24px;
+                padding-top: 28px;
+                spacing: 12px;
+                @children
+            }
+        }
+    }
+
+    // The page itself is a Tab stop, so pages without links still scroll from the keyboard.
+    if keys.has-focus: Rectangle {
+        x: 2px;
+        y: 2px;
+        width: root.width - 4px;
+        height: root.height - 4px;
+        border-width: 2px;
+        border-radius: 6px;
+        border-color: Theme.focus;
+    }
+}

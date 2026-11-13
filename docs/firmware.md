@@ -150,6 +150,40 @@ for each key report the engine emits, so the app can type the keys on the PC.
 `dashboard.set` fills a dashboard page with up to 8 rows. The deck draws them on
 its next 100 ms redraw.
 
+### Transfers
+
+A transfer is the one open bulk move on the link: a Layout or icon put, a
+Layout get, a firmware update, a v2 Asset put or an idle picture put. Chunk
+sizes, windows, retransmissions and the CRC stay in `td_xfer`. One module,
+`td_link_core/include/td_transfer.h`, owns everything else about it:
+
+- **The Carrier session.** The transfer records the carrier connection whose
+  request opened it, the carrier and its generation, which `td_link.c` supplies.
+  Chunk and ack frames from any other connection are dropped. When that
+  connection ends, the next link turn cuts the transfer.
+- **What it holds.** A put's or get's PSRAM buffer, a running firmware update
+  and an Asset upload in flight are released together, by one `td_transfer_drop`
+  or `td_transfer_close`: when the transfer finishes, is replaced by a new
+  open, goes 2 seconds without a chunk (5 for a get), or its connection ends.
+  A selection of a protocol drops a v2 Asset or picture upload.
+- **Effects.** The heap, the update and Asset writers, the carrier session, the
+  idle face, the clock and the wire sit behind `td_transfer_ports_t`.
+  `td_link_transfer.c` wires the Device's.
+
+The message handlers in `td_link_files.c` still check a request and decide
+whether to open one, then call `td_transfer_begin_buffered` or
+`td_transfer_begin_streamed` and `td_transfer_arm`. They keep what they remember
+about the request (the file path, the icon id, the picture's hash) in their own
+state. `test_link_carrier.py` runs the production link, `td_link_transfer.c` and
+`td_transfer.c` against counting fakes of those effects.
+
+Three boundaries were considered. Moving only the origin bookkeeping from
+`td_link.c` would still leave the release of buffers, updates and Assets in
+`td_link_files.c` unobserved. A transfer object per kind would repeat the cut,
+idle and replace rules six times. One module that owns the session and the
+resources, with the handlers outside it, puts every release path behind one
+interface and changes no handler's reply.
+
 The local verification harness provides `link hello`, `link ping --count 100`,
 `link state`, `link raw --hex <frame>`, and `link selftest`. `link scenario <file>`
 sends timed console lines and binary frames through one port handle. Console
@@ -293,8 +327,8 @@ mirrors them into the host session. Built-in pages come from embedded JSON in
 [builtin.json](../schema/examples/builtin.json), and saved layouts use the same
 [layout format](../schema/README.md). The Backlit look is flat: every fill is one
 RGB565 color, with no shadow, glow, border, or gradient. The screen colors are
-macros in `firmware/components/ui/ui_theme.h`, one per token of
-`app/ui/src/styles/tokens.css`. The sizes, radii, and animation times are named
+macros in `firmware/components/ui/ui_theme.h`, one per token of the 1.x app's
+`app/ui/src/styles/tokens.css` (on the `release/1.x` branch). The sizes, radii, and animation times are named
 fields of the theme in `firmware/components/ui/ui_theme.c`.
 
 The `ui` component adds the `ui` console command: `ui state` reports the page and
@@ -358,12 +392,12 @@ decompression. `--lv-include lvgl.h` makes the files include `lvgl.h` the way th
 ESP-IDF LVGL component provides it. The same tool versions and commands give
 the same files byte for byte.
 
-The app's Device Previews measure and break text with the same fonts. After
-you regenerate them, run
+The 1.x app's Device Previews measure and break text with the same fonts. That
+app lives on the `release/1.x` branch. After you regenerate the fonts, run
 `node app/ui/src/lib/deck/fonts.extract.mjs firmware/managed_components/lvgl__lvgl/src/font`
-from the repository root to rewrite `app/ui/src/lib/deck/fonts.data.ts`. The
-UI tests fail when a Preview font's size or line height no longer matches the
-Firmware font `ui_theme.c` names for it.
+there to rewrite `app/ui/src/lib/deck/fonts.data.ts`. Its UI tests fail when a
+Preview font's size or line height no longer matches the Firmware font
+`ui_theme.c` names for it.
 
 ### Performance options
 
@@ -499,9 +533,9 @@ The radio build is an opt-in second Firmware configuration with Wi-Fi, lwIP
 and NimBLE. The installer's Firmware is the normal build, and it stays
 radio-free. A release can also ship the radio build as a separate file,
 `touchdeck-radio-<version>.tdfw`, with the Companion carrying both; then Device
-settings in the app switches a Device between them, both ways. Whether it does
-is set in `app/release-options.json` (see
-[packaging](packaging.md#the-radio-build-in-a-release)). An update keeps the
+settings in the app switches a Device between them, both ways. In 1.x,
+whether it does is set in `app/release-options.json` on the `release/1.x`
+branch. An update keeps the
 build the Device runs. Build the radio build into a directory of its own.
 From `firmware/`:
 
@@ -569,9 +603,18 @@ What the radio build does:
   or the address, so the radio build sets those tags to errors only before the
   station starts, and `radio_guard.py` requires `td_wifi_quiet_logs` in the
   image.
-- A small Wi-Fi glyph at the right end of the title band shows the station
+- A small Wi-Fi glyph near the right end of the title band shows the station
   while a network is stored: grey when joined, dim while joining, amber after
   a failure. With no network stored it is hidden.
+- A gear at the right end of the title band opens Settings, a full-screen
+  panel on LVGL's top layer (`ui_settings.c`). It lists the paired apps by
+  name, with "n of 4", and forgets one, or all, only after a confirmation. Its
+  Pair new app button opens a pairing window. With four Pairings it opens none
+  and says to forget one first; during a lockout it shows the time left. A
+  Layout without a title band, or the idle face, shows no gear. The panel talks
+  to the net-v2 service through hooks (`ui_settings_hooks_t`) that never block
+  the UI: the net task does the work and the panel reads a snapshot four times
+  a second. The panel's state lives in PSRAM.
 - NimBLE is compiled in, with the controller in flash and NimBLE's memory in
   PSRAM. BLE is off until the person turns on the Bluetooth keyboard (see
   [Bluetooth keyboard](#bluetooth-keyboard-radio-build)). A fresh Device never
@@ -581,14 +624,19 @@ What the radio build does:
 - The net-v2 service (`td_netlink`, with the protocol in `td_netlink_core`)
   listens on TCP port 47820 and adds the `wifi` carrier to the link. It pairs
   and opens sessions as [net-v2](../schema/protocol/net-v2.md) describes, with
-  its crypto buffers, records and task stack in PSRAM. Only a USB request opens
-  a pairing window: the `net pair` console command or the `net.pair` link
-  message. The Device then shows the six-digit code, the time left and Cancel.
+  its crypto buffers, records and task stack in PSRAM. A pairing window opens
+  only from the Device or USB: Pair new app on the Settings panel, the
+  `net pair` console command or the `net.pair` link message. The Device then
+  shows the six-digit code, the time left and Cancel, and wakes its screen for
+  it (`power_wake()`, which the next touch read applies, as a touch would).
   The Pairings (up to four), the failed-code count and the lockout live in the
   `td_netlink` NVS namespace. While USB is online, a network session can't
-  open, and an open one closes. mDNS discovery is not built yet.
+  open, and an open one closes. mDNS discovery is not built yet;
+  `td_netlink_core` already builds its private TXT record (nonce and hints,
+  plus the id, name and count only in pairing mode) and finds a session's
+  Pairing by its `open_tag`, as net-v2 says.
 - While the owner is unproven, up to three more connections wait for their
-  first item, since a `session.open` naming a stored app takes over. With every
+  first item, since a `session.open` carrying a stored app's tag takes over. With every
   slot taken, a new connection pushes out the oldest waiter that hasn't sent a
   byte, or else the oldest from a peer in backoff, so idle sockets can't keep a
   paired app out. A waiter that misses the 2-second first-item deadline or hangs
@@ -597,7 +645,8 @@ What the radio build does:
 - Each carrier counts its ended connections. A request that waited in the link
   while its session ended is not handled, a reply or event for an ended session
   is dropped, and a transfer moves only on the connection that opened it: other
-  carriers' chunks are dropped, and the transfer is cut when its session ends.
+  carriers' chunks are dropped, and the transfer is cut when its session ends
+  (see [Transfers](#transfers)).
 - 30 seconds after the station starts, the log reports the steady-state
   internal heap against the 24 KB floor (`CONFIG_TD_RADIO_INTERNAL_FLOOR`):
   `radio: steady free_internal=N largest_internal=N floor=24576`. Below the
@@ -630,13 +679,17 @@ What the radio build does:
   error, the hello has no `wifi` capability, and there is no `wifi` command.
 - `net state` replies with net-v2's `net.state` fields: `listening`, `port`,
   `ble`, `session`, `paired`, `pairing`, `pair_failures` and `locked_ms`.
-  `net pair` opens a pairing window, and `net forget all` erases every Pairing
-  and ends the session. They fail with `reason` `locked`, `full` (four
-  Pairings: no window opens) or `storage`. The link has the same three as
-  `net.state`, `net.pair` and `net.forget`; the last two are USB-only.
-  `net.forget` needs `all:true` and replies with `removed`; a bare one, or one
-  with `app_id`, fails with `reason:"args"`. `net.list` and forgetting one app
-  aren't built yet.
+  `net list` adds `free` and writes one `op:"app"` line with `app_id` and
+  `app_name` for each Pairing, oldest first, before its reply, since four names
+  can outgrow one console line. `net pair` opens a pairing window.
+  `net forget <app_id>` erases one Pairing and ends that app's session;
+  `net forget all` erases every Pairing, the failed-code count and the lockout,
+  and ends any session. They fail with `reason` `locked`, `full` (four
+  Pairings: no window opens), `args` or `storage`. The link has the same four
+  as `net.state`, `net.list`, `net.pair` and `net.forget`, as net-v2 defines
+  them; all but `net.state` are USB-only. The JSON for them is in
+  `td_netlink_core` (`td_netlink_manage.c`), so the host tests run it. No reply
+  carries a key.
 - A session ends between requests once fewer than 1024 of its 2^24 records
   remain in either direction, and the Companion reconnects for fresh keys.
 
@@ -650,8 +703,7 @@ python firmware/tools/radio_guard.py radio <build dir>
 - `normal` fails on any Wi-Fi, Bluetooth or `TD_RADIO_BUILD` option, and on
   any radio or network component linked: `esp_wifi`, `esp_phy`, `esp_coex`,
   `wpa_supplicant`, `bt`, `esp_netif`, `lwip`, `td_radio`, `td_net`, `td_ble`,
-  and any netlink or mDNS component. The release recipe's audit runs the same
-  check.
+  and any netlink or mDNS component.
 - `radio` requires the radio options and components, and fails when one of
   those options is missing, the floor is set below 24576 or the boot floor below
   16384. The options include LVGL's PSRAM-first allocator and
@@ -680,9 +732,9 @@ the Firmware sources for those calls. It also checks that only
 build. CI builds both configurations on every Firmware change. It uploads the
 normal bundle as `firmware-tdfw` and the radio bundle as `firmware-radio-tdfw`,
 named `touchdeck-radio-<version>.tdfw`. A radio bundle's `manifest.json` has
-`"radio": true`, and the installer recipe refuses such a bundle as
-`--firmware-bundle`. It takes one only as `--radio-firmware-bundle`, which
-refuses a normal bundle.
+`"radio": true`. The Companion's build reads that mark: it refuses a radio
+bundle as `TOUCHDECK_FIRMWARE_BUNDLE` and a normal one as
+`TOUCHDECK_RADIO_FIRMWARE_BUNDLE`.
 
 The radio build's link-v2 hello carries `radio: true`; the normal build sends
 no `radio` field (see [link-v2.md](../schema/protocol/link-v2.md)). The
@@ -754,9 +806,9 @@ or the console:
   it.
 - `ble forget [aa:bb:cc:dd:ee:ff]`: forgets one bonded host, or all of them.
 
-Until Tiles choose their target (#277), every key report also goes to the
-bonded host that is connected and subscribed. With no host connected, BLE sends
-nothing.
+Tiles with `sink:"bluetooth"` send their keys only to the bonded host that is
+connected and subscribed. Omitted sinks send to the Companion. With no host
+connected, BLE drops the press without rerouting it.
 
 What a host sees:
 
@@ -868,7 +920,7 @@ Validate the examples or your own layout with Node.js:
 npm ci --prefix schema
 node schema/check-layouts.mjs
 node schema/check-layouts.mjs path/to/layout.json
-node --test schema/
+node --test "schema/*.test.mjs"
 ```
 
 Every failure the validator prints starts with a stable rule key, such as
@@ -926,13 +978,17 @@ and one firmware build first, which fetches cJSON into
 build, with the other host tests.
 
 `python -B firmware/tools/test_link_carrier.py` compiles the production
-`td_link.c` and message dispatcher with host stand-ins for FreeRTOS, the console
-and the rest of the Device, from `firmware/tools/host/link/`. It sends link
+`td_link.c`, message dispatcher and transfer (`td_link_transfer.c`,
+`td_transfer.c`) with host stand-ins for FreeRTOS, the console and the rest of
+the Device, from `firmware/tools/host/link/`. It sends link
 messages through the USB console's frame handler and through a fake carrier, and
 checks which carrier each reply and event leaves on, the USB wire bytes, and the
-online state per carrier, that an ended session's queued request and reply go
-nowhere, and that a transfer takes chunks only from the connection that opened
-it. It also runs the production Device name check against
+online state per carrier, and that an ended session's queued request and reply go
+nowhere. It also drives chunk and ack frames through the production link into
+the transfer, with counting fakes for the heap, the firmware update, the Asset
+upload and the idle face: a transfer takes chunks only from the connection that
+opened it, and its buffer, update or Asset upload is released when it ends,
+is replaced, goes idle or its connection is cut. It also runs the production Device name check against
 [name-vectors-v2.json](../schema/protocol/name-vectors-v2.json) and sends each
 refused name in `v2.name.set`, which must answer `args`. It needs a C compiler,
 `cl` from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere, and one firmware build first,
@@ -955,11 +1011,31 @@ typed. Its compiler and cJSON needs are those of the carrier test.
 
 `python -B firmware/tools/test_netlink.py` compiles `td_netlink_core` and
 ESP-IDF's TF-PSA-Crypto for the host and runs every vector and negative in
-[net-v2-vectors.json](../schema/protocol/net-v2-vectors.json), then pairing with
+[net-v2-vectors.json](../schema/protocol/net-v2-vectors.json), including the compact BLE discovery payloads (all four slots, fillers, rotation
+and pairing mode), then pairing with
 the right and the wrong code, the lockout and its persistence, records, the
 per-peer backoff, idle connections against a paired Companion, and the USB
-rules. It needs `IDF_PATH` and a C compiler, `cl`
+rules. It runs the `management` vector's USB steps through `net.list`,
+`net.pair` and `net.forget` and checks each answer exactly, then forgetting
+one app among four, the `args` refusals and a failed erase. It needs `IDF_PATH` and a C compiler, `cl`
 from an x64 Visual Studio developer terminal on Windows or `cc` elsewhere.
+
+The TCP lifecycle lives in `td_netlink_core/td_netlink_tcp.c`. The Device's
+`td_netlink_service.c` supplies nonblocking socket read/write/close, writable
+waiting, and link receive/session callbacks; the core's environment supplies
+time. Accepted descriptors belong to the lifecycle through owner, waiter and
+terminal-drain states until one final close. The service keeps the listener,
+FreeRTOS outgoing queue and link generation checks. The same host command
+exercises fragmented reads and writes, takeover, refusal with a peer reset,
+exhausted closer slots, write deadlines, record delivery and record-limit closing.
+The 100 ms refusal and drain deadlines and four closer slots stay unchanged.
+
+Three boundaries were considered: extracting just the closer table would leave
+admission and core resets outside host coverage; a per-socket object would
+still need a separate coordinator for takeover; moving the existing TCP
+coordinator into the portable component keeps those decisions behind one
+interface with the smallest change to the poll loop. QEMU remains necessary:
+a scripted host socket cannot reproduce lwIP's close behaviour.
 
 ## Protocol v2 identity
 
@@ -971,7 +1047,7 @@ refuses association. The legacy discovery API remains available.
 
 The `td-link` CLI provides `discover-identities`, `identity`, `name`, and
 `set-name "Studio"`. Names default to `Open TouchDeck`, contain 1–48 UTF-8
-bytes, hold no format character or Hangul filler, and persist in NVS separately
+bytes, hold no control or format character or Hangul filler, and persist in NVS separately
 from Layouts. See the
 [protocol contract](../schema/protocol/link-v2.md) for validation rules.
 It advertises the `static`, `graph`, `photo-frame`, and `clock` Tile kinds, the
@@ -1287,3 +1363,9 @@ through the production validator and decoder, comparing all decoded frames and
 delays. Regenerate that corpus with
 `python -B firmware/tools/generate_gif_fixtures.py`; this invokes the repository's
 Rust normalizer in a temporary Cargo project using the app lockfile.
+
+Tile `key` and `consumer` actions with `sink:"bluetooth"` bypass the Companion engine
+and send press/release reports through the Bluetooth sink. Their modifiers are
+independent of Companion modifier Tiles. Omitted sinks keep the Companion link;
+normal Firmware rejects `bluetooth`. `test_ble.py` also drives Tile presses through
+`ui_tile_click` and checks the encoded shortcut, media and release reports.

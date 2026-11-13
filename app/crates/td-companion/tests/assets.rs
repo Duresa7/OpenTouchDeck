@@ -7,7 +7,6 @@ use td_companion::{
             SuggestRequest,
         },
         devices::DevicePath,
-        layouts::{LayoutBody, LayoutPath, Push},
     },
     jobs::JobState,
     testing::TestCompanion,
@@ -86,12 +85,15 @@ async fn prune_keeps_what_stored_layouts_and_the_caller_use() {
         ]}]
     }))
     .unwrap();
-    let path = LayoutPath {
-        device: a.to_string(),
-        orientation: Orientation::Landscape,
-    };
     let job = td
-        .call::<Push>(path, NoQuery, LayoutBody::new(&layout))
+        .handle()
+        .layout_operations()
+        .push(
+            a.to_string(),
+            Orientation::Landscape,
+            layout.to_canonical_json(),
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
@@ -298,11 +300,7 @@ async fn render_png(td: &TestCompanion, rgb: [u8; 3]) -> td_companion::jobs::Job
 
 #[tokio::test]
 async fn a_running_layout_push_pins_its_assets_against_a_sweep() {
-    let td = TestCompanion::start_with(td_companion::Limits {
-        asset_store_bytes: td_host::icon_pack::FILE_BYTES as u64,
-        ..Default::default()
-    })
-    .await;
+    let td = TestCompanion::start_with_asset_quota(td_host::icon_pack::FILE_BYTES as u64).await;
     let _events = td.events().await;
     let device = td.plug_device("mock0001").await;
 
@@ -339,13 +337,13 @@ async fn a_running_layout_push_pins_its_assets_against_a_sweep() {
     td.deck(&device)
         .delay_replies(std::time::Duration::from_millis(800));
     let push_job = td
-        .call::<Push>(
-            LayoutPath {
-                device: device.to_string(),
-                orientation: Orientation::Landscape,
-            },
-            NoQuery,
-            LayoutBody::new(&layout),
+        .handle()
+        .layout_operations()
+        .push(
+            device.to_string(),
+            Orientation::Landscape,
+            layout.to_canonical_json(),
+            None,
         )
         .await
         .unwrap();

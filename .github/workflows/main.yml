@@ -1,6 +1,8 @@
 name: main
 
-# Run it by hand from the Actions tab to check a branch on every OS before it merges.
+# After a merge, reruns the checks its changed paths need. These runs save the caches that pull requests restore,
+# and they add one check no pull request runs: the release program is built on Windows.
+# Run it by hand from the Actions tab to run every check on a branch before it merges.
 on:
   push:
     branches: [main]
@@ -9,6 +11,54 @@ on:
 permissions:
   contents: read
 
+# No concurrency group: each run checks only its own push, so cancelling or replacing one would leave that
+# push's changes unchecked.
+
 jobs:
-  app:
-    uses: ./.github/workflows/app.yml
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      scripts: ${{ steps.paths.outputs.scripts }}
+      firmware: ${{ steps.paths.outputs.firmware }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Find changed areas
+        id: paths
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = push ] && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            git diff --name-only -z "$BEFORE_SHA" "$AFTER_SHA" | bash .github/scripts/changed-areas.sh | tee -a "$GITHUB_OUTPUT"
+          else
+            # A manual run, or a push whose previous commit is not in the clone: run everything.
+            printf '%s=true\n' rust scripts firmware | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    uses: ./.github/workflows/rust.yml
+    with:
+      cache: true
+      release-exe: true
+
+  scripts:
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    uses: ./.github/workflows/scripts.yml
+
+  firmware:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
+    uses: ./.github/workflows/firmware.yml
+    with:
+      cache: true

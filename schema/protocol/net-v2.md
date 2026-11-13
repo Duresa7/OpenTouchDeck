@@ -50,15 +50,9 @@ service type `_touchdeck._tcp`, or connects to an address the person typed.
 A typed address is an IPv4 address, an IPv6 address or a host name, with an
 optional port that defaults to 47820. Discovery uses only standard DNS-SD and
 no OS-specific service, so it works the same on Windows and Linux. Networks
-that block multicast need the typed address. The TXT record has these keys:
-
-| Key | Value |
-|---|---|
-| `id` | Device id, 12 lowercase hex digits |
-| `proto` | `2` |
-| `name` | The Device name from link-v2, at most 48 UTF-8 bytes |
-| `paired` | Number of stored Pairings, decimal |
-
+that block multicast need the typed address. What the Device advertises is in
+[Discovery privacy](#discovery-privacy) below: outside pairing mode, nothing
+in it identifies the Device.
 Both sides SHOULD disable Nagle's algorithm (`TCP_NODELAY`).
 
 **BLE.** The Device is a GATT server and the Companion is the client. The
@@ -73,10 +67,10 @@ service and its characteristics use these 128-bit UUIDs:
 
 The Device advertises the service UUID in its advertising data while it can
 accept a carrier connection. Its scan response carries service data for the
-same UUID: `proto:u8` (2), `device_id[6]`, `paired:u8`. The Companion matches
-Devices by `device_id`, never by BLE address, because a Device MAY use a random
-address. Both Windows (WinRT) and Linux (BlueZ, for example through btleplug)
-report service data per UUID.
+same UUID, using the compact format below. The Companion MUST NOT identify a
+Device by its BLE address. Both Windows and Linux expose service data by UUID.
+No Device may ship the BLE Carrier until its radio integration follows the
+pairing-mode and rotation rules of [Discovery privacy](#discovery-privacy).
 
 The link service needs no BLE pairing, bonding or link-layer encryption, and
 the Companion MUST NOT start BLE pairing for it. net-v2 authenticates and
@@ -88,6 +82,192 @@ its hosts are separate and outside this document.
 Advertised data and TXT records are untrusted hints. The Companion pins
 `device_id` when it pairs and checks it in every session. An address change
 doesn't change the Pairing.
+
+### Discovery privacy
+
+A stable value in an advertisement lets anyone on the LAN follow a Device from
+network to network. So the Device advertises its id, its name and its Pairing
+count only in **pairing mode**, while a pairing window is open and a person is
+pairing on purpose. At all other times it advertises a fresh random nonce and
+one short **hint** per Pairing, which only the paired Companion can recognise.
+
+Each Pairing has a discovery key, derived from its LTK on both sides, so
+pairing sends nothing new and neither side stores anything new:
+
+```text
+K_disc = derive(LTK, "discovery")
+hint = the first 8 bytes of MAC(K_disc, "hint" || nonce)
+```
+
+`derive` is the HKDF-Expand defined under
+[Transcript, proofs and key delivery](#transcript-proofs-and-key-delivery),
+here with the LTK as its key. The LTK is 32 uniformly random bytes, so it
+needs no extract step. A Pairing's hints stop the moment it is removed.
+
+**The TXT record.** The record of `_touchdeck._tcp` has these keys:
+
+| Key | When | Value |
+|---|---|---|
+| `proto` | always | `2` |
+| `n` | always | `nonce`, 16 random bytes as 32 lowercase hex digits |
+| `h` | always | Four 8-byte hints, concatenated as 64 lowercase hex digits |
+| `id` | pairing mode only | Device id, 12 lowercase hex digits |
+| `name` | pairing mode only | The Device name from link-v2, at most 48 UTF-8 bytes |
+| `paired` | pairing mode only | Number of stored Pairings, decimal |
+
+`h` always holds four hints: one for each stored Pairing, in slot order, and
+8 random bytes for each free slot. A random filler looks like a hint, so the
+record doesn't say how many Pairings there are. The service instance name is
+`TouchDeck ` followed by `label`, and the host name is `td-` followed by
+`label`, where `label` is the first 4 bytes of `nonce` as 8 lowercase hex
+digits. Outside pairing mode, nothing else in the record, the instance name or
+the host name may carry the Device id, the factory MAC, the Device name, the
+Pairing count or any other value that outlives one nonce.
+
+**Rotation.** The Device draws a new nonce, new fillers and so a new label at
+boot, every 900000 ms of uptime, when a pairing window opens or closes, and
+when a Pairing is added or removed. Each change withdraws the old record and
+announces the new one. The payload supplies a linkable value within one nonce,
+at most 15 minutes. Timing and network addresses can still correlate observations
+across rotations. A shorter period would churn mDNS
+caches for little gain, because a Companion browses only when the person asks.
+
+**Why a nonce and not the time.** A time-window hint needs the Device and the
+Companion to agree on the time, and the Device has no battery-backed clock
+and may never reach a time server. A nonce needs no clock at all: the
+Companion computes the hint for the nonce it sees, so clock skew can't make a
+paired Companion miss its Device. The nonce has 128 bits, so it doesn't repeat
+and an observer can't build a table of hints.
+
+**Why 8 bytes.** A hint only chooses which address to try. A false match costs
+one failed session, because a session still needs the LTK. With 64 bits, a
+Companion with four Pairings comparing every hint of 32 records has a chance
+below 2^-54 of one false match. Four hints and a nonce keep the record near 110
+bytes, well inside one mDNS packet.
+
+**The Companion.** For each record it reads, the Companion computes the hint
+for each of its Pairings with that record's `n`, and compares it with each of
+the four hints in `h` in constant time. A match means that Pairing's Device
+answered at the record's address. The Companion tries a session there, and
+keeps the address that last worked until a session at the new one succeeds.
+Replaying an old record from another address therefore only costs a bounded
+number of failed tries: after two consecutive `busy` replies there, the
+Companion drops the trial and immediately tries the address that last worked.
+A later discovery may set a new trial. A record that matches no Pairing and has no `id` is someone else's
+Device, and the Companion drops it. A record with `id` is a Device in pairing
+mode, which the Companion may list for pairing. A record without `n` and `h`
+is malformed and dropped.
+
+**The BLE scan response.** BLE uses the same discovery key with its own,
+smaller layout, because a legacy scan response holds 31 bytes and the service
+data's AD header and 128-bit UUID take 18 of them. The service data after the
+UUID is exactly 13 bytes:
+
+| Mode | Service data |
+|---|---|
+| outside pairing mode | `0x02 \|\| nonce[6] \|\| hint[6]` |
+| pairing mode | `0x82 \|\| device_id[6] \|\| paired:u8 \|\| padding[5]` |
+
+```text
+ble_hint = the first 6 bytes of MAC(K_disc, "ble-hint" || nonce)
+```
+
+The label `ble-hint` keeps BLE hints apart from TXT hints, and the BLE nonce is
+drawn independently of the TXT nonce, so an observer of both radios can't link
+them through the payload. The Device draws one BLE nonce and four random
+six-byte fillers at the same moments as the TXT nonce: at boot, every 900000 ms
+of uptime, when a pairing window opens or closes, and when a Pairing is added
+or removed. Slot `i` carries Pairing `i`'s hint, or filler `i` when the slot is
+free. The scan response shows one slot at a time and moves to the next slot
+every 1000 ms, cycling all four whatever the Pairing count, so neither the
+cadence nor the payloads say how many Pairings there are. No slot number is
+sent. Pairing mode carries no name and no nonce; its padding is fresh random
+bytes at each rotation. `paired` is at most 4.
+
+Two rules belong to the radio code that drives this builder:
+
+* Each rotation replaces the scan response and the Device's resolvable or
+  non-resolvable private BLE address together. A fixed address would link
+  every nonce, and a new address with an old payload would link the
+  addresses.
+* Closing a pairing window removes the pairing-mode payload at once.
+
+The Bluetooth keyboard role advertises separately, under its own rules; it
+doesn't add its name or any other stable value to these advertisements.
+Its own advertising address is still public; see
+[What stays visible](#discovery-privacy) below.
+
+**Why 15 minutes on BLE too.** One period for both Carriers keeps one rotation
+rule in the Firmware, and the linkable window is the same whichever radio an
+observer listens to. A shorter period would buy little: a person who sits near
+the Device for longer than a period can see it anyway.
+
+**Why a 6-byte nonce and a 6-byte hint.** They are what fits beside the
+marker, and they keep BLE discovery on legacy advertising, which every
+Bluetooth adapter supports, instead of requiring extended advertising. The
+cost is in two places, both acceptable:
+
+* A repeated nonce lets an observer link the two periods it appears in. Over
+  ten years of uninterrupted 15-minute rotations a Device draws about 350000
+  nonces, and the chance that any two of them are equal is about 2.2 * 10^-4.
+  Reboots and Pairing changes add draws and raise this slightly.
+* A Companion with four Pairings that sees 32 Devices with four slots each
+  makes 512 comparisons per scan, so the chance of any false match is at most
+  512 / 2^48 = 2^-39. A false match costs one failed session.
+
+A hint chooses which BLE address to try and is never authentication; anyone
+can replay one. The session still proves the LTK and pins `device_id`.
+
+**The Companion on BLE.** It scans actively for at least 5000 ms, so it sees
+every slot, and handles changed service data even from an address it has
+already seen. For each payload it computes the BLE hint for each of its
+Pairings with that payload's nonce and compares it with the payload's hint in
+constant time, checking every Pairing, and it merges matches by Pairing. A
+matching Device answered at that address for now; the Companion never pins a
+BLE address. A pairing-mode payload is a Device the Companion may list for
+pairing. A payload with any other length or marker, or with `paired` above 4,
+is dropped. In particular, the earlier draft's `proto || device_id || paired`
+payload is never read, so neither side falls back to a stable id outside
+pairing mode.
+
+**Existing Pairings.** No migration step is needed. `K_disc` comes from the
+LTK, which every Pairing already stores, so the Device and the Companion
+derive it when they load a Pairing, whenever it was made. Nothing is added to
+NVS or the credential store, and nobody re-pairs. The Companion keeps derived
+keys in memory only and never logs or serializes them. Firmware from before
+this rule, which advertised its id at all times, must be updated: the
+Companion no longer reads that format.
+
+**What exists today.** The Firmware's `td_netlink_advert_build` and
+`td_netlink_ble_advert_build` build both formats, and td-link's
+`net::mdns::Advert::matches` and `net::ble_discovery::recognise` match them.
+The Firmware's mDNS publisher comes with its network service, and the BLE
+net-v2 advertiser and scanner, with the rotation timers and address changes
+above, come with the BLE Carrier.
+
+**Passive privacy only.** Someone who records a valid `session.open` can
+send it to a Device later: the paired Device answers with a challenge, while
+other Devices answer `auth`. This distinguishes that Device even across
+advertisement nonce rotations. Preventing this active probe would require
+binding the tag to fresh Device context, which this protocol does not do.
+
+**What stays visible.** The Device's Wi-Fi station address is its factory MAC,
+which is `device_id` itself on the ESP32-S3. Anyone in radio range sees it in
+every frame, whatever mDNS says. Hiding it needs a random station address,
+which this document doesn't yet require. The TCP port, the service type and
+the fact that a TouchDeck is present stay visible too.
+
+The Bluetooth keyboard role's address is visible on BLE in the same way. While
+no bonded host is connected, the keyboard role advertises with no time limit
+from the Device's public Bluetooth address, which the ESP32-S3 derives from
+the factory MAC (`device_id` + 2). Anyone in radio range can follow the Device
+by that address, whatever the net-v2 discovery advertisements carry, so BLE
+does not yet meet the rule that nothing stable is advertised outside pairing
+mode. The address is still public because the keyboard role was built and
+bonded with its hosts before this rule existed. Moving it to a resolvable
+private address changes how the Device bonds with its hosts, so that change
+is tracked separately in
+[#401](https://github.com/Duresa7/OpenTouchDeck/issues/401).
 
 ## Device identity
 
@@ -114,11 +294,12 @@ connection that is only holding the Device:
 * **Takeover.** An owner is *unproven* until its first handshake item has
   arrived and, for a session, until the Device has verified its
   `client_proof`. A new carrier connection whose first item is `session.open`
-  naming a stored `companion_id` takes over from an unproven owner that is not
-  bound to a pairing window. The Device closes the old connection without an
-  error and continues with the new one. A `session.open` with an unknown id
-  gets `auth` and takes nothing over. An owner bound to a pairing window is
-  never taken over; the person at the Device can cancel it.
+  with an `open_tag` that matches a stored Pairing takes over from an
+  unproven owner that is not bound to a pairing window. The Device closes the
+  old connection without an error and continues with the new one. A
+  `session.open` whose tag matches no Pairing gets `auth` and takes nothing
+  over. An owner bound to a pairing window is never taken over; the person at
+  the Device can cancel it.
 
 Unauthenticated connections are kept short:
 
@@ -134,7 +315,7 @@ Unauthenticated connections are kept short:
   * a missed deadline: the first handshake item (2000 ms), both BLE
     notifications (5000 ms), session setup (10000 ms) or a pairing attempt
     (10000 ms);
-  * `auth`, which includes an unknown `companion_id` and the failed pairing
+  * `auth`, which includes an `open_tag` that matches no Pairing and the failed pairing
     proof that ends the connection;
   * a bad proof: a `client_proof` or `commit_proof` that fails its check;
   * a malformed item: anything this document says closes the carrier
@@ -163,15 +344,17 @@ Unauthenticated connections are kept short:
   Each failure refuses that peer for a delay from the failure that starts at
   1000 ms, doubles on each further failure up to 60000 ms, and resets when
   that peer reaches `session.ready`. The Device applies the refusal to the
-  peer's first handshake item, as it does a takeover: a `session.open` that
-  names a stored `companion_id` skips the backoff and goes on to the
+  peer's first handshake item, as it does a takeover: a `session.open` whose
+  `open_tag` matches a stored Pairing skips the backoff and goes on to the
   handshake, and any other first item gets `busy`. So someone who sends from
-  the real Companion's public BLE address with an unknown id, which gets
+  the real Companion's public BLE address with a made-up tag, which gets
   `auth` and counts against that address, can't keep the real Companion
   out. The Device keeps at least eight peers, evicting the one whose last
-  failure is oldest. Because takeovers and refusals don't count, someone who
-  copies the cleartext `companion_id` from a `session.open` on BLE can delay
-  the real Companion's handshake but can't push its address into backoff.
+  failure is oldest. A tag needs the LTK, so only a replay of a whole
+  `session.open` that someone recorded passes the check, and the replayer
+  can't finish the handshake. Because takeovers and refusals don't count,
+  such a replay can delay the real Companion's handshake but can't push its
+  address into backoff.
   Addresses are easy to change, so this limits nuisance, not guessing; the
   pairing rules below do that.
 
@@ -336,8 +519,8 @@ something authenticated, never from an unauthenticated error.
 
 Errors close the carrier connection,
 except that the first two `auth` errors after a pairing proof return to code
-entry. After a terminal error, TCP shuts down its write side and drains input
-for at most 100 ms before closing; BLE waits at most 100 ms after the
+entry. After a terminal error, TCP drains input for at most 100 ms before
+closing, so the peer reads the error instead of a reset; BLE waits at most 100 ms after the
 notification before disconnecting. An established session closes silently on
 any cryptographic or framing error. Once `session.ready` is sent, no plaintext
 error is valid.
@@ -386,9 +569,10 @@ is pinned to Unicode 17.0's, these inclusive hex ranges, also in the vectors'
 U+0000 to U+001F and U+007F to U+009F. The name also MUST NOT contain the
 Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, letters (`\p{Lo}`) that
 render as blank space. A refused name closes the carrier connection. A
-link-v2 Device name obeys the same character rule
-([link-v2.md](link-v2.md#device-name)); both specs share the names in
-[name-vectors-v2.json](name-vectors-v2.json).
+link-v2 Device name obeys the same character rule, the C1 controls U+0080 to
+U+009F included ([link-v2.md](link-v2.md#device-name)); both specs share the
+names in [name-vectors-v2.json](name-vectors-v2.json), whose `control_ranges`
+list `\p{Cc}`.
 `window_id` is a fresh random 16-byte value. A new request can't replace or
 extend an open window. Three failed client proofs close the window and the
 carrier connection.
@@ -538,7 +722,7 @@ or forget Pairings, as the message table says, so a stolen Pairing can't revoke
 the others. Removing a Pairing erases its entry in NVS durably, drops its
 update prompt cooldown, and closes that app's session if it has one. A session
 that ends this way gets no error item, only a close. The app's next
-`session.open` gets `auth`, because its `companion_id` is unknown. The
+`session.open` gets `auth`, because its `open_tag` matches no Pairing. The
 Companion then tells the person that the Device no longer knows this app and
 that they can pair again. It keeps its own key until the person forgets the
 Device, because an `auth` is an unauthenticated hint and never deletes a key.
@@ -568,7 +752,7 @@ for the Companion, `e_d` and `E_d` for the Device.
 
 | Kind | Name | Sender | Fields |
 |---|---|---|---|
-| `0x20` | `session.open` | Companion | `device_id[6], companion_id[16], client_share[32]` |
+| `0x20` | `session.open` | Companion | `open_tag[16], client_share[32]` |
 | `0x21` | `session.challenge` | Device | `device_share[32], device_proof[32]` |
 | `0x22` | `session.proof` | Companion | `client_proof[32]` |
 | `0x23` | `session.ready` | Device | `ready_proof[32]` |
@@ -576,6 +760,15 @@ for the Companion, `e_d` and `E_d` for the Device.
 `client_share` is `E_c` and `device_share` is `E_d`, each the 32-byte
 little-endian u-coordinate from RFC 7748. The fresh shares replace net-v1's
 session nonces.
+
+`session.open` names neither the Device nor the Companion. Instead it carries
+`open_tag`, which only the holder of a Pairing's LTK can make, for this one
+`client_share`:
+
+```text
+K_open = derive(LTK, "session/open")
+open_tag = the first 16 bytes of MAC(K_open, "open" || client_share)
+```
 
 ```text
 T_session = H("touchdeck/net-v2/session\0" || device_id || companion_id || client_share || device_share)
@@ -591,9 +784,24 @@ client_proof = MAC(kc, T_session || device_proof)
 ready_proof = MAC(kr, T_session || client_proof)
 ```
 
-The Device checks `device_id` against its own and looks up `companion_id`. A
-different `device_id` or an unknown `companion_id` gets `auth` before any
-X25519 work.
+The Device finds the Pairing by computing `open_tag` for all four slots,
+using a fixed dummy key for empty slots, and comparing each with the received
+tag in constant time. Empty slots never match. It computes all four tags
+before it decides, so the work reveals neither the Pairing count nor which
+one matched. The matching Pairing gives `companion_id` and the LTK, and its own `device_id`
+completes `T_session`. A tag that matches no Pairing gets `auth` before any
+X25519 work. A Companion sends `session.open` only to the Device of the
+Pairing whose key made the tag, and the selected `hello`'s `id` check below
+still pins the Device.
+
+**Why no ids on the wire.** net-v1 and earlier drafts of net-v2 sent
+`device_id` and `companion_id` in cleartext in every `session.open`. Anyone on
+the path could then follow a Companion from network to network and see which
+Device it talks to. With `open_tag`, a passive observer sees 16 bytes that
+change with every session. Finding the Pairing costs the Device four HMACs,
+because it holds at most four. `companion_id` travels in cleartext only in
+`pair.request`, while a person pairs on purpose, and `device_id` only in
+`pair.offer` and in pairing mode's TXT record.
 
 **Share checks.** Every implementation follows this one rule for the peer's
 share, so a bad share fails the same way whatever its X25519 library does:
@@ -812,7 +1020,7 @@ sessions only. Over USB, `update.begin` works as before.
 | Stored Pairings | 4 |
 | Failed proofs per pairing window | 3 |
 | Pairing lockout after the third and later failures | 30000 ms doubling, at most 900000 ms |
-| Per-peer backoff, peer-caused failures only, skipped by a stored `companion_id` | 1000 ms doubling, at most 60000 ms |
+| Per-peer backoff, peer-caused failures only, skipped by a stored Pairing's `open_tag` | 1000 ms doubling, at most 60000 ms |
 | Firmware update prompt on the Device | 60000 ms |
 | Update prompt cooldown per Pairing after an unapproved prompt | 60000 ms doubling, at most 3600000 ms |
 
@@ -891,7 +1099,8 @@ if it has one. `net.forget` with `all:true` cancels a window, erases every
 Pairing durably, resets `pair_failures` and the lockout, and ends any network
 session. A bare `net.forget` with neither field fails with `reason:"args"`, so
 a request that lost its `app_id` can't wipe the Device. A failed erase still
-ends the affected session and reports the failure. Over a network Carrier all
+ends the affected session and reports the failure, and keeps the Pairings it
+couldn't erase, so a list or a retry sees what storage still holds. Over a network Carrier all
 three messages get `usb-only`.
 
 Codes, verifiers, private exponents, X25519 private keys, `Z`, LTKs and
@@ -950,8 +1159,14 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
 
 * `pake` and `pairing`: SRP values, every pairing item, the transcript, keys,
   proofs and the wrapped LTK.
-* `session`: both X25519 shares, `Z`, the transcript, keys, proofs and the
-  four session items.
+* `session`: both X25519 shares, `Z`, `K_open` and `open_tag`, the
+  transcript, keys, proofs and the four session items.
+* `discovery`: `K_disc`, the nonce, the three fillers, the fixture Pairing's
+  hint, the label, instance and host names, and the TXT record out of and in
+  pairing mode. `other_record` is a record with another nonce and only
+  fillers, which matches no Pairing.
+* `ble_discovery`: the compact service data for an occupied slot, three fillers,
+  rotation, an unpaired Device, pairing mode and a full four-Pairing store.
 * `records`: the discovery and selected link-v2 hellos, two records each way,
   built from [golden-frames-v2.json](golden-frames-v2.json). The selected
   reply carries the fixture `device_id` as its `id`. The two selected records
@@ -975,10 +1190,13 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
     pairing items. The Device sends `auth`.
   * `tampered_wrapped_key`: `pair.accept` with a flipped ciphertext or tag
     byte. The Companion closes without an LTK.
-  * `swapped_client_share` and `swapped_device_share`: a share replaced under
-    an unchanged proof. The proof check fails and the receiver closes.
-  * `wrong_device_id` and `unknown_companion_id`: `session.open` that gets
-    `auth`.
+  * `swapped_client_share`: a `session.open` whose share was replaced under
+    the original tag. The tag check fails and the Device sends `auth`.
+  * `swapped_device_share`: a share replaced under an unchanged proof. The
+    proof check fails and the Companion closes.
+  * `unknown_open_tag` and `tampered_open_tag`: a `session.open` tagged with
+    an LTK the Device doesn't hold, and the fixture's with one tag bit
+    flipped. Both get `auth`.
   * `counter_limit`: a record at counter `2^24 - 1`, which opens, and one at
     `2^24` with a valid tag, which closes. The session ends there, and a new
     session starts at counter zero.

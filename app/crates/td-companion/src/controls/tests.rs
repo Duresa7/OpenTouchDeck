@@ -1,10 +1,10 @@
 use super::*;
 use crate::actions::{Actions, AllowedAction, GrantStore};
-use crate::api::{Clock, Events};
 use crate::devices::{Config, DeviceManager, LinkState};
-use crate::features::integrations::Service;
+use crate::integrations::Service;
 use crate::link::Links;
 use crate::live::{Live, fake::FakeControl};
+use crate::{api::Events, clock::Clock};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::time::Instant;

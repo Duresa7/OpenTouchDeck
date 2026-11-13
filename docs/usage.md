@@ -32,7 +32,7 @@ Integration secrets and the Brandfetch API key stay in the system keychain eithe
 6. If a Firmware update is offered, choose **Update** and keep USB connected, or **Skip** to continue with the current Firmware.
 7. Choose **Edit Layout** to customize it, or **Done** to return Home.
 
-Click the Device on Home to edit it. The navigation at the bottom centre opens Home, Layout, Integrations and Settings. Settings is a page with its categories down the left: **General** (**Appearance** and **Start at sign-in**), one entry per Device under **Devices**, then **Paired browsers**, **Troubleshooting**, **Errors** and **About**.
+Click the Device on Home to edit it. The navigation rail down the left edge of the window opens Home, Layout, Integrations and Settings; hover an icon to see its name. Settings is a page with its categories in a column beside the rail: **General** (**Appearance** and **Start at sign-in**), one entry per Device under **Devices**, then **Paired browsers**, **Troubleshooting**, **Errors** and **About**.
 
 Closing the window leaves the Companion running in the tray. **Open** brings the window back; **Quit** stops it. Keep the Companion running for keyboard input, commands, Volume, Media and live readings. Keyboard Tiles send input to the focused window on this PC. The Device is not a standalone USB keyboard.
 
@@ -237,7 +237,7 @@ Browser access is local to this PC, not available to a phone or another PC on th
 ### Update the app
 
 1. Export any Layout drafts you want to keep.
-2. Open **Settings > About > Check for updates**, or the **Update available** icon beside navigation.
+2. Open **Settings > About > Check for updates**, or the **Update available** icon at the bottom of the navigation rail.
 3. Review the release notes and choose **Update**. You can keep working during the download.
 4. At **Ready to restart**, choose **Restart**. Wait for any Device transfer to finish first.
 
@@ -292,3 +292,13 @@ App launches and file opens can now ask for command approval on this PC too.
 When something fails, a card pops up at the bottom of the window with what went wrong. Its **Details** opens **Settings > Errors**, which lists the errors since Open TouchDeck opened, newest first, with the full detail and a button to copy it.
 
 **Settings > Troubleshooting** includes Device details and a Firmware console. Overlong console lines are truncated and heavy output can drop lines so Device replies keep flowing. Logs can contain personal data; remove it before sharing. If the Device's Layout prevents normal use, its ten-second touch hold starts the built-in Layout without removing stored files. See [Firmware recovery](firmware.md#recovery) before using it.
+
+For shortcut and media-key Tiles on a Device that offers a Bluetooth keyboard,
+choose **Send to → Bluetooth computer or phone** in the Tile action form. Turn
+on the Bluetooth keyboard and add the computer or phone in Device settings first.
+These Tiles work without the Companion. **This PC (Companion)** keeps sending
+keys to the PC running the Companion. A disconnected Bluetooth destination drops
+the press; it does not send it to the Companion instead. Firmware without the
+Bluetooth keyboard refuses a Layout with Bluetooth Tiles, so before you switch a
+Device back to the normal build, send those Tiles to **This PC (Companion)**;
+otherwise the Device starts its built-in Layout.

@@ -1,5 +1,7 @@
 # Design system
 
+> The React UI this page names (`app/ui/...`) is on the `release/1.x` branch ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). The 2.0 Slint screens follow the same design.
+
 This is the look of Open TouchDeck: the desktop app and the screens the Firmware draws on a Device. Every UI ticket follows it. The tokens live in [`app/ui/src/styles/tokens.css`](../app/ui/src/styles/tokens.css), and this page explains each one, then shows how the parts are built from them.
 
 Words follow [`GLOSSARY.md`](../GLOSSARY.md). Every user-visible string comes from [`docs/copy.md`](copy.md). Strings quoted on this page describe a state; where one differs from the copy guide, the copy guide wins.
@@ -44,8 +46,8 @@ Light is the default. Dark follows `prefers-color-scheme`. The Appearance settin
 | --- | --- | --- | --- |
 | `--mat` | `#e4e6e9` | `#000000` | Window background |
 | `--mat-grain` | 0.045 | 0 | Opacity of the felt grain over the mat; none on black |
-| `--surface` | `#f6f7f8` | `#262d35` | Inspector rail, Integrations list |
-| `--surface-raised` | `#ffffff` | `#2c343d` | Dialogs, popovers, nav cluster, inputs, secondary buttons |
+| `--surface` | `#f6f7f8` | `#262d35` | Nav rail, inspector rail, Settings categories, Integrations list |
+| `--surface-raised` | `#ffffff` | `#2c343d` | Dialogs, popovers, the Update icon, inputs, secondary buttons |
 | `--surface-inset` | `#eceef0` | `#1b2026` | Grouped Settings rows, change list, tracks |
 | `--ink` | `#1a1d22` | `#eef1f5` | Primary text and icons |
 | `--ink-2` | `#565d68` | `#a3acb8` | Secondary text, enabled secondary actions such as **+ Page**, meaningful empty values such as "Nothing" |
@@ -136,7 +138,7 @@ Radius follows physical hierarchy: the bigger and more physical a thing is, the 
 | --- | --- | --- |
 | `--radius-chip` | 999px | Badges, progress, pager |
 | `--radius-control` | 8px | Buttons, inputs, nav buttons |
-| `--radius-group` | 12px | Nav cluster, Update icon, grouped rows, popovers |
+| `--radius-group` | 12px | Update icon, grouped rows, popovers |
 | `--radius-sheet` | 16px | Dialogs, the Integrations list |
 | `--radius-tile` | 18px | Tiles, in screen pixels at 1024 × 600 |
 
@@ -146,7 +148,7 @@ The Device's case is `--bezel` with a 1px `--bezel-edge` highlight (white at 7%)
 | --- | --- |
 | `--shadow-device` | A Device on the mat: a 1px contact line, a tight shadow and a wide ambient one |
 | `--shadow-device-lifted` | A Device on Home under the pointer: 2px higher, longer shadow |
-| `--shadow-float` | The nav cluster |
+| `--shadow-float` | Toasts and error cards, menus, the editor's banner, switch and slider thumbs |
 | `--shadow-float-filter` | The Update icon. It's clipped, which would cut a box-shadow, so it casts this drop-shadow from its wrapper |
 | `--shadow-dialog` | Dialogs and popovers, always with a 1px `--line` ring |
 
@@ -167,21 +169,40 @@ A few places change where the ring is drawn. All of them keep the token's color 
 - **The slider** draws the ring on its thumb, because the focused element is the thumb's hidden input.
 - **The editor canvas** is scaled, so its rings divide by the canvas scale to stay 2 app pixels wide. On a Tile the ring sits inside the Tile edge. The selection ring sits outside, so a selected Tile with focus shows both.
 
+## Window frame
+
+The Electron window draws the desk mat to the top edge on Windows and Linux,
+using a hidden title bar and Window Controls Overlay. The system owns the caption
+buttons and their hover behaviour (including Windows Snap layouts). The window
+keeps the title **Open TouchDeck** for the taskbar and assistive technology.
+
+A thin drag strip occupies the reported `titlebar-area-*` rectangle. Drag,
+double-click and the system menu use Electron's native drag region; interactive
+controls inside it are `no-drag`. All screens and modal content reserve the
+reported top inset, including after resize, maximize, fullscreen or scale changes.
+Browser tabs reserve none. The hidden app menu keeps its keyboard shortcuts.
+Caption backgrounds and glyphs follow Appearance immediately; Match Windows
+also follows system theme changes. No Mica or acrylic is used.
+
 ## Components
 
 Each part below is in the reference prototype; [Reference prototype](#reference-prototype) lists the screenshot for each state.
 
-### Nav cluster
+### Nav rail
 
-- Fixed at the bottom centre, 12px up. In the Layout editor it centres over the canvas rather than the window, and slides with the Details panel as it opens and closes. It doesn't slide when you switch screens. Order: Home, Layout, Integrations, Settings.
-- Toasts centre on the same line and rise 72px from the bottom, so they sit above it.
-- A puck of `--surface-raised` with radius 12, 4px padding, 2px gaps, a 1px `--line` ring and `--shadow-float`.
-- Buttons are 36 × 36, radius 8, with an 18px Lucide icon at stroke 1.9 in `--ink-2`. Hover: `--fill-hover` and `--ink`. Current: `--fill-active` and `--ink`, with `aria-current="page"`. Settings is current while its page is open.
-- A tooltip above each button names it after a 500ms delay. Later tooltips open instantly while the pointer stays in the cluster.
+The rail isn't in the reference prototype. It's variant C of the Layout editor prototype on the `prototype/layout-editor-variants` branch.
+
+- Docked to the window's left edge for its full height, below the drag strip in the Electron window (see [Window frame](#window-frame)): 64 wide, `--surface`, with a 1px `--line` right edge. Every screen lays out to its right, from 800 × 600 up. Nothing on a screen moves it: not switching screens, not scrolling, not the Details panel opening or closing.
+- Home, Layout, Integrations and Settings sit at the top, 12px down with 2px gaps, centred in the rail. The Update icon sits at the bottom, 12px up.
+- Buttons are 36 × 36, radius 8, with a 20px Lucide icon at stroke 1.9 in `--ink-2`. Hover: `--fill-hover` and `--ink`. Current: `--fill-active` and `--ink`, with `aria-current="page"`. Settings is current while its page is open.
+- A tooltip to the right of each button names it after a 500ms delay. Later tooltips open instantly while the pointer stays in the rail.
+- It comes first in the tab order, before the screen's content.
+- Toasts and error cards centre on the content to the right of the rail, 24px up from the bottom.
+- Onboarding hides it but keeps its column, so the screen behind doesn't shift.
 
 ### Update icon
 
-A separate puck 8px right of the nav cluster. An empty column of the same width on the cluster's left keeps the nav icons centred, so nothing it does moves them. Only the visible part of the icon takes clicks. It isn't rendered when no update exists.
+At the bottom of the nav rail, centred in it. Open, its label runs out to the right over the screen, so nothing it does moves the nav icons. Only the visible part of the icon takes clicks. It isn't rendered when no update exists.
 
 | State | Icon | Label |
 | --- | --- | --- |
@@ -206,9 +227,9 @@ Opened from the keyboard, focus lands on the first control. Opened with the poin
 
 ### Settings
 
-A full screen, like Home or Integrations, reached from the nav's Settings icon. Switching to it never animates.
+A full screen, like Home or Integrations, reached from the rail's Settings icon. Switching to it never animates.
 
-- **Categories** down the left in a 232-wide `--surface` column with a 1px `--line` right edge, sticky to the window's height: the nameplate title "Settings", then **General**; a **Devices** label over one entry per Device, named by it; an **App** label over **Paired browsers**, **Troubleshooting**, **Errors** and **About**. Labels are 12/620 `--ink-2`. An entry is 36 tall with a 16px icon and its name in 14/520 `--ink-2`; hover is `--fill-hover`, the current one `--fill-active` in `--ink` with `aria-current="page"`. **Errors** shows its count in a `--danger-ink` pill. Below 760 wide the column sits above the content.
+- **Categories** in a 232-wide `--surface` column right of the nav rail, with a 1px `--line` right edge, sticky to the window's height: the nameplate title "Settings", then **General**; a **Devices** label over one entry per Device, named by it; an **App** label over **Paired browsers**, **Troubleshooting**, **Errors** and **About**. Labels are 12/620 `--ink-2`. An entry is 36 tall with a 16px icon and its name in 14/520 `--ink-2`; hover is `--fill-hover`, the current one `--fill-active` in `--ink` with `aria-current="page"`. **Errors** shows its count in a `--danger-ink` pill. Below 760 wide the column sits above the content.
 - **Content,** at most 760 wide with 40 × 48 padding: a 24/620 nameplate page title, which takes focus when the category changes, and an optional `--ink-2` lede. Sections have a 14/620 heading over a group of rows in `--surface-inset` with a `--line` ring. A row is at least 56 tall: title 14/520 and an optional 12px hint in `--ink-2` on the left, the control on the right. Rows inside a group are split by a `--line` hairline. Controls in rows: a switch, a segmented control (the theme: System, Light, Dark) or a secondary button.
 - **A Device's page** is titled with its name, its status as the lede. Its fields sit in `--surface-inset` cards with 16px padding and 20px between fields, under the headings General (Name, Orientation), Screen (Brightness, with the value tabular at the label's right; Photo frame, a switch, then Start after and Folder when on), Wireless (Wi-Fi, Bluetooth keyboard) and Firmware (the version and its status with Update and Restart, then the Firmware build). A Device that isn't connected leads with a `--signal-tint` line asking to plug it in.
 - **Errors** lists what went wrong since the window opened, newest first, at most 50: a `--surface-inset` card each with the message in 14/520, the time and where in 12px `--ink-2`, a Copy icon button, and the detail in a `--surface-raised` monospace block. **Clear** empties it.
@@ -247,11 +268,11 @@ On the canvas, the editor adds marks the Device never draws, in screen pixels:
 - **Empty cell:** a 3px dashed `--screen-pager-idle` outline at `--radius-tile` with a 44px plus in `--screen-ink-2`. Clicking one opens Add Tile for that cell.
 - **Add Tile target:** the cell gets a 5px solid `--screen-accent` outline, a `--screen-tile` fill and an accent plus.
 
-**Controls notice.** Above the Device on the canvas, at most 680 wide, while the open Device's controls wait for **Send to Device**: `--signal-tint` with a `--line` ring and `--radius-group`, a 14/620 `--signal-ink` title led by a `--signal-led` light, one 12px paragraph in `--ink` whose last sentence is `--ink-2`, and one small secondary button on the right. The canvas counts the notice's full height when it fits the Device. Below 700 tall, the canvas over the Device pads 16 on top and spaces its parts 16 apart while any notice shows, and the notice pads 8 × 12. When the Device is already at its 420 minimum, the notice gives up height before anything else and scrolls inside itself, never below its title and one line, so the Page tabs and the status line stay above the nav. While Checking it's one `--surface-raised` line with a `--led-off` light. When the check can't read the Device it's the same line in `--ink` with a `--signal-led` light. The inspector's Page details then start with a **Controls** list in a `--surface-inset` group: each row names the Tile, its Page, the Integration and account, and its controls, and selects the Tile. Unknown names use `--danger-ink`.
+**Controls notice.** Above the Device on the canvas, at most 680 wide, while the open Device's controls wait for **Send to Device**: `--signal-tint` with a `--line` ring and `--radius-group`, a 14/620 `--signal-ink` title led by a `--signal-led` light, one 12px paragraph in `--ink` whose last sentence is `--ink-2`, and one small secondary button on the right. The canvas counts the notice's full height when it fits the Device. Below 700 tall, the canvas over the Device pads 16 on top and spaces its parts 16 apart while any notice shows, and the notice pads 8 × 12. When the Device is already at its 420 minimum, the notice gives up height before anything else and scrolls inside itself, never below its title and one line, so the Page tabs and the status line stay in the window. While Checking it's one `--surface-raised` line with a `--led-off` light. When the check can't read the Device it's the same line in `--ink` with a `--signal-led` light. The inspector's Page details then start with a **Controls** list in a `--surface-inset` group: each row names the Tile, its Page, the Integration and account, and its controls, and selects the Tile. Unknown names use `--danger-ink`.
 
 **Status line.** Under the Page tabs, 12px `--ink-2`. It reports refusals, imports and sends. A load from the Device shows nothing there, but screen readers still hear it.
 
-**Error card.** An error pops up as a toast card at the bottom centre instead of a line: the error icon in `--danger-ink`, the message, where it happened in 12px `--ink-2`, and a small **Details** button that opens **Settings > Errors**. It stays 10 s, longer while the pointer rests on it. The status line keeps the words for screen readers only.
+**Error card.** An error pops up as a toast card at the bottom centre of the content right of the nav rail instead of a line: the error icon in `--danger-ink`, the message, where it happened in 12px `--ink-2`, and a small **Details** button that opens **Settings > Errors**. It stays 10 s, longer while the pointer rests on it. The status line keeps the words for screen readers only.
 
 **Page details.** The Page name, then **Grid**: an 8 × 8 board of 4px-gapped squares, 220 wide, with the size in words at the label's right. Squares up to the current size are `--accent`; hovering or focusing a square previews its size at 40% `--accent` and names it, and a click, Enter or Space sets it. Only one square is in the tab order, and the arrow keys, Home and End move between them. The footer, pinned to the bottom, holds Remove Page: a quiet-danger trash icon that asks “Remove “{page}”?” on the first click and removes on the second.
 

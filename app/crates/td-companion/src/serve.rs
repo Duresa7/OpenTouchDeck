@@ -12,7 +12,7 @@ use tokio::{
     task::JoinSet,
 };
 
-/// Connection, time and storage limits. Tests shrink them; the Companion uses the defaults.
+/// Connection and time limits. Tests shrink them; the Companion uses the defaults.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     /// Open connections. The accept loop waits for a free slot.
@@ -25,8 +25,6 @@ pub struct Limits {
     pub request: Duration,
     /// How long shutdown waits for open requests before dropping their connections.
     pub drain: Duration,
-    /// Bytes of prepared Assets the Companion keeps on disk.
-    pub asset_store_bytes: u64,
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -36,7 +34,6 @@ impl Default for Limits {
             body_read: Duration::from_secs(10),
             request: Duration::from_secs(30),
             drain: Duration::from_secs(5),
-            asset_store_bytes: crate::store::ASSET_STORE_BYTES,
         }
     }
 }
@@ -82,4 +79,34 @@ pub(crate) async fn serve(
     drop(listener);
     let _ = tokio::time::timeout(limits.drain, graceful.shutdown()).await;
     connections.abort_all();
+}
+
+pub(crate) async fn bind(root: &std::path::Path) -> std::io::Result<tokio::net::TcpListener> {
+    let settings = root.join("companion-settings.json");
+    let port = std::fs::read(&settings)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v["port"].as_u64())
+        .filter(|p| (49152..=65535).contains(p));
+    if let Some(port) = port
+        && let Ok(listener) =
+            tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port as u16)).await
+    {
+        return Ok(listener);
+    }
+    for _ in 0..128 {
+        let mut bytes = [0; 2];
+        getrandom::fill(&mut bytes).map_err(std::io::Error::other)?;
+        let port = 49152 + (u16::from_le_bytes(bytes) % 16384);
+        if let Ok(listener) =
+            tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await
+        {
+            std::fs::write(
+                settings,
+                serde_json::to_vec(&serde_json::json!({"port":port}))?,
+            )?;
+            return Ok(listener);
+        }
+    }
+    Err(std::io::Error::other("No free Companion port."))
 }

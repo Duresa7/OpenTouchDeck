@@ -57,6 +57,7 @@ rules! {
     TileStreams => "tile.streams",
     TileInput => "tile.input",
     IconFormat => "icon.format",
+    ActionSink => "action.sink",
     ActionType => "action.type",
     PageMissing => "action.page-missing",
     KeyUsageRange => "key.usage-range",
@@ -255,10 +256,21 @@ pub struct Tile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum ActionSink {
+    Link,
+    Bluetooth,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "TileAction"))]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Action {
     Key {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts", ts(optional))]
+        sink: Option<ActionSink>,
         usage: u8,
         mods: Vec<Modifier>,
     },
@@ -267,6 +279,9 @@ pub enum Action {
         modifier: Modifier,
     },
     Consumer {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts", ts(optional))]
+        sink: Option<ActionSink>,
         usage: u16,
     },
     Page {
@@ -1291,9 +1306,23 @@ impl Check {
                 );
             }
         };
-        let Some(obj) = self.object(value, pointer, fields) else {
+        let optional: &[&str] = if matches!(kind, "key" | "consumer") {
+            &["sink"]
+        } else {
+            &[]
+        };
+        let Some(obj) = self.object_with(value, pointer, fields, optional) else {
             return;
         };
+        if let Some(sink) = obj.get("sink")
+            && !matches!(sink, Json::Str(s) if matches!(s.text.as_str(), "link" | "bluetooth"))
+        {
+            self.fail(
+                Rule::ActionSink,
+                &format!("{pointer}/sink"),
+                "must be link or bluetooth",
+            );
+        }
         for name in &fields[1..] {
             let Some((field, at)) = self.field(obj, pointer, name) else {
                 continue;
@@ -1334,6 +1363,35 @@ impl Check {
         }
         for (index, item) in items.iter().enumerate() {
             self.modifier(item, &format!("{pointer}/{index}"));
+        }
+    }
+}
+
+impl Layout {
+    /// Check destination support against hello.sinks before transferring a Layout.
+    pub fn validate_sinks(&self, sinks: &[String]) -> Result<(), Vec<LayoutError>> {
+        let mut errors = Vec::new();
+        for (pi, page) in self.pages.iter().enumerate() {
+            if let Page::Grid { tiles, .. } = page {
+                for (ti, tile) in tiles.iter().enumerate() {
+                    let (sink, usage) = match &tile.action {
+                        Action::Key { sink, .. } => (sink, None),
+                        Action::Consumer { sink, usage } => (sink, Some(*usage)),
+                        _ => continue,
+                    };
+                    if sink.as_ref() == Some(&ActionSink::Bluetooth)
+                        && (!sinks.iter().any(|s| s == "bluetooth")
+                            || usage.is_some_and(|u| u > 1023))
+                    {
+                        errors.push(LayoutError { rule: Rule::ActionSink, path: format!("/pages/{pi}/tiles/{ti}/action/sink"), message: "Bluetooth destination is unsupported on this Device or for this media key.".into() });
+                    }
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
         }
     }
 }

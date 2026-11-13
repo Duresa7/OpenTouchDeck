@@ -6,7 +6,9 @@ pub mod discover;
 pub mod live;
 pub mod mock;
 mod mock_ble;
+mod mock_net;
 pub mod net;
+pub mod pairings;
 pub mod photo;
 pub mod recover;
 pub mod session;
@@ -46,11 +48,30 @@ pub struct Serial {
 impl Serial {
     /// Opens the port with DTR and RTS low, so opening never resets the deck.
     pub fn open(path: &str) -> io::Result<Serial> {
-        let port = serialport::new(path, BAUD)
+        let builder = serialport::new(path, BAUD)
             .timeout(READ_TICK)
-            .dtr_on_open(false)
-            .open()
-            .map_err(io::Error::from)?;
+            .dtr_on_open(false);
+        #[cfg(unix)]
+        let port = {
+            use std::os::fd::AsRawFd;
+            let port = builder.open_native().map_err(io::Error::from)?;
+            // serialport clears this flag on open. Keep the write after its readiness
+            // poll nonblocking too, so backpressure cannot strand a Device thread.
+            // SAFETY: the port owns a live descriptor, and these fcntl commands take
+            // no pointer arguments. Preserve every existing file status flag.
+            let flags = unsafe { libc::fcntl(port.as_raw_fd(), libc::F_GETFL) };
+            if flags == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            if unsafe { libc::fcntl(port.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) }
+                == -1
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Box::new(port) as Box<dyn serialport::SerialPort>
+        };
+        #[cfg(not(unix))]
+        let port = builder.open().map_err(io::Error::from)?;
         Ok(Serial { port })
     }
 }

@@ -21,10 +21,9 @@
 
 ## Build, test and run
 
-- **App.** From `app/`: `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm test`, `cargo test --workspace`, and `pnpm dev:electron` to run the Electron window with a mock Device. Use `pnpm dev:ui:demo` for the React UI with demo data. Build the embedded UI with `pnpm build:ui` before `cargo build -p td-companion`. PR CI runs the Linux app checks on every app change, so a local Linux run is optional: use `app/scripts/linux-check.sh` to run them on `HEAD` in Docker when you are chasing a Linux-only failure (needs Docker; takes about 5 minutes the first time and about 3 minutes after). See [app/README.md](app/README.md) and [docs/setup.md](docs/setup.md).
-- **UI packages.** Folders under `app/ui/src/lib/` are deep modules: import a package only through its root files, never its subfolders. See [app/ui/src/lib/README.md](app/ui/src/lib/README.md) before adding or importing one; `pnpm lint` enforces it.
+- **App.** Main is Rust only. From `app/`: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace`. `cargo run -p td-app --features mock -- --mock-devices 2` runs the 2.0 window with mock Devices. The 1.x Electron app and React UI live on the `release/1.x` branch ([ADR 0012](docs/adr/0012-electron-and-react-leave-main-before-cutover.md)). PR CI runs the Linux checks; `app/scripts/linux-check.sh` runs them on `HEAD` in Docker when you chase a Linux-only failure. See [app/README.md](app/README.md) and [docs/setup.md](docs/setup.md).
 - **Firmware.** See [docs/firmware.md](docs/firmware.md).
-- **Proof on the real hardware.** The `verify-touchdeck` skill builds, flashes and drives the Device. `verify-touchdeck-app` drives the app against the mock or real Device.
+- **Proof on the real hardware.** The `verify-touchdeck` skill builds, flashes and drives the Device. `verify-touchdeck-app` drives the 1.x app on `release/1.x` against the mock or real Device.
 - Each ticket that changes these commands updates this section in the same PR.
 
 ## Resume notes

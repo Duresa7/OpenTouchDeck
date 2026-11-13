@@ -514,8 +514,8 @@ test('widget account is required and may be empty', () => {
 test('default checker reports each fixture and the exact acceptance summary', () => {
   const lines = [];
   assert.equal(checkLayouts([], (line) => lines.push(line)), 0);
-  assert.equal(lines.filter((line) => line.startsWith('ok ')).length, 6 + invalidFiles.length);
-  assert.equal(lines.at(-1), `6 valid, ${invalidFiles.length} invalid as expected, 0 problems`);
+  assert.equal(lines.filter((line) => line.startsWith('ok ')).length, 7 + invalidFiles.length);
+  assert.equal(lines.at(-1), `7 valid, ${invalidFiles.length} invalid as expected, 0 problems`);
 });
 
 test('compact UTF-8 JSON accepts exactly 32768 bytes and rejects 32769 bytes', () => {
@@ -546,7 +546,7 @@ test('CLI ignores formatting whitespace and counts whitespace inside strings', (
     writeFileSync(path, source);
     let result = run();
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, new RegExp(`7 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
+    assert.match(result.stdout, new RegExp(`8 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
     action.target += ' ';
     writeFileSync(path, JSON.stringify(layout));
     result = run();
@@ -565,7 +565,7 @@ test('CLI checks extra paths, rejects JSON and file errors, and runs from anothe
     writeFileSync(good, JSON.stringify(dev));
     let result = run(good);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, new RegExp(`7 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
+    assert.match(result.stdout, new RegExp(`8 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
     assert.match(result.stdout, /wall time: \d+\.\d+ ms/);
     const bad = join(temporary, 'bad.json');
     writeFileSync(bad, splitExpectation(readFileSync(join(invalidDirectory, 'overlap.json'))).body);
@@ -606,7 +606,7 @@ test('CLI dedupes paths and finds invalid/ whatever the drive-letter and folder 
     { encoding: 'utf8' },
   );
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, new RegExp(`6 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
+  assert.match(result.stdout, new RegExp(`7 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
 });
 
 test('schema 2 accepts Asset references and forbids mixing icons', () => {

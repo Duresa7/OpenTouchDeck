@@ -49,8 +49,13 @@ async fn raw(
 async fn a_radio_device_sets_joins_and_forgets_its_network() {
     let td = TestCompanion::start().await;
     let id = td.plug_radio_device("mock0001").await;
-    let caps = td.device(&id).unwrap().capabilities.unwrap();
-    assert_eq!(caps.wifi, Some(true));
+    let device = td.device(&id).unwrap();
+    assert_eq!(device.capabilities.unwrap().wifi, Some(true));
+    // Its hello says `radio`, so onboarding offers it Wi-Fi setup.
+    assert_eq!(
+        device.firmware.unwrap().channel,
+        td_companion::devices::FirmwareChannel::Radio
+    );
     td.deck("mock0001").add_wifi_network(NETWORK, PASSWORD);
 
     let off = td.call::<WifiGet>(path(&id), NoQuery, ()).await.unwrap();

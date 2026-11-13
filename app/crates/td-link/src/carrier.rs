@@ -31,6 +31,12 @@ pub trait FrameReader: Send {
 
 /// The sending half of a [`Carrier`].
 pub trait FrameWriter: Send {
+    /// Checks whether a new operation may start. A transfer calls this once before its
+    /// begin request; its chunks, heartbeat and completion share that admission.
+    fn start_operation(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
     /// Sends one frame or console line, or fails within `window`. A carrier that sends in
     /// pieces checks the window between them, so a closed Session stops the send at once.
     /// A carrier without a console refuses [`Outbound::Line`] with `Unsupported`.
@@ -150,15 +156,22 @@ impl FrameWriter for UsbWriter {
                 Ok(0) => return Err(ErrorKind::WriteZero.into()),
                 Ok(n) => rest = &rest[n..],
                 Err(error)
-                    if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::Interrupted)
-                        && Instant::now() < window.deadline() => {}
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::TimedOut | ErrorKind::Interrupted | ErrorKind::WouldBlock
+                    ) =>
+                {
+                    std::thread::sleep(crate::READ_TICK);
+                }
                 Err(error) => return Err(error),
             }
         }
         if !window.is_open() {
             return Err(ErrorKind::BrokenPipe.into());
         }
-        self.0.flush()
+        // Serial drain calls can block indefinitely. Writes enqueue the entire frame;
+        // the protocol acknowledgement confirms delivery.
+        Ok(())
     }
 }
 

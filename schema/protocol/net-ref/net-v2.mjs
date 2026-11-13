@@ -34,7 +34,7 @@ export const derive = (prk, label) => mac(prk, ascii(`touchdeck/net-v2/${label}`
 
 const SIZES = new Map([
   [0x11, 26], [0x12, 416], [0x13, 432], [0x14, 32], [0x15, 80],
-  [0x16, 32], [0x17, 32], [0x20, 54], [0x21, 64], [0x22, 32], [0x23, 32], [0x7f, 1],
+  [0x16, 32], [0x17, 32], [0x20, 48], [0x21, 64], [0x22, 32], [0x23, 32], [0x7f, 1],
 ]);
 
 // The format characters (General_Category Cf) of Unicode 17.0, as inclusive
@@ -173,6 +173,23 @@ export function x25519(secret, peerShare) {
   return Z;
 }
 
+// A session.open names no id. Its tag, made with a Pairing's LTK for this one
+// client_share, lets the Device find the Pairing among the four it may hold.
+export const OPEN_TAG_LEN = 16;
+export const openTag = (ltk, clientShare) =>
+  mac(derive(fixed(ltk, 32, 'LTK'), 'session/open'), ascii('open'), fixed(clientShare, 32)).subarray(0, OPEN_TAG_LEN);
+
+// Compute all four slots before deciding, including dummy work for empty slots.
+export function findPairing(pairings, tag, clientShare) {
+  let found = null;
+  const entries = [...pairings];
+  for (let i = 0; i < MAX_PAIRINGS; i++) {
+    const [companionId, ltk] = entries[i] ?? [null, Buffer.alloc(32)];
+    if (equal(openTag(ltk, clientShare), tag) && companionId !== null && found === null) found = { companionId: Buffer.from(companionId, 'hex'), ltk };
+  }
+  return found;
+}
+
 export function sessionKeys({ ltk, deviceId, companionId, clientShare, deviceShare, Z }) {
   const transcript = hash(ascii('touchdeck/net-v2/session\0'), fixed(deviceId, 6),
     fixed(companionId, 16), fixed(clientShare, 32), fixed(deviceShare, 32));
@@ -213,10 +230,10 @@ export class DeviceSession {
 
   open(wire) {
     const { fields } = parseHandshake(wire, 0x20);
-    const companionId = fields.subarray(6, 22);
-    const ltk = this.pairings.get(companionId.toString('hex'));
-    if (!equal(fields.subarray(0, 6), this.deviceId) || !ltk) throw refuse('auth');
-    const clientShare = fields.subarray(22);
+    const clientShare = fields.subarray(OPEN_TAG_LEN);
+    const pairing = findPairing(this.pairings, fields.subarray(0, OPEN_TAG_LEN), clientShare);
+    if (!pairing) throw refuse('auth');
+    const { companionId, ltk } = pairing;
     const Z = x25519(this.ephemeral, clientShare);
     const deviceShare = share(this.ephemeral);
     this.keys = sessionKeys({ ltk, deviceId: this.deviceId, companionId, clientShare, deviceShare, Z });
@@ -238,7 +255,8 @@ export class CompanionSession {
   }
 
   open() {
-    return handshake(0x20, this.deviceId, this.companionId, share(this.ephemeral));
+    const clientShare = share(this.ephemeral);
+    return handshake(0x20, openTag(this.ltk, clientShare), clientShare);
   }
 
   challenge(wire) {
@@ -503,8 +521,8 @@ export class PeerBackoff {
     return entry ? Math.max(0, entry.until - now) : 0;
   }
 
-  // The check on a peer's first handshake item. A session.open naming a
-  // stored companion_id skips backoff, as a takeover does; anything else
+  // The check on a peer's first handshake item. A session.open whose tag
+  // matches a stored Pairing skips backoff, as a takeover does; anything else
   // from a peer in backoff gets busy.
   admits(peer, now, { kind, storedCompanion = false } = {}) {
     if (kind === 0x20 && storedCompanion) return true;
@@ -656,4 +674,73 @@ export function manage(store, request, carrier, base = {}) {
   if (request.all !== true) return failure(m, 'args', 'Name an app_id, or send all:true');
   const removed = store.forgetAll();
   return { m, ok: true, ...state(), pair_failures: 0, locked_ms: 0, pairing: false, removed };
+}
+
+// Discovery privacy. Outside pairing mode the TXT record carries a random
+// nonce and four 8-byte hints: one per stored Pairing, in slot order, and a
+// random filler per free slot. Only a Companion holding that Pairing's LTK can
+// recognise its hint. In pairing mode it adds the id, name and Pairing count.
+export const HINT_LEN = 8;
+export const HINT_SLOTS = MAX_PAIRINGS;
+export const NONCE_LEN = 16;
+export const ROTATE_MS = 900000;
+export const discoveryKey = (ltk) => derive(fixed(ltk, 32, 'LTK'), 'discovery');
+export const hint = (key, nonce) => mac(fixed(key, 32, 'discovery key'), ascii('hint'), fixed(nonce, NONCE_LEN, 'nonce')).subarray(0, HINT_LEN);
+
+// ltks: the stored Pairings' LTKs in slot order. fillers: one 8-byte random
+// value per free slot. pairing: null, or { deviceId, name, paired } while a
+// pairing window is open.
+export function advertisement({ nonce, ltks, fillers, pairing = null }) {
+  fixed(nonce, NONCE_LEN, 'nonce');
+  requireThat(ltks.length <= HINT_SLOTS && fillers.length === HINT_SLOTS - ltks.length, 'one hint per slot');
+  const hints = [...ltks.map((ltk) => hint(discoveryKey(ltk), nonce)), ...fillers.map((f) => fixed(f, HINT_LEN, 'filler'))];
+  const label = nonce.subarray(0, 4).toString('hex');
+  const txt = { proto: '2', n: nonce.toString('hex'), h: concat(...hints).toString('hex') };
+  if (pairing) {
+    requireThat(Buffer.byteLength(pairing.name) <= 48 && nameAllowed(pairing.name), 'invalid Device name');
+    Object.assign(txt, { id: fixed(pairing.deviceId, 6, 'device_id').toString('hex'), name: pairing.name,
+      paired: String(pairing.paired) });
+  }
+  return { label, instance: `TouchDeck ${label}`, host: `td-${label}`, txt };
+}
+
+const HEX = (length) => new RegExp(`^[0-9a-f]{${length}}$`);
+
+// What a Companion reads from a TXT record, or null when it is malformed: no
+// proto 2, or no valid n and h. An id is only trusted as a hint.
+export function readRecord(txt) {
+  if (txt.proto !== '2' || !HEX(NONCE_LEN * 2).test(txt.n ?? '') || !HEX(HINT_SLOTS * HINT_LEN * 2).test(txt.h ?? '')) {
+    return null;
+  }
+  const h = Buffer.from(txt.h, 'hex');
+  const record = { nonce: Buffer.from(txt.n, 'hex'),
+    hints: Array.from({ length: HINT_SLOTS }, (_, i) => h.subarray(i * HINT_LEN, (i + 1) * HINT_LEN)), pairing: null };
+  if (HEX(12).test(txt.id ?? '')) {
+    const paired = /^[0-4]$/.test(txt.paired ?? '') ? Number(txt.paired) : null;
+    record.pairing = { deviceId: txt.id, name: txt.name ?? null, paired };
+  }
+  return record;
+}
+
+// The Companion's match: the device ids of its Pairings whose hint is in the
+// record. pairings: [{ deviceId, ltk }]. Every comparison runs.
+export function matchRecord(record, pairings) {
+  const matched = [];
+  for (const { deviceId, ltk } of pairings) {
+    const mine = hint(discoveryKey(ltk), record.nonce);
+    let hit = false;
+    for (const candidate of record.hints) hit = equal(mine, candidate) || hit;
+    if (hit) matched.push(deviceId);
+  }
+  return matched;
+}
+
+// Legacy BLE service data after the 128-bit UUID. Synthetic reference encoder.
+export const bleHint = (key, nonce) => mac(fixed(key, 32, 'discovery key'), ascii('ble-hint'), fixed(nonce, 6, 'BLE nonce')).subarray(0, 6);
+export function bleAdvertisement({ nonce, ltks, fillers, slot, pairing }) {
+  fixed(nonce, 6, 'BLE nonce');
+  if (!Number.isInteger(slot) || slot < 0 || slot >= 4 || ltks.length > 4) throw new Error('slots');
+  const filler = fixed(fillers[slot], 6, 'BLE filler');
+  if (pairing) return concat(Buffer.from([0x82]), fixed(pairing.deviceId, 6, 'device id'), Buffer.from([ltks.length]), filler.subarray(0, 5));
+  return concat(Buffer.from([2]), nonce, slot < ltks.length ? bleHint(discoveryKey(ltks[slot]), nonce) : filler);
 }

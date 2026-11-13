@@ -96,4 +96,3 @@ desktop.ini
 *.p12
 *.pfx
 
-/app/electron/src/updates/key.gen.ts

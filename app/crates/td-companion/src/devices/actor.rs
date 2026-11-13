@@ -52,36 +52,41 @@ pub(super) fn spawn(
     let (presses, taps) = mpsc::sync_channel::<serde_json::Value>(16);
     let action_inner = inner.clone();
     let action_id = id.clone();
-    thread::spawn(move || {
+    inner.track(thread::spawn(move || {
         for event in taps {
             if let Some(handler) = action_inner.actions.get() {
                 handler(&action_id, &event);
             }
         }
-    });
-    thread::Builder::new()
-        .name(format!("td-device-{id}"))
-        .spawn(move || {
-            for job in jobs {
-                job(&session);
-            }
-            session.close();
-        })
-        .expect("the Device thread starts");
-    thread::Builder::new()
-        .name(format!("td-device-{id}-in"))
-        .spawn(move || {
-            forward(
-                &inner,
-                &id,
-                connection,
-                session_id,
-                incoming,
-                mirror,
-                Touches { presses },
-            )
-        })
-        .expect("the Device forwarder starts");
+    }));
+    inner.track(
+        thread::Builder::new()
+            .name(format!("td-device-{id}"))
+            .spawn(move || {
+                for job in jobs {
+                    job(&session);
+                }
+                session.close();
+            })
+            .expect("the Device thread starts"),
+    );
+    let forward_inner = inner.clone();
+    inner.track(
+        thread::Builder::new()
+            .name(format!("td-device-{id}-in"))
+            .spawn(move || {
+                forward(
+                    &forward_inner,
+                    &id,
+                    connection,
+                    session_id,
+                    incoming,
+                    mirror,
+                    Touches { presses },
+                )
+            })
+            .expect("the Device forwarder starts"),
+    );
     Handle {
         connection,
         carrier,
@@ -93,12 +98,16 @@ pub(super) fn spawn(
 
 /// A key mirror for a Device, unless it types through its own USB HID or the PC has no sink.
 pub(super) fn mirror(
+    inner: &Arc<Inner>,
     input: &InputFactory,
     hello: &td_core::Hello,
 ) -> (Option<Mirror>, KeyMirrorState) {
     match input() {
         Ok(sink) => {
-            let mut mirror = Mirror::new(sink);
+            let mut mirror = Mirror::new(Box::new(StoppingSink {
+                inner: Arc::downgrade(inner),
+                sink,
+            }));
             let wanted = Mirror::wanted(&hello.sinks);
             mirror.set_enabled(wanted);
             let reason = if wanted {
@@ -119,6 +128,25 @@ pub(super) fn mirror(
             };
             (None, state)
         }
+    }
+}
+
+/// A report may resume after shutdown timed out inside an OS input call.
+struct StoppingSink {
+    inner: std::sync::Weak<Inner>,
+    sink: Box<dyn td_host::InputSink>,
+}
+impl td_host::InputSink for StoppingSink {
+    fn send(&mut self, event: td_host::KeyEvent) -> Result<(), String> {
+        if matches!(event, td_host::KeyEvent::Down(_))
+            && self
+                .inner
+                .upgrade()
+                .is_none_or(|inner| inner.stop.load(std::sync::atomic::Ordering::Acquire))
+        {
+            return Ok(());
+        }
+        self.sink.send(event)
     }
 }
 
@@ -231,6 +259,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn key_reports_type_nothing_once_the_devices_stop() {
+        // A Device thread left running after a timed-out shutdown must not type on the PC.
+        let devices = super::super::DeviceManager::new(crate::api::Events::default());
+        let sink = td_host::FakeSink::default();
+        let mut mirror = Mirror::new(Box::new(sink.clone()));
+        mirror.set_enabled(true);
+        devices.stop();
+        let down = serde_json::json!({"m":"key.report","seq":1,"type":"kbd","mods":0,"keys":[4]});
+        forward(
+            &devices.inner,
+            &DeviceId::parse("mock0001").unwrap(),
+            0,
+            0,
+            [Incoming::Event(down)],
+            Some(mirror),
+            Touches {
+                presses: mpsc::sync_channel(16).0,
+            },
+        );
+        assert_eq!(sink.take(), Vec::new());
+    }
+
+    #[test]
     fn overflow_releases_held_keys_before_the_next_event() {
         let devices = super::super::DeviceManager::new(crate::api::Events::default());
         let sink = td_host::FakeSink::default();
@@ -267,3 +318,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "shutdown_tests.rs"]
+mod shutdown_tests;

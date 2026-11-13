@@ -362,7 +362,7 @@ impl Inner {
         }
         reg.generation += 1;
         let generation = reg.generation;
-        let (mirror, key_mirror) = actor::mirror(&self.config().input, &hello);
+        let (mirror, key_mirror) = actor::mirror(self, &self.config().input, &hello);
         let session_id = crate::now_ms();
         let handle = actor::spawn(
             self.clone(),
@@ -373,6 +373,9 @@ impl Inner {
             incoming,
             mirror,
         );
+        if carrier == Carrier::Usb {
+            self.resend_on_link(id, &handle);
+        }
         let link = LinkState::Connected {
             port,
             since_ms: session_id,

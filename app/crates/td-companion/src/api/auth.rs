@@ -7,10 +7,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
     time::{Duration, Instant},
 };
 use subtle::ConstantTimeEq;
@@ -36,24 +32,6 @@ pub struct SessionInfo {
     pub created_ms: u64,
     pub last_used_ms: u64,
     pub current: bool,
-}
-
-/// The Companion's clock. Tests move it forward.
-#[derive(Clone, Default)]
-pub(crate) struct Clock(Arc<AtomicU64>);
-impl Clock {
-    pub(crate) fn now(&self) -> Instant {
-        Instant::now() + Duration::from_millis(self.0.load(Ordering::SeqCst))
-    }
-    /// Wall-clock seconds since the Unix epoch, moved forward as far as tests moved [`Self::now`].
-    /// For deadlines that must hold across sleep, such as Brandfetch's 30 days.
-    pub(crate) fn unix_s(&self) -> u64 {
-        crate::photos::clock::unix_s() + self.0.load(Ordering::SeqCst) / 1000
-    }
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn advance(&self, by: Duration) {
-        self.0.fetch_add(by.as_millis() as u64, Ordering::SeqCst);
-    }
 }
 
 /// A window session with no open WebSocket for this long ends.
@@ -414,7 +392,7 @@ impl Endpoint for SessionsDelete {
                 }
             }
         }
-        ctx.events.notify();
+        ctx.web_events.notify();
         Ok(())
     }
 }
@@ -443,7 +421,7 @@ impl Endpoint for SessionDelete {
         {
             s.revoked = true;
         }
-        ctx.events.notify();
+        ctx.web_events.notify();
         Ok(())
     }
 }
@@ -472,8 +450,8 @@ pub(super) async fn reset(ctx: Ctx) -> Result<(), CommonError> {
             s.revoked = true;
         }
     }
-    ctx.events.notify();
-    if !crate::process::rewrite_runtime(&ctx).await {
+    ctx.web_events.notify();
+    if !crate::api::rewrite_runtime(&ctx).await {
         let _ = ctx.shutdown.send(true);
         return Err(CommonError::Internal);
     }

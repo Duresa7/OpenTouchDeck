@@ -11,6 +11,11 @@
 #include "cJSON.h"
 #include "td_netlink.h"
 #include "td_netlink_ble.h"
+#include "td_netlink_tcp.h"
+#include "td_netlink_manage.h"
+
+static int g_tag_computations;
+void td_netlink_test_tag_computed(void) { g_tag_computations++; }
 
 static int g_failures;
 static int g_checks;
@@ -639,9 +644,12 @@ static void expect_share_closes(const uint8_t share[32], const char *label)
 {
     fresh_deck(true, 0, 0);
     connect_from(&g_conn, PEER_A);
-    uint8_t open[58];
+    /* A valid tag for this share, so the share check is what refuses it. */
+    uint8_t open[52], ltk[32];
     vec("session.wire.open", open, sizeof open);
-    memcpy(open + 2 + 2 + 6 + 16, share, 32);
+    vec("inputs.ltk", ltk, sizeof ltk);
+    memcpy(open + 2 + 2 + 16, share, 32);
+    CHECK(td_netlink_open_tag(ltk, share, open + 2 + 2));
     const td_netlink_action_t action = feed(&g_conn, open, sizeof open);
     CHECK(action == TD_NETLINK_CLOSE && g_out.len == 0);
     if (action != TD_NETLINK_CLOSE) {
@@ -676,8 +684,10 @@ static void test_x25519_negatives(void)
 
 static void test_session_negatives(void)
 {
-    static const char *const auth[] = { "negative.wrong_device_id", "negative.unknown_companion_id" };
-    for (size_t i = 0; i < 2; i++) {
+    /* A tag made with an LTK the Device lacks, a flipped tag bit, and a share swapped under the original tag. */
+    static const char *const auth[] = { "negative.unknown_open_tag", "negative.tampered_open_tag",
+                                        "negative.swapped_client_share" };
+    for (size_t i = 0; i < 3; i++) {
         char path[96];
         fresh_deck(true, 0, 0);
         connect_from(&g_conn, PEER_A);
@@ -687,16 +697,8 @@ static void test_session_negatives(void)
         CHECK(out_is(path));
         td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
         CHECK(g_rng_fill == 0);
+        CHECK(g_conn.end == TD_NETLINK_END_AUTH && td_netlink_backoff_left(&g_deck, PEER_A, 4) == 1000);
     }
-
-    fresh_deck(true, 0, 0);
-    connect_from(&g_conn, PEER_A);
-    rng_push_vec("inputs.deviceEphemeral");
-    CHECK(feed_vec(&g_conn, "negative.swapped_client_share.open") == TD_NETLINK_SEND);
-    CHECK(out_is("negative.swapped_client_share.challenge"));
-    CHECK(feed_vec(&g_conn, "negative.swapped_client_share.proof") == TD_NETLINK_CLOSE && g_out.len == 0);
-    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
-    CHECK(g_conn.end == TD_NETLINK_END_PROOF && td_netlink_backoff_left(&g_deck, PEER_A, 4) == 1000);
 
     /* The Companion's side of a swapped device share: the device_proof no longer checks. */
     VEC(challenge, "negative.swapped_device_share.challenge");
@@ -881,7 +883,7 @@ static void test_backoff(void)
 {
     fresh_deck(true, 0, 0);
     connect_from(&g_conn, PEER_A);
-    CHECK(feed_vec(&g_conn, "negative.unknown_companion_id.open") == TD_NETLINK_SEND_CLOSE);
+    CHECK(feed_vec(&g_conn, "negative.unknown_open_tag.open") == TD_NETLINK_SEND_CLOSE);
     td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
     CHECK(td_netlink_backoff_left(&g_deck, PEER_A, 4) == 1000);
     CHECK(td_netlink_backoff_left(&g_deck, PEER_B, 4) == 0);
@@ -894,7 +896,7 @@ static void test_backoff(void)
     CHECK(td_netlink_backoff_left(&g_deck, PEER_A, 4) == 1000);
     VEC(open, "session.wire.open");
     CHECK(td_netlink_names_stored(&g_deck, open + 2, open_len - 2));
-    VEC(unknown, "negative.unknown_companion_id.open");
+    VEC(unknown, "negative.unknown_open_tag.open");
     CHECK(!td_netlink_names_stored(&g_deck, unknown + 2, unknown_len - 2));
     open_session(&g_conn, PEER_A);
     td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_PEER);
@@ -1046,7 +1048,7 @@ static void test_waiter_items(void)
     fresh_deck(true, 0, 0);
     connect_from(&g_conn, PEER_A);
     CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
-    CHECK(waiter_first_item(slot, PEER_B, "negative.unknown_companion_id.open") == TD_NETLINK_SEND_CLOSE);
+    CHECK(waiter_first_item(slot, PEER_B, "negative.unknown_open_tag.open") == TD_NETLINK_SEND_CLOSE);
     CHECK(out_is_error(TD_NETLINK_AUTH) && td_netlink_backoff_left(&g_deck, PEER_B, 4) == 1000);
     CHECK(td_netlink_admit(&g_deck, &g_conn, PEER_B, 4, &slot, &evicted) == TD_NETLINK_ADMIT_WAIT);
     CHECK(waiter_first_item(slot, PEER_B, "pairing.wire.request") == TD_NETLINK_SEND_CLOSE);
@@ -1152,8 +1154,664 @@ static void test_forget(void)
     CHECK(g_deck.pair_failures == 0 && g_saved_failures == 0 && !g_deck.window.open);
     fresh_deck(true, 4, 500000);
     CHECK(td_netlink_forget(&g_deck) && td_netlink_lock_left(&g_deck) == 0 && g_saved_lock == 0);
+    /* A failed erase keeps the live table, so it matches what storage still holds. */
+    fresh_deck(true, 0, 0);
     g_pairings_fail = true;
-    CHECK(!td_netlink_forget(&g_deck) && g_deck.pairings.count == 0);
+    CHECK(!td_netlink_forget(&g_deck) && g_deck.pairings.count == 1);
+    g_pairings_fail = false;
+    CHECK(td_netlink_forget(&g_deck) && g_deck.pairings.count == 0 && g_saved.count == 0);
+}
+
+/* ---- net.list, net.pair and net.forget ---- */
+
+static const cJSON *g_base;
+static int g_ended;
+static bool g_ended_all;
+static uint8_t g_ended_id[TD_NETLINK_COMPANION_ID_LEN];
+
+/* The fields the service adds from outside the deck, as the vector's `base` has them. */
+static void vector_base_fields(void *ctx, cJSON *reply)
+{
+    (void)ctx;
+    static const char *const keys[] = { "listening", "port", "ble", "session" };
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        cJSON_AddItemToObject(reply, keys[i], cJSON_Duplicate(at(g_base, keys[i]), true));
+    }
+}
+
+static void record_end(void *ctx, const uint8_t *companion_id)
+{
+    (void)ctx;
+    g_ended++;
+    g_ended_all = companion_id == NULL;
+    if (companion_id) {
+        memcpy(g_ended_id, companion_id, sizeof g_ended_id);
+    }
+}
+
+static const td_netlink_manage_env_t g_manage_env = { .base_fields = vector_base_fields, .end_sessions = record_end };
+
+/* A Device holding the vector's four apps, oldest first, with pair_failures from its base. */
+static void management_deck(void)
+{
+    reset_env();
+    g_base = at(g_vectors, "management.base");
+    td_netlink_pairings_t stored = { 0 };
+    const cJSON *app;
+    cJSON_ArrayForEach(app, at(g_vectors, "management.apps"))
+    {
+        td_netlink_pairing_t *p = &stored.entries[stored.count++];
+        CHECK(td_netlink_parse_app_id(at(app, "app_id")->valuestring, p->companion_id));
+        const char *name = at(app, "app_name")->valuestring;
+        p->name_len = (uint8_t)strlen(name);
+        memcpy(p->name, name, p->name_len);
+        memset(p->ltk, stored.count, sizeof p->ltk);
+    }
+    uint8_t id[6];
+    vec("inputs.deviceId", id, sizeof id);
+    td_netlink_deck_init(&g_deck, id, &stored, (uint32_t)at(g_base, "pair_failures")->valueint, 0, &g_env);
+    g_ended = 0;
+}
+
+static cJSON *manage(const cJSON *request)
+{
+    cJSON *reply = cJSON_CreateObject();
+    cJSON_AddStringToObject(reply, "m", at(request, "m")->valuestring);
+    cJSON_AddBoolToObject(reply, "ok", true);
+    td_netlink_manage(&g_deck, request, reply, &g_manage_env);
+    return reply;
+}
+
+static cJSON *manage_text(const char *json)
+{
+    cJSON *request = cJSON_Parse(json);
+    assert(request);
+    cJSON *reply = manage(request);
+    cJSON_Delete(request);
+    return reply;
+}
+
+static bool refused_with(const cJSON *reply, const char *reason)
+{
+    return !cJSON_IsTrue(at(reply, "ok")) && !strcmp(at(reply, "reason")->valuestring, reason)
+           && cJSON_GetObjectItemCaseSensitive(reply, "paired") == NULL;
+}
+
+/* Every step of the shared `management` vector. USB steps run through td_netlink_manage and must answer exactly; the
+ * link refuses the others before they reach it (tools/host/link_carrier_test.c) with the words checked here. */
+static void test_management_vector(void)
+{
+    management_deck();
+    const cJSON *step;
+    int usb = 0;
+    cJSON_ArrayForEach(step, at(g_vectors, "management.steps"))
+    {
+        const cJSON *request = at(step, "request");
+        const cJSON *expected = at(step, "response");
+        if (strcmp(at(step, "carrier")->valuestring, "usb") != 0) {
+            CHECK(refused_with(expected, "usb-only") && !strcmp(at(expected, "error")->valuestring, "Only over USB"));
+            continue;
+        }
+        usb++;
+        const int saves = g_pairing_saves;
+        cJSON *reply = manage(request);
+        const bool same = cJSON_Compare(reply, expected, true);
+        if (!same) {
+            char *got = cJSON_PrintUnformatted(reply);
+            fprintf(stderr, "management step '%s' answered %s\n", at(step, "note")->valuestring, got);
+            free(got);
+        }
+        CHECK(same);
+        /* Forgetting writes the table once when something goes: a repeat, a refusal or a read writes nothing. */
+        const cJSON *removed = cJSON_GetObjectItemCaseSensitive(expected, "removed");
+        CHECK(g_pairing_saves - saves == (removed && removed->valueint > 0));
+        cJSON_Delete(reply);
+    }
+    CHECK(usb == 8);
+    CHECK(g_deck.pairings.count == 0 && g_saved.count == 0 && g_deck.pair_failures == 0 && g_saved_failures == 0);
+}
+
+/* Forgetting one app keeps the others in order and ends only that app's session; a refusal ends nothing. */
+static void test_forget_one(void)
+{
+    management_deck();
+    cJSON *reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"101112131415161718191a1b1c1d1e1f\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1);
+    CHECK(g_ended == 1 && !g_ended_all && g_ended_id[0] == 0x10 && g_ended_id[15] == 0x1f);
+    CHECK(g_deck.pairings.count == 3 && g_saved.count == 3);
+    CHECK(g_saved.entries[0].companion_id[0] == 0x20 && g_saved.entries[2].companion_id[0] == 0x40);
+    CHECK(g_deck.pair_failures == 1);
+    cJSON_Delete(reply);
+
+    /* The list follows: three apps, one free slot, oldest first, and no key. */
+    reply = manage_text("{\"m\":\"net.list\"}");
+    const cJSON *first = cJSON_GetArrayItem(at(reply, "pairings"), 0);
+    CHECK(at(reply, "free")->valueint == 1 && cJSON_GetArraySize(at(reply, "pairings")) == 3);
+    CHECK(!strcmp(at(first, "app_name")->valuestring, "Vector app 2") && cJSON_GetArraySize(first) == 2);
+    cJSON_Delete(reply);
+
+    /* Both fields, an app_id that isn't a string of 32 lowercase hex characters, or all:false: refused. */
+    static const char *const refused[] = {
+        "{\"m\":\"net.forget\",\"app_id\":\"202122232425262728292a2b2c2d2e2f\",\"all\":true}",
+        "{\"m\":\"net.forget\",\"app_id\":7}",
+        "{\"m\":\"net.forget\",\"app_id\":\"2021\"}",
+        "{\"m\":\"net.forget\",\"app_id\":\"g02122232425262728292a2b2c2d2e2f\"}",
+        "{\"m\":\"net.forget\",\"all\":false}",
+    };
+    for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
+        g_ended = 0;
+        reply = manage_text(refused[i]);
+        CHECK(refused_with(reply, "args"));
+        CHECK(g_ended == 0 && g_deck.pairings.count == 3);
+        cJSON_Delete(reply);
+    }
+
+    /* A failed erase ends the session but keeps the live table available for a retry. */
+    g_pairings_fail = true;
+    g_ended = 0;
+    reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"303132333435363738393a3b3c3d3e3f\"}");
+    CHECK(refused_with(reply, "storage"));
+    CHECK(g_ended == 1 && g_deck.pairings.count == 3);
+    cJSON_Delete(reply);
+    reply = manage_text("{\"m\":\"net.list\"}");
+    CHECK(cJSON_GetArraySize(at(reply, "pairings")) == 3);
+    cJSON_Delete(reply);
+
+    g_pairings_fail = false;
+    reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"303132333435363738393a3b3c3d3e3f\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1);
+    CHECK(g_deck.pairings.count == 2 && g_saved.count == 2);
+    CHECK(g_saved.entries[0].companion_id[0] == 0x20 && g_saved.entries[1].companion_id[0] == 0x40);
+    cJSON_Delete(reply);
+
+    /* A failed erase of all keeps the live table, so a Companion's retry for one app still removes and saves it. */
+    g_pairings_fail = true;
+    reply = manage_text("{\"m\":\"net.forget\",\"all\":true}");
+    CHECK(refused_with(reply, "storage") && g_deck.pairings.count == 2);
+    cJSON_Delete(reply);
+    g_pairings_fail = false;
+    reply = manage_text("{\"m\":\"net.forget\",\"app_id\":\"202122232425262728292a2b2c2d2e2f\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1);
+    CHECK(g_deck.pairings.count == 1 && g_saved.count == 1);
+    cJSON_Delete(reply);
+
+    /* All ends every session first. */
+    g_ended = 0;
+    reply = manage_text("{\"m\":\"net.forget\",\"all\":true}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && at(reply, "removed")->valueint == 1 && g_ended == 1 && g_ended_all);
+    cJSON_Delete(reply);
+}
+
+/* A lockout refuses net.pair with `locked` and opens no window; after it, the window opens. */
+static void test_pair_locked(void)
+{
+    management_deck();
+    uint8_t removed = 0;
+    CHECK(td_netlink_forget_one(&g_deck, g_deck.pairings.entries[0].companion_id, &removed) && removed == 1);
+    g_deck.locked = true;
+    g_deck.lock_until_ms = g_now + 30000;
+    cJSON *reply = manage_text("{\"m\":\"net.pair\"}");
+    CHECK(refused_with(reply, "locked") && !g_deck.window.open);
+    cJSON_Delete(reply);
+    g_now += 30000;
+    reply = manage_text("{\"m\":\"net.pair\"}");
+    CHECK(cJSON_IsTrue(at(reply, "ok")) && cJSON_IsTrue(at(reply, "pairing")) && at(reply, "paired")->valueint == 3);
+    cJSON_Delete(reply);
+}
+
+/* ---- Discovery privacy ---- */
+
+/* A Pairing with a synthetic id and LTK, each byte `fill`. */
+static td_netlink_pairing_t other_pairing(uint8_t fill)
+{
+    td_netlink_pairing_t p = { 0 };
+    memset(p.companion_id, fill, sizeof p.companion_id);
+    memset(p.ltk, fill, sizeof p.ltk);
+    p.name_len = 5;
+    memcpy(p.name, "Other", 5);
+    return p;
+}
+
+static void test_open_tags(void)
+{
+    VEC(ltk, "inputs.ltk");
+    VEC(share, "session.client_share");
+    VEC(tag, "session.open_tag");
+    VEC(open, "session.wire.open");
+    VEC(device_id, "inputs.deviceId");
+    VEC(companion_id, "inputs.companionId");
+    uint8_t mine[TD_NETLINK_OPEN_TAG_LEN];
+    CHECK(td_netlink_open_tag(ltk, share, mine) && !memcmp(mine, tag, sizeof mine));
+    /* The item is the tag and the share: no device_id, no companion_id. */
+    CHECK(open_len == 4 + TD_NETLINK_OPEN_TAG_LEN + 32 && !memcmp(open + 4, tag, TD_NETLINK_OPEN_TAG_LEN));
+    for (size_t i = 0; i + 6 <= open_len; i++) {
+        CHECK(memcmp(open + i, device_id, 6) != 0);
+    }
+    for (size_t i = 0; i + 16 <= open_len; i++) {
+        CHECK(memcmp(open + i, companion_id, 16) != 0);
+    }
+
+    /* With four Pairings the tag finds the fixture's in the third slot, and the session matches the vectors. */
+    reset_env();
+    td_netlink_pairings_t stored = { 0 };
+    stored.count = 4;
+    stored.entries[0] = other_pairing(0x30);
+    stored.entries[1] = other_pairing(0x40);
+    stored.entries[2] = vector_pairing();
+    stored.entries[3] = other_pairing(0x50);
+    td_netlink_deck_init(&g_deck, device_id, &stored, 0, 0, &g_env);
+    CHECK(td_netlink_names_stored(&g_deck, open + 2, open_len - 2));
+    open_session(&g_conn, PEER_A);
+    CHECK(!memcmp(g_conn.companion_id, companion_id, 16));
+    td_netlink_conn_close(&g_conn, &g_deck, TD_NETLINK_GONE_DEVICE);
+
+    /* Without the fixture Pairing the same item names nothing. */
+    stored.entries[2] = other_pairing(0x60);
+    td_netlink_deck_init(&g_deck, device_id, &stored, 0, 0, &g_env);
+    CHECK(!td_netlink_names_stored(&g_deck, open + 2, open_len - 2));
+}
+
+static void test_open_tag_work_is_fixed(void)
+{
+    VEC(open, "session.wire.open");
+    VEC(device_id, "inputs.deviceId");
+    const uint8_t dummy[32] = { 0 };
+    /* Even a valid tag for the public dummy key must never match an empty slot. */
+    CHECK(td_netlink_open_tag(dummy, open + 20, open + 4));
+    const int counts[] = { 0, 1, 4 };
+    for (size_t n = 0; n < sizeof counts / sizeof counts[0]; n++) {
+        td_netlink_pairings_t stored = { 0 };
+        stored.count = counts[n];
+        for (int i = 0; i < stored.count; i++) stored.entries[i] = other_pairing(0x30 + i);
+        reset_env();
+        td_netlink_deck_init(&g_deck, device_id, &stored, 0, 0, &g_env);
+        g_tag_computations = 0;
+        CHECK(!td_netlink_names_stored(&g_deck, open + 2, open_len - 2));
+        CHECK(g_tag_computations == TD_NETLINK_PAIRINGS_MAX);
+        connect_from(&g_conn, PEER_A);
+        g_tag_computations = 0;
+        CHECK(feed(&g_conn, open, open_len) == TD_NETLINK_SEND_CLOSE);
+        CHECK(out_is_error(TD_NETLINK_AUTH));
+        CHECK(g_tag_computations == TD_NETLINK_PAIRINGS_MAX);
+    }
+}
+
+static bool txt_is(const td_netlink_txt_t *txt, size_t count, const cJSON *want)
+{
+    if ((size_t)cJSON_GetArraySize(want) != count) {
+        return false;
+    }
+    for (size_t i = 0; i < count; i++) {
+        const cJSON *value = cJSON_GetObjectItemCaseSensitive(want, txt[i].key);
+        if (!cJSON_IsString(value) || strcmp(value->valuestring, txt[i].value) != 0) {
+            fprintf(stderr, "txt %s=%s\n", txt[i].key, txt[i].value);
+            return false;
+        }
+    }
+    return true;
+}
+
+static void test_advert(void)
+{
+    VEC(nonce, "discovery.nonce");
+    VEC(ltk, "inputs.ltk");
+    VEC(hint, "discovery.hint");
+    uint8_t mine[TD_NETLINK_HINT_LEN];
+    CHECK(td_netlink_hint(ltk, nonce, mine) && !memcmp(mine, hint, sizeof mine));
+
+    VEC(ble_nonce, "ble_discovery.nonce");
+    VEC(ble_rotated, "ble_discovery.rotated_nonce");
+    uint8_t ble_out[TD_NETLINK_BLE_DISCOVERY_LEN], expected[TD_NETLINK_BLE_DISCOVERY_LEN];
+    uint8_t filler[TD_NETLINK_BLE_HINT_LEN];
+    fresh_deck(true, 0, 0);
+    for (unsigned i = 0; i < 4; i++) {
+        unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.fillers"), i)->valuestring, filler, sizeof filler);
+        unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.slots"), i)->valuestring, expected, sizeof expected);
+        CHECK(td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, i, ble_out));
+        CHECK(!memcmp(ble_out, expected, sizeof expected));
+    }
+    unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.fillers"), 0)->valuestring, filler, sizeof filler);
+    unhex(at(g_vectors, "ble_discovery.rotated")->valuestring, expected, sizeof expected);
+    CHECK(td_netlink_ble_advert_build(&g_deck, ble_rotated, filler, 0, ble_out));
+    CHECK(!memcmp(ble_out, expected, sizeof expected));
+    g_deck.window.open = true;
+    unhex(at(g_vectors, "ble_discovery.pairing")->valuestring, expected, sizeof expected);
+    CHECK(td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, 0, ble_out));
+    CHECK(!memcmp(ble_out, expected, sizeof expected));
+    g_deck.window.open = false;
+    g_deck.pairings.count = 0;
+    unhex(at(g_vectors, "ble_discovery.unpaired")->valuestring, expected, sizeof expected);
+    CHECK(td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, 0, ble_out));
+    CHECK(!memcmp(ble_out, expected, sizeof expected));
+    CHECK(!td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, 4, ble_out));
+    fresh_deck(true, 0, 0);
+    for (unsigned i = 0; i < 4; i++) {
+        unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.full_ltks"), i)->valuestring,
+              g_deck.pairings.entries[i].ltk, TD_NETLINK_KEY_LEN);
+    }
+    g_deck.pairings.count = 4;
+    for (unsigned i = 0; i < 4; i++) {
+        unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.full"), i)->valuestring, expected, sizeof expected);
+        CHECK(td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, i, ble_out));
+        CHECK(!memcmp(ble_out, expected, sizeof expected));
+    }
+
+    /* The fixture's free slots get the vector fillers; the first slot's bytes are overwritten by its hint. */
+    uint8_t fillers[TD_NETLINK_HINT_SLOTS * TD_NETLINK_HINT_LEN];
+    memset(fillers, 0xee, sizeof fillers);
+    const cJSON *entry;
+    int slot = 1;
+    cJSON_ArrayForEach(entry, at(g_vectors, "discovery.fillers")) {
+        unhex(entry->valuestring, fillers + slot * TD_NETLINK_HINT_LEN, TD_NETLINK_HINT_LEN);
+        slot++;
+    }
+    CHECK(slot == TD_NETLINK_HINT_SLOTS);
+    const char *name = at(g_vectors, "inputs.deviceName")->valuestring;
+    td_netlink_advert_t advert;
+    td_netlink_txt_t txt[TD_NETLINK_ADVERT_TXT_MAX];
+
+    fresh_deck(true, 0, 0);
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, name, &advert) && !advert.pairing);
+    CHECK(!strcmp(advert.label, at(g_vectors, "discovery.label")->valuestring));
+    CHECK(!strcmp(advert.instance, at(g_vectors, "discovery.instance")->valuestring));
+    CHECK(!strcmp(advert.host, at(g_vectors, "discovery.host")->valuestring));
+    size_t count = td_netlink_advert_txt(&advert, txt);
+    CHECK(count == 3 && txt_is(txt, count, at(g_vectors, "discovery.txt")));
+    /* Nothing stable outside pairing mode: no id, no name, in any field. */
+    char id_hex[13];
+    snprintf(id_hex, sizeof id_hex, "%s", at(g_vectors, "inputs.deviceId")->valuestring);
+    for (size_t i = 0; i < count; i++) {
+        CHECK(!strstr(txt[i].value, id_hex) && !strstr(txt[i].value, name));
+    }
+    CHECK(!strstr(advert.instance, id_hex) && !strstr(advert.host, id_hex));
+
+    /* Pairing mode adds the id, the name and the count. */
+    CHECK(td_netlink_window_open(&g_deck) == TD_NETLINK_REASON_NONE);
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, name, &advert) && advert.pairing);
+    count = td_netlink_advert_txt(&advert, txt);
+    CHECK(count == 6 && txt_is(txt, count, at(g_vectors, "discovery.pairing_txt")));
+
+    /* A name the wire refuses, or none, advertises as TouchDeck; a long one is cut on a character boundary. */
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, "De\xe2\x80\xaesk", &advert) && !strcmp(advert.name, "TouchDeck"));
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, NULL, &advert) && !strcmp(advert.name, "TouchDeck"));
+    char long_name[64];
+    memset(long_name, 'a', 47);
+    memcpy(long_name + 47, "\xc3\xa9\xc3\xa9", 5);
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, long_name, &advert) && strlen(advert.name) == 47);
+
+    /* No window, or a lockout, is not pairing mode. With no Pairings every slot is a filler. */
+    td_netlink_window_cancel(&g_deck);
+    fresh_deck(false, 0, 0);
+    CHECK(td_netlink_advert_build(&g_deck, nonce, fillers, name, &advert) && !advert.pairing);
+    char filler_hex[65];
+    for (size_t i = 0; i < sizeof fillers; i++) {
+        snprintf(filler_hex + 2 * i, 3, "%02x", fillers[i]);
+    }
+    CHECK(!strcmp(advert.h, filler_hex));
+    fresh_deck(true, 3, 60000);
+    CHECK(td_netlink_window_open(&g_deck) != TD_NETLINK_REASON_NONE && !td_netlink_pairing_mode(&g_deck));
+}
+
+/* ---- TCP lifecycle: these socket callbacks replace only the OS, not the orchestration ---- */
+typedef struct {
+    uint8_t input[2048], output[4096];
+    size_t input_len, pos, output_len, read_max, write_max;
+    int read_budget, stalls, closes, writes;
+    bool eof, failed, blocked;
+} fake_socket_t;
+static fake_socket_t sockets[16];
+static td_netlink_tcp_t tcp;
+static int ready_events, ended_events, received_records;
+
+static int fake_read(void *ctx, int fd, uint8_t *buf, size_t len)
+{
+    (void)ctx;
+    fake_socket_t *s = &sockets[fd];
+    CHECK(s->closes == 0);
+    if (s->pos == s->input_len) return s->eof ? 0 : TD_NETLINK_TCP_AGAIN;
+    if (s->read_budget == 0) return TD_NETLINK_TCP_AGAIN;
+    s->read_budget--;
+    if (len > s->read_max) len = s->read_max;
+    if (len > s->input_len - s->pos) len = s->input_len - s->pos;
+    memcpy(buf, s->input + s->pos, len);
+    s->pos += len;
+    return (int)len;
+}
+static int fake_write(void *ctx, int fd, const uint8_t *buf, size_t len)
+{
+    (void)ctx;
+    fake_socket_t *s = &sockets[fd];
+    CHECK(s->closes == 0);
+    s->writes++;
+    if (s->failed) return -1;
+    if (s->blocked) return TD_NETLINK_TCP_AGAIN;
+    if (s->stalls > 0) { s->stalls--; return TD_NETLINK_TCP_AGAIN; }
+    if (len > s->write_max) len = s->write_max;
+    assert(s->output_len + len <= sizeof s->output);
+    memcpy(s->output + s->output_len, buf, len);
+    s->output_len += len;
+    return (int)len;
+}
+static void fake_close(void *ctx, int fd)
+{
+    (void)ctx;
+    CHECK(++sockets[fd].closes == 1);
+}
+static void fake_wait(void *ctx, int fd, uint32_t timeout_ms)
+{
+    (void)ctx; (void)fd;
+    g_now += timeout_ms;
+}
+static void fake_session(void *ctx, bool ready)
+{
+    (void)ctx;
+    if (ready) ready_events++; else ended_events++;
+}
+static void fake_receive(void *ctx, const uint8_t *body, size_t len)
+{
+    (void)ctx;
+    CHECK(body != NULL && len > 0);
+    received_records++;
+}
+static void fresh_tcp(void)
+{
+    fresh_deck(true, 0, 0);
+    memset(&tcp, 0, sizeof tcp);
+    tcp.deck = g_deck;
+    memset(sockets, 0, sizeof sockets);
+    for (size_t i = 0; i < 16; i++) {
+        sockets[i].read_max = 2048;
+        sockets[i].write_max = 4096;
+        sockets[i].read_budget = 4096;
+    }
+    ready_events = ended_events = received_records = 0;
+    const td_netlink_tcp_io_t io = {
+        .read = fake_read, .write = fake_write, .close = fake_close, .wait_write = fake_wait,
+        .session = fake_session, .receive = fake_receive,
+    };
+    td_netlink_tcp_init(&tcp, &io);
+}
+static void tcp_input(int fd, const char *path)
+{
+    fake_socket_t *s = &sockets[fd];
+    s->input_len = vec(path, s->input, sizeof s->input);
+    s->pos = 0;
+}
+static void tcp_output(int fd, const char *path)
+{
+    VEC(want, path);
+    CHECK(sockets[fd].output_len == want_len);
+    CHECK(!memcmp(sockets[fd].output, want, want_len));
+    sockets[fd].output_len = 0;
+}
+static void tcp_ready(void)
+{
+    td_netlink_tcp_accept(&tcp, 0, PEER_A, 4);
+    rng_push_vec("inputs.deviceEphemeral");
+    tcp_input(0, "session.wire.open");
+    td_netlink_tcp_read(&tcp, 0);
+    tcp_output(0, "session.wire.challenge");
+    tcp_input(0, "session.wire.proof");
+    td_netlink_tcp_read(&tcp, 0);
+    tcp_output(0, "session.wire.ready");
+    CHECK(ready_events == 1 && tcp.ready);
+}
+static void test_tcp_partial_and_takeover(void)
+{
+    fresh_tcp();
+    td_netlink_tcp_accept(&tcp, 0, PEER_A, 4);
+    td_netlink_tcp_accept(&tcp, 1, PEER_B, 4);
+    rng_push_vec("inputs.deviceEphemeral");
+    tcp_input(1, "session.wire.open");
+    sockets[1].read_max = sockets[1].write_max = 1;
+    sockets[1].stalls = 2;
+    /* A byte per poll splits both the prefix and the body, without releasing the waiter. */
+    for (size_t i = 0; i < sockets[1].input_len; i++) {
+        sockets[1].read_budget = 1;
+        td_netlink_tcp_read(&tcp, 1);
+        if (i + 1 < sockets[1].input_len) CHECK(sockets[0].closes == 0);
+    }
+    CHECK(sockets[0].closes == 1 && tcp.owner.fd == 1);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_A, 4) == 0);
+    tcp_output(1, "session.wire.challenge");
+    tcp_input(1, "session.wire.proof");
+    sockets[1].read_budget = 4096;
+    td_netlink_tcp_read(&tcp, 1);
+    tcp_output(1, "session.wire.ready");
+    CHECK(ready_events == 1);
+    sockets[1].eof = true;
+    td_netlink_tcp_read(&tcp, 1);
+    CHECK(sockets[1].closes == 1 && ended_events == 1 && !tcp.ready);
+    CHECK(tcp.conn.state == TD_NETLINK_CONN_CLOSED && tcp.owner.fd == -1);
+    const uint8_t erased[TD_NETLINK_KEY_LEN] = { 0 };
+    CHECK(!memcmp(tcp.conn.rx.key, erased, sizeof erased));
+    CHECK(!memcmp(tcp.conn.tx.key, erased, sizeof erased));
+    td_netlink_tcp_read(&tcp, 1);
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[1].closes == 1 && ended_events == 1);
+}
+static void test_tcp_refusal(void)
+{
+    fresh_tcp();
+    tcp_ready();
+    td_netlink_tcp_accept(&tcp, 1, PEER_B, 4);
+    sockets[1].write_max = 1;
+    sockets[1].stalls = 1;
+    for (int i = 0; i < 6; i++) td_netlink_tcp_tick(&tcp);
+    tcp_output(1, "errors.busy");
+    CHECK(sockets[1].closes == 0);
+    g_now += 99;
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[1].closes == 0);
+    g_now++;
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[1].closes == 1);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_B, 4) == 0);
+    /* The peer resets while the refusal is only partially sent. One final close, no half-close. */
+    td_netlink_tcp_accept(&tcp, 2, PEER_B, 4);
+    sockets[2].write_max = 1;
+    td_netlink_tcp_tick(&tcp);
+    sockets[2].failed = sockets[2].eof = true;
+    td_netlink_tcp_tick(&tcp);
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[2].closes == 1);
+    CHECK(tcp.ready && ended_events == 0);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_B, 4) == 0);
+}
+static void test_tcp_closer_exhaustion(void)
+{
+    fresh_tcp();
+    g_now = UINT32_MAX - 50; /* Refusal and drain deadlines cross clock wrap. */
+    tcp_ready();
+    for (int fd = 1; fd <= TD_NETLINK_TCP_CLOSERS + 1; fd++) {
+        sockets[fd].blocked = true;
+        td_netlink_tcp_accept(&tcp, fd, PEER_B, 4);
+    }
+    CHECK(sockets[TD_NETLINK_TCP_CLOSERS + 1].closes == 1);
+    CHECK(sockets[TD_NETLINK_TCP_CLOSERS + 1].writes == 1);
+    td_netlink_tcp_tick(&tcp);
+    g_now += 100;
+    td_netlink_tcp_tick(&tcp);
+    for (int fd = 1; fd <= TD_NETLINK_TCP_CLOSERS; fd++) CHECK(sockets[fd].closes == 0);
+    g_now += 100;
+    td_netlink_tcp_tick(&tcp);
+    for (int fd = 1; fd <= TD_NETLINK_TCP_CLOSERS + 1; fd++) CHECK(sockets[fd].closes == 1);
+    CHECK(tcp.ready && ended_events == 0);
+    td_netlink_tcp_end(&tcp, NULL);
+    CHECK(sockets[0].closes == 1 && ended_events == 1);
+    CHECK(!td_netlink_tcp_busy(&tcp));
+}
+static void test_tcp_records_and_close(void)
+{
+    fresh_tcp();
+    tcp_ready();
+    const cJSON *record;
+    cJSON_ArrayForEach(record, at(g_vectors, "records")) {
+        uint8_t wire[1100], plain[1100];
+        const size_t wire_len = vec_of(record, "wire", wire, sizeof wire);
+        const size_t plain_len = vec_of(record, "plaintext", plain, sizeof plain);
+        if (!strcmp(at(record, "direction")->valuestring, "c2d")) {
+            memcpy(sockets[0].input, wire, wire_len);
+            sockets[0].input_len = wire_len;
+            sockets[0].pos = 0;
+            sockets[0].read_max = 3;
+            td_netlink_tcp_read(&tcp, 0);
+        } else {
+            sockets[0].write_max = 3;
+            td_netlink_tcp_send(&tcp, plain, plain_len);
+            CHECK(sockets[0].output_len == wire_len);
+            CHECK(!memcmp(sockets[0].output, wire, wire_len));
+            sockets[0].output_len = 0;
+        }
+    }
+    CHECK(received_records == 2 && tcp.ready);
+    tcp_input(0, "tampered_record.wire");
+    td_netlink_tcp_read(&tcp, 0);
+    CHECK(sockets[0].closes == 1 && ended_events == 1 && !tcp.ready);
+    CHECK(tcp.conn.state == TD_NETLINK_CONN_CLOSED);
+
+    fresh_tcp();
+    tcp_ready();
+    tcp.conn.tx.counter = TD_NETLINK_COUNTER_LIMIT - 1;
+    td_netlink_tcp_flushed(&tcp);
+    CHECK(!tcp.ready && ended_events == 1 && tcp.owner.fd == -1);
+    CHECK(sockets[0].closes == 0);
+    td_netlink_tcp_tick(&tcp);
+    g_now += 100;
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[0].closes == 1);
+}
+
+static void test_tcp_terminal_owner(void)
+{
+    fresh_tcp();
+    td_netlink_tcp_accept(&tcp, 0, PEER_A, 4);
+    tcp_input(0, "pairing.wire.request");
+    td_netlink_tcp_read(&tcp, 0);
+    CHECK(tcp.owner.fd == -1 && tcp.conn.state == TD_NETLINK_CONN_CLOSED);
+    CHECK(!tcp.deck.window.open && ready_events == 0 && ended_events == 0);
+    sockets[0].write_max = 1;
+    for (int i = 0; i < 5; i++) td_netlink_tcp_tick(&tcp);
+    tcp_output(0, "errors.closed");
+    sockets[0].eof = true;
+    td_netlink_tcp_tick(&tcp);
+    CHECK(sockets[0].closes == 1);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_A, 4) == 0);
+    CHECK(!td_netlink_tcp_busy(&tcp));
+}
+
+static void test_tcp_write_deadline(void)
+{
+    fresh_tcp();
+    td_netlink_tcp_accept(&tcp, 0, PEER_A, 4);
+    rng_push_vec("inputs.deviceEphemeral");
+    tcp_input(0, "session.wire.open");
+    sockets[0].blocked = true;
+    const uint32_t start = g_now;
+    td_netlink_tcp_read(&tcp, 0);
+    CHECK(g_now - start == 1000 && sockets[0].closes == 1);
+    CHECK(tcp.owner.fd == -1 && !tcp.ready && ready_events == 0);
+    CHECK(td_netlink_backoff_left(&tcp.deck, PEER_A, 4) == 1000);
 }
 
 int main(int argc, char **argv)
@@ -1186,6 +1844,12 @@ int main(int argc, char **argv)
         void (*fn)(void);
         const char *name;
     } tests[] = {
+        { test_tcp_partial_and_takeover, "TCP partial I/O and takeover" },
+        { test_tcp_refusal, "TCP refusal and peer close" },
+        { test_tcp_closer_exhaustion, "TCP exhausted closers" },
+        { test_tcp_records_and_close, "TCP records and final close" },
+        { test_tcp_terminal_owner, "TCP terminal owner error" },
+        { test_tcp_write_deadline, "TCP write deadline" },
         { test_primitives_match_vectors, "primitives" },
         { test_pairing_vectors, "pairing vectors" },
         { test_wrong_code_then_right, "wrong code then right" },
@@ -1207,6 +1871,12 @@ int main(int argc, char **argv)
         { test_usb_wins, "usb wins" },
         { test_session_liveness, "session liveness" },
         { test_forget, "forget" },
+        { test_open_tags, "open tags" },
+        { test_open_tag_work_is_fixed, "fixed open tag work" },
+        { test_advert, "discovery advertisement" },
+        { test_management_vector, "management vector" },
+        { test_forget_one, "forget one" },
+        { test_pair_locked, "pair locked" },
     };
     const size_t count = sizeof tests / sizeof tests[0];
     for (size_t i = 0; i < count; i++) {

@@ -4,13 +4,12 @@
     python app/scripts/release_version.py check [--tag vX.Y.Z]
     python app/scripts/release_version.py bump X.Y.Z
 
-check verifies the version of the three package.json files, the four crate Cargo.toml files and the
-workspace crates in app/Cargo.lock, plus an optional release tag.
+check verifies the version of the workspace crate Cargo.toml files and the workspace crates in app/Cargo.lock,
+plus an optional release tag.
 bump changes only those version strings, preserving all other bytes.
 """
 
 import argparse
-import json
 from pathlib import Path
 import re
 import sys
@@ -18,17 +17,10 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-JSON_VERSION = re.compile(r'(\A\{\s*(?:"[^"]*"\s*:\s*(?:"[^"]*"|true|false|null|-?[0-9][0-9.eE+-]*)\s*,\s*)*?'
-                          r'"version"\s*:\s*")([^"]*)(")')
 TOML_VERSION = re.compile(r'(^\[package\]\r?\n(?:(?!\[)[^\n]*\n)*?version\s*=\s*")([^"]*)(")', re.MULTILINE)
-CRATES = ("td-companion", "td-core", "td-host", "td-link")
+CRATES = ("td-app", "td-companion", "td-core", "td-host", "td-link", "td-updater")
 LOCK = "app/Cargo.lock"
-PATTERNS = {
-    "app/package.json": JSON_VERSION,
-    "app/electron/package.json": JSON_VERSION,
-    "app/ui/package.json": JSON_VERSION,
-    **{f"app/crates/{crate}/Cargo.toml": TOML_VERSION for crate in CRATES},
-}
+PATTERNS = {f"app/crates/{crate}/Cargo.toml": TOML_VERSION for crate in CRATES}
 
 
 def lock_pattern(crate):
@@ -37,8 +29,6 @@ def lock_pattern(crate):
 
 
 def parsed_version(relative, text):
-    if relative.endswith(".json"):
-        return json.loads(text).get("version")
     return tomllib.loads(text).get("package", {}).get("version")
 
 

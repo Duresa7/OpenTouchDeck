@@ -17,7 +17,7 @@ use td_host::integrations::{Delivery, LiveSample};
 pub use router::{Binding, LiveCaps, Report, Router, StreamKey, bindings, stream_source};
 
 use crate::devices::{DeviceManager, LinkState};
-use crate::features::integrations::{Controls, Service};
+use crate::integrations::{Controls, Service};
 use crate::layouts::LayoutAuthority;
 use crate::link::Links;
 use covers::CoverCache;
@@ -30,6 +30,7 @@ const ROUND: Duration = Duration::from_millis(250);
 const LINK_WAIT: Duration = Duration::from_millis(50);
 
 struct Shared {
+    stopped: std::sync::atomic::AtomicBool,
     authority: LayoutAuthority,
     wake: Mutex<bool>,
     woken: Condvar,
@@ -48,6 +49,7 @@ struct Shared {
 impl Shared {
     fn new(authority: LayoutAuthority) -> Self {
         Self {
+            stopped: Default::default(),
             authority,
             wake: Mutex::default(),
             woken: Condvar::new(),
@@ -71,6 +73,13 @@ impl Shared {
 pub struct Live(Arc<Shared>);
 
 impl Live {
+    pub(crate) fn stop(&self) {
+        self.0
+            .stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0.wake();
+    }
+
     pub(crate) fn cover_assets(&self, device: &str) -> BTreeSet<String> {
         self.0.router.lock().cover_assets(device)
     }
@@ -138,6 +147,9 @@ fn run(
         let Some(shared) = shared.upgrade() else {
             break;
         };
+        if shared.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
         {
             let mut wake = shared.wake.lock();
             if !*wake {
@@ -255,6 +267,9 @@ fn make_covers(shared: Weak<Shared>, controls: Controls, queue: Receiver<Vec<Cov
         let Some(shared) = shared.upgrade() else {
             break;
         };
+        if shared.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
         let mut covers = shared.covers.lock();
         if *covers != made {
             *covers = made;

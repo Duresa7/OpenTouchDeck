@@ -247,27 +247,32 @@ fn a_lost_pair_stored_leaves_the_pairing_pending_until_a_session_works() {
 fn an_unpaired_companion_or_another_device_is_refused() {
     let device = fake();
     let paired = pair_with(&device, COMPANION);
+    // session.open names no id: a key the Device doesn't hold makes a tag it can't match.
     let stranger = Credential {
         companion_id: [0x20; 16],
+        ltk: [0x55; 32],
         ..paired.credential.clone()
     };
     assert!(matches!(
         try_connect_when_free(&device, &stranger).err(),
         Some(NetError::Refused(Refusal::Auth))
     ));
-    let elsewhere = Credential {
-        device_id: [2, 0, 0, 0, 0, 9],
-        ..paired.credential.clone()
-    };
-    assert!(matches!(
-        try_connect_when_free(&device, &elsewhere).err(),
-        Some(NetError::Refused(Refusal::Auth))
-    ));
-    let forged = Credential {
-        ltk: [0x55; 32],
-        ..paired.credential.clone()
-    };
-    assert!(NetCarrier::connect(&addr(&device), &forged, TIMEOUT).is_err());
+    // The right key with the wrong ids gets past the tag, but the transcript holds the ids the
+    // Device knows, so the proofs fail.
+    for wrong in [
+        Credential {
+            device_id: [2, 0, 0, 0, 0, 9],
+            ..paired.credential.clone()
+        },
+        Credential {
+            companion_id: [0x20; 16],
+            ..paired.credential.clone()
+        },
+    ] {
+        let error = try_connect_when_free(&device, &wrong).err();
+        assert!(matches!(error, Some(NetError::Auth(_))), "{error:?}");
+    }
+    assert_eq!(device.sessions(), 0);
 }
 
 #[test]
@@ -333,6 +338,29 @@ fn usb_only_requests_are_refused_over_the_network() {
         session.send_line("reboot").is_err(),
         "a network carrier has no console"
     );
+}
+
+/// The Pairings a Companion made over Wi-Fi are the ones `net.list` shows over USB, oldest
+/// first, and `net.forget` over USB removes them from the fake Device.
+#[test]
+fn usb_lists_and_forgets_the_wifi_pairings() {
+    use td_link::pairings::{Forget, net_forget, net_list};
+    let deck = MockDeck::v2();
+    deck.set_wifi_capability(true);
+    let device = FakeNetDevice::start(deck);
+    let second = [0x20; 16];
+    pair_with(&device, COMPANION);
+    pair_with(&device, second);
+    let (usb, _usb_incoming) = Session::open(Box::new(device.deck().connect()), quiet()).unwrap();
+    usb.hello(TIMEOUT).unwrap();
+    let listed = net_list(&usb).unwrap();
+    let ids: Vec<[u8; 16]> = listed.pairings.iter().map(|p| p.app_id).collect();
+    assert_eq!(ids, vec![COMPANION, second]);
+    assert_eq!(listed.free, 2);
+    assert_eq!(net_forget(&usb, Forget::One(COMPANION)).unwrap(), 1);
+    assert_eq!(device.paired(), 1);
+    assert_eq!(net_forget(&usb, Forget::All).unwrap(), 1);
+    assert_eq!(device.paired(), 0);
 }
 
 fn image() -> (usize, String) {
@@ -491,12 +519,23 @@ fn a_request_cut_off_by_a_closed_session_has_an_unknown_outcome() {
     let device = fake();
     let paired = pair_with(&device, COMPANION);
     let (session, _incoming) = session(&device, &paired.credential);
-    device.deck().delay_replies(Duration::from_millis(500));
+    // The Device holds its reply for as long as the call waits, so the drop comes first.
+    device.deck().delay_replies(TIMEOUT);
+    let before = device.deck().received().len();
     let dropper = {
         let device = &device;
         thread::scope(|scope| {
             let call = scope.spawn(|| session.call(&json!({"m": "ping"}), TIMEOUT));
-            thread::sleep(Duration::from_millis(100));
+            // Drop once the Device holds the request. A session that ends before the request
+            // goes out refuses it as closed, which is a known outcome.
+            let end = Instant::now() + TIMEOUT;
+            while device.deck().received().len() == before && Instant::now() < end {
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(
+                device.deck().received().len() > before,
+                "the Device never got the request"
+            );
             device.drop_connection();
             call.join().unwrap()
         })
@@ -536,4 +575,88 @@ fn the_bluetooth_keyboard_refuses_every_request_over_wifi() {
     refused(ble::ble_forget(&session, None).map(drop));
     assert!(!deck.ble_enabled());
     assert_eq!(deck.ble_bonds().len(), 1);
+}
+
+#[test]
+fn a_layout_read_finishes_below_the_record_reserve_and_next_transfer_is_refused() {
+    use td_link::net::wire::{COUNTER_LIMIT, RECORD_RESERVE};
+    let device = fake();
+    let paired = pair_with(&device, COMPANION);
+    let layout = Layout::parse(include_bytes!("../../../../schema/examples/dev.json")).unwrap();
+    {
+        let (session, _) = session(&device, &paired.credential);
+        xfer::put_layout(&session, Orientation::Landscape, &layout).unwrap();
+    }
+    let start = COUNTER_LIMIT - RECORD_RESERVE;
+    device.skip_next_session(start);
+    let mut carrier = connect_when_free(&device, &paired.credential);
+    carrier.skip_records(start);
+    let (session, _) = Session::over(Box::new(carrier), quiet()).unwrap();
+    assert_eq!(
+        xfer::get_layout(&session, Orientation::Landscape)
+            .unwrap()
+            .data,
+        layout.to_canonical_json()
+    );
+    assert!(
+        session.transfer().is_err(),
+        "a new operation needs the reserve"
+    );
+}
+
+#[test]
+fn abandoning_a_transfer_releases_the_real_network_carrier() {
+    let device = fake();
+    let paired = pair_with(&device, COMPANION);
+    let (session, _) = session(&device, &paired.credential);
+    let mut transfer = session.transfer().unwrap();
+    transfer
+        .begin(|| {
+            session.call(
+                &json!({"m":"icon.put", "id":"0000000000000001",
+        "bytes": xfer::ICON_BYTES, "crc32": 0}),
+                TIMEOUT,
+            )
+        })
+        .unwrap();
+    drop(transfer);
+    assert!(!session.is_open());
+    let end = Instant::now() + TIMEOUT;
+    while device.session().is_some() && Instant::now() < end {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(device.session(), None);
+    let (next, _) = self::session(&device, &paired.credential);
+    assert!(next.hello(TIMEOUT).unwrap().is_deck());
+    assert!(device.deck().icons().is_empty());
+}
+
+#[test]
+fn an_admitted_transfer_cannot_cross_the_hard_record_limit() {
+    use td_link::net::wire::{COUNTER_LIMIT, RECORD_RESERVE};
+    let device = fake();
+    let paired = pair_with(&device, COMPANION);
+    let start = COUNTER_LIMIT - RECORD_RESERVE;
+    device.skip_next_session(start);
+    let mut carrier = connect_when_free(&device, &paired.credential);
+    carrier.skip_records(start);
+    let (session, _) = Session::over(Box::new(carrier), quiet()).unwrap();
+    let mut transfer = session.transfer().unwrap();
+    let opened = transfer
+        .begin(|| {
+            session.call(
+                &json!({"m":"icon.put",
+        "id":"0000000000000001", "bytes":xfer::ICON_BYTES, "crc32":0}),
+                TIMEOUT,
+            )
+        })
+        .unwrap();
+    assert!(opened.ok);
+    // Heartbeats share admission, but never extend either key's hard limit.
+    for _ in 1..RECORD_RESERVE {
+        session.call(&json!({"m":"ping"}), TIMEOUT).unwrap();
+    }
+    assert!(session.call(&json!({"m":"ping"}), TIMEOUT).is_err());
+    drop(transfer);
+    assert!(!session.is_open());
 }

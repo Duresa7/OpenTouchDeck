@@ -4,10 +4,10 @@ mod auth;
 mod error;
 pub mod security;
 mod socket;
-mod ui;
 
+pub use crate::events::Events;
 pub use crate::jobs::{JobKind, Jobs};
-pub(crate) use auth::{Auth, Clock};
+pub(crate) use auth::Auth;
 pub use auth::{ClientInfo, SessionInfo, SessionKind};
 use axum::{
     Router,
@@ -21,155 +21,63 @@ use axum::{
 pub use error::{ApiError, CommonError, ErrorBody};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-pub use socket::{Event, Events, Topic};
+pub use socket::{Event, Topic};
 use std::{collections::HashMap, future::Future, sync::Arc};
 use ts_rs::TS;
 
+/// The local web adapter's state. Product behaviour lives in `companion::Handle`.
 #[derive(Clone)]
 pub struct Ctx {
-    pub actions: crate::actions::Actions,
-    pub integrations: crate::features::integrations::Service,
-    pub(crate) desktop: Arc<crate::tray::Desktop>,
-    pub devices: crate::devices::DeviceManager,
-    pub firmware: crate::features::firmware::Firmware,
-    pub events: Events,
-    pub jobs: crate::jobs::Jobs,
-    pub links: crate::link::Links,
-    pub authority: crate::layouts::LayoutAuthority,
-    pub live: crate::live::Live,
-    pub photos: crate::photos::PhotoFrames,
-    pub layouts: crate::store::LayoutStore,
-    pub assets: crate::store::AssetStore,
-    pub catalog: Arc<td_host::catalog::Catalog>,
-    pub packs: Arc<td_host::packs::Packs>,
-    pub brandfetch: crate::features::brandfetch::Brandfetch,
+    companion: crate::companion::Handle,
+    pub(crate) web_events: socket::WebEvents,
     pub(crate) uploads: crate::features::uploads::Uploads,
     auth: Arc<Mutex<Auth>>,
-    pub(crate) clock: Clock,
-    pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
     pub(crate) port: u16,
     pub(crate) runtime: Option<Arc<crate::runtime::Runtime>>,
-    pub(crate) mock: bool,
     pub(crate) limits: crate::Limits,
     pub(crate) started_ms: u64,
-    /// Counts requests that reached a handler, so tests can show a rejection never did.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) handler_hits: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) checkpoints: crate::checkpoints::Checkpoints,
-    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) real_device_console: bool,
 }
+impl std::ops::Deref for Ctx {
+    type Target = crate::companion::Handle;
+    fn deref(&self) -> &Self::Target {
+        &self.companion
+    }
+}
 impl Ctx {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn companion_handle(&self) -> crate::companion::Handle {
+        self.companion.clone()
+    }
     pub(crate) fn new(
+        companion: crate::companion::Handle,
         port: u16,
-        mock: bool,
         runtime: Option<Arc<crate::runtime::Runtime>>,
         limits: crate::Limits,
-        data: &std::path::Path,
-        grants: Arc<dyn crate::actions::GrantStore>,
     ) -> Self {
-        let events = Events::default();
-        let clock = Clock::default();
-        let layouts = crate::store::LayoutStore::new(data.join("layouts"));
-        let devices = crate::devices::DeviceManager::new(events.clone());
-        let links = crate::link::Links::new(devices.clone());
-        let actions = crate::actions::Actions::new(
-            events.clone(),
-            clock.clone(),
-            devices.clone(),
-            links.clone(),
-            grants,
-            mock,
-        );
         let auth = Arc::new(Mutex::new(Auth::new()));
         let lease_auth = auth.clone();
-        let lease_clock = clock.clone();
-        let integrations = crate::features::integrations::Service::new(mock, events.clone());
-        integrations.command_approval(Arc::new(actions.clone()));
-        let settable = integrations.clone();
-        let settable: crate::controls::Settable = Arc::new(move |key| settable.settable(key));
-        let authority = crate::layouts::LayoutAuthority::new(
-            layouts.pushed(),
-            settable.clone(),
-            devices.clone(),
-        );
-        let live = crate::live::Live::start(
-            devices.clone(),
-            links.clone(),
-            integrations.clone(),
-            authority.clone(),
-        );
-        let turned_on = integrations.clone();
-        actions.attach(
-            authority.clone(),
-            integrations.controls.clone(),
-            settable,
-            Arc::new(move |id| turned_on.enabled(id)),
-        );
+        let lease_clock = companion.clock.clone();
+        companion.jobs.session_check(Arc::new(move |id| {
+            lease_auth.lock().active(id, lease_clock.now())
+        }));
         Self {
-            actions,
-            integrations,
-            live,
-            authority,
-            firmware: crate::features::firmware::Firmware::new(mock),
-            desktop: Arc::new(crate::tray::Desktop::new(mock)),
-            jobs: crate::jobs::Jobs::new(
-                events.clone(),
-                clock.clone(),
-                Arc::new(move |id| lease_auth.lock().active(id, lease_clock.now())),
-            ),
-            photos: crate::photos::PhotoFrames::new(
-                Some(data.join("photo-frame.json")),
-                devices.clone(),
-                links.clone(),
-            ),
-            links,
-            assets: crate::store::AssetStore::new(
-                data.join("assets"),
-                layouts.clone(),
-                clock.clone(),
-                limits.asset_store_bytes,
-            ),
-            layouts,
-            catalog: Arc::new(td_host::catalog::Catalog::new(
-                data.join("cache/catalog"),
-                Box::new(td_host::catalog::HttpFetcher),
-            )),
-            packs: Arc::new(td_host::packs::Packs::new(
-                data.join("packs"),
-                Box::new(td_host::catalog::HttpDownload::new(
-                    td_host::packs::MAX_DOWNLOAD,
-                    std::time::Duration::from_secs(120),
-                )),
-            )),
-            brandfetch: crate::features::brandfetch::Brandfetch::new(data.join("brandfetch"), mock),
-            uploads: Default::default(),
-            devices,
-            events,
+            web_events: socket::WebEvents::new(&companion.events),
+            companion,
             auth,
-            clock,
-            shutdown: tokio::sync::watch::channel(false).0,
             port,
             runtime,
-            mock,
             limits,
+            uploads: Default::default(),
             started_ms: crate::now_ms(),
             #[cfg(any(test, feature = "test-hooks"))]
             handler_hits: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
-            checkpoints: Default::default(),
-            #[cfg(any(test, feature = "test-hooks"))]
             real_device_console: false,
         }
-    }
-    #[cfg(windows)]
-    pub(crate) async fn pair_browser(&self) -> Result<(), CommonError> {
-        auth::pair_code(self.clone()).await.map(|_| ())
-    }
-    #[cfg(windows)]
-    pub(crate) async fn reset_pairing(&self) -> Result<(), CommonError> {
-        auth::reset(self.clone()).await
     }
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn pairing_token(&self) -> String {
@@ -186,7 +94,7 @@ impl Ctx {
         let ended_with_sockets = auth.sweep(now);
         drop(auth);
         if ended_with_sockets {
-            self.events.notify();
+            self.web_events.notify();
         }
     }
     pub(crate) fn runtime_value(&self) -> serde_json::Value {
@@ -207,8 +115,7 @@ impl<T: DeserializeOwned + Serialize + TS + Send + 'static> RequestBody for T {}
 pub trait ResponseBody: DeserializeOwned + Serialize + TS + Send + 'static {}
 impl<T: DeserializeOwned + Serialize + TS + Send + 'static> ResponseBody for T {}
 
-/// One route, declared once. The router, the typed test client and the generated TypeScript
-/// client all read this declaration.
+/// One route, declared once. The router and the typed test client both read this declaration.
 pub trait Endpoint: Sized + Send + Sync + 'static {
     const NAME: &'static str;
     const METHOD: Method;
@@ -294,9 +201,6 @@ pub enum Access {
     Public,
 }
 
-/// Collects TypeScript declarations for the generated client.
-#[cfg(any(test, feature = "test-hooks"))]
-pub type CollectTypes = fn(&mut crate::bindings::Decls);
 pub struct EndpointInfo {
     pub name: &'static str,
     pub method: Method,
@@ -306,39 +210,17 @@ pub struct EndpointInfo {
     pub errors: &'static [&'static str],
     #[cfg(any(test, feature = "test-hooks"))]
     pub path_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub query_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub body_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub ok_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub types: CollectTypes,
 }
 pub struct JobKindInfo {
     pub name: &'static str,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub progress_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub result_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub types: CollectTypes,
 }
 pub struct EventInfo {
     pub name: &'static str,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub data_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub types: CollectTypes,
 }
 pub type ReadSnapshot = Box<dyn Fn(&Ctx) -> serde_json::Value + Send + Sync>;
 pub struct Snapshot {
     pub key: &'static str,
     pub read: ReadSnapshot,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub data_type: String,
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub types: CollectTypes,
 }
 pub struct Feature {
     pub name: &'static str,
@@ -347,10 +229,6 @@ pub struct Feature {
     pub snapshots: Vec<Snapshot>,
     pub jobs: Vec<JobKindInfo>,
     router: Router<Ctx>,
-}
-#[cfg(any(test, feature = "test-hooks"))]
-fn collect<T: TS + 'static + ?Sized>(decls: &mut crate::bindings::Decls) {
-    decls.add::<T>();
 }
 impl Feature {
     pub fn new(name: &'static str) -> Self {
@@ -364,31 +242,12 @@ impl Feature {
         }
     }
     pub fn event<E: Event>(mut self) -> Self {
-        self.events.push(EventInfo {
-            name: E::NAME,
-            #[cfg(any(test, feature = "test-hooks"))]
-            data_type: E::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            types: collect::<E>,
-        });
+        self.events.push(EventInfo { name: E::NAME });
         self
     }
-    /// A Job kind, so the generated `JobMap` types its progress and result.
+    /// A Job kind.
     pub fn job<K: JobKind>(mut self) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
-        fn types<K: JobKind>(decls: &mut crate::bindings::Decls) {
-            decls.add::<K::Progress>();
-            decls.add::<K::Result>();
-        }
-        self.jobs.push(JobKindInfo {
-            name: K::NAME,
-            #[cfg(any(test, feature = "test-hooks"))]
-            progress_type: K::Progress::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            result_type: K::Result::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            types: types::<K>,
-        });
+        self.jobs.push(JobKindInfo { name: K::NAME });
         self
     }
     /// A `sync` key, filled from `read` for every new socket.
@@ -400,10 +259,6 @@ impl Feature {
         self.snapshots.push(Snapshot {
             key,
             read: Box::new(move |ctx| serde_json::to_value(read(ctx)).unwrap()),
-            #[cfg(any(test, feature = "test-hooks"))]
-            data_type: T::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            types: collect::<T>,
         });
         self
     }
@@ -412,13 +267,6 @@ impl Feature {
     }
     /// Registers a route with another access level. Visible only inside `api`.
     fn route<E: Endpoint>(mut self, access: Access) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
-        fn types<E: Endpoint>(decls: &mut crate::bindings::Decls) {
-            decls.add::<E::Path>();
-            decls.add::<E::Query>();
-            decls.add::<E::Body>();
-            decls.add::<E::Ok>();
-        }
         self.endpoints.push(EndpointInfo {
             name: E::NAME,
             method: E::METHOD,
@@ -428,14 +276,6 @@ impl Feature {
             errors: E::Error::CODES,
             #[cfg(any(test, feature = "test-hooks"))]
             path_type: E::Path::inline(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            query_type: E::Query::inline(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            body_type: E::Body::inline(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            ok_type: E::Ok::name(),
-            #[cfg(any(test, feature = "test-hooks"))]
-            types: types::<E>,
         });
         self.router = self.router.route(
             &format!("/api/v1{}", E::PATH),
@@ -549,10 +389,15 @@ fn build_router(ctx: Ctx, features: Vec<Feature>) -> Router {
     router = router.route("/api/v1/events", axum::routing::get(socket::upgrade));
     let access = Arc::new(access);
     router
-        .fallback(ui::serve)
+        .fallback(|| async { CommonError::NotFound })
         .method_not_allowed_fallback(|| async { CommonError::MethodNotAllowed })
         .layer(middleware::from_fn_with_state((ctx.clone(), access), guard))
         .with_state(ctx)
+}
+
+/// Only `/api` paths are routed. Every other path is a 404 that still passes the request guard.
+fn is_api(path: &str) -> bool {
+    path == "/api" || path.starts_with("/api/")
 }
 
 type Routes = HashMap<(Method, String), (Access, bool)>;
@@ -597,7 +442,7 @@ fn admit(ctx: &Ctx, access: &Routes, mut request: Request) -> Result<Request, Co
             origin: header("origin"),
             fetch_site: header("sec-fetch-site"),
             fetch_mode: header("sec-fetch-mode"),
-            api: ui::is_api(request.uri().path()),
+            api: is_api(request.uri().path()),
             get: request.method() == Method::GET,
         },
         ctx.port,
@@ -613,7 +458,7 @@ fn admit(ctx: &Ctx, access: &Routes, mut request: Request) -> Result<Request, Co
     {
         return Err(CommonError::MediaType);
     }
-    if !ui::is_api(request.uri().path()) {
+    if !is_api(request.uri().path()) {
         return Ok(request);
     }
     // Access is looked up by the route the request matched, so a request that matches no
@@ -685,4 +530,27 @@ pub(crate) fn is_json(headers: &HeaderMap) -> bool {
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.split(';').next().unwrap_or("").trim() == "application/json")
+}
+
+/// Checks the runtime file off the async runtime and rewrites it on drift. Returns false when
+/// it couldn't be secured after retries.
+pub(crate) async fn rewrite_runtime(ctx: &Ctx) -> bool {
+    let Some(runtime) = ctx.runtime.clone() else {
+        return true;
+    };
+    let ctx = ctx.clone();
+    tokio::task::spawn_blocking(move || runtime.repair(&ctx.runtime_value()).is_ok())
+        .await
+        .unwrap_or(false)
+}
+/// The web adapter's 60 s maintenance step: sweeps ended sessions, then
+/// checks the runtime file. Returns false when the Companion must stop.
+pub(crate) async fn maintain(ctx: &Ctx) -> bool {
+    ctx.sweep_sessions();
+    let ok = rewrite_runtime(ctx).await;
+    if !ok {
+        ctx.desktop
+            .notify("The runtime file failed its check. Restart Open TouchDeck.");
+    }
+    ok
 }

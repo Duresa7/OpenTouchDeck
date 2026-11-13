@@ -99,10 +99,15 @@ built-in implementation. There is no net-v2 socket peer yet; the Firmware and
 Companion tickets bring their own.
 
 For per-peer backoff and pairing, `closeOutcome` tells a close the peer starts
-from a radio loss, `PeerBackoff.admits` lets a `session.open` naming a stored
-`companion_id` past a backoff, and `PairFailures` counts failed proofs and
-dropped pairing windows toward the pairing lockout. `HANGUL_FILLERS` extends
-the `companion_name` rule.
+from a radio loss, `PeerBackoff.admits` lets a `session.open` whose
+`open_tag` matches a stored Pairing past a backoff, and `PairFailures` counts
+failed proofs and dropped pairing windows toward the pairing lockout.
+`HANGUL_FILLERS` extends the `companion_name` rule.
+
+For discovery privacy, `openTag` and `findPairing` replace the cleartext ids in
+`session.open`, `advertisement` builds the TXT record in and out of pairing
+mode, and `readRecord` with `matchRecord` is the Companion's side: it finds its
+Pairings by hint and drops records it can't match.
 
 `net-v2.mjs` also models three rules the Firmware and Companion must match:
 `nameAllowed` with the pinned `FORMAT_RANGES` table for `companion_name`,

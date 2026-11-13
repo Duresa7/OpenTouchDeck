@@ -127,6 +127,16 @@ pub struct Named {
     pub terms: Vec<String>,
 }
 
+/// Whether Windows keeps this name for a device, so a pack's folder can't have it. A prefix is the
+/// pack's folder name on every OS, and it's refused on every OS so a pack means the same everywhere.
+fn windows_reserves(prefix: &str) -> bool {
+    matches!(prefix, "con" | "prn" | "aux" | "nul")
+        || prefix
+            .strip_prefix("com")
+            .or_else(|| prefix.strip_prefix("lpt"))
+            .is_some_and(|n| n.len() == 1 && n.as_bytes()[0].is_ascii_digit())
+}
+
 /// A name that Iconify accepts: lowercase letters and digits, joined by single hyphens.
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -211,6 +221,11 @@ fn safe_element(node: roxmltree::Node) -> bool {
 
 fn safe_attribute(attr: &roxmltree::Attribute) -> bool {
     if !matches!(attr.namespace(), None | Some(XLINK_NS) | Some(XML_NS)) {
+        return false;
+    }
+    // Of the `xml:` attributes a body needs only `xml:space`. `xml:base` would change what a
+    // relative link means.
+    if attr.namespace() == Some(XML_NS) && attr.name() != "space" {
         return false;
     }
     let name = attr.name().to_ascii_lowercase();
@@ -305,6 +320,12 @@ impl IconSet {
             serde_json::from_slice(json).map_err(|e| format!("not an Iconify JSON file: {e}"))?;
         if !valid_name(&raw.prefix) || raw.prefix.len() > 64 {
             return Err("the prefix must be lowercase letters, digits and single hyphens".into());
+        }
+        if windows_reserves(&raw.prefix) {
+            return Err(format!(
+                "its prefix \"{}\" is a name Windows reserves, so no folder can have it",
+                raw.prefix
+            ));
         }
         if raw.icons.len() + raw.aliases.len() > MAX_ICONS {
             return Err(format!("the file holds more than {MAX_ICONS} icons"));
@@ -514,6 +535,24 @@ mod tests {
     }
 
     #[test]
+    fn a_prefix_windows_reserves_is_refused_on_every_os() {
+        let pack = |prefix: &str| {
+            serde_json::json!({"prefix": prefix, "icons": {"a": {"body": "<path/>"}}})
+                .to_string()
+                .into_bytes()
+        };
+        for reserved in [
+            "con", "prn", "aux", "nul", "com0", "com1", "com9", "lpt0", "lpt9",
+        ] {
+            let error = IconSet::parse(&pack(reserved)).unwrap_err();
+            assert!(error.contains("Windows reserves"), "{reserved}: {error}");
+        }
+        for fine in ["cons", "nul-icons", "com", "com10", "lpt", "a-con"] {
+            assert_eq!(IconSet::parse(&pack(fine)).unwrap().prefix, fine);
+        }
+    }
+
+    #[test]
     fn bodies_with_scripts_handlers_or_outside_references_are_unsafe() {
         assert!(safe_body(
             r##"<path d="M0 0h1"/><use href="#a"/><path fill="url(#g)"/>"##
@@ -560,6 +599,9 @@ mod tests {
             r#"<image href=" https://example.org/x.png"/>"#,
             r#"<style>path{fill:red}</style>"#,
             r#"<path d="M0 0"#,
+            // Of the `xml:` attributes, only `xml:space`.
+            r#"<g xml:base="https://example.org/"><path/></g>"#,
+            r#"<g xml:lang="en"><path/></g>"#,
         ] {
             assert!(!safe_body(bad), "{bad}");
         }

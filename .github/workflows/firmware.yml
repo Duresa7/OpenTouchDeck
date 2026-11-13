@@ -1,39 +1,78 @@
 name: firmware
 
-# Pull requests run these checks once; merging to main does not rerun them.
-# The windows release workflow calls this again on the exact commit it releases.
+# Pull requests run these checks when Firmware or the schema changes. Main reruns them after such a merge, which
+# saves the compiler cache the next pull request restores.
+# It always checks the commit that started the run and takes no ref from its caller, so no caller can point it
+# at other code (ADR 0007).
 on:
   workflow_call:
     inputs:
-      ref:
-        description: Commit or tag to check (empty means the triggering ref)
-        type: string
-        default: ""
+      cache:
+        description: Keep the ESP-IDF compiler cache between runs. Pull request and main checks only, never a release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-concurrency:
-  group: firmware-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
+  # One job builds the three images in turn: the normal build, the radio build and the QEMU test image. They
+  # share one checkout, one toolchain and one compiler cache.
   firmware:
-    name: esp32s3 build
+    name: esp32s3 builds, QEMU and layout schema
     runs-on: ubuntu-24.04
-    # The same ESP-IDF release the Windows release workflow clones.
+    # The ESP-IDF release the Firmware is built with.
     container: espressif/idf:v6.1
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       # Relative to the workspace and git-ignored (build/): container jobs see a different absolute path.
-      FIRMWARE_BUILD: build/firmware
-      BUNDLE_OUT: build/bundle
+      NORMAL_BUILD: build/firmware
+      NORMAL_BUNDLES: build/bundle
+      RADIO_BUILD: build/firmware-radio
+      RADIO_BUNDLES: build/bundle-radio
+      # The QEMU test image (-DTD_QEMU_TEST=1): Ethernet in place of Wi-Fi and a pairing window at boot. It is never
+      # packed or flashed, and radio_guard.py fails any build that has it.
+      QEMU_BUILD: build/firmware-qemu
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
+      # For the layout schema checks and the net-v2 reference client the QEMU check runs.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
 
+      - name: Check the layout schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix schema
+          node schema/check-layouts.mjs
+          node --test "schema/*.test.mjs"
+
+      # The ESP-IDF image compiles through ccache (IDF_CCACHE_ENABLE=1). Its folder is kept between runs under
+      # build/, which is git-ignored, so most of a build is cache hits. Pull requests restore what main saved.
+      - name: Keep the compiler cache in the workspace
+        if: inputs.cache
+        shell: bash
+        run: |
+          {
+            echo "CCACHE_DIR=$GITHUB_WORKSPACE/build/ccache"
+            # Room for all three images.
+            echo "CCACHE_MAXSIZE=1200M"
+            # ESP-IDF writes a specs file into every new build folder, and ccache would key on that file's time.
+            # Keying on the content of the compiler and its specs files lets one run's cache serve the next.
+            echo "CCACHE_COMPILERCHECK=content"
+          } >> "$GITHUB_ENV"
+      - name: Restore the compiler cache
+        if: inputs.cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/ccache
+          key: idf-ccache-all-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: idf-ccache-all-
+
+      # The normal build: what every release ships.
       - name: Build the firmware
         shell: bash
         run: |
@@ -41,7 +80,7 @@ jobs:
           # Source the environment before strict mode: export.sh is not written for set -u.
           . "$IDF_PATH/export.sh"
           set -euo pipefail
-          idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" build
+          idf.py -C firmware -B "$GITHUB_WORKSPACE/$NORMAL_BUILD" build
 
       - name: Test Firmware file loaders, key events, link carriers, Wi-Fi, the Bluetooth keyboard, Assets, Tile geometry, td_ui_core and net-v2 on the host
         # After the build: the LittleFS test compiles the pinned managed component it fetched.
@@ -68,89 +107,48 @@ jobs:
           python -B firmware/tools/test_gif_ui.py
           python -B firmware/tools/test_ui_core.py
           python -B firmware/tools/test_netlink.py
-          TD_GUARD_NORMAL_BUILD="$FIRMWARE_BUILD" python -B firmware/tools/test_radio_guard.py
+          TD_GUARD_NORMAL_BUILD="$NORMAL_BUILD" python -B firmware/tools/test_radio_guard.py
 
       - name: Check the firmware is esp32s3 and radio-free
+        # radio_guard.py: the esp32s3 target, the USB console, no Wi-Fi or Bluetooth option, and no radio, network,
+        # mDNS or netlink component linked.
         shell: bash
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           set -euo pipefail
-          if grep -E '^CONFIG_BT_ENABLED=y' firmware/sdkconfig || grep -E '^#define CONFIG_BT_ENABLED 1' "$FIRMWARE_BUILD/config/sdkconfig.h"; then
+          if grep -E '^CONFIG_BT_ENABLED=y' firmware/sdkconfig || grep -E '^#define CONFIG_BT_ENABLED 1' "$NORMAL_BUILD/config/sdkconfig.h"; then
             echo "::error::The built sdkconfig enables Bluetooth"
             exit 1
           fi
-          # The release recipe's own audit (firmware/tools/radio_guard.py): no Wi-Fi or Bluetooth option, no radio,
-          # network, mDNS or netlink component linked.
-          python -B - <<'EOF'
-          import importlib.util, json, os, sys
-          from pathlib import Path
-          build = Path(os.environ["FIRMWARE_BUILD"])
-          settings = json.loads((build / "config/sdkconfig.json").read_text(encoding="utf-8"))
-          if settings.get("IDF_TARGET") != "esp32s3":
-              sys.exit(f"IDF_TARGET is {settings.get('IDF_TARGET')!r}, not 'esp32s3'")
-          spec = importlib.util.spec_from_file_location("package_windows", "app/scripts/package_windows.py")
-          package = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(package)
-          audit = package.audit_radio(build)
-          print(json.dumps({"radio_free": True, "usb_serial_jtag": audit["usb_serial_jtag"]}))
-          EOF
+          python -B firmware/tools/radio_guard.py normal "$NORMAL_BUILD"
 
       - name: Pack and check the .tdfw bundle
         shell: bash
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           set -euo pipefail
-          python -B firmware/tools/make_bundle.py --build-dir "$FIRMWARE_BUILD" --out-dir "$BUNDLE_OUT"
-          for bundle in "$BUNDLE_OUT"/*.tdfw; do python -B firmware/tools/make_bundle.py --check "$bundle"; done
+          python -B firmware/tools/make_bundle.py --build-dir "$NORMAL_BUILD" --out-dir "$NORMAL_BUNDLES"
+          for bundle in "$NORMAL_BUNDLES"/*.tdfw; do python -B firmware/tools/make_bundle.py --check "$bundle"; done
 
-      - name: Check the build left the checkout clean
-        # The release recipe refuses a dirty tree, so sdkconfig or lock drift must fail here first.
-        shell: bash
-        run: |
-          git status --porcelain --untracked-files=normal
-          test -z "$(git status --porcelain --untracked-files=normal)"
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: firmware-tdfw
-          path: ${{ env.BUNDLE_OUT }}/*.tdfw
-          if-no-files-found: error
-          retention-days: 14
-
-  radio:
-    name: esp32s3 radio build
-    runs-on: ubuntu-24.04
-    container: espressif/idf:v6.1
-    timeout-minutes: 60
-    env:
-      FIRMWARE_BUILD: build/firmware-radio
-      BUNDLE_OUT: build/bundle-radio
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-
+      # The radio build: the opt-in build with Wi-Fi and the Bluetooth keyboard.
       - name: Build the radio firmware
         shell: bash
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . "$IDF_PATH/export.sh"
           set -euo pipefail
-          idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" -DTD_RADIO_BUILD=1 build
+          idf.py -C firmware -B "$GITHUB_WORKSPACE/$RADIO_BUILD" -DTD_RADIO_BUILD=1 build
 
-      - name: Check the radio build and that the release guards reject it
+      - name: Check the radio build and that the normal build's guard rejects it
         # Wi-Fi, lwIP and NimBLE on, buffers in PSRAM, the BLE controller in flash, BLE started only by the Bluetooth
         # keyboard, nothing in the image that scans, connects as a central or joins a network, and static internal RAM
-        # under the ceiling that keeps the 24 KB floor measured on the board. The normal build's guard and the release
-        # audit must fail it.
+        # under the ceiling that keeps the 24 KB floor measured on the board. The normal build's guard must fail it.
         shell: bash
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           set -euo pipefail
-          idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" size --format json2 --output-file "$FIRMWARE_BUILD/size.json"
-          python -B firmware/tools/radio_guard.py radio "$FIRMWARE_BUILD" --size-json "$FIRMWARE_BUILD/size.json"
-          TD_GUARD_RADIO_BUILD="$FIRMWARE_BUILD" python -B firmware/tools/test_radio_guard.py
+          idf.py -C firmware -B "$GITHUB_WORKSPACE/$RADIO_BUILD" size --format json2 --output-file "$RADIO_BUILD/size.json"
+          python -B firmware/tools/radio_guard.py radio "$RADIO_BUILD" --size-json "$RADIO_BUILD/size.json"
+          TD_GUARD_RADIO_BUILD="$RADIO_BUILD" python -B firmware/tools/test_radio_guard.py
 
       - name: Report the radio build's static internal RAM
         shell: bash
@@ -160,7 +158,7 @@ jobs:
           {
             echo '### Radio build memory'
             echo '```'
-            idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" size
+            idf.py -C firmware -B "$GITHUB_WORKSPACE/$RADIO_BUILD" size
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -169,64 +167,45 @@ jobs:
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           set -euo pipefail
-          python -B firmware/tools/make_bundle.py --build-dir "$FIRMWARE_BUILD" --out-dir "$BUNDLE_OUT"
-          for bundle in "$BUNDLE_OUT"/touchdeck-*.tdfw; do
-            radio="$BUNDLE_OUT/touchdeck-radio-${bundle##*/touchdeck-}"
+          python -B firmware/tools/make_bundle.py --build-dir "$RADIO_BUILD" --out-dir "$RADIO_BUNDLES"
+          for bundle in "$RADIO_BUNDLES"/touchdeck-*.tdfw; do
+            radio="$RADIO_BUNDLES/touchdeck-radio-${bundle##*/touchdeck-}"
             mv "$bundle" "$radio"
             python -B firmware/tools/make_bundle.py --check "$radio"
           done
 
-      - name: Check the build left the checkout clean
-        # The radio build keeps its sdkconfig in its build directory, never in firmware/sdkconfig.
-        shell: bash
-        run: |
-          git status --porcelain --untracked-files=normal
-          test -z "$(git status --porcelain --untracked-files=normal)"
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: firmware-radio-tdfw
-          path: ${{ env.BUNDLE_OUT }}/touchdeck-radio-*.tdfw
-          if-no-files-found: error
-          retention-days: 14
-
-  qemu:
-    name: esp32s3 radio build, net-v2 in QEMU
-    runs-on: ubuntu-24.04
-    container: espressif/idf:v6.1
-    timeout-minutes: 60
-    env:
-      # The QEMU test image (-DTD_QEMU_TEST=1): Ethernet in place of Wi-Fi and a pairing window at boot. It is never
-      # packed or flashed, and radio_guard.py fails any build that has it.
-      FIRMWARE_BUILD: build/firmware-qemu
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-
+      # The QEMU test image: the radio build with Ethernet in place of Wi-Fi, to try net-v2 against real code.
       - name: Build the QEMU test image
         shell: bash
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . "$IDF_PATH/export.sh"
           set -euo pipefail
-          idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" -DTD_RADIO_BUILD=1 -DTD_QEMU_TEST=1 build
+          idf.py -C firmware -B "$GITHUB_WORKSPACE/$QEMU_BUILD" -DTD_RADIO_BUILD=1 -DTD_QEMU_TEST=1 build
+
+      # After the last build. A cache entry cannot be replaced, so each save is a new entry and a restore takes
+      # the newest.
+      - name: Report the compiler cache
+        if: inputs.cache
+        shell: bash
+        run: ccache --show-stats
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: inputs.cache && github.event_name != 'pull_request'
+        with:
+          path: build/ccache
+          key: idf-ccache-all-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Check the radio guard rejects the QEMU test image
         shell: bash
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           set -euo pipefail
-          if python -B firmware/tools/radio_guard.py radio "$FIRMWARE_BUILD" > guard.log 2>&1; then
-            cat guard.log
+          # The log goes under build/, which is git-ignored, so the checkout stays clean.
+          if python -B firmware/tools/radio_guard.py radio "$QEMU_BUILD" > "$QEMU_BUILD/guard.log" 2>&1; then
+            cat "$QEMU_BUILD/guard.log"
             echo "::error::radio_guard.py passed the QEMU test image"
             exit 1
           fi
-          grep 'test-only options' guard.log
+          grep 'test-only options' "$QEMU_BUILD/guard.log"
 
       - name: Install QEMU
         shell: bash
@@ -241,20 +220,25 @@ jobs:
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           set -euo pipefail
-          python -B firmware/tools/qemu_net_check.py "$FIRMWARE_BUILD"
+          python -B firmware/tools/qemu_net_check.py "$QEMU_BUILD"
 
-  schema:
-    name: layout schema
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the builds left the checkout clean
+        # A release needs a clean tree, so sdkconfig or lock drift must fail here first. The radio build keeps its
+        # sdkconfig in its build directory, never in firmware/sdkconfig.
+        shell: bash
+        run: |
+          git status --porcelain --untracked-files=normal
+          test -z "$(git status --porcelain --untracked-files=normal)"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+          name: firmware-tdfw
+          path: ${{ env.NORMAL_BUNDLES }}/*.tdfw
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          node-version: 24
-      - run: npm ci --prefix schema
-      - run: node schema/check-layouts.mjs
-      - run: node --test schema/
+          name: firmware-radio-tdfw
+          path: ${{ env.RADIO_BUNDLES }}/touchdeck-radio-*.tdfw
+          if-no-files-found: error
+          retention-days: 14
