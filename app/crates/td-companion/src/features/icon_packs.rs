@@ -6,7 +6,7 @@ use crate::{
         Req, is_json,
     },
     features::assets::CatalogHit,
-    jobs::{Job, JobError, JobHandle, JobScope, Stop},
+    jobs::{Job, JobError},
 };
 use axum::{
     body::{Body, to_bytes},
@@ -87,6 +87,13 @@ impl ApiError for IconPackError {
     }
 }
 
+fn typed_error(error: std::sync::Arc<crate::icon_packs::Error>) -> IconPackError {
+    match std::sync::Arc::try_unwrap(error) {
+        Ok(crate::icon_packs::Error::Pack(error)) => error.into(),
+        _ => CommonError::Internal.into(),
+    }
+}
+
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, CommonError> {
@@ -107,7 +114,10 @@ impl Endpoint for List {
     type Ok = Vec<PackInfo>;
     type Error = CommonError;
     async fn handle(ctx: Ctx, _: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        blocking(move || ctx.packs.list()).await
+        ctx.icon_packs()
+            .list()
+            .await
+            .map_err(|_| CommonError::Internal)
     }
 }
 
@@ -139,27 +149,8 @@ impl Endpoint for Install {
     type Ok = Job;
     type Error = IconPackError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        let prefix = req.path.prefix;
-        // Only curated packs download; an imported one has nowhere to come from.
-        if !ctx.packs.is_curated(&prefix) {
-            return Err(PackError::NotFound.into());
-        }
-        let work = ctx.clone();
-        Ok(ctx
-            .jobs
-            .start::<InstallJob>(JobScope::Companion, true, move |job| {
-                install(&work, &prefix, job)
-            })?)
+        ctx.icon_packs().start_install_job(req.path.prefix)
     }
-}
-fn install(ctx: &Ctx, prefix: &str, job: &JobHandle<InstallJob>) -> Result<PackInfo, Stop> {
-    let result = ctx.packs.install(
-        prefix,
-        &|stage| job.progress(&InstallProgress { stage }),
-        &|| job.check().is_err(),
-    );
-    job.check()?;
-    result.map_err(|e| Stop::from(IconPackError::from(e)))
 }
 
 /// Deletes an installed pack's folder.
@@ -175,7 +166,10 @@ impl Endpoint for Remove {
     type Ok = ();
     type Error = IconPackError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        Ok(blocking(move || ctx.packs.remove(&req.path.prefix)).await??)
+        ctx.icon_packs()
+            .remove(&req.path.prefix)
+            .await
+            .map_err(typed_error)
     }
 }
 
@@ -211,7 +205,10 @@ impl Endpoint for Import {
         Ok(PackFile(bytes.to_vec()))
     }
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        Ok(blocking(move || ctx.packs.import(&req.body.0)).await??)
+        ctx.icon_packs()
+            .import(req.body.0)
+            .await
+            .map_err(typed_error)
     }
 }
 

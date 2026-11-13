@@ -74,7 +74,8 @@ pub struct Snapshot {
 /// A window-independent handle. Construction and worker ownership stay in `Companion`.
 #[derive(Clone)]
 pub struct Handle {
-    editor_root: PathBuf,
+    pub(crate) editor_root: PathBuf,
+    pub(crate) icon_packs_gate: Arc<tokio::sync::Mutex<()>>,
     pub(crate) editor_gif_sources:
         Arc<parking_lot::Mutex<std::collections::BTreeMap<String, crate::editor::GifSource>>>,
     updates: crate::updates::Updates,
@@ -171,6 +172,7 @@ impl Handle {
         );
         Self {
             editor_root: data.to_path_buf(),
+            icon_packs_gate: Arc::default(),
             editor_gif_sources: Default::default(),
             updates: Default::default(),
             actions,
@@ -259,6 +261,9 @@ impl Handle {
     }
     pub fn device_operations(&self) -> &crate::devices::Operations {
         &self.device_operations
+    }
+    pub fn icon_packs(&self) -> crate::icon_packs::Service {
+        crate::icon_packs::Service(self.clone())
     }
     pub fn integrations(&self) -> &crate::integrations::Service {
         &self.integrations
