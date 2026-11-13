@@ -35,9 +35,6 @@ check "rust" app/crates/td-link/tests/fixtures/touchdeck-test.tdfw
 check "rust scripts" app/scripts/check_exe.ps1
 check "rust" docs/usage.md app/crates/td-link/src/lib.rs
 
-# The Electron shell and React UI left main (ADR 0012), so a path there needs no check.
-check none app/ui/src/App.tsx app/electron/src/main.ts app/package.json app/pnpm-lock.yaml
-
 # The release and data scripts.
 check "scripts" app/scripts/release_version.py
 check "scripts" app/scripts/tests/test_release_workflow.py
