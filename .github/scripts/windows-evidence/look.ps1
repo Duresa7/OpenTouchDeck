@@ -262,10 +262,13 @@ try {
         $wanted = 'light-home', 'light-about', 'dark-home', 'dark-about', 'contrast-home', 'contrast-about', 'text-200-home', 'text-200-about', 'min-width-home'
         $missing = @($wanted | Where-Object { -not (Test-Path (Join-Path $shots "$_.png")) })
         $behind = @($facts.captures.Keys | Where-Object { -not $facts.captures[$_].inFront })
+        # A page that did not open would be saved under the other page's name.
+        $wrongPage = @($facts.captures.Keys | Where-Object { -not $facts.captures[$_].pageSelected })
         @{
-            pass   = $missing.Count -eq 0 -and $behind.Count -eq 0
+            pass   = $missing.Count -eq 0 -and $behind.Count -eq 0 -and $wrongPage.Count -eq 0
             detail = "$($facts.captures.Count) screenshots" + $(if ($missing.Count) { "; missing: $($missing -join ', ')" } else { '' }) +
-                $(if ($behind.Count) { "; window not in front for: $($behind -join ', ')" } else { '' })
+                $(if ($behind.Count) { "; window not in front for: $($behind -join ', ')" } else { '' }) +
+                $(if ($wrongPage.Count) { "; page not selected for: $($wrongPage -join ', ')" } else { '' })
         }
     }
 } finally {
