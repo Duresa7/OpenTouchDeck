@@ -5,6 +5,10 @@ use crate::{
     jobs::{Job, JobState},
     layouts::{IfMatch, LayoutError, LayoutRead},
 };
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use td_core::editing::Capabilities;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,17 +16,20 @@ pub enum SaveState {
     None,
     Saved,
     Unsent,
+    Unconfirmed,
     Sending,
 }
 /// Owns immutable transfer work; it never borrows the Session or the UI thread.
 pub struct PendingSend {
     owner: std::sync::Arc<()>,
     task: tokio::task::JoinHandle<SendReceipt>,
+    observation_clock: Arc<AtomicU64>,
     plan: PushPlan,
     serial: u64,
 }
 /// A completion may be applied only to its originating Session's active send.
 pub struct SendReceipt {
+    observation: u64,
     owner: std::sync::Arc<()>,
     serial: u64,
     plan: PushPlan,
@@ -35,6 +42,7 @@ impl PendingSend {
         match self.task.await {
             Ok(receipt) => receipt,
             Err(error) => SendReceipt {
+                observation: self.observation_clock.fetch_add(1, Ordering::SeqCst) + 1,
                 owner: self.owner,
                 serial: self.serial,
                 plan: self.plan,
@@ -49,12 +57,16 @@ impl PendingSend {
     }
 }
 impl Session {
+    pub(super) fn next_observation(&self) -> u64 {
+        self.observation_clock.fetch_add(1, Ordering::SeqCst) + 1
+    }
     pub fn save_state(&self) -> SaveState {
         if self.sending.is_some() {
             SaveState::Sending
         } else {
             match self.draft() {
                 None => SaveState::None,
+                Some(d) if d.is_unconfirmed() => SaveState::Unconfirmed,
                 Some(d) if d.is_sent() => SaveState::Saved,
                 Some(_) => SaveState::Unsent,
             }
@@ -134,13 +146,19 @@ impl Session {
         };
         let runtime =
             tokio::runtime::Handle::try_current().map_err(|_| EditorError::RuntimeUnavailable)?;
+        // Persist before starting owned work: losing its reply (or the process) cannot
+        // turn a value-equal old draft into evidence that the write was rejected.
+        self.model.mark_unconfirmed(self.orientation)?;
+        self.model.persist()?;
         self.send_serial += 1;
         let serial = self.send_serial;
         self.sending = Some(serial);
         let (handle, copy, owner) = (self.handle.clone(), plan.clone(), self.send_owner.clone());
+        let clock = self.observation_clock.clone();
         Ok(PendingSend {
             owner: self.send_owner.clone(),
-            task: runtime.spawn(async move { execute(handle, copy, serial, owner).await }),
+            observation_clock: clock.clone(),
+            task: runtime.spawn(async move { execute(handle, copy, serial, owner, clock).await }),
             plan,
             serial,
         })
@@ -153,8 +171,15 @@ impl Session {
             return Err(EditorError::StalePush.into());
         }
         self.sending = None;
-        self.last_job = receipt.job;
         let orientation = receipt.plan.layout().orientation;
+        let observed = &mut self.observed[crate::editor::index(orientation)];
+        // Equal Layout values or revisions do not make an old observation current.
+        // Gate every result, including failures, before any draft or Job mutation.
+        if receipt.observation <= *observed {
+            return Err(EditorError::StalePush.into());
+        }
+        *observed = receipt.observation;
+        self.last_job = receipt.job;
         match receipt.result {
             Ok(read) => {
                 if let Err(error) =
@@ -169,6 +194,7 @@ impl Session {
                 }
             }
             Err(error) => {
+                self.model.mark_unconfirmed(orientation)?;
                 if matches!(
                     &error,
                     SessionError::Layout(LayoutError::NotFound | LayoutError::StoredInvalid(_))
@@ -188,6 +214,7 @@ impl Session {
                     }
                     self.model.persist()?;
                 }
+                self.model.persist()?;
                 return Err(error);
             }
         }
@@ -202,12 +229,18 @@ async fn execute(
     plan: PushPlan,
     serial: u64,
     owner: std::sync::Arc<()>,
+    observation_clock: Arc<AtomicU64>,
 ) -> SendReceipt {
     let mut changes = handle.observe();
     let operations = handle.layout_operations();
     let device = plan.device.clone();
     let orientation = plan.layout().orientation;
     let mut last = None;
+    // Number each read when it is issued, and a failure before any read when it is known.
+    // The readback is issued after the write finished, so a Load issued before it may
+    // predate the write and must rank lower; a Load issued after it sees the write too.
+    let next = || observation_clock.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut read_at = None;
     let result: Result<LayoutRead, SessionError> = async {
         let job = operations
             .push(
@@ -244,8 +277,9 @@ async fn execute(
             })
             .await
             .map_err(|e| SessionError::Send(e.to_string()))?
-            .map_err(|_| SessionError::Send("Readback stopped".into()))?;
+            .map_err(|_| LayoutError::Device(crate::link::DeviceLinkError::Timeout))?;
         }
+        read_at = Some(next());
         Ok(operations.read(device.clone(), orientation).await?)
     }
     .await;
@@ -255,11 +289,13 @@ async fn execute(
         .and_then(|e| e.refusal())
         .is_some_and(|e| e.code == "layout.changed")
     {
+        read_at = Some(next());
         match operations.read(device, orientation).await {
             Ok(read) => Some(Some(read)),
             Err(LayoutError::NotFound) => Some(None),
             Err(error) => {
                 return SendReceipt {
+                    observation: read_at.unwrap_or_else(next),
                     owner,
                     serial,
                     plan,
@@ -273,6 +309,7 @@ async fn execute(
         None
     };
     SendReceipt {
+        observation: read_at.unwrap_or_else(next),
         owner,
         serial,
         plan,

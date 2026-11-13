@@ -53,6 +53,8 @@ pub struct Session {
     send_owner: std::sync::Arc<()>,
     sending: Option<u64>,
     send_serial: u64,
+    observation_clock: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    observed: [u64; 2],
     gifs: gifs::GifState,
     changes: tokio::sync::broadcast::Receiver<crate::events::Change>,
     replacements: std::collections::BTreeMap<String, String>,
@@ -76,6 +78,8 @@ impl Session {
             send_owner: std::sync::Arc::new(()),
             sending: None,
             send_serial: 0,
+            observation_clock: Default::default(),
+            observed: [0; 2],
             gifs: Default::default(),
             changes,
             replacements: Default::default(),
@@ -138,6 +142,7 @@ impl Session {
     pub fn start(&mut self, layout: Layout) -> Result<(), EditorError> {
         let orientation = layout.orientation;
         self.model.start(layout)?;
+        self.cancel_replaced_gifs(orientation);
         self.refresh_assets()?;
         self.select_orientation(orientation);
         self.sync_gifs()?;
@@ -171,6 +176,7 @@ impl Session {
             && self.draft().is_some_and(|draft| draft.conflict().is_some());
         self.model.resolve(self.orientation, decision)?;
         if replacing {
+            self.cancel_replaced_gifs(self.orientation);
             self.page = None;
             self.tile = None;
         }
@@ -258,6 +264,8 @@ impl Session {
         }
     }
     pub async fn load(&mut self) -> Result<(), SessionError> {
+        // Numbered at issue, like a send's readback: see `sending::execute`.
+        let observation = self.next_observation();
         let read = match self
             .handle
             .layout_operations()
@@ -266,6 +274,7 @@ impl Session {
         {
             Ok(read) => read,
             Err(error @ LayoutError::NotFound) => {
+                self.observed[super::index(self.orientation)] = observation;
                 if self.draft().is_some() {
                     self.model.receive_missing(self.orientation)?;
                     self.model.persist()?;
@@ -274,6 +283,7 @@ impl Session {
             }
             Err(error) => return Err(error.into()),
         };
+        self.observed[super::index(self.orientation)] = observation;
         self.model.receive(read.layout, read.revision)?;
         if self.draft().is_some_and(|draft| draft.conflict().is_none()) {
             self.page = None;

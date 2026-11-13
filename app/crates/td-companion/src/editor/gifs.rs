@@ -332,6 +332,15 @@ impl Session {
             self.cancel_gif(&key);
         }
     }
+    /// Work belongs to the Layout it was chosen in. A replacement Layout may reuse the
+    /// same Tile id and geometry, so a matching key does not make the old result its own.
+    pub(super) fn cancel_replaced_gifs(&mut self, replaced: Orientation) {
+        for key in self.gifs.work.keys().cloned().collect::<Vec<_>>() {
+            if orientation(&key) == replaced {
+                self.cancel_gif(&key);
+            }
+        }
+    }
     pub(super) fn sync_gifs(&mut self) -> Result<(), EditorError> {
         let keys = self.gifs.work.keys().cloned().collect::<Vec<_>>();
         for key in keys {

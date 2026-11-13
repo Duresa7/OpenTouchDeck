@@ -1863,3 +1863,195 @@ async fn loading_and_replacing_reset_selection_while_keep_mine_preserves_it() {
     assert_eq!(s.selection(), (Some("media"), None));
     assert_eq!(s.draft().unwrap().layout().name, "Starter");
 }
+
+#[tokio::test]
+async fn lost_readback_keeps_reverted_draft_unconfirmed_and_preserves_conditional_revision() {
+    use td_companion::{
+        checkpoints::Checkpoint,
+        editor::{Decision, SaveState},
+    };
+    use td_core::editing::Capabilities;
+    let (td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    s.send(Capabilities::default()).await.unwrap();
+    let original = s.export().unwrap();
+    s.edit(Edit::Name { name: "B".into() }).unwrap();
+    td.checkpoints().hold(Checkpoint::BeforeEditorReadback);
+    let pending = s.begin_send(Capabilities::default()).unwrap();
+    td.until(|td| td.checkpoints().waiting(Checkpoint::BeforeEditorReadback))
+        .await;
+    assert_eq!(
+        td_core::Layout::parse(&td.deck("mock0001").layout(Orientation::Landscape).unwrap())
+            .unwrap()
+            .name,
+        "B"
+    );
+    s.import("original.json", original.as_bytes()).unwrap();
+    td.checkpoints()
+        .release(Checkpoint::BeforeEditorReadback, true);
+    let error = s.finish_send(pending.wait().await).unwrap_err();
+    assert_eq!(error.refusal().unwrap().code, "device.timeout");
+    assert_eq!(s.save_state(), SaveState::Unconfirmed);
+    assert!(!s.draft().unwrap().is_sent());
+    let reopened = td.handle().open_editor("mock0001").unwrap();
+    assert_eq!(reopened.save_state(), SaveState::Unconfirmed);
+    // The old conditional revision is retained: retry cannot overwrite B blindly.
+    assert_eq!(
+        s.send(Capabilities::default())
+            .await
+            .unwrap_err()
+            .refusal()
+            .unwrap()
+            .code,
+        "layout.changed"
+    );
+    s.load().await.unwrap();
+    s.resolve(Decision::UseDevice).unwrap();
+    assert_eq!(s.draft().unwrap().layout().name, "B");
+    assert_eq!(s.save_state(), SaveState::Saved);
+}
+
+#[tokio::test]
+async fn stale_send_receipts_cannot_mutate_a_newer_load_on_any_outcome() {
+    use td_companion::{
+        checkpoints::Checkpoint,
+        editor::{EditorError, SaveState, SessionError},
+    };
+    use td_core::editing::Capabilities;
+    for outcome in [
+        "mismatch", "match", "missing", "invalid", "timeout", "conflict",
+    ] {
+        let (td, mut s) = session().await;
+        let mut b = blank();
+        b.name = "B".into();
+        s.start(b.clone()).unwrap();
+        s.send(Capabilities::default()).await.unwrap();
+        let mut c = b.clone();
+        c.name = "Obsolete C".into();
+        if outcome == "conflict" {
+            td.deck("mock0001")
+                .seed_layout(Orientation::Landscape, Some(c.to_canonical_json()));
+        } else {
+            td.checkpoints().hold(Checkpoint::BeforeEditorReadback);
+        }
+        let pending = s.begin_send(Capabilities::default()).unwrap();
+        if outcome != "conflict" {
+            td.until(|td| td.checkpoints().waiting(Checkpoint::BeforeEditorReadback))
+                .await;
+            let bytes = match outcome {
+                "mismatch" => Some(c.to_canonical_json()),
+                "missing" => None,
+                "invalid" => Some(b"{}".to_vec()),
+                _ => Some(b.to_canonical_json()),
+            };
+            td.deck("mock0001")
+                .seed_layout(Orientation::Landscape, bytes);
+            td.checkpoints()
+                .release(Checkpoint::BeforeEditorReadback, outcome == "timeout");
+        }
+        let receipt = pending.wait().await;
+        // Same values and same revision as the original baseline, but a NEW observation.
+        td.deck("mock0001")
+            .seed_layout(Orientation::Landscape, Some(b.to_canonical_json()));
+        s.load().await.unwrap();
+        assert!(
+            matches!(
+                s.finish_send(receipt),
+                Err(SessionError::Editor(EditorError::StalePush))
+            ),
+            "{outcome}"
+        );
+        assert_eq!(s.save_state(), SaveState::Saved, "{outcome}");
+        assert!(s.draft().unwrap().conflict().is_none(), "{outcome}");
+        assert_eq!(s.draft().unwrap().layout(), &b);
+        let reopened = td.handle().open_editor("mock0001").unwrap();
+        assert_eq!(reopened.save_state(), SaveState::Saved, "{outcome}");
+        assert!(reopened.draft().unwrap().conflict().is_none());
+    }
+}
+
+#[tokio::test]
+async fn replacing_a_layout_cancels_old_gif_work_even_when_tile_identity_matches() {
+    // TypeScript 1.x keyed GIF runs by Device, orientation and Tile id only, so a
+    // replacement Layout with the same Tile id inherited the old result. Fixed here.
+    use td_companion::editor::{Decision, GifEdit};
+    for replacement in ["import", "start", "replace", "load"] {
+        let (td, mut s) = session().await;
+        gif_caps(&td, "mock0001");
+        s.start(blank()).unwrap();
+        let id = s.add(AddKind::Key, AddTarget::Auto).unwrap();
+        let original = s.draft().unwrap().layout().clone();
+        let mut imported = original.clone();
+        if replacement != "load" {
+            imported.name = "Imported".into();
+        }
+        if replacement == "replace" || replacement == "load" {
+            td.deck("mock0001")
+                .seed_layout(Orientation::Landscape, Some(imported.to_canonical_json()));
+        }
+        if replacement == "replace" {
+            s.load().await.unwrap();
+            assert!(s.draft().unwrap().conflict().is_some());
+        }
+        td.hold_jobs();
+        s.gif(
+            &id,
+            GifEdit::Choose {
+                file: "old.gif".into(),
+                bytes: gif_bytes(),
+            },
+        )
+        .unwrap();
+        let job = td
+            .handle()
+            .snapshot()
+            .jobs
+            .into_iter()
+            .find(|j| j.kind == "assets.render")
+            .unwrap();
+        // Rejected imports preserve both the Layout and the work that belongs to it.
+        assert!(s.import("bad.json", b"{}").is_err());
+        assert!(s.gif_work(&id).is_some());
+        match replacement {
+            "import" => s.import("new.json", &imported.to_canonical_json()).unwrap(),
+            "start" => s.start(imported.clone()).unwrap(),
+            "replace" => s.resolve(Decision::UseDevice).unwrap(),
+            "load" => s.load().await.unwrap(),
+            _ => unreachable!(),
+        }
+        td.release_jobs();
+        let finished = td.wait(&job).await;
+        // Process queued events after completion: the old result must never attach.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let td_companion::companion::Change::JobUpdated(update) =
+                    s.changed().await.unwrap()
+                    && update.0.id == finished.id
+                    && update.0.state.finished()
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(s.gif_work(&id).is_none(), "{replacement}");
+        let reopened = td.handle().open_editor("mock0001").unwrap();
+        if replacement == "load" {
+            // A Load that confirms the same Layout replaces nothing: the GIF still lands.
+            let tile = s.draft().unwrap().effective_tile(&id).unwrap();
+            assert_eq!(tile.render, Some(td_core::layout::TileRender::Gif));
+            assert_eq!(
+                reopened.draft().unwrap().layout(),
+                s.draft().unwrap().layout()
+            );
+        } else {
+            assert_eq!(s.draft().unwrap().layout(), &imported, "{replacement}");
+            assert_eq!(
+                reopened.draft().unwrap().layout(),
+                &imported,
+                "{replacement}"
+            );
+        }
+    }
+}

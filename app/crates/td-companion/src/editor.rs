@@ -80,6 +80,7 @@ pub struct Draft {
     known: Option<DeviceCopy>,
     rejected: Vec<Rejected>,
     conflict: Option<DeviceCopy>,
+    unconfirmed: bool,
 }
 impl Draft {
     pub fn layout(&self) -> &Layout {
@@ -91,8 +92,13 @@ impl Draft {
     pub fn conflict(&self) -> Option<&DeviceCopy> {
         self.conflict.as_ref()
     }
+    /// A write may have reached the Device without a confirming observation.
+    pub fn is_unconfirmed(&self) -> bool {
+        self.unconfirmed
+    }
     pub fn is_sent(&self) -> bool {
-        self.rejected.is_empty()
+        !self.unconfirmed
+            && self.rejected.is_empty()
             && self.conflict.is_none()
             && self
                 .known
@@ -197,6 +203,7 @@ impl Editor {
                         document,
                         known,
                         conflict,
+                        unconfirmed: draft.unconfirmed,
                         rejected: Vec::new(),
                     };
                     // Recompute diagnostics through today's interface; don't trust saved error text.
@@ -237,10 +244,12 @@ impl Editor {
         let slot = &mut self.drafts[index(document.layout().orientation)];
         let known = slot.as_ref().and_then(|draft| draft.known.clone());
         let conflict = slot.as_ref().and_then(|draft| draft.conflict.clone());
+        let unconfirmed = slot.as_ref().is_some_and(|draft| draft.unconfirmed);
         *slot = Some(Draft {
             document,
             known,
             conflict,
+            unconfirmed,
             rejected: Vec::new(),
         });
         Ok(())
@@ -355,6 +364,9 @@ impl Editor {
         let slot = &mut self.drafts[index(document.layout().orientation)];
         let remote = DeviceCopy { document, revision };
         self.receive_serial[index(remote.document.layout().orientation)] += 1;
+        if let Some(draft) = slot {
+            draft.unconfirmed = false;
+        }
         match slot {
             Some(draft) if draft.document != remote.document || !draft.rejected.is_empty() => {
                 draft.conflict = Some(remote)
@@ -369,6 +381,7 @@ impl Editor {
                     known: Some(remote),
                     rejected: Vec::new(),
                     conflict: None,
+                    unconfirmed: false,
                 })
             }
         }
@@ -380,6 +393,7 @@ impl Editor {
         let draft = self.draft_mut(orientation)?;
         draft.known = None;
         draft.conflict = None;
+        draft.unconfirmed = false;
         Ok(())
     }
     pub fn resolve(
@@ -394,7 +408,12 @@ impl Editor {
                 draft.rejected.clear();
             }
             draft.known = Some(remote);
+            draft.unconfirmed = false;
         }
+        Ok(())
+    }
+    fn mark_unconfirmed(&mut self, orientation: Orientation) -> Result<(), EditorError> {
+        self.draft_mut(orientation)?.unconfirmed = true;
         Ok(())
     }
     pub fn prepare_push(
@@ -445,6 +464,7 @@ impl Editor {
         if Document::admit(displayed)? != plan.document {
             return Err(EditorError::PushMismatch);
         }
+        draft.unconfirmed = false;
         if identical_receive {
             return Ok(());
         }
@@ -464,6 +484,7 @@ impl Editor {
                 .flatten()
                 .map(|draft| StoredDraft {
                     layout: text(&draft.document),
+                    unconfirmed: draft.unconfirmed,
                     known: draft.known.as_ref().map(StoredCopy::from),
                     conflict: draft.conflict.as_ref().map(StoredCopy::from),
                     rejected: draft.rejected.iter().map(|r| r.edit.clone()).collect(),
@@ -529,6 +550,8 @@ struct Stored {
 #[derive(Serialize, Deserialize)]
 struct StoredDraft {
     layout: String,
+    #[serde(default)]
+    unconfirmed: bool,
     known: Option<StoredCopy>,
     conflict: Option<StoredCopy>,
     rejected: Vec<Edit>,
