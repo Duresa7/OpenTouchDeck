@@ -158,7 +158,9 @@ impl Editor {
                     return Err(bad_storage("unsupported editor storage version").into());
                 }
                 for draft in stored.drafts {
-                    let document = Document::parse(draft.layout.as_bytes())?;
+                    let Ok(document) = Document::parse(draft.layout.as_bytes()) else {
+                        continue;
+                    };
                     let orientation = document.layout().orientation;
                     let slot = &mut editor.drafts[index(orientation)];
                     if slot.is_some() {

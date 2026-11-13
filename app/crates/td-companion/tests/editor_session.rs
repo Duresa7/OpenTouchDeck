@@ -330,3 +330,228 @@ async fn import_opens_its_orientation_and_graph_export_import_round_trips() {
     s.select_orientation(Orientation::Landscape);
     assert_eq!(s.export().unwrap(), graph);
 }
+
+#[tokio::test]
+async fn load_without_draft_then_keep_mine_and_replace_preserve_conditional_revisions() {
+    use td_companion::editor::Decision;
+    use td_core::editing::Capabilities;
+    let (td, mut writer) = session().await;
+    writer.start(blank()).unwrap();
+    writer.send(Capabilities::default()).await.unwrap();
+    // Delete its local checkpoint to arrange a first open with no draft.
+    std::fs::remove_file(td.data_dir().join("editor-drafts-v1/mock0001.json")).unwrap();
+    let mut s = td.handle().open_editor("mock0001").unwrap();
+    assert!(s.draft().is_none());
+    s.load().await.unwrap();
+    assert!(s.draft().unwrap().is_sent());
+    s.edit(Edit::Name {
+        name: "Mine".into(),
+    })
+    .unwrap();
+    s.load().await.unwrap();
+    assert_eq!(s.draft().unwrap().layout().name, "Mine");
+    assert!(s.draft().unwrap().conflict().is_some());
+    s.resolve(Decision::KeepMine).unwrap();
+    s.send(Capabilities::default()).await.unwrap();
+    assert!(s.draft().unwrap().is_sent());
+    let remote = {
+        let mut l = blank();
+        l.name = "Elsewhere".into();
+        l
+    };
+    td.write_layout_unseen(
+        &td_companion::devices::DeviceId::parse("mock0001").unwrap(),
+        &remote,
+    )
+    .await;
+    s.edit(Edit::Name {
+        name: "Local".into(),
+    })
+    .unwrap();
+    let error = s.send(Capabilities::default()).await.unwrap_err();
+    assert_eq!(error.refusal().unwrap().code, "layout.changed");
+    s.resolve(Decision::UseDevice).unwrap();
+    assert_eq!(s.draft().unwrap().layout().name, "Elsewhere");
+    assert!(s.draft().unwrap().is_sent());
+}
+#[tokio::test]
+async fn orientation_without_device_layout_preserves_draft_and_disconnected_send_is_typed() {
+    use td_core::editing::Capabilities;
+    let (td, mut s) = session().await;
+    s.select_orientation(Orientation::Portrait);
+    assert_eq!(
+        s.load().await.unwrap_err().refusal().unwrap().code,
+        "layout.not_found"
+    );
+    let mut portrait = blank();
+    portrait.orientation = Orientation::Portrait;
+    s.start(portrait.clone()).unwrap();
+    assert_eq!(
+        s.load().await.unwrap_err().refusal().unwrap().code,
+        "layout.not_found"
+    );
+    assert_eq!(s.draft().unwrap().layout(), &portrait);
+    td.unplug("mock0001").await;
+    assert_eq!(
+        s.send(Capabilities::default())
+            .await
+            .unwrap_err()
+            .refusal()
+            .unwrap()
+            .code,
+        "device.not_connected"
+    );
+}
+#[tokio::test]
+async fn busy_send_is_typed_and_success_follows_job_updated_with_progress() {
+    use td_companion::{companion::Change, jobs::JobState};
+    use td_core::editing::Capabilities;
+    let (td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    td.hold_jobs();
+    let job = td
+        .handle()
+        .layout_operations()
+        .push(
+            "mock0001".into(),
+            Orientation::Landscape,
+            blank().to_canonical_json(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        s.send(Capabilities::default())
+            .await
+            .unwrap_err()
+            .refusal()
+            .unwrap()
+            .code,
+        "device.busy"
+    );
+    td.release_jobs();
+    td.wait(&job).await;
+    let mut changes = s.observe();
+    s.send(Capabilities::default()).await.unwrap();
+    let mut seen = vec![];
+    while let Ok(event) = changes.try_recv() {
+        if let Change::JobUpdated(update) = event {
+            seen.push(update.0);
+        }
+    }
+    assert!(seen.iter().any(|j| j.state == JobState::Running));
+    assert!(seen.iter().any(|j| j.state == JobState::Succeeded));
+    assert_eq!(s.last_job().unwrap().state, JobState::Succeeded);
+    assert!(
+        seen.iter()
+            .any(|j| j.progress.get("assets_total").is_some())
+    );
+}
+#[tokio::test]
+async fn persisted_drafts_are_per_device_orientation_and_invalid_saved_layout_is_dropped() {
+    let (td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    let mut tall = blank();
+    tall.orientation = Orientation::Portrait;
+    tall.name = "Tall".into();
+    s.start(tall).unwrap();
+    let mut reopened = td.handle().open_editor("mock0001").unwrap();
+    assert_eq!(reopened.draft().unwrap().layout().name, "New Layout");
+    reopened.select_orientation(Orientation::Portrait);
+    assert_eq!(reopened.draft().unwrap().layout().name, "Tall");
+    assert!(
+        td.handle()
+            .open_editor("mock0002")
+            .unwrap()
+            .draft()
+            .is_none()
+    );
+    let path = td.data_dir().join("editor-drafts-v1/mock0001.json");
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stored["drafts"][0]["layout"] = "{\"schema\":1}".into();
+    std::fs::write(path, serde_json::to_vec(&stored).unwrap()).unwrap();
+    let mut reopened = td.handle().open_editor("mock0001").unwrap();
+    assert!(reopened.draft().is_none());
+    reopened.select_orientation(Orientation::Portrait);
+    assert_eq!(reopened.draft().unwrap().layout().name, "Tall");
+}
+#[tokio::test]
+async fn rejected_send_selects_invalid_tile_and_repair_preserves_machine_readable_issues() {
+    use td_core::editing::Capabilities;
+    let (_td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    let id = s.add(AddKind::Command, AddTarget::Auto).unwrap();
+    s.select("page1", None);
+    assert!(s.send(Capabilities::default()).await.is_err());
+    assert_eq!(s.selection().1, Some(id.as_str()));
+    let error = s
+        .edit(Edit::Action {
+            tile: id.clone(),
+            action: Action::Open { target: "".into() },
+        })
+        .unwrap_err();
+    assert!(
+        matches!(error, td_companion::editor::EditorError::Edit(td_core::editing::EditError::Invalid(ref problems)) if problems[0].path.ends_with("/action/target"))
+    );
+    s.edit(Edit::Action {
+        tile: id,
+        action: Action::Open {
+            target: "https://example.com".into(),
+        },
+    })
+    .unwrap();
+    s.send(Capabilities::default()).await.unwrap();
+    assert!(s.draft().unwrap().is_sent());
+}
+
+#[tokio::test]
+async fn companion_422_and_rejected_fields_keep_structured_rules_and_paths() {
+    use td_companion::api::ApiError;
+    use td_core::editing::Capabilities;
+    let (td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    let limit = td.handle().snapshot().devices[0]
+        .capabilities
+        .as_ref()
+        .unwrap()
+        .live_images;
+    assert!(limit < 64);
+    let mut p = preset(Some(TileRender::NowPlaying));
+    p.streams = Some(BTreeMap::from([
+        ("title".into(), StreamType::Text),
+        ("artist".into(), StreamType::Text),
+        ("cover".into(), StreamType::Image),
+        ("state".into(), StreamType::Number),
+    ]));
+    for _ in 0..=limit {
+        s.place_preset(&p, "volume", &streams(), true, AddTarget::Auto)
+            .unwrap();
+    }
+    let error = s.send(Capabilities::default()).await.unwrap_err();
+    assert_eq!(error.refusal().unwrap().code, "layout.live_image_limit");
+    assert!(
+        matches!(error, td_companion::editor::SessionError::Layout(ref e) if e.status() == axum::http::StatusCode::UNPROCESSABLE_ENTITY)
+    );
+    let id = tiles(&s)[0].id.clone();
+    let error = s
+        .edit(Edit::Label {
+            tile: id,
+            label: "a label over sixteen characters".into(),
+        })
+        .unwrap_err();
+    let refusal = td_companion::editor::SessionError::from(error)
+        .refusal()
+        .unwrap();
+    assert_eq!(refusal.code, "layout.invalid");
+    assert_eq!(
+        refusal.details.as_ref().unwrap()["issues"][0]["rule"],
+        "label.too-long"
+    );
+    assert!(
+        refusal.details.unwrap()["issues"][0]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("/label")
+    );
+}

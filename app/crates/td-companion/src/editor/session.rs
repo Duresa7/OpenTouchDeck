@@ -26,6 +26,8 @@ pub enum SessionError {
     Layout(#[from] LayoutError),
     #[error("Layout send did not succeed: {0}")]
     Send(String),
+    #[error("{0:?}")]
+    Job(crate::api::ErrorBody),
 }
 
 pub struct Session {
@@ -35,6 +37,7 @@ pub struct Session {
     orientation: Orientation,
     page: Option<String>,
     tile: Option<String>,
+    last_job: Option<crate::jobs::Job>,
 }
 impl Session {
     pub(crate) fn open(
@@ -50,9 +53,17 @@ impl Session {
             orientation: Orientation::Landscape,
             page: None,
             tile: None,
+            last_job: None,
         };
         session.reconcile_selection();
         Ok(session)
+    }
+    /// The same typed change stream used by the Companion's native adapters.
+    pub fn observe(&self) -> tokio::sync::broadcast::Receiver<crate::events::Change> {
+        self.handle.observe()
+    }
+    pub fn last_job(&self) -> Option<&crate::jobs::Job> {
+        self.last_job.as_ref()
     }
     pub fn draft(&self) -> Option<&Draft> {
         self.model.draft(self.orientation)
@@ -125,11 +136,22 @@ impl Session {
         self.model.persist()
     }
     pub async fn load(&mut self) -> Result<(), SessionError> {
-        let read = self
+        let read = match self
             .handle
             .layout_operations()
             .read(self.device.clone(), self.orientation)
-            .await?;
+            .await
+        {
+            Ok(read) => read,
+            Err(error @ LayoutError::NotFound) => {
+                if self.draft().is_some() {
+                    self.model.receive_missing(self.orientation)?;
+                    self.model.persist()?;
+                }
+                return Err(error.into());
+            }
+            Err(error) => return Err(error.into()),
+        };
         self.model.receive(read.layout, read.revision)?;
         self.reconcile_selection();
         self.model.persist()?;
@@ -138,7 +160,13 @@ impl Session {
     /// Runs the conditional send and checks the Device readback before marking the draft sent.
     /// A conflict is captured for resolve(); the caller can render draft().conflict().
     pub async fn send(&mut self, capabilities: Capabilities<'_>) -> Result<(), SessionError> {
-        let plan = self.model.prepare_push(self.orientation, capabilities)?;
+        let plan = match self.model.prepare_push(self.orientation, capabilities) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.select_first_problem();
+                return Err(error.into());
+            }
+        };
         let operations = self.handle.layout_operations();
         let mut changes = self.handle.observe();
         let pushed = operations
@@ -168,6 +196,7 @@ impl Session {
                 .jobs()
                 .get(&job.id)
                 .ok_or_else(|| SessionError::Send("Job expired".into()))?;
+            self.last_job = Some(latest.clone());
             if latest.state.finished() {
                 if latest.state != JobState::Succeeded {
                     if latest
@@ -184,7 +213,9 @@ impl Session {
                         }
                         self.model.persist()?;
                     }
-                    return Err(SessionError::Send(format!("{:?}", latest.error)));
+                    return Err(latest.error.map(SessionError::Job).unwrap_or_else(|| {
+                        SessionError::Send("Sending stopped. The Device keeps its Layout.".into())
+                    }));
                 }
                 break;
             }
@@ -200,6 +231,16 @@ impl Session {
         self.model.persist()?;
         Ok(())
     }
+    fn select_first_problem(&mut self) {
+        let target = self.draft().and_then(|d| d.layout().pages.iter().find_map(|p| match p {
+            td_core::layout::Page::Grid { id, tiles, .. } => tiles.iter().find(|t| d.rejected().iter().any(|r| matches!(&r.edit, Edit::Label { tile, .. } | Edit::Action { tile, .. } if tile == &t.id))).map(|t| (id.clone(), t.id.clone())),
+            _ => None,
+        }));
+        if let Some((page, tile)) = target {
+            self.page = Some(page);
+            self.tile = Some(tile);
+        }
+    }
     fn reconcile_selection(&mut self) {
         let layout = self.model.draft(self.orientation).map(|d| d.layout());
         if !layout.is_some_and(|l| l.pages.iter().any(|p| Some(p.id()) == self.page.as_deref())) {
@@ -207,5 +248,24 @@ impl Session {
             self.tile = None;
         }
         if !layout.is_some_and(|l| l.pages.iter().any(|p| matches!(p, td_core::layout::Page::Grid { id, tiles, .. } if Some(id.as_str()) == self.page.as_deref() && tiles.iter().any(|t| Some(t.id.as_str()) == self.tile.as_deref())))) { self.tile = None; }
+    }
+}
+
+impl SessionError {
+    /// Preserve machine-readable refusals (including 412/422 and Device/Job failures).
+    pub fn refusal(&self) -> Option<crate::api::ErrorBody> {
+        use crate::api::ApiError;
+        match self {
+            Self::Layout(error) => Some(error.body()),
+            Self::Job(error) => Some(error.clone()),
+            Self::Editor(EditorError::Edit(td_core::editing::EditError::Invalid(problems))) => {
+                Some(crate::api::ErrorBody {
+                    code: "layout.invalid".into(),
+                    message: "The Layout has problems.".into(),
+                    details: Some(serde_json::json!({"issues": problems})),
+                })
+            }
+            _ => None,
+        }
     }
 }
