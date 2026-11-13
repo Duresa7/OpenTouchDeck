@@ -7,10 +7,11 @@ import { AboutPage, Component } from "about.slint";
 import { SetupPage, BoardCard, SetupLater, Wizard } from "setup.slint";
 import { SettingsPage, PcSettings, DeviceEntry, DevicePage, PairedApp } from "settings.slint";
 import { CloseNotice } from "close-notice.slint";
+import { EditorScreen, EditorState, EditorFocus, FilmPage, ThumbTile, CanvasTile, CanvasCell, DropTarget, EditorDevice } from "editor.slint";
 
-export { Theme, ContrastColors, DeviceRow, Tone, Component, BoardCard, SetupLater, Wizard, PcSettings, DeviceEntry, DevicePage, PairedApp }
+export { Theme, ContrastColors, DeviceRow, Tone, Component, BoardCard, SetupLater, Wizard, PcSettings, DeviceEntry, DevicePage, PairedApp, EditorState, EditorFocus, FilmPage, ThumbTile, CanvasTile, CanvasCell, DropTarget, EditorDevice }
 
-export enum Page { home, setup, settings, about }
+export enum Page { home, layout, setup, settings, about }
 
 export component AppWindow inherits Window {
     title: "Open TouchDeck";
@@ -76,6 +77,36 @@ export component AppWindow inherits Window {
     callback update-firmware();
     callback restart-device();
 
+    // The Layout editor.
+    in property <EditorState> editor;
+    in property <[FilmPage]> editor-pages;
+    in property <[ThumbTile]> editor-thumbs;
+    in property <[CanvasTile]> editor-tiles;
+    in property <[CanvasCell]> editor-cells;
+    in property <[EditorDevice]> editor-devices;
+    in property <bool> filmstrip-folded;
+    callback editor-shown();
+    callback editor-set-folded(bool);
+    callback editor-choose-device(string);
+    callback editor-read();
+    callback editor-start(bool);
+    callback editor-select-page(string);
+    callback editor-add-page();
+    callback editor-remove-page(string);
+    callback editor-select-tile(string);
+    callback editor-clear-selection();
+    callback editor-activate-cell(int, int);
+    callback editor-add-tile(int, int);
+    callback editor-move-tile(string, int, int);
+    callback editor-resize-tile(string, int, int);
+    callback editor-nudge(int, int);
+    callback editor-grow(int, int);
+    callback editor-remove-tile();
+    pure callback editor-drop-target(string, float, float, float, float, bool) -> DropTarget;
+    callback editor-send();
+    callback editor-keep-mine();
+    callback editor-replace();
+
     callback open-url(string);
     callback keep-running();
     callback quit();
@@ -97,7 +128,8 @@ export component AppWindow inherits Window {
     HorizontalLayout {
         Rectangle {
             accessible-role: tab-list;
-            accessible-label: "Pages";
+            // Not "Pages": a Page is one screen of a Layout.
+            accessible-label: "Sections";
             horizontal-stretch: 0;
             VerticalLayout {
                 alignment: start;
@@ -110,6 +142,15 @@ export component AppWindow inherits Window {
                     selected: root.page == Page.home;
                     activated => {
                         root.page = Page.home;
+                    }
+                }
+
+                NavItem {
+                    text: "Layout";
+                    selected: root.page == Page.layout;
+                    activated => {
+                        root.page = Page.layout;
+                        root.editor-shown();
                     }
                 }
 
@@ -150,6 +191,76 @@ export component AppWindow inherits Window {
 
             if root.page == Page.home: HomePage {
                 devices: root.devices;
+            }
+            if root.page == Page.layout: EditorScreen {
+                editor: root.editor;
+                pages: root.editor-pages;
+                thumbs: root.editor-thumbs;
+                tiles: root.editor-tiles;
+                cells: root.editor-cells;
+                devices: root.editor-devices;
+                window-width: root.width;
+                folded-choice: root.filmstrip-folded;
+                set-folded(folded) => {
+                    root.editor-set-folded(folded);
+                }
+                choose-device(id) => {
+                    root.editor-choose-device(id);
+                }
+                read-layout => {
+                    root.editor-read();
+                }
+                start-layout(starter) => {
+                    root.editor-start(starter);
+                }
+                select-page(id) => {
+                    root.editor-select-page(id);
+                }
+                add-page => {
+                    root.editor-add-page();
+                }
+                remove-page(id) => {
+                    root.editor-remove-page(id);
+                }
+                select-tile(id) => {
+                    root.editor-select-tile(id);
+                }
+                clear-selection => {
+                    root.editor-clear-selection();
+                }
+                activate-cell(row, col) => {
+                    root.editor-activate-cell(row, col);
+                }
+                add-tile(row, col) => {
+                    root.editor-add-tile(row, col);
+                }
+                move-tile(id, row, col) => {
+                    root.editor-move-tile(id, row, col);
+                }
+                resize-tile(id, rows, cols) => {
+                    root.editor-resize-tile(id, rows, cols);
+                }
+                nudge(dx, dy) => {
+                    root.editor-nudge(dx, dy);
+                }
+                grow(dx, dy) => {
+                    root.editor-grow(dx, dy);
+                }
+                remove-tile => {
+                    root.editor-remove-tile();
+                }
+                drop-target(id, px, py, x, y, resize) => {
+                    return root.editor-drop-target(id, px, py, x, y, resize);
+                }
+                send => {
+                    root.editor-send();
+                }
+                keep-mine => {
+                    root.editor-keep-mine();
+                }
+                replace => {
+                    root.editor-replace();
+                }
             }
             if root.page == Page.setup: SetupPage {
                 boards: root.boards;

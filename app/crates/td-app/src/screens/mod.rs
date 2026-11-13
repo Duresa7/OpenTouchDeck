@@ -1,4 +1,4 @@
-//! Setup and Settings, fed from the Companion. Every rule they follow lives in td-companion
+//! Setup, Settings and the Layout editor, fed from the Companion. Every rule they follow lives in td-companion
 //! (`setup`, the Device settings and Pairings sessions, Firmware tasks) or td-core (the update
 //! setting); this module only turns those views into the window's properties and sends the
 //! window's callbacks back as typed operations.
@@ -36,8 +36,13 @@ macro_rules! on {
     }};
 }
 
+mod editor;
 mod settings;
 mod setup;
+
+pub(crate) use editor::CLOSE_LIMIT;
+#[cfg(test)]
+pub(crate) use editor::{MAX_PAGES, drop_target, failure_text, map, problem_text};
 
 pub(crate) use settings::{FolderPicker, scheme};
 use settings::{StartAtSignIn, UpdateChecks};
@@ -134,6 +139,7 @@ pub(crate) struct Screens {
     start: Arc<std::sync::Mutex<StartAtSignIn>>,
     updates: RefCell<UpdateChecks>,
     models: Models,
+    editor: editor::Editor,
     refreshing: Cell<bool>,
 }
 
@@ -182,6 +188,7 @@ impl Screens {
             start: Arc::new(std::sync::Mutex::new(StartAtSignIn::Reading)),
             updates: RefCell::new(updates),
             models: Models::default(),
+            editor: editor::Editor::default(),
             refreshing: Cell::new(false),
         });
         SCREENS.with(|s| *s.borrow_mut() = Rc::downgrade(&screens));
@@ -194,6 +201,7 @@ impl Screens {
         ui.set_appearance(scheme(screens.window.appearance()));
         screens.wire_setup(ui);
         screens.wire_settings(ui);
+        screens.wire_editor(ui);
         screens.follow();
         screens.read_start();
         screens.refresh();
@@ -315,6 +323,7 @@ impl Screens {
         }
         self.refresh_setup(&ui, &devices, &boards);
         self.refresh_settings(&ui, &devices);
+        self.refresh_editor(&ui, &devices);
         self.refreshing.set(false);
     }
 }

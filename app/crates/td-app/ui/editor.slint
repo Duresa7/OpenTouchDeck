@@ -1,0 +1,1238 @@
+// The Layout editor: a header, the Page filmstrip and the Device canvas. Rust maps the editor
+// Worker's view into these properties and every control answers with a callback; the Session,
+// not Slint, holds the selection. Only a drag in progress and keyboard focus live here.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ActionButton, Body, InfoBar, ProgressBar, SectionTitle, Severity } from "controls.slint";
+
+// One Page in the filmstrip.
+export struct FilmPage {
+    id: string,
+    number: int,
+    title: string,
+    usage: bool,
+    current: bool,
+    problem: bool,
+    // What screen readers hear: "Page 2 of 5, Media, current".
+    label: string,
+}
+
+// A Tile in a filmstrip thumbnail, placed as a fraction of the Device's screen.
+export struct ThumbTile {
+    page: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    problem: bool,
+}
+
+// A Tile on the canvas, placed as a fraction of the Device's screen.
+export struct CanvasTile {
+    id: string,
+    label: string,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    row: int,
+    col: int,
+    selected: bool,
+    // Why a field was refused, or empty.
+    problem: string,
+    // "Spotify, row 1, column 2, 1 by 2".
+    name: string,
+}
+
+// One grid cell of the current Page, row by row.
+export struct CanvasCell {
+    row: int,
+    col: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    empty: bool,
+    name: string,
+}
+
+// Where a dragged Tile would land, as a fraction of the screen. `ok` is false where it doesn't fit.
+export struct DropTarget {
+    ok: bool,
+    row: int,
+    col: int,
+    row-span: int,
+    col-span: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
+export struct EditorDevice {
+    id: string,
+    name: string,
+}
+
+export struct EditorState {
+    // `no-device`, `opening`, `reading`, `empty` (the Device has no Layout), `unreadable`,
+    // `failed` (the drafts couldn't be opened) or `ready`.
+    state: string,
+    message: string,
+    detail: string,
+    device-id: string,
+    device-name: string,
+    // The Device's screen, width over height, in the orientation being edited.
+    aspect: float,
+    save-state: string,
+    save-caution: bool,
+    sending: bool,
+    // 0 to 100, or -1 while the size is unknown.
+    progress: int,
+    progress-text: string,
+    page-id: string,
+    page-title: string,
+    page-usage: bool,
+    page-index: int,
+    page-count: int,
+    rows: int,
+    cols: int,
+    // The Page's title band and pager, as fractions of the screen's height; 0 when full screen.
+    title-h: float,
+    pager-y: float,
+    tile-selected: bool,
+    selected-row: int,
+    selected-col: int,
+    notice: string,
+    notice-detail: string,
+    conflict: bool,
+    conflict-title: string,
+    conflict-body: string,
+    can-add-page: bool,
+    can-remove-page: bool,
+    canvas-description: string,
+}
+
+// Which editor tab stop has keyboard focus: `fold`, `device`, `layout`, `send`, `filmstrip`,
+// `canvas`, or empty. The keyboard tests read it; Slint offers no other way to ask.
+export global EditorFocus {
+    in-out property <string> area;
+    public function report(name: string, focused: bool) {
+        if focused {
+            self.area = name;
+        } else if self.area == name {
+            self.area = "";
+        }
+    }
+}
+
+// The Device's own colours: the canvas pictures the Device, so it stays dark in a light theme.
+global Device {
+    out property <color> bezel: #0b0b0b;
+    out property <color> screen: #161616;
+    out property <color> tile: #2c2c2c;
+    out property <color> tile-selected: #3a3a3a;
+    out property <color> text: #ffffff;
+    out property <color> quiet: #ffffff40;
+    out property <color> caution: #fce100;
+}
+
+// The menu key, or Shift+F10, opens a context menu.
+global MenuKey {
+    pure public function is(event: KeyEvent) -> bool {
+        return event.text == Key.Menu || (event.text == Key.F10 && event.modifiers.shift);
+    }
+}
+
+// A caution mark, as on a Tile or thumbnail whose field was refused.
+component Caution inherits Rectangle {
+    in property <length> size: 16px;
+    width: self.size;
+    height: self.size;
+    border-radius: self.size / 2;
+    background: Device.caution;
+    Text {
+        accessible-role: none;
+        text: "!";
+        color: #000000;
+        font-size: root.size * 0.7;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// A small borderless button, such as an entry's menu button. Not a Tab stop: the list it sits
+// in handles the keyboard.
+component QuietButton inherits Rectangle {
+    in property <string> text;
+    in property <string> label;
+    callback clicked();
+    accessible-role: button;
+    accessible-label: self.label;
+    accessible-action-default => {
+        self.clicked();
+    }
+    width: max(24px, words.preferred-width + 8px);
+    height: max(24px, words.preferred-height + 4px);
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.subtle-hover : transparent;
+    words := Text {
+        accessible-role: none;
+        text: root.text;
+        color: Theme.text;
+        font-size: Theme.body;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// The Page filmstrip: one Tab stop, Up and Down change Page, the menu key opens an entry's menu.
+component Filmstrip inherits Rectangle {
+    in property <EditorState> editor;
+    in property <[FilmPage]> pages;
+    in property <[ThumbTile]> thumbs;
+    callback select-page(string);
+    callback add-page();
+    callback remove-page(string);
+
+    // The entry whose menu is open, or -1.
+    property <int> menu-for: -1;
+    // The keyboard is on Add Page rather than a Page.
+    property <bool> on-add;
+    property <length> thumb-w: root.width - 24px;
+    property <length> thumb-h: self.thumb-w / max(0.1, root.editor.aspect);
+
+    function step(by: int) {
+        root.menu-for = -1;
+        let next = root.editor.page-index + by;
+        if root.on-add {
+            if by < 0 {
+                root.on-add = false;
+            }
+        } else if next >= root.pages.length {
+            root.on-add = true;
+        } else if next >= 0 {
+            root.select-page(root.pages[next].id);
+        }
+    }
+
+    keys := FocusScope {
+        accessible-role: list;
+        accessible-label: "Pages";
+        accessible-item-count: root.pages.length;
+        changed has-focus => {
+            EditorFocus.report("filmstrip", self.has-focus);
+            if !self.has-focus {
+                root.on-add = false;
+            }
+        }
+        key-pressed(event) => {
+            if event.text == Key.UpArrow {
+                root.step(-1);
+            } else if event.text == Key.DownArrow {
+                root.step(1);
+            } else if (event.text == Key.Return || event.text == " ") && root.on-add && !event.repeat {
+                if root.editor.can-add-page {
+                    root.add-page();
+                    root.on-add = false;
+                }
+            } else if MenuKey.is(event) && !root.on-add {
+                root.menu-for = root.editor.page-index;
+            } else if event.text == Key.Escape && root.menu-for >= 0 {
+                root.menu-for = -1;
+                self.focus();
+            } else {
+                return reject;
+            }
+            return accept;
+        }
+
+        ScrollView {
+            VerticalLayout {
+                padding: 12px;
+                padding-top: 4px;
+                spacing: 8px;
+                alignment: start;
+                for page[index] in root.pages: Rectangle {
+                    accessible-role: list-item;
+                    accessible-label: page.label;
+                    accessible-item-index: index;
+                    accessible-item-selectable: true;
+                    accessible-item-selected: page.current;
+                    accessible-action-default => {
+                        root.select-page(page.id);
+                    }
+                    border-radius: 6px;
+                    background: page.current ? Theme.subtle-selected : entry-touch.has-hover ? Theme.subtle-hover : transparent;
+                    border-width: page.current ? 2px : 0;
+                    border-color: Theme.high-contrast ? Theme.contrast.highlight : Theme.accent;
+                    min-height: entry.preferred-height;
+
+                    entry-touch := TouchArea {
+                        clicked => {
+                            root.menu-for = -1;
+                            root.on-add = false;
+                            root.select-page(page.id);
+                            keys.focus();
+                        }
+                    }
+
+                    entry := VerticalLayout {
+                        padding: 6px;
+                        spacing: 4px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text {
+                                accessible-role: none;
+                                text: page.number;
+                                font-size: Theme.caption;
+                                color: Theme.secondary-text;
+                                vertical-alignment: center;
+                            }
+
+                            if page.usage: Rectangle {
+                                border-radius: 3px;
+                                background: Theme.subtle-selected;
+                                border-width: Theme.high-contrast ? 1px : 0;
+                                border-color: Theme.contrast.window-text;
+                                min-width: tag.preferred-width + 8px;
+                                tag := Text {
+                                    accessible-role: none;
+                                    text: "Usage";
+                                    font-size: Theme.caption;
+                                    color: Theme.text;
+                                }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1;
+                            }
+
+                            QuietButton {
+                                text: "⋯";
+                                label: "More for " + page.title;
+                                clicked => {
+                                    root.menu-for = root.menu-for == index ? -1 : index;
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: root.thumb-h;
+                            border-radius: 4px;
+                            background: Device.screen;
+                            clip: true;
+                            for tile in root.thumbs: Rectangle {
+                                visible: tile.page == index;
+                                x: tile.x * parent.width;
+                                y: tile.y * parent.height;
+                                width: tile.w * parent.width;
+                                height: tile.h * parent.height;
+                                border-radius: 2px;
+                                background: tile.problem ? Device.caution : Device.tile;
+                            }
+                            if page.problem: Caution {
+                                x: parent.width - self.width - 4px;
+                                y: 4px;
+                                size: 14px;
+                            }
+                        }
+
+                        Text {
+                            accessible-role: none;
+                            text: page.title;
+                            font-size: Theme.caption;
+                            color: Theme.text;
+                            overflow: elide;
+                        }
+
+                        if root.menu-for == index: ActionButton {
+                            text: "Remove Page";
+                            enabled: root.editor.can-remove-page;
+                            description: root.editor.can-remove-page ? "" : "A Layout keeps at least one Page.";
+                            clicked => {
+                                root.menu-for = -1;
+                                root.remove-page(page.id);
+                                keys.focus();
+                            }
+                            init => {
+                                self.focus();
+                            }
+                        }
+                    }
+                }
+
+                // Add Page, the dashed last entry.
+                add := Rectangle {
+                    accessible-role: button;
+                    accessible-label: "Add Page";
+                    accessible-enabled: root.editor.can-add-page;
+                    accessible-description: root.editor.can-add-page ? "" : "A Layout holds up to 8 Pages.";
+                    accessible-action-default => {
+                        if root.editor.can-add-page {
+                            root.add-page();
+                        }
+                    }
+                    min-height: max(40px, add-words.preferred-height + 16px);
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: root.editor.can-add-page ? Theme.control-stroke : Theme.disabled-fill;
+                    background: add-touch.has-hover && root.editor.can-add-page ? Theme.subtle-hover : transparent;
+                    add-words := Text {
+                        accessible-role: none;
+                        text: "+ Add Page";
+                        font-size: Theme.body;
+                        color: root.editor.can-add-page ? Theme.text : Theme.disabled-text;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    add-touch := TouchArea {
+                        enabled: root.editor.can-add-page;
+                        clicked => {
+                            root.add-page();
+                        }
+                    }
+
+                    if keys.has-focus && root.on-add: Rectangle {
+                        x: -3px;
+                        y: -3px;
+                        width: parent.width + 6px;
+                        height: parent.height + 6px;
+                        border-width: 2px;
+                        border-radius: 9px;
+                        border-color: Theme.focus;
+                    }
+                }
+            }
+        }
+    }
+
+    // The focus outline goes round the current Page.
+    if keys.has-focus && !root.on-add: Rectangle {
+        x: 2px;
+        y: 2px;
+        width: root.width - 4px;
+        height: root.height - 4px;
+        border-width: 2px;
+        border-radius: 6px;
+        border-color: Theme.focus;
+    }
+}
+
+// The Device at its aspect ratio with the current Page's Tiles. One Tab stop: arrows move
+// between cells, or move the selected Tile; Shift+arrows resize it.
+component DeviceCanvas inherits Rectangle {
+    in property <EditorState> editor;
+    in property <[CanvasTile]> tiles;
+    in property <[CanvasCell]> cells;
+    callback select-tile(string);
+    callback clear-selection();
+    callback activate-cell(int, int);
+    callback add-tile(int, int);
+    callback move-tile(string, int, int);
+    callback resize-tile(string, int, int);
+    callback nudge(int, int);
+    callback grow(int, int);
+    callback remove-tile();
+    pure callback drop-target(string, float, float, float, float, bool) -> DropTarget;
+
+    // The screen's size on the canvas.
+    property <float> aspect: max(0.1, root.editor.aspect);
+    property <length> sw: max(0px, min(root.width - 52px, (root.height - 52px) * self.aspect));
+    property <length> sh: self.sw / self.aspect;
+    // The Device's pixels to the canvas's, so text keeps the Device's proportions.
+    property <float> scale: min(self.sw, self.sh) / 600px;
+
+    // A drag in progress: the Tile, whether its corner handle resizes it, and how far it moved.
+    property <string> dragging;
+    property <bool> resizing;
+    property <length> drag-dx;
+    property <length> drag-dy;
+    property <DropTarget> ghost;
+    // A released Tile glides into its cell; keyboard moves don't.
+    property <bool> settling;
+    // The keyboard's cell while nothing is selected.
+    property <int> focus-row;
+    property <int> focus-col;
+    property <CanvasCell> focus-cell: root.cells[root.focus-row * root.editor.cols + root.focus-col];
+
+    function press() {
+        root.settling = false;
+        keys.focus();
+    }
+
+    // The pointer moved by (dx, dy) in the moving Tile's own frame since the last move.
+    function drag(id: string, resize: bool, base-x: length, base-y: length, press-x: length, press-y: length, dx: length, dy: length) {
+        if root.dragging != id && abs(dx) < 4px && abs(dy) < 4px {
+            return;
+        }
+        root.dragging = id;
+        root.resizing = resize;
+        root.drag-dx += dx;
+        root.drag-dy += dy;
+        root.ghost = root.drop-target(id, (base-x + press-x) / root.sw, (base-y + press-y) / root.sh, (base-x + press-x + root.drag-dx) / root.sw, (base-y + press-y + root.drag-dy) / root.sh, resize);
+    }
+
+    // Commits the drop, or lets the Tile snap back where it can't go.
+    function drop(id: string) {
+        if root.ghost.ok {
+            if root.resizing {
+                root.resize-tile(id, root.ghost.row-span, root.ghost.col-span);
+            } else {
+                root.move-tile(id, root.ghost.row, root.ghost.col);
+            }
+        }
+        root.settling = true;
+        root.dragging = "";
+        root.resizing = false;
+        root.drag-dx = 0;
+        root.drag-dy = 0;
+    }
+
+    keys := FocusScope {
+        accessible-role: groupbox;
+        accessible-label: "Device canvas";
+        accessible-description: root.editor.canvas-description;
+        changed has-focus => {
+            EditorFocus.report("canvas", self.has-focus);
+        }
+        key-pressed(event) => {
+            let dx = event.text == Key.LeftArrow ? -1 : event.text == Key.RightArrow ? 1 : 0;
+            let dy = event.text == Key.UpArrow ? -1 : event.text == Key.DownArrow ? 1 : 0;
+            if root.editor.tile-selected {
+                if event.text == Key.Escape {
+                    root.focus-row = root.editor.selected-row;
+                    root.focus-col = root.editor.selected-col;
+                    root.clear-selection();
+                } else if event.text == Key.Delete || event.text == Key.Backspace {
+                    root.focus-row = root.editor.selected-row;
+                    root.focus-col = root.editor.selected-col;
+                    root.remove-tile();
+                } else if dx != 0 || dy != 0 {
+                    root.settling = false;
+                    if event.modifiers.shift {
+                        root.grow(dx, dy);
+                    } else {
+                        root.nudge(dx, dy);
+                    }
+                } else {
+                    return reject;
+                }
+                return accept;
+            }
+            if dx != 0 || dy != 0 {
+                root.focus-row = clamp(root.focus-row + dy, 0, max(0, root.editor.rows - 1));
+                root.focus-col = clamp(root.focus-col + dx, 0, max(0, root.editor.cols - 1));
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == " ") && !event.repeat && root.editor.rows > 0 {
+                root.activate-cell(root.focus-row, root.focus-col);
+                return accept;
+            }
+            return reject;
+        }
+
+        // An empty spot on the canvas clears the selection.
+        TouchArea {
+            clicked => {
+                root.press();
+                root.clear-selection();
+            }
+        }
+
+        bezel := Rectangle {
+            width: root.sw + 20px;
+            height: root.sh + 20px;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            border-radius: 14px;
+            background: Device.bezel;
+            border-width: Theme.high-contrast ? 1px : 0;
+            border-color: Theme.contrast.window-text;
+
+            screen := Rectangle {
+                x: 10px;
+                y: 10px;
+                width: root.sw;
+                height: root.sh;
+                background: Device.screen;
+                clip: true;
+
+                if root.editor.title-h > 0: Text {
+                    accessible-role: none;
+                    y: 0;
+                    height: root.editor.title-h * root.sh;
+                    width: parent.width;
+                    text: root.editor.page-title;
+                    color: Device.text;
+                    font-size: max(7px, 22px * root.scale);
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                // The pager: one dot per Page.
+                if root.editor.title-h > 0: HorizontalLayout {
+                    y: root.editor.pager-y * root.sh;
+                    height: root.sh - self.y;
+                    alignment: center;
+                    spacing: 8px * root.scale;
+                    padding-top: (self.height - 8px * root.scale) / 2;
+                    padding-bottom: self.padding-top;
+                    for n in root.editor.page-count: Rectangle {
+                        width: 8px * root.scale;
+                        border-radius: 4px * root.scale;
+                        background: n == root.editor.page-index ? Device.text : Device.quiet;
+                    }
+                }
+
+                if root.editor.page-usage: Text {
+                    accessible-role: none;
+                    text: "Usage Page";
+                    color: Device.quiet;
+                    font-size: max(8px, 24px * root.scale);
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                // Empty cells show a quiet plus.
+                for cell in root.cells: Rectangle {
+                    x: cell.x * root.sw;
+                    y: cell.y * root.sh;
+                    width: cell.w * root.sw;
+                    height: cell.h * root.sh;
+                    if cell.empty && root.dragging == "": Rectangle {
+                        accessible-role: button;
+                        accessible-label: cell.name;
+                        accessible-action-default => {
+                            root.add-tile(cell.row, cell.col);
+                        }
+                        border-radius: 6px * root.scale;
+                        border-width: cell-touch.has-hover ? 1px : 0;
+                        border-color: Device.quiet;
+                        Text {
+                            accessible-role: none;
+                            text: "+";
+                            color: cell-touch.has-hover ? Device.text : Device.quiet;
+                            font-size: max(10px, 28px * root.scale);
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        cell-touch := TouchArea {
+                            clicked => {
+                                root.press();
+                                root.add-tile(cell.row, cell.col);
+                            }
+                        }
+                    }
+                }
+
+                // Where the dragged Tile would land. Absent where it wouldn't fit.
+                if root.dragging != "" && root.ghost.ok: Rectangle {
+                    x: root.ghost.x * root.sw;
+                    y: root.ghost.y * root.sh;
+                    width: root.ghost.w * root.sw;
+                    height: root.ghost.h * root.sh;
+                    border-radius: 6px * root.scale;
+                    border-width: 2px;
+                    border-color: Theme.accent;
+                    background: Theme.accent.transparentize(85%);
+                }
+
+                for tile in root.tiles: tile-box := Rectangle {
+                    property <bool> dragged: root.dragging == tile.id;
+                    property <length> base-x: tile.x * root.sw;
+                    property <length> base-y: tile.y * root.sh;
+                    accessible-role: button;
+                    accessible-label: tile.name;
+                    accessible-description: tile.problem;
+                    accessible-action-default => {
+                        root.select-tile(tile.id);
+                    }
+                    x: self.base-x + (self.dragged && !root.resizing ? root.drag-dx : 0);
+                    y: self.base-y + (self.dragged && !root.resizing ? root.drag-dy : 0);
+                    width: max(12px, tile.w * root.sw + (self.dragged && root.resizing ? root.drag-dx : 0));
+                    height: max(12px, tile.h * root.sh + (self.dragged && root.resizing ? root.drag-dy : 0));
+                    animate x, y, width, height {
+                        duration: root.settling && !Theme.reduce-motion ? 150ms : 0ms;
+                        easing: ease-out;
+                    }
+                    opacity: self.dragged ? 0.85 : 1;
+                    border-radius: 8px * root.scale;
+                    background: tile.selected ? Device.tile-selected : Device.tile;
+                    border-width: tile.selected ? 2px : Theme.high-contrast ? 1px : 0;
+                    border-color: tile.selected ? (Theme.high-contrast ? Theme.contrast.highlight : Theme.accent) : Theme.contrast.window-text;
+
+                    Text {
+                        accessible-role: none;
+                        x: 4px;
+                        width: parent.width - 8px;
+                        text: tile.label;
+                        color: Device.text;
+                        font-size: max(7px, 18px * root.scale);
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                        overflow: elide;
+                    }
+
+                    if tile.problem != "": Caution {
+                        x: parent.width - self.width - 4px;
+                        y: 4px;
+                    }
+
+                    TouchArea {
+                        pointer-event(event) => {
+                            if event.button != PointerEventButton.left {
+                                return;
+                            }
+                            if event.kind == PointerEventKind.down {
+                                root.press();
+                            } else if event.kind == PointerEventKind.up {
+                                if root.dragging == tile.id {
+                                    root.drop(tile.id);
+                                } else {
+                                    root.select-tile(tile.id);
+                                }
+                            }
+                        }
+                        moved => {
+                            if self.pressed {
+                                root.drag(tile.id, false, tile-box.base-x, tile-box.base-y, self.pressed-x, self.pressed-y, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
+                            }
+                        }
+                    }
+
+                    // The corner handle resizes the selected Tile.
+                    if tile.selected: Rectangle {
+                        x: parent.width - self.width / 2 - 2px;
+                        y: parent.height - self.height / 2 - 2px;
+                        width: 14px;
+                        height: 14px;
+                        border-radius: 7px;
+                        background: Theme.high-contrast ? Theme.contrast.highlight : Theme.accent;
+                        border-width: 2px;
+                        border-color: Device.screen;
+                        TouchArea {
+                            mouse-cursor: nwse-resize;
+                            pointer-event(event) => {
+                                if event.button != PointerEventButton.left {
+                                    return;
+                                }
+                                if event.kind == PointerEventKind.down {
+                                    root.press();
+                                } else if event.kind == PointerEventKind.up && root.dragging == tile.id {
+                                    root.drop(tile.id);
+                                }
+                            }
+                            moved => {
+                                if self.pressed {
+                                    root.drag(tile.id, true, tile-box.base-x + parent.x, tile-box.base-y + parent.y, self.pressed-x, self.pressed-y, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
+                                }
+                            }
+                        }
+                    }
+
+                    if tile.selected && keys.has-focus: Rectangle {
+                        x: -4px;
+                        y: -4px;
+                        width: parent.width + 8px;
+                        height: parent.height + 8px;
+                        border-width: 2px;
+                        border-radius: 8px * root.scale + 4px;
+                        border-color: Theme.focus;
+                    }
+                }
+
+                // The keyboard's cell, while nothing is selected.
+                if keys.has-focus && !root.editor.tile-selected && root.editor.rows > 0: Rectangle {
+                    x: root.focus-cell.x * root.sw - 3px;
+                    y: root.focus-cell.y * root.sh - 3px;
+                    width: root.focus-cell.w * root.sw + 6px;
+                    height: root.focus-cell.h * root.sh + 6px;
+                    border-width: 2px;
+                    border-radius: 8px * root.scale + 3px;
+                    border-color: Theme.focus;
+                }
+            }
+        }
+    }
+}
+
+// "{Device} has "{name}"": which Layout stays. Closing it keeps mine.
+component ConflictDialog inherits Rectangle {
+    in property <string> title;
+    in property <string> body;
+    callback keep-mine();
+    callback replace();
+
+    background: Theme.smoke;
+    TouchArea { }
+
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.keep-mine();
+                return accept;
+            }
+            return reject;
+        }
+
+        dialog := Rectangle {
+            accessible-role: groupbox;
+            accessible-label: root.title;
+            width: min(root.width - 32px, max(440px, 320px * Theme.text-scale));
+            height: content.preferred-height;
+            x: (root.width - self.width) / 2;
+            y: max(16px, (root.height - self.height) / 2);
+            background: Theme.dialog;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.high-contrast ? Theme.contrast.window-text : Theme.card-stroke;
+            drop-shadow-blur: Theme.high-contrast ? 0 : 32px;
+            drop-shadow-offset-y: 8px;
+            drop-shadow-color: #00000040;
+
+            content := VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                SectionTitle {
+                    text: root.title;
+                }
+
+                Body {
+                    text: root.body;
+                }
+
+                if dialog.width >= 300px * Theme.text-scale: HorizontalLayout {
+                    padding-top: 12px;
+                    spacing: 8px;
+                    ActionButton {
+                        text: "Replace";
+                        horizontal-stretch: 1;
+                        clicked => {
+                            root.replace();
+                        }
+                    }
+
+                    ActionButton {
+                        text: "Keep mine";
+                        primary: true;
+                        horizontal-stretch: 1;
+                        clicked => {
+                            root.keep-mine();
+                        }
+                        init => {
+                            self.focus();
+                        }
+                    }
+                }
+                if dialog.width < 300px * Theme.text-scale: VerticalLayout {
+                    padding-top: 12px;
+                    spacing: 8px;
+                    ActionButton {
+                        text: "Keep mine";
+                        primary: true;
+                        clicked => {
+                            root.keep-mine();
+                        }
+                        init => {
+                            self.focus();
+                        }
+                    }
+
+                    ActionButton {
+                        text: "Replace";
+                        clicked => {
+                            root.replace();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A menu of buttons that opens below its button and closes on Escape or a choice.
+component MenuPanel inherits Rectangle {
+    in property <string> label;
+    callback close();
+    accessible-role: groupbox;
+    accessible-label: self.label;
+    background: Theme.dialog;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.high-contrast ? Theme.contrast.window-text : Theme.card-stroke;
+    drop-shadow-blur: Theme.high-contrast ? 0 : 16px;
+    drop-shadow-offset-y: 4px;
+    drop-shadow-color: #00000030;
+    height: items.preferred-height;
+    opacity: 1;
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.close();
+                return accept;
+            }
+            return reject;
+        }
+        items := VerticalLayout {
+            padding: 4px;
+            spacing: 4px;
+            @children
+        }
+    }
+}
+
+export component EditorScreen inherits Rectangle {
+    in property <EditorState> editor;
+    in property <[FilmPage]> pages;
+    in property <[ThumbTile]> thumbs;
+    in property <[CanvasTile]> tiles;
+    in property <[CanvasCell]> cells;
+    in property <[EditorDevice]> devices;
+    // The window's width: the filmstrip folds by itself below 720 px.
+    in property <length> window-width;
+    // The person's choice in a wide window, kept in `window.json`.
+    in property <bool> folded-choice;
+    callback set-folded(bool);
+    callback choose-device(string);
+    callback read-layout();
+    callback start-layout(bool);
+    callback select-page(string);
+    callback add-page();
+    callback remove-page(string);
+    callback select-tile(string);
+    callback clear-selection();
+    callback activate-cell(int, int);
+    callback add-tile(int, int);
+    callback move-tile(string, int, int);
+    callback resize-tile(string, int, int);
+    callback nudge(int, int);
+    callback grow(int, int);
+    callback remove-tile();
+    pure callback drop-target(string, float, float, float, float, bool) -> DropTarget;
+    callback send();
+    callback keep-mine();
+    callback replace();
+
+    property <bool> narrow: root.window-width < 720px;
+    // In a narrow window the fold button shows the filmstrip until the window widens again.
+    property <bool> peek;
+    changed narrow => {
+        root.peek = false;
+    }
+    out property <bool> folded: root.narrow ? !root.peek : root.folded-choice;
+    property <bool> device-menu;
+    property <bool> layout-menu;
+    property <bool> wide-header: root.width >= 520px * Theme.text-scale;
+    property <bool> ready: root.editor.state == "ready";
+
+    function toggle-fold() {
+        if root.narrow {
+            root.peek = !root.peek;
+        } else {
+            root.set-folded(!root.folded-choice);
+        }
+    }
+
+    VerticalLayout {
+        header := VerticalLayout {
+            padding: 12px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: stretch;
+                if root.ready: ActionButton {
+                    text: root.folded ? "Show Pages" : "Hide Pages";
+                    changed has-focus => {
+                        EditorFocus.report("fold", self.has-focus);
+                    }
+                    clicked => {
+                        root.toggle-fold();
+                    }
+                }
+
+                if root.devices.length > 1: ActionButton {
+                    text: root.editor.device-name + " ▾";
+                    label: "Device";
+                    description: root.editor.device-name;
+                    changed has-focus => {
+                        EditorFocus.report("device", self.has-focus);
+                    }
+                    clicked => {
+                        root.layout-menu = false;
+                        root.device-menu = !root.device-menu;
+                    }
+                }
+                if root.devices.length <= 1: Text {
+                    text: root.editor.device-name;
+                    font-size: Theme.body-large;
+                    font-weight: Theme.semibold;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    min-width: 0;
+                }
+
+                if root.ready: ActionButton {
+                    text: "Layout ▾";
+                    label: "Layout";
+                    changed has-focus => {
+                        EditorFocus.report("layout", self.has-focus);
+                    }
+                    clicked => {
+                        root.device-menu = false;
+                        root.layout-menu = !root.layout-menu;
+                    }
+                }
+
+                if root.wide-header: Rectangle {
+                    horizontal-stretch: 1;
+                }
+                if root.wide-header && root.ready: save-line := Text {
+                    accessible-role: text;
+                    accessible-label: root.editor.save-state;
+                    accessible-live-region: polite;
+                    text: root.editor.save-state;
+                    color: root.editor.save-caution ? Theme.caution : Theme.secondary-text;
+                    font-size: Theme.body;
+                    vertical-alignment: center;
+                }
+                if root.wide-header && root.ready && !root.editor.sending: ActionButton {
+                    text: "Send to Device";
+                    primary: true;
+                    changed has-focus => {
+                        EditorFocus.report("send", self.has-focus);
+                    }
+                    clicked => {
+                        root.send();
+                    }
+                }
+                if root.wide-header && root.ready && root.editor.sending: VerticalLayout {
+                    alignment: center;
+                    width: 160px;
+                    ProgressBar {
+                        label: "Sending to " + root.editor.device-name;
+                        value: root.editor.progress;
+                        value-text: root.editor.progress-text;
+                    }
+                }
+            }
+
+            // A narrow header puts the save state and Send on their own line.
+            if !root.wide-header && root.ready: HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    accessible-role: text;
+                    accessible-label: root.editor.save-state;
+                    accessible-live-region: polite;
+                    text: root.editor.save-state;
+                    color: root.editor.save-caution ? Theme.caution : Theme.secondary-text;
+                    font-size: Theme.body;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+
+                if !root.editor.sending: ActionButton {
+                    text: "Send to Device";
+                    primary: true;
+                    changed has-focus => {
+                        EditorFocus.report("send", self.has-focus);
+                    }
+                    clicked => {
+                        root.send();
+                    }
+                }
+                if root.editor.sending: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    ProgressBar {
+                        label: "Sending to " + root.editor.device-name;
+                        value: root.editor.progress;
+                        value-text: root.editor.progress-text;
+                    }
+                }
+            }
+        }
+
+        if root.ready: HorizontalLayout {
+            vertical-stretch: 1;
+            // The filmstrip leaves the Tab order and the accessibility tree when folded.
+            strip := Rectangle {
+                width: root.folded ? 0 : 160px * min(1.4, Theme.text-scale);
+                animate width {
+                    duration: Theme.reduce-motion ? 0ms : 200ms;
+                    easing: ease-out;
+                }
+                clip: true;
+                if !root.folded: Filmstrip {
+                    width: 160px * min(1.4, Theme.text-scale);
+                    editor: root.editor;
+                    pages: root.pages;
+                    thumbs: root.thumbs;
+                    select-page(id) => {
+                        root.select-page(id);
+                    }
+                    add-page => {
+                        root.add-page();
+                    }
+                    remove-page(id) => {
+                        root.remove-page(id);
+                    }
+                }
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                padding-right: 16px;
+                padding-left: root.folded ? 16px : 4px;
+                padding-bottom: 12px;
+                spacing: 8px;
+                // Notices stack above the Device, never over it.
+                if root.editor.notice != "": InfoBar {
+                    text: root.editor.notice;
+                    details: root.editor.notice-detail;
+                    severity: Severity.error;
+                }
+                DeviceCanvas {
+                    vertical-stretch: 1;
+                    editor: root.editor;
+                    tiles: root.tiles;
+                    cells: root.cells;
+                    select-tile(id) => {
+                        root.select-tile(id);
+                    }
+                    clear-selection => {
+                        root.clear-selection();
+                    }
+                    activate-cell(row, col) => {
+                        root.activate-cell(row, col);
+                    }
+                    add-tile(row, col) => {
+                        root.add-tile(row, col);
+                    }
+                    move-tile(id, row, col) => {
+                        root.move-tile(id, row, col);
+                    }
+                    resize-tile(id, rows, cols) => {
+                        root.resize-tile(id, rows, cols);
+                    }
+                    nudge(dx, dy) => {
+                        root.nudge(dx, dy);
+                    }
+                    grow(dx, dy) => {
+                        root.grow(dx, dy);
+                    }
+                    remove-tile => {
+                        root.remove-tile();
+                    }
+                    drop-target(id, px, py, x, y, resize) => {
+                        return root.drop-target(id, px, py, x, y, resize);
+                    }
+                }
+            }
+        }
+
+        // No Layout to show yet: say why and what to do.
+        if !root.ready: VerticalLayout {
+            vertical-stretch: 1;
+            padding: 24px;
+            spacing: 12px;
+            alignment: start;
+            SectionTitle {
+                text: root.editor.message;
+            }
+
+            if root.editor.detail != "": Body {
+                text: root.editor.detail;
+            }
+            if root.editor.state == "empty" || root.editor.state == "unreadable": HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+                ActionButton {
+                    text: "Start a Layout";
+                    primary: true;
+                    clicked => {
+                        root.start-layout(true);
+                    }
+                }
+
+                ActionButton {
+                    text: root.editor.state == "empty" ? "Start blank" : "Retry";
+                    clicked => {
+                        if root.editor.state == "empty" {
+                            root.start-layout(false);
+                        } else {
+                            root.read-layout();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.device-menu: MenuPanel {
+        label: "Devices";
+        x: 16px;
+        y: header.height - 4px;
+        width: min(root.width - 32px, 280px * Theme.text-scale);
+        close => {
+            root.device-menu = false;
+        }
+        for device in root.devices: ActionButton {
+            text: device.name;
+            primary: device.id == root.editor.device-id;
+            clicked => {
+                root.device-menu = false;
+                root.choose-device(device.id);
+            }
+        }
+    }
+
+    if root.layout-menu: MenuPanel {
+        label: "Layout";
+        x: max(16px, root.width - self.width - 16px);
+        y: header.height - 4px;
+        width: min(root.width - 32px, 240px * Theme.text-scale);
+        close => {
+            root.layout-menu = false;
+        }
+        ActionButton {
+            text: "Read from Device";
+            description: "Replaces nothing until you choose, if your Layout differs.";
+            clicked => {
+                root.layout-menu = false;
+                root.read-layout();
+            }
+            init => {
+                self.focus();
+            }
+        }
+    }
+
+    if root.editor.conflict: ConflictDialog {
+        title: root.editor.conflict-title;
+        body: root.editor.conflict-body;
+        keep-mine => {
+            root.keep-mine();
+        }
+        replace => {
+            root.replace();
+        }
+    }
+}

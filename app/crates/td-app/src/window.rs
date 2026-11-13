@@ -35,6 +35,8 @@ pub(crate) fn close_action(close_to_tray: bool, notice_shown: bool) -> Close {
 pub(crate) struct State {
     prefs: RefCell<Prefs>,
     close_to_tray: bool,
+    /// Writes `window.json` off the UI thread, newest value last.
+    writer: std::sync::Arc<Writer>,
     /// Saves a moment after the window stops moving, so a killed process loses little.
     save_soon: Timer,
     quit_requested: Cell<bool>,
@@ -84,6 +86,47 @@ impl State {
         self.save();
     }
 
+    pub(crate) fn filmstrip_folded(&self) -> bool {
+        self.prefs.borrow().value.filmstrip_folded
+    }
+
+    pub(crate) fn set_filmstrip_folded(&self, folded: bool, runtime: &tokio::runtime::Handle) {
+        self.prefs.borrow_mut().value.filmstrip_folded = folded;
+        self.save_in_background(runtime);
+    }
+
+    pub(crate) fn editor_device(&self) -> Option<String> {
+        self.prefs.borrow().value.editor_device.clone()
+    }
+
+    pub(crate) fn set_editor_device(&self, device: &str, runtime: &tokio::runtime::Handle) {
+        let mut prefs = self.prefs.borrow_mut();
+        if prefs.value.editor_device.as_deref() == Some(device) {
+            return;
+        }
+        prefs.value.editor_device = Some(device.to_owned());
+        drop(prefs);
+        self.save_in_background(runtime);
+    }
+
+    /// Saves on a blocking thread, so a click never waits for the disk. Saves that overlap
+    /// write one after another, and the newest value is written last.
+    fn save_in_background(&self, runtime: &tokio::runtime::Handle) {
+        *lock(&self.writer.pending) = Some(self.prefs.borrow().clone());
+        let writer = self.writer.clone();
+        runtime.spawn_blocking(move || {
+            let _turn = lock(&writer.turn);
+            if let Some(prefs) = lock(&writer.pending).take()
+                && let Err(error) = prefs.save()
+            {
+                eprintln!(
+                    "Open TouchDeck: could not save {}: {error}",
+                    prefs.path().display()
+                );
+            }
+        });
+    }
+
     fn notice_seen(&self) {
         self.prefs.borrow_mut().value.close_notice_shown = true;
         self.save();
@@ -101,6 +144,20 @@ impl State {
     }
 }
 
+#[derive(Default)]
+struct Writer {
+    /// The newest preferences not yet written.
+    pending: std::sync::Mutex<Option<Prefs>>,
+    /// Held while writing, so two writes never interleave.
+    turn: std::sync::Mutex<()>,
+}
+
+fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 thread_local! {
     /// The window's state, for `reveal`. An `Opener` crosses threads, so it can't hold the `Rc`.
     static STATE: RefCell<Weak<State>> = const { RefCell::new(Weak::new()) };
@@ -111,6 +168,7 @@ pub(crate) fn attach(ui: &AppWindow, prefs: Prefs, close_to_tray: bool) -> Rc<St
     let state = Rc::new(State {
         prefs: RefCell::new(prefs),
         close_to_tray,
+        writer: Default::default(),
         save_soon: Timer::default(),
         quit_requested: Cell::new(false),
     });
