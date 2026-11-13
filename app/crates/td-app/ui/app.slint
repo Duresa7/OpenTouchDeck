@@ -61,6 +61,7 @@ export component AppWindow inherits Window {
     in property <[PairedApp]> paired-apps;
     in property <[string]> after-choices;
     in-out property <bool> confirming-forget-all;
+    in-out property <bool> confirming-build;
     callback set-start(bool);
     callback set-updates(bool);
     callback set-appearance(string);
@@ -75,6 +76,9 @@ export component AppWindow inherits Window {
     callback forget-app(string);
     callback forget-all();
     callback update-firmware();
+    callback update-firmware-file();
+    callback cancel-firmware();
+    callback switch-build();
     callback restart-device();
 
     // The Layout editor.
@@ -313,6 +317,7 @@ export component AppWindow inherits Window {
                 paired: root.paired-apps;
                 after-choices: root.after-choices;
                 confirming-forget-all <=> root.confirming-forget-all;
+                confirming-build <=> root.confirming-build;
                 set-start(on) => {
                     root.set-start(on);
                 }
@@ -324,6 +329,7 @@ export component AppWindow inherits Window {
                 }
                 open-device(id) => {
                     root.confirming-forget-all = false;
+                    root.confirming-build = false;
                     root.settings-device = id;
                     root.open-device(id);
                 }
@@ -360,6 +366,15 @@ export component AppWindow inherits Window {
                 }
                 update-firmware => {
                     root.update-firmware();
+                }
+                update-firmware-file => {
+                    root.update-firmware-file();
+                }
+                cancel-firmware => {
+                    root.cancel-firmware();
+                }
+                switch-build => {
+                    root.switch-build();
                 }
                 restart => {
                     root.restart-device();

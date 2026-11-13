@@ -32,6 +32,11 @@ impl Rig {
     /// A Companion on mock ports, the window wired to it and shown at `width` × 2000 px so the
     /// whole page can be searched.
     fn start(width: f32) -> Self {
+        Self::start_with(width, |_| {})
+    }
+
+    /// As [`Rig::start`], with `prepare` run on the Companion before the window connects.
+    fn start_with(width: f32, prepare: impl FnOnce(&td_companion::companion::Handle)) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -44,6 +49,7 @@ impl Rig {
         let handle = companion.handle();
         let ports = handle.devices().mock().unwrap().0.clone();
         handle.firmware().script(vec![ConsentAnswer::Accept; 16]);
+        prepare(&handle);
         crate::ui_tests::init();
         let app = App::new(Options {
             data_dir: dir.path().join("data"),
@@ -179,6 +185,7 @@ fn settle(app: &App) {
 }
 
 mod editor;
+mod firmware;
 mod settings;
 mod setup;
 
