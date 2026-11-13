@@ -1,3 +1,70 @@
+# Native Layout editor model
+
+Three shapes were considered:
+
+- A td-app controller could compose Editor and Device operations, but would put
+  persistence, Asset preparation and conflict policy beside UI code.
+- A shared Handle-owned editor registry could broadcast snapshots, but adds locks
+  and ownership rules without a second editor consumer.
+- A per-Device Companion Session can own the drafts and expose commands and
+  snapshots to one native adapter.
+
+The third shape is chosen. `Handle::open_editor(device)` opens an
+`editor::Session`. Persisted drafts, conditional revisions, Assets and Device
+operations belong in td-companion. Slint owns window state, dialogs and rendering.
+Keep one Session owner per Device. There is no undo/redo: the 1.x reference editor
+had none. No UI is implemented here.
+
+## Native adapter contract
+
+- Render `draft()`, `selection()` and `save_state()`. `Draft::effective_tile()`
+  includes rejected label/action values; `rejected()` carries structured rules,
+  pointers and `action_field()` for form errors. Refused structural edits leave
+  the draft unchanged. Sending selects the first invalid Tile.
+- Use `new_layout(Blank | Starter)`, `start`, `import`, `export`, `edit`, `select`
+  and `select_orientation`. `add_target`, `add`, `preset_tile` and `place_preset`
+  share placement rules. Clear Tile is `Edit::RemoveTile`. Page edits, geometry,
+  renderers, input and actions all cross the validated Document interface.
+- `load()` preserves a different draft as a conflict; `resolve(KeepMine |
+  UseDevice)` adopts the read revision. A missing orientation clears a stale
+  revision while keeping the draft. Corrupt storage containers are reported;
+  saved Layouts that no longer validate are dropped independently by orientation.
+- Drive `changed().await` while the editor is open, then render another snapshot.
+  It consumes Companion events, refreshes durable Asset replacements and applies
+  GIF results. Replacements also apply when opening, importing, resolving and
+  editing, so an old Asset chosen from Recents becomes its replacement. Known
+  Device copies stay unchanged. `prune_assets` preserves both drafts' Assets.
+- `numeric_streams()` supplies ordered numeric choices with Preset labels and
+  units. `bar_appearance()` supplies only a matching Integration/stream Preset.
+  Graph Presets fall back to a plain value without graph Firmware; bars and
+  now-playing retain their renderer so the UI can show a Firmware requirement.
+- `add_gif` and `gif(Choose | Cancel | Retry | Fit)` own the GIF queue, files,
+  preparation and refits. Render `gif_work()` and `gif_fit()`. `gif_target()` uses
+  Device-space geometry and panel capabilities. Edits and capability events
+  refit retained sources; another Device can reuse a source during this Companion
+  session. Missing sources ask for the file again. Replaced/cancelled jobs cannot
+  write their results into another Tile or resurrect a deleted Tile. Session drop
+  cancels its preparation jobs. Uploads are limited to 16 MiB before queuing.
+  Native preparation shares normalization, cancellation, limits and admission with
+  the existing Asset service. `inspect_gif`, `fitted_text`, `gif_problem` and
+  `send_problem` preserve the reference preview and refusal rules without UI code.
+
+## Sending without borrowing the UI
+
+`begin_send(capabilities)` snapshots a push and starts owned work on the current
+Tokio runtime. The Session remains editable. Consume `changed()` to render Job
+progress through `push_progress()`; await `PendingSend::wait()` on a worker, then
+apply its opaque receipt with `finish_send()`. A receipt belongs to one Session
+and one active send. Later edits and orientation changes remain intact; only a
+matching Device readback marks the sent snapshot known. `push_report()` supplies
+counts, transfer measurements and Asset results. `send()` is the convenience
+wrapper for callers that do not edit while awaiting the transfer. Device writes
+always go through `Handle::layout_operations()`, including the Pushed copy policy.
+
+The existing Editor and Document remain lower layers for deterministic admission
+and lifecycle tests. Browser local-storage migration is outside this native model;
+its new durable format is separate from 1.x browser storage.
+
 # Rust Layout editing
 
 Three interface shapes were considered:
@@ -33,8 +100,7 @@ separate from `Unsupported`; Bluetooth consumer usages above 1023 are unsupporte
 even without diagnostics. This reuses Layout's transfer-time sink validation.
 
 The Companion module holds one Device's two orientation drafts. A native adapter
-keeps one `Editor` owner per Device under the Companion data directory. Selection,
-window state, dialogs and Device I/O belong to adapters. The lifecycle is:
+keeps one `Editor` owner per Device under the Companion data directory. The Session owns native selection and Device I/O; window state and dialogs belong to adapters. The lifecycle is:
 
 1. `Editor::open(data_dir, device_id)` reads the Device's drafts. `start(layout)`
    admits an import or a newly built Layout without losing a known Device revision.
@@ -67,8 +133,7 @@ window state, dialogs and Device I/O belong to adapters. The lifecycle is:
 drafts, preserving the last known Device copies. Replacement keys and values use
 full `sha256:` wire references. The Asset owner supplies replacement notifications.
 
-The M3 UI must connect this lifecycle to the Device lane and schedule persistence.
-Further transformations (Layout/Page names, grid size and full-screen settings),
-Preset fallback policy, asynchronous GIF preparation and migration of browser
-local-storage drafts remain follow-ups. Firmware enforcement and schema format
+The Session connects this lifecycle to the Device lane and checkpoints accepted edits and rejected fields.
+Layout/Page names, grid size and full-screen settings are validated Edit commands.
+Migration of browser local-storage drafts remains outside this native model. Firmware enforcement and schema format
 fixtures remain independent.

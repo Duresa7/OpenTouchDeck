@@ -33,6 +33,7 @@ dirs = "6"
 serialport = "4"
 serde_urlencoded = "0.7"
 thiserror = "2"
+unicode-segmentation = "1"
 ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
 url = "2"
 fs2 = "0.4"

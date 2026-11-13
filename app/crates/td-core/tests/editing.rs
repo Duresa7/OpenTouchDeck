@@ -225,6 +225,7 @@ fn renderer_transitions_drop_incompatible_fields_and_choose_the_schema() {
         Edit::Renderer {
             tile: "t".into(),
             appearance: Appearance::Plain {
+                action: None,
                 icon: None,
                 asset: None,
             },
@@ -279,6 +280,7 @@ fn action_and_label_validation_and_asset_replacement_cross_the_document_interfac
         Edit::Renderer {
             tile: "t".into(),
             appearance: Appearance::Plain {
+                action: None,
                 icon: None,
                 asset: Some(old.clone()),
             },
@@ -410,6 +412,7 @@ fn all_live_renderers_replace_the_previous_bindings_and_input_policy() {
         Edit::Renderer {
             tile: "t".into(),
             appearance: Appearance::Plain {
+                action: None,
                 icon: Some("lv:play_pause".into()),
                 asset: None,
             },
@@ -486,4 +489,143 @@ fn an_admitted_layout_drops_an_explicit_companion_sink() {
     );
     let wire = String::from_utf8(doc.layout().to_canonical_json()).unwrap();
     assert!(!wire.contains("\"sink\":\"link\""), "{wire}");
+}
+
+#[test]
+fn removing_last_schema_two_tile_or_page_downgrades_schema() {
+    let mut animated = tile("gif", 0, 0);
+    animated.asset = Some(format!("sha256:{}", "a".repeat(64)));
+    animated.render = Some(TileRender::Gif);
+    let doc = place(&document(), animated);
+    assert_eq!(doc.layout().schema, 2);
+    assert_eq!(
+        apply(&doc, Edit::RemoveTile { tile: "gif".into() })
+            .layout()
+            .schema,
+        1
+    );
+    let doc = apply(
+        &doc,
+        Edit::AddPage {
+            page: Page::Grid {
+                id: "other".into(),
+                title: "Other".into(),
+                rows: 1,
+                cols: 1,
+                tiles: vec![],
+            },
+        },
+    );
+    assert_eq!(
+        apply(
+            &doc,
+            Edit::RemovePage {
+                page: "main".into()
+            }
+        )
+        .layout()
+        .schema,
+        1
+    );
+}
+
+#[test]
+fn input_requires_bar_and_plain_can_replace_widget_binding() {
+    let doc = place(&document(), tile("t", 0, 0));
+    assert!(
+        doc.apply(&Edit::Input {
+            tile: "t".into(),
+            on: false
+        })
+        .is_err()
+    );
+    let action = Action::Widget {
+        source: "volume".into(),
+        field: "level".into(),
+        account: "".into(),
+    };
+    let doc = apply(
+        &doc,
+        Edit::Renderer {
+            tile: "t".into(),
+            appearance: Appearance::Live {
+                render: TileRender::Bar,
+                streams: BTreeMap::from([("value".into(), StreamType::Number)]),
+                input: true,
+                action,
+            },
+        },
+    );
+    let doc = apply(
+        &doc,
+        Edit::Input {
+            tile: "t".into(),
+            on: false,
+        },
+    );
+    assert!(!tiles(&doc)[0].input);
+    let doc = apply(
+        &doc,
+        Edit::Input {
+            tile: "t".into(),
+            on: true,
+        },
+    );
+    assert!(tiles(&doc)[0].input);
+    let action = Action::Widget {
+        source: "this_pc".into(),
+        field: "cpu_pct".into(),
+        account: "".into(),
+    };
+    let doc = apply(
+        &doc,
+        Edit::Renderer {
+            tile: "t".into(),
+            appearance: Appearance::Plain {
+                icon: None,
+                asset: None,
+                action: Some(action.clone()),
+            },
+        },
+    );
+    assert_eq!(tiles(&doc)[0].action, action);
+    assert!(!tiles(&doc)[0].input);
+    assert!(tiles(&doc)[0].streams.is_none());
+    assert_eq!(doc.layout().schema, 1);
+}
+
+#[test]
+fn page_toolbar_edits_validate_names_grid_and_full_screen_atomically() {
+    let doc = place(&document(), tile("edge", 1, 3));
+    for edit in [
+        Edit::Name { name: "".into() },
+        Edit::PageTitle {
+            page: "main".into(),
+            title: "".into(),
+        },
+        Edit::GridSize {
+            page: "main".into(),
+            rows: 1,
+            cols: 1,
+        },
+    ] {
+        assert!(doc.apply(&edit).is_err());
+    }
+    let doc = apply(
+        &doc,
+        Edit::Name {
+            name: "Renamed".into(),
+        },
+    );
+    let doc = apply(
+        &doc,
+        Edit::PageTitle {
+            page: "main".into(),
+            title: "Page title".into(),
+        },
+    );
+    let doc = apply(&doc, Edit::FullScreen { on: true });
+    assert_eq!(doc.layout().name, "Renamed");
+    assert!(doc.layout().full_screen);
+    assert!(matches!(&doc.layout().pages[0], Page::Grid { title, .. } if title == "Page title"));
 }

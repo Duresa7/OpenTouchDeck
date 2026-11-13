@@ -487,12 +487,24 @@ impl TestCompanion {
     pub fn data_dir(&self) -> &std::path::Path {
         self._data.path()
     }
+    /// Notify native sessions after arranging durable Brandfetch provenance in a test.
+    pub fn notify_asset_replacements(&self) {
+        self.ctx
+            .events
+            .publish(&crate::events::Change::AssetsReplaced);
+    }
     /// Runs one Brandfetch refresh as if the wall clock read `now`, in Unix seconds.
     pub async fn refresh_brandfetch(&self, now: u64) -> crate::features::brandfetch::RefreshReport {
         let ctx = self.ctx.clone();
-        tokio::task::spawn_blocking(move || ctx.brandfetch.refresh(&ctx.assets, now))
-            .await
-            .unwrap()
+        tokio::task::spawn_blocking(move || {
+            let report = ctx.brandfetch.refresh(&ctx.assets, now);
+            if !report.replaced.is_empty() {
+                ctx.events.publish(&crate::events::Change::AssetsReplaced);
+            }
+            report
+        })
+        .await
+        .unwrap()
     }
     /// Starts the Companion's Brandfetch refresh loop, checking every `tick` by the clock that
     /// [`Self::clock`] moves. It stops when the handle is aborted.

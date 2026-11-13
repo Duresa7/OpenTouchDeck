@@ -1009,6 +1009,19 @@ impl MockDeck {
         self.state().layouts.get(&orientation).cloned()
     }
 
+    /// Seed or remove a stored Layout, including damaged bytes, as an outside writer.
+    pub fn seed_layout(&self, orientation: Orientation, bytes: Option<Vec<u8>>) {
+        let mut state = self.state();
+        match bytes {
+            Some(bytes) => {
+                state.layouts.insert(orientation, bytes);
+            }
+            None => {
+                state.layouts.remove(&orientation);
+            }
+        }
+    }
+
     pub fn reboots(&self) -> u32 {
         self.state().reboots
     }
