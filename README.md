@@ -53,6 +53,8 @@ The packaged app is Windows x64. Linux source builds need a desktop session and 
 - [Layout format](schema/README.md)
 - [Packaging and releases](docs/packaging.md)
 - [Privacy and update checks](docs/PRIVACY.md)
+- [Coding standards](CODING_STANDARDS.md): read before implementing or reviewing changes.
+- [Project wiki](docs/wiki/index.md): read before revisiting a decision or recurring problem; entries record dated history.
 
 ## License
 
