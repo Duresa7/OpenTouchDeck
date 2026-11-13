@@ -1,6 +1,7 @@
-//! Routes for the e2e harness. Compiled only with `test-hooks`, and they answer only when the
-//! Companion runs on mock ports, or for `test.console` when it was started with
-//! `--test-real-device-console`; otherwise every one is `route.not_found`.
+//! Routes for the integration tests. Compiled only with `test-hooks`, and they answer only when
+//! the Companion runs on mock ports, or for `test.console` when a test starts it on real ports
+//! with the console on (`TestCompanion::start_on_real_ports(true)`); otherwise every one is
+//! `route.not_found`.
 use super::devices::{DeviceError, DevicePath};
 use crate::{
     api::{CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req, Topic},
@@ -153,21 +154,6 @@ impl Endpoint for Press {
     }
 }
 
-pub struct Sets;
-impl Endpoint for Sets {
-    const NAME: &'static str = "test.sets";
-    const METHOD: Method = Method::GET;
-    const PATH: &'static str = "/test/devices/{device}/sets";
-    type Path = DevicePath;
-    type Query = NoQuery;
-    type Body = ();
-    type Ok = Vec<Value>;
-    type Error = DeviceError;
-    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        Ok(mock_deck(&ctx, &req.path.device)?.sets())
-    }
-}
-
 /// What a mock Device received and stores.
 #[derive(Serialize, Deserialize, TS)]
 pub struct MockRecord {
@@ -291,21 +277,6 @@ fn emit(deck: &MockDeck, event: &Value) {
     }
 }
 
-pub struct InputLog;
-impl Endpoint for InputLog {
-    const NAME: &'static str = "test.input_log";
-    const METHOD: Method = Method::GET;
-    const PATH: &'static str = "/test/input-log";
-    type Path = ();
-    type Query = NoQuery;
-    type Body = ();
-    type Ok = Vec<String>;
-    type Error = CommonError;
-    async fn handle(ctx: Ctx, _: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        let (_, sink) = ctx.devices.mock().ok_or(CommonError::NotFound)?;
-        Ok(input_log(sink))
-    }
-}
 /// The keys the fake sink typed, oldest first, as `down <name>` or `up <name>`.
 pub fn input_log(sink: &td_host::FakeSink) -> Vec<String> {
     sink.events
@@ -351,29 +322,6 @@ impl Endpoint for Ports {
     }
 }
 
-#[derive(Serialize, Deserialize, TS)]
-pub struct ClockAdvance {
-    pub advance_ms: u64,
-}
-pub struct Clock;
-impl Endpoint for Clock {
-    const NAME: &'static str = "test.clock";
-    const METHOD: Method = Method::POST;
-    const PATH: &'static str = "/test/clock";
-    const STATUS: StatusCode = StatusCode::NO_CONTENT;
-    type Path = ();
-    type Query = NoQuery;
-    type Body = ClockAdvance;
-    type Ok = ();
-    type Error = CommonError;
-    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        ctx.devices.mock().ok_or(CommonError::NotFound)?;
-        ctx.clock
-            .advance(Duration::from_millis(req.body.advance_ms));
-        Ok(())
-    }
-}
-
 fn feature() -> Feature {
     Feature::new("test")
         .endpoint::<VolumeRead>()
@@ -381,12 +329,9 @@ fn feature() -> Feature {
         .endpoint::<Console>()
         .endpoint::<Mock>()
         .endpoint::<Press>()
-        .endpoint::<Sets>()
         .endpoint::<Record>()
         .endpoint::<Emit>()
-        .endpoint::<InputLog>()
         .endpoint::<Ports>()
-        .endpoint::<Clock>()
         .endpoint::<ApprovalsScript>()
         .endpoint::<FirmwareScript>()
         .endpoint::<MediaScript>()

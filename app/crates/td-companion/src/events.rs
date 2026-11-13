@@ -120,6 +120,7 @@ impl Events {
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<Change> {
         self.sender.subscribe()
     }
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn observe(&self, observer: Arc<Observer>) -> Arc<Observer> {
         self.observers.lock().push(Arc::downgrade(&observer));
         observer

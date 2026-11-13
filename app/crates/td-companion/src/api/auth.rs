@@ -85,6 +85,7 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
         .strip_prefix("Bearer ")
 }
 impl Auth {
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn new() -> Self {
         Self {
             pairing: token("tdp_"),
@@ -103,6 +104,7 @@ impl Auth {
             .kind = SessionKind::Browser;
         created.token
     }
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn pairing(&self) -> &str {
         &self.pairing
     }
@@ -213,6 +215,7 @@ impl Auth {
         s.sockets += 1;
         Ok(())
     }
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn sweep(&mut self, now: Instant) -> bool {
         let mut ended_with_sockets = false;
         for s in self.sessions.values_mut() {
@@ -425,7 +428,7 @@ impl Endpoint for SessionDelete {
         Ok(())
     }
 }
-/// Reset pairing: a new pairing token, every session revoked, the runtime file rewritten.
+/// Reset pairing: a new pairing token and every session revoked.
 pub struct Reset;
 impl Endpoint for Reset {
     const NAME: &'static str = "auth.reset";
@@ -451,10 +454,6 @@ pub(super) async fn reset(ctx: Ctx) -> Result<(), CommonError> {
         }
     }
     ctx.web_events.notify();
-    if !crate::api::rewrite_runtime(&ctx).await {
-        let _ = ctx.shutdown.send(true);
-        return Err(CommonError::Internal);
-    }
     Ok(())
 }
 

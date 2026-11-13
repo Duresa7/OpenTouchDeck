@@ -8,8 +8,8 @@ use ts_rs::TS;
 
 /// A feature's error type. The kernel takes the message from `Display`.
 pub trait ApiError: std::fmt::Display + Send {
-    /// Every code this type adds to the catalogue, for the generated `ErrorCode` union and
-    /// `api_contract_is_documented`. Codes from `CommonError` are always collected.
+    /// Every code this type adds to the catalogue, listed in each route's `EndpointInfo`.
+    /// Codes from `CommonError` apply to every route.
     const CODES: &'static [&'static str];
     fn status(&self) -> StatusCode;
     fn code(&self) -> &'static str;

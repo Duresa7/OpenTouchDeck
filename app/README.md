@@ -12,9 +12,10 @@ that moves 1.x to 2.0 are built
 app, check out that branch and follow its copy of this page. For everyday use, follow the
 [USB user guide](../docs/usage.md).
 
-The window is `td-app`, described under [Native app](#native-app-20-in-development). The `td-companion`
-program alone has no window: it runs the Devices, the tray and the local JSON API
-([contract](../docs/companion-api.md)), and its tests drive it through that API.
+The program is `td-app`, described under [Native app](#native-app-20-in-development). `td-companion` is
+the library it runs in-process: the Devices, Integrations, actions and the tray. Many of its integration
+tests still drive it through the 1.x local JSON API, which nothing else serves
+([retired contract](../docs/companion-api.md)).
 
 ## Build
 
@@ -35,11 +36,11 @@ builds need the libudev development package described in the setup guide.
 From `app/`:
 
 ```sh
-cargo build -p td-companion
+cargo build -p td-app
 ```
 
-The Companion executable is `target/debug/td-companion.exe` on Windows or `target/debug/td-companion` on
-Linux. The [packaging guide](../docs/packaging.md) describes the 2.0 MSI and its release pipeline.
+The program is `target/debug/td-app.exe` on Windows or `target/debug/td-app` on Linux. The
+[packaging guide](../docs/packaging.md) describes the 2.0 MSI and its release pipeline.
 
 ## Native app (2.0, in development)
 
@@ -108,11 +109,11 @@ in Docker (needs Docker; the first run takes a few minutes):
 ./scripts/linux-check.sh
 ```
 
-To run the Companion with mock Devices and its test routes, build it with the `test-hooks` feature. Never
-enable that feature for a distributed build:
+To run the app with mock Devices, build it with the `mock` feature, which turns on td-companion's
+`test-hooks`. Never enable either for a distributed build:
 
 ```sh
-cargo run -p td-companion --features test-hooks -- --mock-devices 1
+cargo run -p td-app --features mock -- --mock-devices 2
 ```
 
 ### Windows tray
@@ -121,8 +122,7 @@ The program sets the fixed process AUMID `io.github.duresa7.touchdeck` before
 creating the window or the tray. The tray's notification icon uses a permanent
 GUID and restores itself after Explorer restarts. Left-click and Enter/Space open
 the native window; right-click and the context-menu key show Open, Start at
-sign-in and Quit. Only `td-app` starts the tray: the standalone `td-companion`
-has no window to open. Windows builds need the SDK resource compiler (included
+sign-in and Quit. Windows builds need the SDK resource compiler (included
 in the documented MSVC setup); Linux cross-checks use MinGW's
 `x86_64-w64-mingw32-windres`.
 
@@ -143,7 +143,7 @@ setting on clears that decision. Linux startup behavior is unchanged.
 | `crates/td-core` | Frame codec, link messages, layout validation, settings, and source-config path/storage helpers. |
 | `crates/td-link` | Serial and mock transports, transfers, firmware update and ROM recovery, and the link CLI. |
 | `crates/td-host` | Host input, actions, approvals, icon processing, and Sources. |
-| `crates/td-companion` | Background Companion and local API. |
+| `crates/td-companion` | The Companion library td-app runs in-process, and the test-only local API. |
 | `crates/td-updater` | Finds, downloads and verifies a 2.x update. |
 | `crates/td-app` | The 2.0 program: the Companion and the Slint window. |
 | `installer` | The 2.0 MSI's WiX source. |

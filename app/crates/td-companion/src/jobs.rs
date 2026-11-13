@@ -203,6 +203,7 @@ impl Jobs {
             gate: Default::default(),
         }
     }
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn session_check(&self, check: SessionCheck) {
         let _ = self.session_active.set(check);
     }

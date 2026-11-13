@@ -1,13 +1,5 @@
 use std::{env, fs, path::Path};
 
-mod version_info;
-
-/// The product name wherever Windows shows this program. The installer's product name must be the same text.
-const PRODUCT_NAME: &str = "Open TouchDeck";
-const COMPANY_NAME: &str = "Duresa Kadi";
-const COPYRIGHT: &str = "Copyright Duresa Kadi";
-const FILE_NAME: &str = "td-companion";
-
 fn git(args: &[&str]) -> Option<String> {
     let output = std::process::Command::new("git").args(args).output().ok()?;
     output
@@ -24,7 +16,6 @@ fn main() {
             .expect("embed the Windows app icon and Common Controls manifest");
         println!("cargo:rerun-if-changed=app.rc");
         println!("cargo:rerun-if-changed=app.manifest");
-        embed_version_info();
         println!("cargo:rerun-if-changed=icon.ico");
     }
     // Each channel embeds its own bundle, and each bundle must be the build its channel names: the normal channel never
@@ -42,45 +33,6 @@ fn main() {
     }
     let sha = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=TD_BUILD={sha}");
-}
-
-/// Links the version resource into `td-companion.exe`: the product name, company, file description, original file
-/// name and the Cargo version. Explorer, Task Manager and the Startup apps list show them, and a code-signing
-/// service checks them before it signs.
-fn embed_version_info() {
-    // Only MSVC's linker takes a `.res` file as an input. app.rc carries the icon and manifest separately.
-    if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
-        return;
-    }
-    let part = |name: &str| -> u16 {
-        env::var(name)
-            .unwrap()
-            .parse()
-            .expect("each version part fits in 16 bits")
-    };
-    let version = env::var("CARGO_PKG_VERSION").unwrap();
-    let info = version_info::VersionInfo {
-        version: [
-            part("CARGO_PKG_VERSION_MAJOR"),
-            part("CARGO_PKG_VERSION_MINOR"),
-            part("CARGO_PKG_VERSION_PATCH"),
-            0,
-        ],
-        strings: &[
-            ("CompanyName", COMPANY_NAME),
-            ("FileDescription", PRODUCT_NAME),
-            ("FileVersion", &version),
-            ("InternalName", FILE_NAME),
-            ("LegalCopyright", COPYRIGHT),
-            ("OriginalFilename", &format!("{FILE_NAME}.exe")),
-            ("ProductName", PRODUCT_NAME),
-            ("ProductVersion", &version),
-        ],
-    };
-    let path = Path::new(&env::var_os("OUT_DIR").unwrap()).join("version.res");
-    fs::write(&path, info.res_file()).expect("write the version resource");
-    // The program only: test executables need no version resource.
-    println!("cargo:rustc-link-arg-bins={}", path.display());
 }
 
 fn embed_firmware(variable: &str, file: &str, radio: bool) {
