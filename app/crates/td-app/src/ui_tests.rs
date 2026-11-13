@@ -17,7 +17,7 @@ use td_companion::{
     devices::{DeviceUpdated, LinkState},
 };
 
-fn init() {
+pub(crate) fn init() {
     thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     READY.with(|ready| {
         if !ready.replace(true) {
@@ -30,6 +30,9 @@ fn app(dir: &Path, close_to_tray: bool) -> App {
     init();
     App::new(Options {
         data_dir: dir.to_owned(),
+        config: td_core::app_dirs::Dirs {
+            config: dir.join("config"),
+        },
         close_to_tray,
     })
     .unwrap()

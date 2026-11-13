@@ -75,6 +75,15 @@ impl State {
         }
     }
 
+    pub(crate) fn appearance(&self) -> crate::prefs::Appearance {
+        self.prefs.borrow().value.appearance
+    }
+
+    pub(crate) fn set_appearance(&self, appearance: crate::prefs::Appearance) {
+        self.prefs.borrow_mut().value.appearance = appearance;
+        self.save();
+    }
+
     fn notice_seen(&self) {
         self.prefs.borrow_mut().value.close_notice_shown = true;
         self.save();

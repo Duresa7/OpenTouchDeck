@@ -15,7 +15,7 @@ const SETTINGS_TIMEOUT: Duration = Duration::from_secs(2);
 const BRIGHTNESS_MAX: u8 = 100;
 
 /// The Device's settings. v2 fields are `null` on v1 Firmware.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct DeviceSettings {
     pub idle_timeout_s: u32,
     /// `landscape` or `portrait`.

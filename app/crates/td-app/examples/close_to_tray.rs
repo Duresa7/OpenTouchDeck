@@ -27,6 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     td_app::init_platform()?;
     let app = td_app::App::new(td_app::Options {
         data_dir: data.clone(),
+        config: td_core::app_dirs::Dirs {
+            config: data.join("config"),
+        },
         close_to_tray: true,
     })?;
     let opener = app.opener();

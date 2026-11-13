@@ -12,7 +12,11 @@
 //! use td_companion::companion::{Companion, Config};
 //! let companion = runtime.block_on(Companion::start(Config::real(data.clone())))?;
 //! td_app::init_platform()?;
-//! let app = td_app::App::new(td_app::Options { data_dir: data, close_to_tray: true })?;
+//! let app = td_app::App::new(td_app::Options {
+//!     data_dir: data,
+//!     config: td_core::app_dirs::Dirs::current(),
+//!     close_to_tray: true,
+//! })?;
 //! let open = app.opener(); // The tray's "Open" calls `open.open()` from its own thread.
 //! app.run(&companion.handle(), runtime.handle())?;
 //! runtime.block_on(companion.shutdown());
@@ -29,6 +33,7 @@ mod about;
 mod home;
 mod look;
 pub mod prefs;
+mod screens;
 mod window;
 
 pub use look::init_platform;
@@ -37,6 +42,8 @@ pub use window::Opener;
 pub struct Options {
     /// The app data folder, where the window keeps `window.json`.
     pub data_dir: PathBuf,
+    /// The configuration folder, where `app-settings.json` keeps the update-check switch.
+    pub config: td_core::app_dirs::Dirs,
     /// A tray icon can open the window again, so closing it hides it and the app keeps running.
     /// Without one, closing the window ends the program.
     pub close_to_tray: bool,
@@ -46,6 +53,8 @@ pub struct Options {
 pub struct App {
     ui: AppWindow,
     state: Rc<window::State>,
+    config: td_core::app_dirs::Dirs,
+    screens: std::cell::RefCell<Option<Rc<screens::Screens>>>,
 }
 
 impl App {
@@ -60,7 +69,82 @@ impl App {
             prefs::Prefs::load(&options.data_dir),
             options.close_to_tray,
         );
-        Ok(Self { ui, state })
+        ui.set_appearance(screens::scheme(state.appearance()));
+        Ok(Self {
+            ui,
+            state,
+            config: options.config,
+            screens: Default::default(),
+        })
+    }
+
+    /// Wires Setup and Settings to the Companion. `run` does it; tests call it themselves.
+    fn connect(
+        &self,
+        companion: &Handle,
+        runtime: &tokio::runtime::Handle,
+    ) -> Rc<screens::Screens> {
+        self.screens
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                screens::Screens::attach(
+                    &self.ui,
+                    companion.clone(),
+                    runtime.clone(),
+                    self.state.clone(),
+                    self.config.clone(),
+                )
+            })
+            .clone()
+    }
+
+    /// Opens `setup`, `settings` or `device:<id>` (that Device's settings), for screenshots.
+    #[cfg(feature = "mock")]
+    pub fn open_page(&self, page: &str) {
+        match page {
+            "setup" => self.ui.set_page(Page::Setup),
+            "settings" => self.ui.set_page(Page::Settings),
+            "about" => self.ui.set_page(Page::About),
+            _ => {
+                if let Some(id) = page.strip_prefix("device:") {
+                    self.ui.set_page(Page::Settings);
+                    self.ui.set_settings_device(id.into());
+                    self.ui.invoke_open_device(id.into());
+                }
+            }
+        }
+    }
+
+    /// Mock builds only: while running, writing a file name into `<dir>/request` saves the
+    /// window as drawn to that PNG file in `dir`, for screenshots that don't need the desktop's
+    /// own screenshot service.
+    #[cfg(feature = "mock")]
+    pub fn snapshots(&self, dir: PathBuf) -> slint::Timer {
+        let timer = slint::Timer::default();
+        let weak = self.ui.as_weak();
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(200),
+            move || {
+                let request = dir.join("request");
+                let Ok(name) = std::fs::read_to_string(&request) else {
+                    return;
+                };
+                let _ = std::fs::remove_file(&request);
+                let Some(ui) = weak.upgrade() else { return };
+                match ui.window().take_snapshot() {
+                    Ok(image) => {
+                        let (width, height) = (image.width(), image.height());
+                        let path = dir.join(name.trim());
+                        if let Err(error) = write_png(&path, image.as_bytes(), width, height) {
+                            eprintln!("Open TouchDeck: snapshot failed: {error}");
+                        }
+                    }
+                    Err(error) => eprintln!("Open TouchDeck: snapshot failed: {error}"),
+                }
+            },
+        );
+        timer
     }
 
     /// The handle that opens the window from any thread.
@@ -77,6 +161,7 @@ impl App {
         runtime: &tokio::runtime::Handle,
     ) -> Result<(), slint::PlatformError> {
         let feed = home::follow(companion.clone(), runtime, self.ui.as_weak());
+        let _screens = self.connect(companion, runtime);
         let stopping = companion.clone();
         let stop = runtime.spawn(async move {
             stopping.stopping().await;
@@ -115,6 +200,17 @@ impl App {
     }
 }
 
+/// Writes RGBA pixels as a PNG.
+#[cfg(feature = "mock")]
+fn write_png(path: &std::path::Path, rgba: &[u8], width: u32, height: u32) -> std::io::Result<()> {
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut encoder = png::Encoder::new(file, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(std::io::Error::other)?;
+    writer.write_image_data(rgba).map_err(std::io::Error::other)
+}
+
 /// Opens a web page in the default browser. Only https links leave the app.
 fn open_url(url: &str) {
     if !url.starts_with("https://") {
@@ -125,5 +221,7 @@ fn open_url(url: &str) {
     }
 }
 
+#[cfg(test)]
+mod screens_tests;
 #[cfg(test)]
 mod ui_tests;

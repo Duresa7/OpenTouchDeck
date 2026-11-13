@@ -3,7 +3,7 @@
 //! frame, idle, and clock" defines them.
 pub(crate) mod clock;
 pub(crate) mod encode;
-pub(crate) mod folder;
+pub mod folder;
 mod stream;
 
 use crate::{

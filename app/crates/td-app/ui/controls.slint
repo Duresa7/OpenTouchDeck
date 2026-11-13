@@ -17,11 +17,14 @@ component FocusRing inherits Rectangle {
 // One page in the navigation pane. Enter or Space opens it, like a click.
 export component NavItem inherits Rectangle {
     in property <string> text;
+    // What screen readers call it, when `text` carries more, like a count.
+    in property <string> label: self.text;
     in property <bool> selected;
     callback activated();
 
     accessible-role: tab;
-    accessible-label: self.text;
+    accessible-label: self.label;
+    accessible-description: self.label != self.text ? self.text : "";
     accessible-item-selectable: true;
     accessible-item-selected: self.selected;
     accessible-action-default => {
@@ -59,7 +62,7 @@ export component NavItem inherits Rectangle {
     // Keyboard first and the pointer on top, so a click acts at once without taking focus.
     keys := FocusScope {
         key-pressed(event) => {
-            if event.text == Key.Return || event.text == " " {
+            if (event.text == Key.Return || event.text == " ") && !event.repeat {
                 root.activated();
                 return accept;
             }
@@ -79,48 +82,78 @@ export component NavItem inherits Rectangle {
     }
 }
 
-// A push button. `primary` uses the accent colour.
+// A push button. `primary` uses the accent colour. A disabled button stays a Tab stop and
+// says so to screen readers, as the 1.x app's aria-disabled buttons did.
 export component ActionButton inherits Rectangle {
     in property <string> text;
+    // What screen readers call it, when the words alone aren't enough ("Forget Laptop").
+    in property <string> label: self.text;
     in property <bool> primary;
+    in property <bool> enabled: true;
+    // Read when it gets focus, such as the hint below a field.
+    in property <string> description;
     callback clicked();
 
     accessible-role: button;
-    accessible-label: self.text;
+    accessible-label: self.label;
+    accessible-description: self.description;
+    accessible-enabled: self.enabled;
     accessible-action-default => {
-        self.clicked();
+        if self.enabled {
+            self.clicked();
+        }
     }
     forward-focus: keys;
-    min-height: max(32px, label.preferred-height + 12px);
-    min-width: max(96px, label.preferred-width + 24px);
+    // A button keeps its size in a row unless told to stretch.
+    horizontal-stretch: 0;
+    // As wide as its words on one line, at least 96 px, but it can narrow to fit its space:
+    // the words then wrap, as a WinUI button's content does, and the button grows taller.
+    preferred-width: max(96px, label.preferred-width + 24px);
+    min-width: min(96px, self.preferred-width);
+    min-height: max(32px, content.min-height);
     border-radius: 4px;
     border-width: 1px;
-    border-color: Theme.high-contrast && self.primary ? Theme.contrast.highlight : Theme.control-stroke;
-    background: self.primary
+    border-color: Theme.high-contrast ? (root.enabled ? (self.primary ? Theme.contrast.highlight : Theme.contrast.button-text) : Theme.contrast.gray-text) : Theme.control-stroke;
+    background: !root.enabled
+        ? (self.primary && !Theme.high-contrast ? Theme.disabled-fill : Theme.control)
+        : self.primary
         ? (touch.pressed ? Theme.accent.darker(0.15) : touch.has-hover ? Theme.accent.darker(0.08) : Theme.accent)
         : (touch.has-hover || touch.pressed ? Theme.control-hover : Theme.control);
 
-    label := Text {
-        accessible-role: none;
-        text: root.text;
-        font-size: Theme.body;
-        color: root.primary ? Theme.accent-text : Theme.control-text;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    content := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        label := Text {
+            accessible-role: none;
+            text: root.text;
+            font-size: Theme.body;
+            color: !root.enabled ? Theme.disabled-text : root.primary ? Theme.accent-text : Theme.control-text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
     }
 
     // Keyboard first and the pointer on top, so a click acts at once without taking focus.
     keys := FocusScope {
         key-pressed(event) => {
-            if event.text == Key.Return || event.text == " " {
+            if (event.text == Key.Return || event.text == " ") && root.enabled && !event.repeat {
                 root.clicked();
                 return accept;
             }
             return reject;
         }
+        changed has-focus => {
+            if self.has-focus {
+                Focus.show(root.absolute-position.y, root.height);
+            }
+        }
     }
 
     touch := TouchArea {
+        enabled: root.enabled;
         clicked => {
             root.clicked();
         }
@@ -161,7 +194,7 @@ export component Link inherits Rectangle {
 
             keys := FocusScope {
                 key-pressed(event) => {
-                    if event.text == Key.Return || event.text == " " {
+                    if (event.text == Key.Return || event.text == " ") && !event.repeat {
                         root.open(root.url);
                         return accept;
                     }
@@ -221,4 +254,717 @@ export component Card inherits Rectangle {
     border-width: 1px;
     border-color: Theme.card-stroke;
     border-radius: 8px;
+}
+
+// Secondary text under a field or row.
+export component Hint inherits Text {
+    font-size: Theme.body;
+    color: Theme.secondary-text;
+    wrap: word-wrap;
+}
+
+// An on/off switch, as Windows 11 draws a ToggleSwitch. Space or Enter flips it.
+export component ToggleSwitch inherits Rectangle {
+    in property <string> label;
+    in property <string> description;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    accessible-role: switch;
+    accessible-label: self.label;
+    accessible-description: self.description;
+    accessible-checkable: true;
+    accessible-checked: self.checked;
+    accessible-enabled: self.enabled;
+    accessible-action-default => {
+        if self.enabled {
+            self.toggled(!self.checked);
+        }
+    }
+    forward-focus: keys;
+    horizontal-stretch: 0;
+    min-width: track.width + words.preferred-width + 12px;
+    min-height: max(32px, words.preferred-height);
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: end;
+        words := Text {
+            accessible-role: none;
+            text: root.checked ? "On" : "Off";
+            font-size: Theme.body;
+            color: root.enabled ? Theme.text : Theme.disabled-text;
+            vertical-alignment: center;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            track := Rectangle {
+                width: 40px;
+                height: 20px;
+                border-radius: 10px;
+                border-width: root.checked && !Theme.high-contrast ? 0 : 1px;
+                border-color: !root.enabled ? Theme.disabled-text : Theme.high-contrast ? (root.checked ? Theme.contrast.highlight : Theme.contrast.window-text) : Theme.secondary-text;
+                background: root.checked ? (root.enabled ? Theme.accent : Theme.disabled-fill) : Theme.high-contrast ? Theme.contrast.window : transparent;
+                knob := Rectangle {
+                    width: touch.pressed ? 17px : 12px;
+                    height: 12px;
+                    border-radius: 6px;
+                    y: 4px;
+                    x: root.checked ? parent.width - self.width - 4px : 4px;
+                    background: root.checked ? (Theme.high-contrast ? Theme.contrast.highlight-text : Theme.accent-text) : !root.enabled ? Theme.disabled-text : Theme.secondary-text;
+                    animate x, width { duration: 120ms; }
+                }
+            }
+        }
+    }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") && root.enabled && !event.repeat {
+                root.toggled(!root.checked);
+                return accept;
+            }
+            return reject;
+        }
+        changed has-focus => {
+            if self.has-focus {
+                Focus.show(root.absolute-position.y, root.height);
+            }
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.toggled(!root.checked);
+        }
+    }
+
+    if keys.has-focus: FocusRing {
+        width: root.width + 6px;
+        height: root.height + 6px;
+    }
+}
+
+// One choice of a `Choices` group.
+export struct Choice {
+    value: string,
+    label: string,
+    hint: string,
+}
+
+// One radio button with its words.
+component ChoiceItem inherits Rectangle {
+    in property <Choice> choice;
+    in property <bool> checked;
+    in property <bool> enabled;
+    in property <bool> tile;
+    in property <bool> autofocus;
+    // The arrow keys just moved the choice, so focus follows it.
+    in-out property <bool> moving;
+    callback chosen();
+    callback move(int);
+
+    init => {
+        if self.autofocus && self.checked {
+            keys.focus();
+        }
+    }
+    changed checked => {
+        if self.checked && self.moving {
+            self.moving = false;
+            keys.focus();
+        }
+    }
+
+    accessible-role: radio-button;
+    accessible-label: self.choice.label;
+    accessible-description: self.choice.hint;
+    accessible-checkable: true;
+    accessible-checked: self.checked;
+    accessible-enabled: self.enabled;
+    accessible-action-default => {
+        if self.enabled {
+            self.chosen();
+        }
+    }
+    forward-focus: keys;
+    min-height: max(36px, content.preferred-height);
+    border-radius: 6px;
+    border-width: self.tile ? 1px : 0;
+    border-color: self.checked && Theme.high-contrast ? Theme.contrast.highlight : self.checked ? Theme.accent : Theme.card-stroke;
+    background: self.tile ? (touch.has-hover && self.enabled ? Theme.control-hover : Theme.control) : transparent;
+
+    content := HorizontalLayout {
+        padding: root.tile ? 12px : 4px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: start;
+            padding-top: max(0, (title.preferred-height - 20px) / 2);
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                border-width: root.checked ? 5px : 1px;
+                border-color: !root.enabled ? Theme.disabled-text : root.checked ? Theme.accent : Theme.secondary-text;
+                background: Theme.high-contrast ? Theme.contrast.window : root.checked ? Theme.accent-text : transparent;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            title := Text {
+                accessible-role: none;
+                text: root.choice.label;
+                font-size: Theme.body;
+                color: root.enabled ? Theme.text : Theme.disabled-text;
+                wrap: word-wrap;
+            }
+
+            if root.choice.hint != "": Text {
+                accessible-role: none;
+                text: root.choice.hint;
+                font-size: Theme.caption;
+                color: Theme.secondary-text;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) && root.enabled && !event.repeat {
+                root.chosen();
+                return accept;
+            }
+            if event.text == Key.DownArrow || event.text == Key.RightArrow {
+                root.move(1);
+                return accept;
+            }
+            if event.text == Key.UpArrow || event.text == Key.LeftArrow {
+                root.move(-1);
+                return accept;
+            }
+            return reject;
+        }
+        changed has-focus => {
+            if self.has-focus {
+                Focus.show(root.absolute-position.y, root.height);
+            }
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.chosen();
+        }
+    }
+
+    if keys.has-focus: FocusRing {
+        width: root.width + 6px;
+        height: root.height + 6px;
+        radius: 6px;
+    }
+}
+
+// A group of radio buttons. The arrow keys move the choice, as in Windows.
+export component Choices inherits Rectangle {
+    in property <string> label;
+    in property <[Choice]> choices;
+    in property <string> value;
+    in property <bool> enabled: true;
+    // Each choice in a bordered tile, as setup shows them.
+    in property <bool> tiles;
+    // The chosen one takes keyboard focus when the group appears, as a setup step does.
+    in property <bool> autofocus;
+    callback chose(string);
+    property <bool> moving;
+
+    accessible-role: radio-group;
+    accessible-label: self.label;
+
+    VerticalLayout {
+        spacing: root.tiles ? 8px : 4px;
+        for choice[index] in root.choices: item := ChoiceItem {
+            choice: choice;
+            checked: choice.value == root.value;
+            enabled: root.enabled;
+            tile: root.tiles;
+            autofocus: root.autofocus;
+            moving <=> root.moving;
+            chosen => {
+                root.chose(choice.value);
+            }
+            move(step) => {
+                if root.enabled {
+                    root.moving = true;
+                    root.chose(root.choices[mod(index + step + root.choices.length, root.choices.length)].value);
+                }
+            }
+        }
+    }
+}
+
+// A single-line text field. It shows `value` until the person edits it; Enter or leaving it
+// commits the words, Escape puts `value` back.
+export component TextField inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> placeholder;
+    in property <string> description;
+    in property <bool> enabled: true;
+    in property <bool> invalid;
+    // Commit when focus leaves, as Settings does. Setup commits with its Next button.
+    in property <bool> commit-on-leave: true;
+    out property <string> text <=> input.text;
+    callback edited(string);
+    callback accepted(string);
+
+    accessible-role: text-input;
+    accessible-label: self.label;
+    accessible-description: self.description;
+    accessible-value: input.text;
+    accessible-placeholder-text: self.placeholder;
+    accessible-enabled: self.enabled;
+    // Setting the value is typing: it commits only as the field would, on Enter or leaving it.
+    accessible-action-set-value(text) => {
+        input.text = text;
+        self.edited(text);
+    }
+    forward-focus: input;
+    min-height: max(32px, input.preferred-height + 12px);
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: !self.enabled ? Theme.disabled-text : self.invalid ? Theme.critical : input.has-focus && !Theme.high-contrast ? Theme.accent : Theme.control-stroke;
+    background: Theme.high-contrast ? Theme.contrast.window : input.has-focus ? Theme.field-focused : Theme.control;
+
+    init => {
+        input.text = root.value;
+    }
+    // A new value replaces what is typed: the Device saved something else, or refused it.
+    changed value => {
+        input.text = root.value;
+    }
+
+    // Windows 11 marks the focused field with an accent line along its bottom.
+    if input.has-focus && !Theme.high-contrast: Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        x: 1px;
+        width: parent.width - 2px;
+        background: Theme.accent;
+    }
+
+    if input.text == "" && !input.has-focus: Text {
+        x: 11px;
+        accessible-role: none;
+        text: root.placeholder;
+        font-size: Theme.body;
+        color: Theme.secondary-text;
+        vertical-alignment: center;
+        height: parent.height;
+    }
+
+    input := TextInput {
+        x: 11px;
+        width: parent.width - 22px;
+        height: parent.height;
+        accessible-role: none;
+        enabled: root.enabled;
+        single-line: true;
+        font-size: Theme.body;
+        color: root.enabled ? Theme.text : Theme.disabled-text;
+        selection-background-color: Theme.accent;
+        selection-foreground-color: Theme.accent-text;
+        vertical-alignment: center;
+        edited => {
+            root.edited(self.text);
+        }
+        accepted => {
+            root.accepted(self.text);
+        }
+        key-pressed(event) => {
+            // A held Enter commits once, not again on every repeat.
+            if event.text == Key.Return && event.repeat {
+                return accept;
+            }
+            if event.text == Key.Escape {
+                self.text = root.value;
+                root.edited(self.text);
+                return accept;
+            }
+            return reject;
+        }
+        changed has-focus => {
+            if self.has-focus {
+                Focus.show(root.absolute-position.y, root.height);
+            } else if root.commit-on-leave && root.enabled && self.text != root.value {
+                root.accepted(self.text);
+            }
+        }
+    }
+}
+
+// A determinate progress bar, or a moving one while the amount is unknown.
+export component ProgressBar inherits Rectangle {
+    in property <string> label;
+    // 0 to 100, or -1 when unknown.
+    in property <int> value: -1;
+    in property <string> value-text;
+
+    accessible-role: progress-indicator;
+    accessible-label: self.label;
+    accessible-value: self.value-text;
+    accessible-value-minimum: 0;
+    accessible-value-maximum: 100;
+    height: 4px;
+    border-radius: 2px;
+    background: Theme.high-contrast ? Theme.contrast.window : Theme.control-stroke;
+    border-width: Theme.high-contrast ? 1px : 0;
+    border-color: Theme.contrast.window-text;
+
+    if root.value >= 0: Rectangle {
+        x: 0;
+        width: parent.width * clamp(root.value, 0, 100) / 100;
+        border-radius: 2px;
+        background: Theme.accent;
+    }
+    if root.value < 0: Rectangle {
+        property <duration> period: 1600ms;
+        width: parent.width * 30%;
+        x: (parent.width * 130%) * mod(animation-tick(), self.period) / self.period - self.width;
+        border-radius: 2px;
+        background: Theme.accent;
+    }
+}
+
+// "Details": a button that shows or hides the raw text behind a failure.
+export component Details inherits VerticalLayout {
+    in property <string> text;
+    property <bool> open;
+    spacing: 4px;
+
+    HorizontalLayout {
+        alignment: start;
+        toggle := Rectangle {
+            accessible-role: button;
+            accessible-label: "Details";
+            accessible-expandable: true;
+            accessible-expanded: root.open;
+            accessible-action-default => {
+                root.open = !root.open;
+            }
+            accessible-action-expand => {
+                root.open = !root.open;
+            }
+            forward-focus: keys;
+            min-height: max(24px, words.preferred-height + 4px);
+            HorizontalLayout {
+                spacing: 6px;
+                words := Text {
+                    accessible-role: none;
+                    text: (root.open ? "▾ " : "▸ ") + "Details";
+                    font-size: Theme.body;
+                    color: Theme.link;
+                    vertical-alignment: center;
+                }
+            }
+
+            keys := FocusScope {
+                key-pressed(event) => {
+                    if (event.text == Key.Return || event.text == " ") && !event.repeat {
+                        root.open = !root.open;
+                        return accept;
+                    }
+                    return reject;
+                }
+                changed has-focus => {
+                    if self.has-focus {
+                        Focus.show(toggle.absolute-position.y, toggle.height);
+                    }
+                }
+            }
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.open = !root.open;
+                }
+            }
+
+            if keys.has-focus: FocusRing {
+                width: toggle.width + 6px;
+                height: toggle.height + 6px;
+                radius: 2px;
+            }
+        }
+    }
+
+    if root.open: Text {
+        text: root.text;
+        font-size: Theme.caption;
+        font-family: "monospace";
+        color: Theme.secondary-text;
+        wrap: word-wrap;
+    }
+}
+
+// Severity of an `InfoBar`.
+export enum Severity { info, success, error }
+
+// A message that something happened, as Windows 11 draws an InfoBar. Screen readers hear it
+// when it changes.
+export component InfoBar inherits Rectangle {
+    in property <string> text;
+    in property <Severity> severity;
+    in property <string> details;
+
+    accessible-role: AccessibleRole.text;
+    accessible-label: self.text;
+    accessible-description: self.details;
+    accessible-live-region: self.severity == Severity.error ? AccessibleLiveness.assertive : AccessibleLiveness.polite;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.high-contrast ? Theme.contrast.window-text : Theme.card-stroke;
+    background: Theme.high-contrast ? Theme.contrast.window : self.severity == Severity.error ? Theme.critical-fill : self.severity == Severity.success ? Theme.good-fill : Theme.card;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 10px;
+            VerticalLayout {
+                alignment: start;
+                padding-top: max(0, (message.preferred-height - 16px) / 2);
+                Rectangle {
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 8px;
+                    background: root.severity == Severity.error ? Theme.critical : root.severity == Severity.success ? Theme.good : Theme.accent;
+                    Text {
+                        accessible-role: none;
+                        text: root.severity == Severity.error ? "!" : root.severity == Severity.success ? "✓" : "i";
+                        color: Theme.high-contrast ? Theme.contrast.window : Theme.dark ? #000000 : #ffffff;
+                        font-size: 11px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            message := Text {
+                accessible-role: none;
+                text: root.text;
+                font-size: Theme.body;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+        }
+
+        if root.details != "": Details {
+            text: root.details;
+        }
+    }
+}
+
+// The title, description and problem of one setting.
+component SettingText inherits VerticalLayout {
+    in property <string> title;
+    in property <string> description;
+    in property <string> problem;
+    alignment: center;
+    spacing: 2px;
+    Text {
+        accessible-role: none;
+        text: root.title;
+        font-size: Theme.body;
+        color: Theme.text;
+        wrap: word-wrap;
+    }
+
+    // Screen readers read it in order: it can be a status, such as "No apps are paired".
+    if root.description != "": Text {
+        accessible-role: AccessibleRole.text;
+        accessible-label: self.text;
+        text: root.description;
+        font-size: Theme.caption;
+        color: Theme.secondary-text;
+        wrap: word-wrap;
+    }
+
+    if root.problem != "": Text {
+        accessible-role: AccessibleRole.text;
+        accessible-label: self.text;
+        text: root.problem;
+        font-size: Theme.caption;
+        color: Theme.critical;
+        wrap: word-wrap;
+    }
+}
+
+// A divider above every row of a card but the first.
+component Divider inherits Rectangle {
+    y: 0;
+    height: 1px;
+    background: Theme.card-stroke;
+}
+
+// An on/off setting in a card: its words on the left and the switch on the right, or the switch
+// under the words when the card is too narrow for both, as Windows 11 Settings stacks them.
+export component SwitchRow inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    // A problem with this setting, shown under it.
+    in property <string> problem;
+    in property <bool> first;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+    property <bool> stacked: root.width < 360px * Theme.text-scale;
+
+    min-height: max(64px, layout.preferred-height);
+
+    layout := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        if !root.stacked: HorizontalLayout {
+            spacing: 16px;
+            SettingText {
+                horizontal-stretch: 1;
+                title: root.title;
+                description: root.description;
+                problem: root.problem;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                ToggleSwitch {
+                    label: root.title;
+                    description: root.description;
+                    checked: root.checked;
+                    enabled: root.enabled;
+                    toggled(on) => {
+                        root.toggled(on);
+                    }
+                }
+            }
+        }
+        if root.stacked: VerticalLayout {
+            spacing: 8px;
+            SettingText {
+                title: root.title;
+                description: root.description;
+                problem: root.problem;
+            }
+
+            HorizontalLayout {
+                alignment: start;
+                ToggleSwitch {
+                    label: root.title;
+                    description: root.description;
+                    checked: root.checked;
+                    enabled: root.enabled;
+                    toggled(on) => {
+                        root.toggled(on);
+                    }
+                }
+            }
+        }
+    }
+
+    if !root.first: Divider { }
+}
+
+// One setting whose control is wide (choices, a text field, buttons): it sits below the words.
+export component SettingBlock inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <string> problem;
+    in property <bool> first;
+
+    min-height: layout.preferred-height;
+
+    layout := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 8px;
+        if root.title != "" || root.description != "" || root.problem != "": SettingText {
+            title: root.title;
+            description: root.description;
+            problem: root.problem;
+        }
+        @children
+    }
+
+    if !root.first: Divider { }
+}
+
+// A heading above a group of cards, as Windows 11 Settings labels its groups.
+export component GroupTitle inherits Text {
+    accessible-role: AccessibleRole.text;
+    accessible-label: self.text;
+    font-size: Theme.body;
+    font-weight: Theme.semibold;
+    color: Theme.text;
+    wrap: word-wrap;
+}
+
+// A primary button and a second one, side by side when they fit and stacked when the text is
+// large or the window narrow.
+export component ButtonPair inherits Rectangle {
+    in property <string> first;
+    in property <string> second;
+    callback first-clicked();
+    callback second-clicked();
+    property <bool> wide: root.width >= 240px * Theme.text-scale;
+    min-height: layout.preferred-height;
+
+    layout := VerticalLayout {
+        if root.wide: HorizontalLayout {
+            alignment: start;
+            spacing: 8px;
+            ActionButton {
+                text: root.first;
+                primary: true;
+                clicked => {
+                    root.first-clicked();
+                }
+            }
+
+            ActionButton {
+                text: root.second;
+                clicked => {
+                    root.second-clicked();
+                }
+            }
+        }
+        if !root.wide: VerticalLayout {
+            spacing: 8px;
+            ActionButton {
+                text: root.first;
+                primary: true;
+                horizontal-stretch: 1;
+                clicked => {
+                    root.first-clicked();
+                }
+            }
+
+            ActionButton {
+                text: root.second;
+                horizontal-stretch: 1;
+                clicked => {
+                    root.second-clicked();
+                }
+            }
+        }
+    }
 }

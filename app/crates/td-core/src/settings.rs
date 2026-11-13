@@ -33,6 +33,44 @@ impl AppSettings {
         let bytes = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         crate::app_dirs::write_atomic(&dirs.app_settings(), &bytes)
     }
+
+    /// Turns automatic update checks on or off, as the Settings switch does. Fields this version
+    /// doesn't know stay in the file. A damaged file is an error and stays as it is, so the
+    /// switch can never silently rewrite someone's preferences.
+    pub fn set_automatic_update_checks(
+        dirs: &crate::app_dirs::Dirs,
+        on: bool,
+    ) -> std::io::Result<Self> {
+        let path = dirs.app_settings();
+        let mut fields = match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                Ok(Value::Object(fields)) => {
+                    // The file must read as settings before anything in it changes.
+                    serde_json::from_value::<Self>(Value::Object(fields.clone()))
+                        .map_err(std::io::Error::other)?;
+                    fields
+                }
+                Ok(_) => {
+                    return Err(std::io::Error::other(
+                        "app-settings.json doesn't hold an object",
+                    ));
+                }
+                Err(error) => return Err(std::io::Error::other(error)),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
+            Err(error) => return Err(error),
+        };
+        fields.insert("automatic_update_checks".into(), Value::Bool(on));
+        let value = Value::Object(fields);
+        let settings: Self =
+            serde_json::from_value(value.clone()).map_err(std::io::Error::other)?;
+        if let Some(folder) = path.parent() {
+            std::fs::create_dir_all(folder)?;
+        }
+        let bytes = serde_json::to_vec_pretty(&value).map_err(std::io::Error::other)?;
+        crate::app_dirs::write_atomic(&path, &bytes)?;
+        Ok(settings)
+    }
 }
 
 pub const IDLE_TIMEOUT_MIN_S: u32 = 1;
@@ -80,6 +118,52 @@ impl Settings {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn dirs(folder: &std::path::Path) -> crate::app_dirs::Dirs {
+        crate::app_dirs::Dirs {
+            config: folder.join("config"),
+        }
+    }
+
+    #[test]
+    fn the_update_switch_writes_its_field_and_keeps_the_others() {
+        let folder = tempfile::tempdir().unwrap();
+        let dirs = dirs(folder.path());
+        assert!(AppSettings::load(&dirs).unwrap().automatic_update_checks);
+
+        let off = AppSettings::set_automatic_update_checks(&dirs, false).unwrap();
+        assert!(!off.automatic_update_checks);
+        assert!(!AppSettings::load(&dirs).unwrap().automatic_update_checks);
+
+        std::fs::write(
+            dirs.app_settings(),
+            br#"{"automatic_update_checks": false, "later_field": [1, 2]}"#,
+        )
+        .unwrap();
+        AppSettings::set_automatic_update_checks(&dirs, true).unwrap();
+        let written: Value =
+            serde_json::from_slice(&std::fs::read(dirs.app_settings()).unwrap()).unwrap();
+        assert_eq!(
+            written,
+            json!({"automatic_update_checks": true, "later_field": [1, 2]})
+        );
+    }
+
+    #[test]
+    fn the_update_switch_leaves_a_damaged_file_alone() {
+        let folder = tempfile::tempdir().unwrap();
+        let dirs = dirs(folder.path());
+        std::fs::create_dir_all(&dirs.config).unwrap();
+        for damaged in [
+            &b"{not json"[..],
+            b"[true]",
+            br#"{"automatic_update_checks": "yes"}"#,
+        ] {
+            std::fs::write(dirs.app_settings(), damaged).unwrap();
+            assert!(AppSettings::set_automatic_update_checks(&dirs, true).is_err());
+            assert_eq!(std::fs::read(dirs.app_settings()).unwrap(), damaged);
+        }
+    }
 
     #[test]
     fn firmware_parsing_rules() {
