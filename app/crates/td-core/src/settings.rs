@@ -8,6 +8,7 @@ use crate::layout::Orientation;
 #[serde(default)]
 pub struct AppSettings {
     pub automatic_update_checks: bool,
+    pub icon_packs_enabled: bool,
     /// Whether the native editor offers Brandfetch search. Credentials stay saved when off.
     pub brandfetch_enabled: bool,
 }
@@ -16,6 +17,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             automatic_update_checks: true,
+            icon_packs_enabled: true,
             brandfetch_enabled: false,
         }
     }
@@ -45,6 +47,11 @@ impl AppSettings {
         on: bool,
     ) -> std::io::Result<Self> {
         Self::set_switch(dirs, "automatic_update_checks", on)
+    }
+
+    /// Controls whether pickers offer installed packs. Does not download or remove packs.
+    pub fn set_icon_packs_enabled(dirs: &crate::app_dirs::Dirs, on: bool) -> std::io::Result<Self> {
+        Self::set_switch(dirs, "icon_packs_enabled", on)
     }
 
     /// Changes only the Brandfetch switch, preserving other and unknown preferences.
@@ -137,6 +144,34 @@ mod tests {
     fn dirs(folder: &std::path::Path) -> crate::app_dirs::Dirs {
         crate::app_dirs::Dirs {
             config: folder.join("config"),
+        }
+    }
+
+    #[test]
+    fn icon_pack_switch_preserves_other_preferences_and_refuses_damage() {
+        let folder = tempfile::tempdir().unwrap();
+        let dirs = dirs(folder.path());
+        assert!(AppSettings::load(&dirs).unwrap().icon_packs_enabled);
+        AppSettings::set_automatic_update_checks(&dirs, false).unwrap();
+        assert!(
+            !AppSettings::set_icon_packs_enabled(&dirs, false)
+                .unwrap()
+                .icon_packs_enabled
+        );
+        assert!(!AppSettings::load(&dirs).unwrap().automatic_update_checks);
+        std::fs::write(
+            dirs.app_settings(),
+            br#"{"later":42,"icon_packs_enabled":false}"#,
+        )
+        .unwrap();
+        AppSettings::set_icon_packs_enabled(&dirs, true).unwrap();
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(dirs.app_settings()).unwrap()).unwrap();
+        assert_eq!(saved["later"], 42);
+        for damaged in [b"broken".as_slice(), br#"{"icon_packs_enabled":"yes"}"#] {
+            std::fs::write(dirs.app_settings(), damaged).unwrap();
+            assert!(AppSettings::set_icon_packs_enabled(&dirs, true).is_err());
+            assert_eq!(std::fs::read(dirs.app_settings()).unwrap(), damaged);
         }
     }
 
