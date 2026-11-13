@@ -2,6 +2,8 @@
 
 Decided 2026-11-12. Supersedes the Electron and React timing in ADR 0011. The rest of ADR 0011 stands.
 
+Amended by ADR 0013 on 2026-11-13: the 1.x bridge release described below was dropped.
+
 ADR 0011 kept the Electron shell, the React UI and the Companion's local web API frozen on main and deleted all three at M6. The Electron shell and the React UI now leave main at once. The local web API stays for now.
 
 A frozen app still cost work on main. Its pnpm workspace, its lint, unit and end-to-end checks and its three 1.x release workflows ran beside the 2.0 work, and a Rust change had to keep a generated TypeScript client and an embedded web build in step with code nobody was changing.
