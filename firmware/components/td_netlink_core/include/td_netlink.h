@@ -405,6 +405,18 @@ bool td_netlink_advert_build(const td_netlink_deck_t *deck, const uint8_t nonce[
 /* The record's keys and values, pointing into advert. Returns how many: 3, or 6 in pairing mode. */
 size_t td_netlink_advert_txt(const td_netlink_advert_t *advert, td_netlink_txt_t txt[TD_NETLINK_ADVERT_TXT_MAX]);
 
+/* Legacy BLE service data, excluding its 128-bit UUID. The radio owns the fixed
+ * four-slot cadence and nonce/address rotation specified by net-v2. */
+#define TD_NETLINK_BLE_DISCOVERY_LEN 13
+#define TD_NETLINK_BLE_NONCE_LEN 6
+#define TD_NETLINK_BLE_HINT_LEN 6
+bool td_netlink_ble_hint(const uint8_t ltk[TD_NETLINK_KEY_LEN], const uint8_t nonce[TD_NETLINK_BLE_NONCE_LEN],
+                        uint8_t hint[TD_NETLINK_BLE_HINT_LEN]);
+bool td_netlink_ble_advert_build(const td_netlink_deck_t *deck,
+                                const uint8_t nonce[TD_NETLINK_BLE_NONCE_LEN],
+                                const uint8_t filler[TD_NETLINK_BLE_HINT_LEN], unsigned slot,
+                                uint8_t out[TD_NETLINK_BLE_DISCOVERY_LEN]);
+
 /* A complete `busy` error item, for a connection the Device refuses before it has any state. */
 extern const uint8_t td_netlink_busy_item[5];
 

@@ -13,7 +13,7 @@ import {
   gatt, handshake, errorItem, pairKeys, wrapKey, commitProof, storedProof,
   share, x25519, sessionKeys, recordParameters, RecordSender, fragment, creditValue,
   MIN_INITIAL_CREDIT, FORMAT_RANGES, VERSION, RECORD_LIMIT, PairingStore, manage, onHandshakeError, MAX_HANDSHAKE_BODY, MAX_RECORD_BODY, MIN_RECORD_BODY,
-  openTag, derive, discoveryKey, hint, advertisement,
+  openTag, derive, discoveryKey, hint, advertisement, bleAdvertisement,
 } from './net-v2.mjs';
 
 const ramp = (start, length) => Buffer.from(Array.from({ length }, (_, i) => (start + i) & 255));
@@ -315,6 +315,19 @@ export function buildVectors() {
       K_open: sess.openKey, open_tag: sess.openTag }),
       ...hexObject(sess.keys), wire: hexObject(sess.wire) },
     discovery: discovery(),
+    ble_discovery: (() => {
+      const nonce = ramp(0x40, 6), rotated = ramp(0x50, 6);
+      const fillers = [0, 1, 2, 3].map(i => ramp(0x90 + i * 6, 6));
+      const ltks = [inputs.ltk];
+      const fullKeys = [0, 1, 2, 3].map(i => ramp(0x20 + i * 32, 32));
+      const encode = (n, slot, keys = ltks, pairing) => hex(bleAdvertisement({ nonce: n, slot, ltks: keys, fillers, pairing }));
+      return { nonce: hex(nonce), rotated_nonce: hex(rotated), fillers: fillers.map(hex),
+        slots: fillers.map((_, slot) => encode(nonce, slot)),
+        rotated: encode(rotated, 0), unpaired: encode(nonce, 0, []),
+        pairing: encode(nonce, 0, ltks, { deviceId: inputs.deviceId }),
+        full_ltks: fullKeys.map(hex),
+        full: fillers.map((_, slot) => encode(nonce, slot, fullKeys)) };
+    })(),
     records,
     tampered_record: { direction: 'c2d', counter: 0, wire: hex(tampered), expected: 'close' },
     non_contributory_share: { device_share: hex(Buffer.alloc(32)), expected: 'close' },

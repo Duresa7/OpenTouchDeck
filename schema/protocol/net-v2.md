@@ -67,14 +67,10 @@ service and its characteristics use these 128-bit UUIDs:
 
 The Device advertises the service UUID in its advertising data while it can
 accept a carrier connection. Its scan response carries service data for the
-same UUID: `proto:u8` (2), `device_id[6]`, `paired:u8`. The Companion matches
-Devices by `device_id`, never by BLE address, because a Device MAY use a random
-address. Both Windows (WinRT) and Linux (BlueZ, for example through btleplug)
-report service data per UUID. This scan response still carries a stable
-identifier, so it isn't private yet. No Device may ship the BLE Carrier until
-it follows the pairing-mode rule of [Discovery privacy](#discovery-privacy).
-A scan response has no room for the TCP nonce and hints, so BLE needs its own
-layout.
+same UUID, using the compact format below. The Companion MUST NOT identify a
+Device by its BLE address. Both Windows and Linux expose service data by UUID.
+No Device may ship the BLE Carrier until its radio integration follows the
+pairing-mode and rotation rules of [Discovery privacy](#discovery-privacy).
 
 The link service needs no BLE pairing, bonding or link-layer encryption, and
 the Companion MUST NOT start BLE pairing for it. net-v2 authenticates and
@@ -131,8 +127,9 @@ Pairing count or any other value that outlives one nonce.
 **Rotation.** The Device draws a new nonce, new fillers and so a new label at
 boot, every 900000 ms of uptime, when a pairing window opens or closes, and
 when a Pairing is added or removed. Each change withdraws the old record and
-announces the new one. An observer can link what it sees within one nonce, at
-most 15 minutes, and not across nonces. A shorter period would churn mDNS
+announces the new one. The payload supplies a linkable value within one nonce,
+at most 15 minutes. Timing and network addresses can still correlate observations
+across rotations. A shorter period would churn mDNS
 caches for little gain, because a Companion browses only when the person asks.
 
 **Why a nonce and not the time.** A time-window hint needs the Device and the
@@ -161,6 +158,93 @@ Device, and the Companion drops it. A record with `id` is a Device in pairing
 mode, which the Companion may list for pairing. A record without `n` and `h`
 is malformed and dropped.
 
+**The BLE scan response.** BLE uses the same discovery key with its own,
+smaller layout, because a legacy scan response holds 31 bytes and the service
+data's AD header and 128-bit UUID take 18 of them. The service data after the
+UUID is exactly 13 bytes:
+
+| Mode | Service data |
+|---|---|
+| outside pairing mode | `0x02 \|\| nonce[6] \|\| hint[6]` |
+| pairing mode | `0x82 \|\| device_id[6] \|\| paired:u8 \|\| padding[5]` |
+
+```text
+ble_hint = the first 6 bytes of MAC(K_disc, "ble-hint" || nonce)
+```
+
+The label `ble-hint` keeps BLE hints apart from TXT hints, and the BLE nonce is
+drawn independently of the TXT nonce, so an observer of both radios can't link
+them through the payload. The Device draws one BLE nonce and four random
+six-byte fillers at the same moments as the TXT nonce: at boot, every 900000 ms
+of uptime, when a pairing window opens or closes, and when a Pairing is added
+or removed. Slot `i` carries Pairing `i`'s hint, or filler `i` when the slot is
+free. The scan response shows one slot at a time and moves to the next slot
+every 1000 ms, cycling all four whatever the Pairing count, so neither the
+cadence nor the payloads say how many Pairings there are. No slot number is
+sent. Pairing mode carries no name and no nonce; its padding is fresh random
+bytes at each rotation. `paired` is at most 4.
+
+Two rules belong to the radio code that drives this builder:
+
+* Each rotation replaces the scan response and the Device's resolvable or
+  non-resolvable private BLE address together. A fixed address would link
+  every nonce, and a new address with an old payload would link the
+  addresses.
+* Closing a pairing window removes the pairing-mode payload at once.
+
+The Bluetooth keyboard role advertises separately, under its own rules; it
+doesn't add its name or any other stable value to these advertisements.
+Its own advertising address is still public; see
+[What stays visible](#discovery-privacy) below.
+
+**Why 15 minutes on BLE too.** One period for both Carriers keeps one rotation
+rule in the Firmware, and the linkable window is the same whichever radio an
+observer listens to. A shorter period would buy little: a person who sits near
+the Device for longer than a period can see it anyway.
+
+**Why a 6-byte nonce and a 6-byte hint.** They are what fits beside the
+marker, and they keep BLE discovery on legacy advertising, which every
+Bluetooth adapter supports, instead of requiring extended advertising. The
+cost is in two places, both acceptable:
+
+* A repeated nonce lets an observer link the two periods it appears in. Over
+  ten years of uninterrupted 15-minute rotations a Device draws about 350000
+  nonces, and the chance that any two of them are equal is about 2.2 * 10^-4.
+  Reboots and Pairing changes add draws and raise this slightly.
+* A Companion with four Pairings that sees 32 Devices with four slots each
+  makes 512 comparisons per scan, so the chance of any false match is at most
+  512 / 2^48 = 2^-39. A false match costs one failed session.
+
+A hint chooses which BLE address to try and is never authentication; anyone
+can replay one. The session still proves the LTK and pins `device_id`.
+
+**The Companion on BLE.** It scans actively for at least 5000 ms, so it sees
+every slot, and handles changed service data even from an address it has
+already seen. For each payload it computes the BLE hint for each of its
+Pairings with that payload's nonce and compares it with the payload's hint in
+constant time, checking every Pairing, and it merges matches by Pairing. A
+matching Device answered at that address for now; the Companion never pins a
+BLE address. A pairing-mode payload is a Device the Companion may list for
+pairing. A payload with any other length or marker, or with `paired` above 4,
+is dropped. In particular, the earlier draft's `proto || device_id || paired`
+payload is never read, so neither side falls back to a stable id outside
+pairing mode.
+
+**Existing Pairings.** No migration step is needed. `K_disc` comes from the
+LTK, which every Pairing already stores, so the Device and the Companion
+derive it when they load a Pairing, whenever it was made. Nothing is added to
+NVS or the credential store, and nobody re-pairs. The Companion keeps derived
+keys in memory only and never logs or serializes them. Firmware from before
+this rule, which advertised its id at all times, must be updated: the
+Companion no longer reads that format.
+
+**What exists today.** The Firmware's `td_netlink_advert_build` and
+`td_netlink_ble_advert_build` build both formats, and td-link's
+`net::mdns::Advert::matches` and `net::ble_discovery::recognise` match them.
+The Firmware's mDNS publisher comes with its network service, and the BLE
+net-v2 advertiser and scanner, with the rotation timers and address changes
+above, come with the BLE Carrier.
+
 **Passive privacy only.** Someone who records a valid `session.open` can
 send it to a Device later: the paired Device answers with a challenge, while
 other Devices answer `auth`. This distinguishes that Device even across
@@ -172,6 +256,18 @@ which is `device_id` itself on the ESP32-S3. Anyone in radio range sees it in
 every frame, whatever mDNS says. Hiding it needs a random station address,
 which this document doesn't yet require. The TCP port, the service type and
 the fact that a TouchDeck is present stay visible too.
+
+The Bluetooth keyboard role's address is visible on BLE in the same way. While
+no bonded host is connected, the keyboard role advertises with no time limit
+from the Device's public Bluetooth address, which the ESP32-S3 derives from
+the factory MAC (`device_id` + 2). Anyone in radio range can follow the Device
+by that address, whatever the net-v2 discovery advertisements carry, so BLE
+does not yet meet the rule that nothing stable is advertised outside pairing
+mode. The address is still public because the keyboard role was built and
+bonded with its hosts before this rule existed. Moving it to a resolvable
+private address changes how the Device bonds with its hosts, so that change
+is tracked separately in
+[#401](https://github.com/Duresa7/OpenTouchDeck/issues/401).
 
 ## Device identity
 
@@ -1069,6 +1165,8 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
   hint, the label, instance and host names, and the TXT record out of and in
   pairing mode. `other_record` is a record with another nonce and only
   fillers, which matches no Pairing.
+* `ble_discovery`: the compact service data for an occupied slot, three fillers,
+  rotation, an unpaired Device, pairing mode and a full four-Pairing store.
 * `records`: the discovery and selected link-v2 hellos, two records each way,
   built from [golden-frames-v2.json](golden-frames-v2.json). The selected
   reply carries the fixture `device_id` as its `id`. The two selected records
