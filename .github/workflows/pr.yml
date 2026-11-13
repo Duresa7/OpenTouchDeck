@@ -15,6 +15,7 @@ jobs:
       firmware: ${{ steps.paths.outputs.firmware }}
       e2e: ${{ steps.paths.outputs.e2e }}
       actionlint: ${{ steps.paths.outputs.actionlint }}
+      skills: ${{ steps.paths.outputs.skills }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,9 +65,21 @@ jobs:
       - name: Lint workflows
         run: '"$RUNNER_TEMP/actionlint" -color'
 
+  skills:
+    needs: changes
+    if: needs.changes.outputs.skills == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check that .claude/skills copies .agents/skills
+        run: python3 .github/scripts/skills_mirror.py check
+
   gate:
     name: gate
-    needs: [changes, app, firmware, actionlint]
+    needs: [changes, app, firmware, actionlint, skills]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
