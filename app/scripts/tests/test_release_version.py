@@ -39,7 +39,7 @@ class ReleaseVersionTest(unittest.TestCase):
         return code, errors.getvalue()
 
     def next_version(self):
-        major, minor, patch = (int(part) for part in self.version.split("."))
+        major, minor, patch = (int(part) for part in self.version.split("-")[0].split("."))
         return f"{major}.{minor}.{patch + 1}"
 
     def test_check_passes_on_repo_copy(self):
@@ -126,9 +126,18 @@ class ReleaseVersionTest(unittest.TestCase):
             data = (self.root / relative).read_bytes()
             self.assertEqual(data.count(b"\r"), data.count(b"\r\n"), relative)
 
+    def test_bump_accepts_a_pre_release(self):
+        # A preview tag such as v2.0.0-preview.1 must pass the same check the release pipeline makes.
+        for version in ("2.0.0-preview.1", "2.0.0-rc.1", "2.0.0-alpha", "2.0.0-0.3.7", "2.0.0-x-y.1"):
+            with self.subTest(version=version):
+                self.assertEqual(self.run_cli("bump", version)[0], 0)
+                self.assertEqual(self.run_cli("check", "--tag", f"v{version}")[0], 0)
+                self.assertEqual(release_version.read_versions(self.root)[LOCK + ":td-app"], version)
+
     def test_bump_rejects_bad_versions_without_writing(self):
         before = {relative: (self.root / relative).read_bytes() for relative in FILES}
-        for version in ("1.2", "v1.2.3", "1.2.3-rc1", "1.2.3.4", ""):
+        for version in ("1.2", "v1.2.3", "1.2.3.4", "", "01.2.3", "1.2.3-", "1.2.3-rc..1", "1.2.3-rc.01",
+                        "1.2.3+build", "1.2.3-rc.1+build", "1.2.3-rc_1"):
             code, errors = self.run_cli("bump", version)
             self.assertEqual(code, 1, version)
             self.assertIn("not X.Y.Z", errors)
