@@ -695,10 +695,8 @@ impl Screens {
             .map(|board| {
                 let task = self.task(Target::NewBoard(board.id.clone()));
                 let view = task.view();
+                // The install job itself clears the board's old setup skip.
                 let step = board_step(&view.view);
-                if step == BoardStep::Done {
-                    skips.unskip(&board.id);
-                }
                 BoardCard {
                     id: board.id.as_str().into(),
                     port: board.port.as_str().into(),

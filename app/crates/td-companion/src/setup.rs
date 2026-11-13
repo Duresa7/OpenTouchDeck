@@ -189,6 +189,13 @@ impl Skips {
             self.save(&skipped);
         }
     }
+    /// Skips setup for this Device, as closing setup does.
+    pub fn skip(&self, id: &DeviceId) {
+        let mut skipped = self.skipped.lock();
+        if skipped.insert(id.as_str().to_owned()) {
+            self.save(&skipped);
+        }
+    }
     /// Firmware was installed on this board again, so its setup may open by itself again.
     pub fn unskip(&self, id: &DeviceId) {
         let mut skipped = self.skipped.lock();

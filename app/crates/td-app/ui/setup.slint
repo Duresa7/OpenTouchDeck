@@ -128,8 +128,113 @@ component BoardItem inherits Card {
     }
 }
 
+// The title of the setup card, with the Device it sets up.
+component WizardTitle inherits VerticalLayout {
+    in property <string> status;
+    spacing: 2px;
+    SectionTitle {
+        text: "Set up your Device";
+    }
+
+    Hint {
+        text: root.status;
+    }
+}
+
+component CloseSetup inherits ActionButton {
+    text: "Close";
+    label: "Close setup";
+    description: "Setup won't open again by itself. You can open it here.";
+}
+
+// Back on the left and the step's actions on the right, or, when the card is narrow, the
+// actions stacked full width with the primary one first and Back last.
+component WizardFooter inherits VerticalLayout {
+    in property <bool> narrow;
+    in property <bool> back-shown;
+    in property <bool> back-enabled;
+    in property <bool> skip-shown;
+    in property <bool> skip-enabled;
+    in property <string> primary;
+    in property <bool> primary-enabled;
+    // The last step's Done takes focus, so Enter finishes.
+    in property <bool> primary-focused;
+    callback back();
+    callback skip();
+    callback primary-clicked();
+    padding-top: 4px;
+
+    if !root.narrow: HorizontalLayout {
+        spacing: 8px;
+        if root.back-shown: ActionButton {
+            text: "Back";
+            enabled: root.back-enabled;
+            clicked => {
+                root.back();
+            }
+        }
+        Rectangle { }
+
+        if root.skip-shown: ActionButton {
+            text: "Skip";
+            enabled: root.skip-enabled;
+            clicked => {
+                root.skip();
+            }
+        }
+        ActionButton {
+            text: root.primary;
+            primary: true;
+            enabled: root.primary-enabled;
+            clicked => {
+                root.primary-clicked();
+            }
+            init => {
+                if root.primary-focused {
+                    self.focus();
+                }
+            }
+        }
+    }
+    if root.narrow: VerticalLayout {
+        spacing: 8px;
+        ActionButton {
+            text: root.primary;
+            primary: true;
+            horizontal-stretch: 1;
+            enabled: root.primary-enabled;
+            clicked => {
+                root.primary-clicked();
+            }
+            init => {
+                if root.primary-focused {
+                    self.focus();
+                }
+            }
+        }
+        if root.skip-shown: ActionButton {
+            text: "Skip";
+            horizontal-stretch: 1;
+            enabled: root.skip-enabled;
+            clicked => {
+                root.skip();
+            }
+        }
+        if root.back-shown: ActionButton {
+            text: "Back";
+            horizontal-stretch: 1;
+            enabled: root.back-enabled;
+            clicked => {
+                root.back();
+            }
+        }
+    }
+}
+
 component WizardCard inherits Card {
     in property <Wizard> wizard;
+    // Too narrow for a row of buttons beside each other.
+    property <bool> narrow: self.width < 400px * Theme.text-scale;
     callback name-edited(string);
     callback next();
     callback back();
@@ -144,27 +249,33 @@ component WizardCard inherits Card {
     VerticalLayout {
         padding: 20px;
         spacing: 12px;
-        HorizontalLayout {
+        // Close beside the title, or under it when the card is narrow.
+        if !root.narrow: HorizontalLayout {
             spacing: 12px;
-            VerticalLayout {
-                spacing: 2px;
+            WizardTitle {
                 horizontal-stretch: 1;
-                SectionTitle {
-                    text: "Set up your Device";
-                }
-
-                Hint {
-                    text: root.wizard.device-name + " · " + root.wizard.device-status;
-                }
+                status: root.wizard.device-name + " · " + root.wizard.device-status;
             }
 
             VerticalLayout {
                 alignment: start;
                 horizontal-stretch: 0;
-                ActionButton {
-                    text: "Close";
-                    label: "Close setup";
-                    description: "Setup won't open again by itself. You can open it here.";
+                CloseSetup {
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+        }
+        if root.narrow: VerticalLayout {
+            spacing: 8px;
+            WizardTitle {
+                status: root.wizard.device-name + " · " + root.wizard.device-status;
+            }
+
+            HorizontalLayout {
+                alignment: start;
+                CloseSetup {
                     clicked => {
                         root.close();
                     }
@@ -305,49 +416,30 @@ component WizardCard inherits Card {
             details: root.wizard.error-detail;
         }
 
-        // Back on the left, the step's actions on the right.
-        HorizontalLayout {
-            padding-top: 4px;
-            spacing: 8px;
-            if !root.wizard.first && root.wizard.step != "done": ActionButton {
-                text: "Back";
-                enabled: root.wizard.busy == "" && !root.wizard.updating;
-                clicked => {
-                    root.back();
-                }
+        WizardFooter {
+            narrow: root.narrow;
+            back-shown: !root.wizard.first && root.wizard.step != "done";
+            back-enabled: root.wizard.busy == "" && !root.wizard.updating;
+            // The Firmware step can be skipped until its update is done.
+            skip-shown: root.wizard.step == "firmware" && root.wizard.firmware-step != "done";
+            skip-enabled: !root.wizard.updating;
+            primary: root.wizard.step == "done" ? "Done"
+                : self.skip-shown ? (root.wizard.updating ? "Updating…" : root.wizard.firmware-step == "failed" ? "Retry" : "Update")
+                : root.wizard.busy != "" ? root.wizard.busy : "Next";
+            primary-enabled: root.wizard.step == "done" || (root.wizard.live && root.wizard.busy == "" && !root.wizard.updating);
+            primary-focused: root.wizard.step == "done";
+            back => {
+                root.back();
             }
-            Rectangle { }
-
-            if root.wizard.step == "firmware" && root.wizard.firmware-step != "done": ActionButton {
-                text: "Skip";
-                enabled: !root.wizard.updating;
-                clicked => {
-                    root.skip();
-                }
+            skip => {
+                root.skip();
             }
-            if root.wizard.step == "firmware" && root.wizard.firmware-step != "done": ActionButton {
-                text: root.wizard.updating ? "Updating…" : root.wizard.firmware-step == "failed" ? "Retry" : "Update";
-                primary: true;
-                enabled: root.wizard.live && !root.wizard.updating;
-                clicked => {
-                    root.update();
-                }
-            }
-            if root.wizard.step == "done": ActionButton {
-                text: "Done";
-                primary: true;
-                clicked => {
+            primary-clicked => {
+                if root.wizard.step == "done" {
                     root.close();
-                }
-                init => {
-                    self.focus();
-                }
-            }
-            if root.wizard.step != "done" && !(root.wizard.step == "firmware" && root.wizard.firmware-step != "done"): ActionButton {
-                text: root.wizard.busy != "" ? root.wizard.busy : "Next";
-                primary: true;
-                enabled: root.wizard.live && root.wizard.busy == "" && !root.wizard.updating;
-                clicked => {
+                } else if self.skip-shown {
+                    root.update();
+                } else {
                     root.next();
                 }
             }

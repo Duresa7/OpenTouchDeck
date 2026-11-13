@@ -143,12 +143,14 @@ impl Handle {
             Arc::new(move |id| turned_on.enabled(id)),
         );
         let jobs = crate::jobs::Jobs::new(events.clone(), clock.clone());
+        let skips = crate::setup::Skips::load(data);
         let firmware = crate::features::firmware::Firmware::new(
             mock,
             devices.clone(),
             links.clone(),
             jobs.clone(),
             clock.clone(),
+            skips.clone(),
         );
         let photos = crate::photos::PhotoFrames::new(
             Some(data.join("photo-frame.json")),
@@ -200,7 +202,7 @@ impl Handle {
             clock,
             shutdown: tokio::sync::watch::channel(false).0,
             stopped: Default::default(),
-            skips: crate::setup::Skips::load(data),
+            skips,
             mock,
             #[cfg(any(test, feature = "test-hooks"))]
             checkpoints,

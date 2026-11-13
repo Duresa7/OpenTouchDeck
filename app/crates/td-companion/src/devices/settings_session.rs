@@ -132,6 +132,30 @@ pub struct SettingsSession {
     inner: Arc<Inner>,
 }
 
+impl Field {
+    /// The parts of a Device settings change this field asks for.
+    fn settings_fields(self) -> &'static [super::SettingsField] {
+        use super::SettingsField as S;
+        match self {
+            Field::Name => &[S::Name],
+            Field::Orientation => &[S::Orientation],
+            Field::PhotoFrame => &[S::PhotoFrame, S::PhotoFolder],
+        }
+    }
+}
+
+/// An answer's settings, keeping the photo frame already known when a failure came before the
+/// answer read it: unread isn't "no photo frame".
+fn known(before: Option<&DeviceSettings>, answer: &DeviceSettings) -> DeviceSettings {
+    let mut settings = answer.clone();
+    if settings.photo_frame.is_none()
+        && let Some(frame) = before.and_then(|b| b.photo_frame.clone())
+    {
+        settings.photo_frame = Some(frame);
+    }
+    settings
+}
+
 fn take(settings: &mut DeviceSettings, from: &DeviceSettings, field: Field) {
     match field {
         Field::Name => settings.name.clone_from(&from.name),
@@ -259,6 +283,16 @@ impl SettingsSession {
             .settings_patch(&self.inner.id, patch)
             .await;
         let (outcome, error) = match result {
+            // A failure after this field was acknowledged doesn't undo it: the Device keeps the
+            // change, so it counts as saved (`SettingsOutcome` lists what is still pending).
+            Ok(outcome)
+                if !field
+                    .settings_fields()
+                    .iter()
+                    .any(|f| outcome.pending.contains(f)) =>
+            {
+                (Some(outcome), None)
+            }
             Ok(outcome) => {
                 let error = outcome.error.as_ref().map(|error| match error {
                     DeviceError::NeedsFirmware { field } => DeviceError::NeedsFirmware { field },
@@ -282,7 +316,7 @@ impl SettingsSession {
             self.set(|view| {
                 // What the Device acknowledged before the failure is what it keeps now.
                 if let Some(outcome) = &outcome {
-                    view.saved = Some(outcome.settings.clone());
+                    view.saved = Some(known(view.saved.as_ref(), &outcome.settings));
                 }
                 if latest && let (Some(shown), Some(saved)) = (&mut view.shown, &view.saved) {
                     take(shown, saved, field);
@@ -325,14 +359,15 @@ impl SettingsSession {
                 .filter(|field| sequence.pending(*field))
                 .collect()
         };
+        let answered = known(self.view().saved.as_ref(), &outcome.settings);
         self.set(|view| {
-            let mut shown = outcome.settings.clone();
+            let mut shown = answered.clone();
             if let Some(before) = &view.shown {
                 for field in &pending {
                     take(&mut shown, before, *field);
                 }
             }
-            view.saved = Some(outcome.settings.clone());
+            view.saved = Some(answered);
             view.shown = Some(shown);
         });
         if outcome.restart_required && field != Field::Orientation {

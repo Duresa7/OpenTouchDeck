@@ -174,6 +174,8 @@ pub struct Firmware {
     links: crate::link::Links,
     jobs: crate::jobs::Jobs,
     clock: crate::clock::Clock,
+    /// A new install asks for setup again, so it clears the board's old setup skip.
+    skips: crate::setup::Skips,
     picked: Arc<Mutex<HashMap<String, Picked>>>,
     dialog: Arc<AtomicBool>,
     prompter: Arc<Mutex<Arc<dyn Prompter>>>,
@@ -190,6 +192,7 @@ impl Firmware {
         links: crate::link::Links,
         jobs: crate::jobs::Jobs,
         clock: crate::clock::Clock,
+        skips: crate::setup::Skips,
     ) -> Self {
         let bytes: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bundled.tdfw"));
         let radio: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bundled-radio.tdfw"));
@@ -210,6 +213,7 @@ impl Firmware {
             links,
             jobs,
             clock,
+            skips,
             picked: Default::default(),
             dialog: Default::default(),
             prompter: Arc::new(Mutex::new(Arc::new(Native))),

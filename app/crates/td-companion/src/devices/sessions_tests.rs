@@ -492,3 +492,91 @@ async fn a_device_on_older_firmware_of_its_build_is_offered_the_bundled_one() {
     assert_eq!(offered(&device, None).as_deref(), Some("2.0.0"));
     td.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_reinstalled_board_clears_its_old_setup_skip_without_any_screen() {
+    let mut td = InProcessCompanion::start().await;
+    let id = DeviceId::parse("mock0009").unwrap();
+    // Setup was closed for this board before, so it was skipped.
+    let skips = td.handle.setup_skips();
+    skips.skip(&id);
+    assert!(skips.skipped().contains("mock0009"));
+
+    td.plug_board("mock0009", BoardKind::Silent).await;
+    td.handle.firmware().script(vec![ConsentAnswer::Accept]);
+    // No screen follows the install: the Companion clears the skip itself.
+    let install = FirmwareTask::new(td.handle.clone(), Target::NewBoard(id.clone()));
+    install.start().await;
+    assert!(matches!(install.view().view, JobView::Done { .. }));
+    td.until(|td| {
+        td.device(&id)
+            .is_some_and(|d| d.setup == SetupState::NeedsSetup)
+    })
+    .await;
+    assert!(
+        !skips.skipped().contains("mock0009"),
+        "a new install asks for setup again"
+    );
+    let devices = td.handle.snapshot().devices;
+    assert_eq!(candidate(&devices, &skips.skipped()).unwrap().id, id);
+    td.shutdown().await;
+}
+
+#[tokio::test]
+async fn orientation_failures_in_a_row_leave_the_session_ready_for_a_retry() {
+    let mut td = InProcessCompanion::start().await;
+    let id = td.plug_device("mock0001").await;
+    let session = td.handle.device_operations().settings_session(&id);
+    session.load().await;
+    let deck = td.deck("mock0001");
+
+    // Three failures in a row: no answer twice, then an answer lost after the Device saved it.
+    for attempt in 0..2 {
+        deck.delay_replies(Duration::from_secs(3));
+        session.choose_orientation(td_core::Orientation::Portrait);
+        session.confirm_orientation().await;
+        let view = session.view();
+        assert_eq!(view.confirm, None, "attempt {attempt}");
+        assert_eq!(view.restart, Restart::Idle, "attempt {attempt}");
+        assert_eq!(
+            view.notice.as_ref().unwrap().event,
+            "save-failed",
+            "attempt {attempt}"
+        );
+        assert_eq!(
+            view.shown, view.saved,
+            "nothing pending after attempt {attempt}"
+        );
+        assert!(view.editable(), "attempt {attempt}");
+        assert_eq!(view.shown.unwrap().orientation, "landscape");
+        deck.delay_replies(Duration::ZERO);
+        // Let the late answers drain before the next try.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+    }
+
+    // The Device saved the orientation, then the answer to a later step was lost. It keeps
+    // what it saved, so the session shows it and restarts the Device to apply it.
+    td.handle
+        .checkpoints
+        .release(Checkpoint::AfterOrientationPut, true);
+    session.choose_orientation(td_core::Orientation::Portrait);
+    session.confirm_orientation().await;
+    let view = session.view();
+    assert_eq!(view.shown, view.saved, "nothing pending");
+    assert_eq!(view.shown.as_ref().unwrap().orientation, "portrait");
+    assert_eq!(view.restart, Restart::Idle, "restarted and back");
+    assert_eq!(deck.settings().orientation, td_core::Orientation::Portrait);
+
+    // And a retry still works: back to landscape.
+    session.choose_orientation(td_core::Orientation::Landscape);
+    assert_eq!(
+        session.view().confirm,
+        Some(td_core::Orientation::Landscape)
+    );
+    session.confirm_orientation().await;
+    let view = session.view();
+    assert_eq!(view.shown.unwrap().orientation, "landscape");
+    assert_eq!(view.notice, None);
+    assert_eq!(deck.settings().orientation, td_core::Orientation::Landscape);
+    td.shutdown().await;
+}
