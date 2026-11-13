@@ -27,7 +27,12 @@ fn type_in(rig: &Rig, label: &str, text: &str) {
         .set_accessible_value(text);
 }
 
+/// Flips a switch once it takes input. While a flip is saving, the switch is disabled, and
+/// the Companion can report the new state a moment before the switch frees up.
 fn flip(rig: &Rig, name: &str) {
+    rig.until("the switch to be enabled", |r| {
+        r.one(name, AccessibleRole::Switch).accessible_enabled() == Some(true)
+    });
     rig.one(name, AccessibleRole::Switch)
         .invoke_accessible_default_action();
 }
@@ -233,9 +238,7 @@ fn custom_sets_up_switches_and_is_removed() {
             .contains('\n')
     );
 
-    // Each flip waits for the switch too: it sends the opposite of what it shows.
     back(&rig);
-    rig.until("the switch on", |r| checked(r, "Custom"));
     flip(&rig, "Custom");
     rig.until("off", |r| !enabled(r, "custom") && !checked(r, "Custom"));
     flip(&rig, "Custom");
