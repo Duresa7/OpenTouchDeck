@@ -74,6 +74,8 @@ pub struct Snapshot {
 #[derive(Clone)]
 pub struct Handle {
     editor_root: PathBuf,
+    pub(crate) editor_gif_sources:
+        Arc<parking_lot::Mutex<std::collections::BTreeMap<String, crate::editor::GifSource>>>,
     pub(crate) actions: crate::actions::Actions,
     pub(crate) integrations: crate::integrations::Service,
     pub(crate) desktop: Arc<crate::tray::Desktop>,
@@ -164,6 +166,7 @@ impl Handle {
         );
         Self {
             editor_root: data.to_path_buf(),
+            editor_gif_sources: Default::default(),
             actions,
             integrations,
             live,

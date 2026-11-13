@@ -5,7 +5,11 @@ mod presets;
 pub use presets::placed_appearance;
 mod session;
 use serde::{Deserialize, Serialize};
-pub use session::{AddKind, AddTarget, Session, SessionError, StreamChoice};
+pub(crate) use session::GifSource;
+pub use session::{
+    AddKind, AddTarget, GifEdit, GifPreview, GifProblem, GifWork, Session, SessionError,
+    StreamChoice,
+};
 use std::{collections::BTreeMap, io, path::PathBuf};
 use td_core::{
     Layout, Orientation,

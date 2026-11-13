@@ -142,7 +142,7 @@ impl Session {
             super::super::placed_appearance(preset, integration, streams, draws_graphs);
         self.place(target, tile.label, tile.action, appearance, None)
     }
-    fn place(
+    pub(super) fn place(
         &mut self,
         target: AddTarget,
         label: String,

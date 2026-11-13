@@ -261,14 +261,14 @@ pub enum AssetSource {
     Brandfetch(super::brandfetch::BrandfetchLogo),
 }
 const GIF_TARGET_MAX: u16 = 4096;
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct GifTarget {
     pub width: u16,
     pub height: u16,
     pub background: [u8; 3],
 }
 /// How an image that isn't square fills the Tile: whole inside it, or cropped to fill it.
-#[derive(Clone, Copy, Default, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Fit {
     #[default]
@@ -371,37 +371,7 @@ fn render(
             let bytes = claim
                 .take(ctx.clock.now())
                 .ok_or(AssetError::UploadNotFound)?;
-            let output = td_host::gif_normalize::normalize_gif_until(
-                &bytes,
-                td_host::gif_normalize::Target {
-                    width: target.width,
-                    height: target.height,
-                    fit: match fit {
-                        Fit::Contain => td_host::gif_normalize::Fit::Contain,
-                        Fit::Cover => td_host::gif_normalize::Fit::Cover,
-                    },
-                },
-                &limits,
-                target.background,
-                &|| job.check().is_err(),
-            )
-            .map_err(|error| match error {
-                td_host::gif_normalize::GifError::Cancelled => Stop::Cancelled,
-                other => gif_error(other).into(),
-            })?;
-            job.check()?;
-            let id = ctx.assets.put(&output.bytes).map_err(stored)?;
-            job.progress(&RenderProgress {
-                frames_done: output.frames as u32,
-                frames_total: output.frames as u32,
-            });
-            return Ok(AssetRef {
-                id,
-                kind: "gif".into(),
-                width: output.width.into(),
-                height: output.height.into(),
-                bytes: output.bytes.len() as u64,
-            });
+            return prepare_gif(ctx, &bytes, target, fit, &limits, job);
         }
         AssetSource::App { path } => {
             icons::app_icon(std::path::Path::new(&path)).map_err(AssetError::RenderFailed)?
@@ -830,6 +800,65 @@ fn too_large_message(details: &serde_json::Value) -> &'static str {
         Some("gif_frames" | "source_frames") => "This GIF is too long. Choose a shorter GIF.",
         _ => "This GIF is too large. Choose a smaller GIF.",
     }
+}
+
+/// Native and web GIF preparation share normalization, cancellation and store admission.
+pub(crate) fn start_gif(
+    ctx: &crate::companion::Handle,
+    device: String,
+    bytes: std::sync::Arc<Vec<u8>>,
+    target: GifTarget,
+    fit: Fit,
+) -> Result<Job, AssetError> {
+    let _ = gif_limits(&gif_caps(ctx, &device)?)?;
+    let work = ctx.clone();
+    Ok(ctx
+        .jobs
+        .start_turn::<RenderJob>(JobScope::Companion, true, "gif", move |job| {
+            job.acquire_slot()?;
+            let limits = gif_limits(&gif_caps(&work, &device)?)?;
+            prepare_gif(&work, &bytes, target, fit, &limits, job)
+        })?)
+}
+fn prepare_gif(
+    ctx: &crate::companion::Handle,
+    bytes: &[u8],
+    target: GifTarget,
+    fit: Fit,
+    limits: &td_host::gif_normalize::AnimLimits,
+    job: &JobHandle<RenderJob>,
+) -> Result<AssetRef, Stop> {
+    let output = td_host::gif_normalize::normalize_gif_until(
+        bytes,
+        td_host::gif_normalize::Target {
+            width: target.width,
+            height: target.height,
+            fit: match fit {
+                Fit::Contain => td_host::gif_normalize::Fit::Contain,
+                Fit::Cover => td_host::gif_normalize::Fit::Cover,
+            },
+        },
+        limits,
+        target.background,
+        &|| job.check().is_err(),
+    )
+    .map_err(|error| match error {
+        td_host::gif_normalize::GifError::Cancelled => Stop::Cancelled,
+        other => gif_error(other).into(),
+    })?;
+    job.check()?;
+    let id = ctx.assets.put(&output.bytes).map_err(stored)?;
+    job.progress(&RenderProgress {
+        frames_done: output.frames as u32,
+        frames_total: output.frames as u32,
+    });
+    Ok(AssetRef {
+        id,
+        kind: "gif".into(),
+        width: output.width.into(),
+        height: output.height.into(),
+        bytes: output.bytes.len() as u64,
+    })
 }
 
 #[cfg(test)]

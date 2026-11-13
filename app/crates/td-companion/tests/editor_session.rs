@@ -826,3 +826,520 @@ async fn preset_renderer_fallback_validates_streams_source_input_and_numeric_bin
         None
     );
 }
+
+fn gif_bytes() -> Vec<u8> {
+    let mut out = vec![];
+    {
+        let mut encoder = gif::Encoder::new(&mut out, 8, 4, &[0, 0, 0, 255, 0, 0]).unwrap();
+        encoder.set_repeat(gif::Repeat::Infinite).unwrap();
+        for value in [0, 1] {
+            let frame = gif::Frame {
+                width: 8,
+                height: 4,
+                delay: 20,
+                buffer: std::borrow::Cow::Owned(vec![value; 32]),
+                ..Default::default()
+            };
+            encoder.write_frame(&frame).unwrap();
+        }
+    }
+    out
+}
+fn gif_caps(td: &TestCompanion, device: &str) -> td_companion::devices::Capabilities {
+    let id = td_companion::devices::DeviceId::parse(device).unwrap();
+    let mut caps = td
+        .handle()
+        .devices()
+        .get(&id)
+        .unwrap()
+        .capabilities
+        .unwrap();
+    caps.anim = Some(td_companion::devices::AnimationCapabilities {
+        image: [128, 128],
+        min_delay_ms: 100,
+        page_tiles: 4,
+        page_pixels: 65536,
+    });
+    caps.formats.push("gif".into());
+    caps.tile_kinds.push("gif".into());
+    caps.gif_frames = Some(60);
+    caps.gif_pixels = Some(128 * 128 * 60);
+    caps.asset_bytes = 1024 * 1024;
+    td.deck(device).set_gif_capabilities(true);
+    td.handle()
+        .devices()
+        .set_capability_fixture(&id, Some(caps.clone()));
+    caps
+}
+async fn settle_gif(s: &mut Session, tile: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while s.gif_work(tile).is_some() {
+            assert!(
+                !matches!(
+                    s.gif_work(tile),
+                    Some(td_companion::editor::GifWork::Failed { .. })
+                ),
+                "{:?}",
+                s.gif_work(tile)
+            );
+            s.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+}
+#[tokio::test]
+async fn gif_preparation_uses_tile_pixels_replaces_icons_and_preserves_action() {
+    use td_companion::editor::GifEdit;
+    let (td, mut s) = session().await;
+    gif_caps(&td, "mock0001");
+    s.start(blank()).unwrap();
+    let id = s
+        .add_gif(
+            "cat.gif".into(),
+            gif_bytes(),
+            AddTarget::Cell { row: 0, col: 2 },
+        )
+        .unwrap();
+    assert_eq!(s.draft().unwrap().effective_tile(&id).unwrap().label, "GIF");
+    let target = s.gif_target(&id).unwrap();
+    assert_eq!(
+        (target.width, target.height, target.background),
+        (312, 226, [24, 32, 49])
+    );
+    settle_gif(&mut s, &id).await;
+    let tile = s.draft().unwrap().effective_tile(&id).unwrap();
+    assert_eq!(tile.render, Some(TileRender::Gif));
+    assert_eq!(tile.icon, None);
+    assert!(tile.asset.unwrap().starts_with("sha256:"));
+    assert_eq!(s.draft().unwrap().layout().schema, 2);
+    let key = s.add(AddKind::Consumer, AddTarget::Auto).unwrap();
+    let action = s.draft().unwrap().effective_tile(&key).unwrap().action;
+    s.gif(
+        &key,
+        GifEdit::Choose {
+            file: "cat.gif".into(),
+            bytes: gif_bytes(),
+        },
+    )
+    .unwrap();
+    settle_gif(&mut s, &key).await;
+    assert_eq!(
+        s.draft().unwrap().effective_tile(&key).unwrap().action,
+        action
+    );
+    assert_eq!(s.gif_target("missing"), None);
+}
+#[tokio::test]
+async fn queued_gifs_cancel_replace_fail_retry_and_drop_deleted_tile_results() {
+    use td_companion::editor::{GifEdit, GifWork};
+    let (td, mut s) = session().await;
+    gif_caps(&td, "mock0001");
+    s.start(blank()).unwrap();
+    let id = s.add(AddKind::Key, AddTarget::Auto).unwrap();
+    let before = s.export().unwrap();
+    td.hold_jobs();
+    s.gif(
+        &id,
+        GifEdit::Choose {
+            file: "first.gif".into(),
+            bytes: gif_bytes(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(s.gif_work(&id), Some(GifWork::Queued { .. })));
+    s.gif(&id, GifEdit::Cancel).unwrap();
+    assert!(s.gif_work(&id).is_none());
+    td.release_jobs();
+    assert_eq!(s.export().unwrap(), before);
+    s.gif(
+        &id,
+        GifEdit::Choose {
+            file: "bad.gif".into(),
+            bytes: b"not a gif".to_vec(),
+        },
+    )
+    .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !matches!(s.gif_work(&id), Some(GifWork::Failed { .. })) {
+            s.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(s.export().unwrap(), before);
+    s.gif(&id, GifEdit::Retry).unwrap();
+    assert!(matches!(
+        s.gif_work(&id),
+        Some(GifWork::Queued { .. }) | Some(GifWork::Preparing { .. })
+    ));
+    s.gif(
+        &id,
+        GifEdit::Choose {
+            file: "good.gif".into(),
+            bytes: gif_bytes(),
+        },
+    )
+    .unwrap();
+    settle_gif(&mut s, &id).await;
+    let good = s.export().unwrap();
+    s.gif(
+        &id,
+        GifEdit::Choose {
+            file: "bad.gif".into(),
+            bytes: b"bad".to_vec(),
+        },
+    )
+    .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !matches!(s.gif_work(&id), Some(GifWork::Failed { .. })) {
+            s.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(s.export().unwrap(), good);
+    td.hold_jobs();
+    s.gif(
+        &id,
+        GifEdit::Choose {
+            file: "late.gif".into(),
+            bytes: gif_bytes(),
+        },
+    )
+    .unwrap();
+    s.edit(Edit::RemoveTile { tile: id.clone() }).unwrap();
+    td.release_jobs();
+    assert!(s.gif_work(&id).is_none());
+    assert!(tiles(&s).is_empty());
+}
+#[tokio::test]
+async fn gif_fit_geometry_limits_and_another_device_refit_from_retained_source() {
+    use td_companion::{editor::GifEdit, features::assets::Fit};
+    let (td, mut s) = session().await;
+    let mut caps = gif_caps(&td, "mock0001");
+    s.start(blank()).unwrap();
+    let id = s
+        .add_gif("cat.gif".into(), gif_bytes(), AddTarget::Auto)
+        .unwrap();
+    settle_gif(&mut s, &id).await;
+    assert_eq!(s.gif_fit(&id), Fit::Contain);
+    s.gif(&id, GifEdit::Fit(Fit::Cover)).unwrap();
+    settle_gif(&mut s, &id).await;
+    assert_eq!(s.gif_fit(&id), Fit::Cover);
+    td.hold_jobs();
+    s.gif(
+        &id,
+        GifEdit::Choose {
+            file: "resizing.gif".into(),
+            bytes: gif_bytes(),
+        },
+    )
+    .unwrap();
+    s.edit(Edit::Resize {
+        tile: id.clone(),
+        row_span: 1,
+        col_span: 2,
+    })
+    .unwrap();
+    assert_eq!(s.gif_target(&id).unwrap().width, 640);
+    td.release_jobs();
+    settle_gif(&mut s, &id).await;
+    s.edit(Edit::FullScreen { on: true }).unwrap();
+    assert_eq!(s.gif_target(&id).unwrap().width, 677);
+    settle_gif(&mut s, &id).await;
+    caps.anim.as_mut().unwrap().image = [96, 96];
+    let device = td_companion::devices::DeviceId::parse("mock0001").unwrap();
+    td.handle()
+        .devices()
+        .set_capability_fixture(&device, Some(caps));
+    s.changed().await.unwrap();
+    assert!(s.gif_work(&id).is_some());
+    settle_gif(&mut s, &id).await;
+    let exported = s.export().unwrap();
+    td.plug_device("mock0002").await;
+    gif_caps(&td, "mock0002");
+    let mut other = td.handle().open_editor("mock0002").unwrap();
+    other.import("gif.json", exported.as_bytes()).unwrap();
+    assert!(other.gif_work(&id).is_some());
+    settle_gif(&mut other, &id).await;
+}
+#[tokio::test]
+async fn gif_capability_loss_upload_limit_and_old_asset_refit_have_recoverable_messages() {
+    use td_companion::{
+        editor::{GifEdit, GifWork},
+        features::assets::Fit,
+    };
+    let (td, mut s) = session().await;
+    s.start(blank()).unwrap();
+    let id = s.add(AddKind::None, AddTarget::Auto).unwrap();
+    assert!(!s.offers_gif());
+    s.gif(
+        &id,
+        GifEdit::Choose {
+            file: "cat.gif".into(),
+            bytes: gif_bytes(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        s.gif_work(&id),
+        Some(GifWork::Failed { retry: true, .. })
+    ));
+    let caps = gif_caps(&td, "mock0001");
+    assert!(s.offers_gif());
+    s.gif(&id, GifEdit::Retry).unwrap();
+    settle_gif(&mut s, &id).await;
+    s.gif(
+        &id,
+        GifEdit::Choose {
+            file: "huge.gif".into(),
+            bytes: vec![0; 16 * 1024 * 1024 + 1],
+        },
+    )
+    .unwrap();
+    assert!(
+        matches!(s.gif_work(&id),Some(GifWork::Failed{problem,..}) if problem.detail.contains("request.too_large"))
+    );
+    td.hold_jobs();
+    s.gif(
+        &id,
+        GifEdit::Choose {
+            file: "cat.gif".into(),
+            bytes: gif_bytes(),
+        },
+    )
+    .unwrap();
+    let device = td_companion::devices::DeviceId::parse("mock0001").unwrap();
+    td.handle().devices().set_capability_fixture(&device, None);
+    s.changed().await.unwrap();
+    assert!(matches!(
+        s.gif_work(&id),
+        Some(GifWork::Failed { retry: true, .. })
+    ));
+    td.release_jobs();
+    td.handle()
+        .devices()
+        .set_capability_fixture(&device, Some(caps));
+    s.gif(&id, GifEdit::Retry).unwrap();
+    settle_gif(&mut s, &id).await;
+    s.gif(&id, GifEdit::Cancel).unwrap();
+    s.edit(Edit::Renderer {
+        tile: id.clone(),
+        appearance: Appearance::Gif {
+            asset: format!("sha256:{}", "a".repeat(64)),
+        },
+    })
+    .unwrap();
+    s.gif(&id, GifEdit::Fit(Fit::Cover)).unwrap();
+    assert!(
+        matches!(s.gif_work(&id),Some(GifWork::Failed{retry:false,problem,..}) if problem.text=="Choose this GIF again to refit it.")
+    );
+}
+#[tokio::test]
+async fn gif_messages_keep_raw_details_and_distinguish_send_from_preparation_errors() {
+    let (_td, s) = session().await;
+    for (code, details, text) in [
+        (
+            "asset.too_short",
+            serde_json::json!({"limit":100}),
+            "at least 100 ms",
+        ),
+        (
+            "asset.store_full",
+            serde_json::json!({}),
+            "Asset store is full",
+        ),
+        (
+            "asset.unsupported",
+            serde_json::json!({}),
+            "can't play this GIF",
+        ),
+        (
+            "layout.animation_limit",
+            serde_json::json!({}),
+            "too many animations",
+        ),
+        (
+            "asset.too_large",
+            serde_json::json!({"field":"gif_frames"}),
+            "too long",
+        ),
+        (
+            "asset.too_large",
+            serde_json::json!({"field":"decoded_rgba"}),
+            "64 MiB",
+        ),
+        (
+            "asset.too_large",
+            serde_json::json!({"reason":"size","limit":null}),
+            "too large",
+        ),
+        (
+            "asset.refused",
+            serde_json::json!({"reason":"full"}),
+            "out of space",
+        ),
+        (
+            "asset.refused",
+            serde_json::json!({"reason":"memory"}),
+            "too large",
+        ),
+    ] {
+        let error = td_companion::api::ErrorBody {
+            code: code.into(),
+            message: "raw message".into(),
+            details: Some(details),
+        };
+        for push in [false, true] {
+            let problem = s.gif_problem(&error, push).unwrap();
+            assert!(problem.text.contains(text));
+            assert!(problem.detail.contains(code));
+            assert!(problem.detail.contains("raw message"));
+        }
+    }
+    let error = td_companion::api::ErrorBody {
+        code: "device.timeout".into(),
+        message: "raw".into(),
+        details: None,
+    };
+    assert!(s.gif_problem(&error, true).is_none());
+    assert!(s.gif_problem(&error, false).is_some());
+}
+#[tokio::test]
+async fn gif_inspection_poster_bounds_and_fitted_line_match_reference() {
+    let (_td, s) = session().await;
+    let bytes = gif_bytes();
+    let info = s.inspect_gif(&bytes).unwrap();
+    assert_eq!(
+        (info.width, info.height, info.frames, info.duration_ms),
+        (8, 4, 2, 400)
+    );
+    let poster = s.inspect_gif(&info.poster).unwrap();
+    assert_eq!(poster.frames, 1);
+    assert_eq!(poster.duration_ms, 200);
+    assert!(!info.poster.windows(11).any(|b| b == b"NETSCAPE2.0"));
+    assert!(s.fitted_text(&info).contains("8 × 4, 5 fps"));
+    assert!(!s.fitted_text(&poster).contains("fps"));
+    for end in 0..bytes.len() {
+        assert!(s.inspect_gif(&bytes[..end]).is_none());
+    }
+    assert!(s.inspect_gif(b"not a gif").is_none());
+    let mut corrupt = bytes.clone();
+    corrupt.insert(corrupt.len() - 1, 0x99);
+    assert!(s.inspect_gif(&corrupt).is_none());
+}
+
+#[tokio::test]
+async fn gif_capability_gate_checks_every_required_limit_and_geometry_follows_portrait() {
+    let (td, mut s) = session().await;
+    let valid = gif_caps(&td, "mock0001");
+    s.start(blank()).unwrap();
+    let id = s.add(AddKind::None, AddTarget::Auto).unwrap();
+    let device = td_companion::devices::DeviceId::parse("mock0001").unwrap();
+    let mut cases = vec![];
+    let mut c = valid.clone();
+    c.anim = None;
+    cases.push(c);
+    let mut c = valid.clone();
+    c.formats.retain(|f| f != "gif");
+    cases.push(c);
+    let mut c = valid.clone();
+    c.tile_kinds.retain(|f| f != "gif");
+    cases.push(c);
+    let mut c = valid.clone();
+    c.gif_frames = Some(0);
+    cases.push(c);
+    let mut c = valid.clone();
+    c.gif_pixels = Some(0);
+    cases.push(c);
+    let mut c = valid.clone();
+    c.anim.as_mut().unwrap().image = [0, 128];
+    cases.push(c);
+    let mut c = valid.clone();
+    c.anim.as_mut().unwrap().min_delay_ms = 0;
+    cases.push(c);
+    let mut c = valid.clone();
+    c.anim.as_mut().unwrap().page_tiles = 0;
+    cases.push(c);
+    let mut c = valid.clone();
+    c.anim.as_mut().unwrap().page_pixels = 0;
+    cases.push(c);
+    for caps in cases {
+        td.handle()
+            .devices()
+            .set_capability_fixture(&device, Some(caps));
+        assert!(!s.offers_gif());
+    }
+    td.handle()
+        .devices()
+        .set_capability_fixture(&device, Some(valid));
+    assert!(s.offers_gif());
+    let target = s.gif_target(&id).unwrap();
+    assert_eq!((target.width, target.height), (312, 226));
+    let mut tall = blank();
+    tall.orientation = Orientation::Portrait;
+    if let Page::Grid { rows, cols, .. } = &mut tall.pages[0] {
+        *rows = 2;
+        *cols = 3;
+    }
+    s.start(tall).unwrap();
+    let id = s.add(AddKind::None, AddTarget::Auto).unwrap();
+    let target = s.gif_target(&id).unwrap();
+    assert_eq!((target.width, target.height), (170, 438));
+}
+#[tokio::test]
+async fn gif_store_failure_and_animation_push_limit_use_real_companion_refusals() {
+    use td_companion::editor::{GifEdit, GifWork};
+    use td_core::editing::Capabilities;
+    let td = TestCompanion::start_with_asset_quota(1).await;
+    td.plug_device("mock0001").await;
+    gif_caps(&td, "mock0001");
+    let mut s = td.handle().open_editor("mock0001").unwrap();
+    s.start(blank()).unwrap();
+    let id = s
+        .add_gif("cat.gif".into(), gif_bytes(), AddTarget::Auto)
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !matches!(s.gif_work(&id), Some(GifWork::Failed { .. })) {
+            s.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(s.gif_work(&id),Some(GifWork::Failed{problem,retry:true,..}) if problem.detail.contains("asset.store_full"))
+    );
+    s.gif(&id, GifEdit::Cancel).unwrap();
+    drop(s);
+    drop(td);
+    let (td, mut s) = session().await;
+    let mut caps = gif_caps(&td, "mock0001");
+    caps.anim.as_mut().unwrap().page_tiles = 1;
+    td.handle().devices().set_capability_fixture(
+        &td_companion::devices::DeviceId::parse("mock0001").unwrap(),
+        Some(caps),
+    );
+    s.start(blank()).unwrap();
+    let first = s
+        .add_gif("one.gif".into(), gif_bytes(), AddTarget::Auto)
+        .unwrap();
+    settle_gif(&mut s, &first).await;
+    let second = s
+        .add_gif("two.gif".into(), gif_bytes(), AddTarget::Auto)
+        .unwrap();
+    settle_gif(&mut s, &second).await;
+    let error = s
+        .send(Capabilities::default())
+        .await
+        .unwrap_err()
+        .refusal()
+        .unwrap();
+    assert_eq!(error.code, "layout.animation_limit");
+    assert!(
+        s.gif_problem(&error, true)
+            .unwrap()
+            .text
+            .contains("too many animations")
+    );
+}

@@ -1,3 +1,7 @@
+#[path = "gifs.rs"]
+mod gifs;
+pub(crate) use gifs::GifSource;
+pub use gifs::{GifEdit, GifPreview, GifProblem, GifWork};
 #[path = "streams.rs"]
 mod streams;
 pub use streams::StreamChoice;
@@ -43,6 +47,7 @@ pub struct Session {
     page: Option<String>,
     tile: Option<String>,
     last_job: Option<crate::jobs::Job>,
+    gifs: gifs::GifState,
     changes: tokio::sync::broadcast::Receiver<crate::events::Change>,
     replacements: std::collections::BTreeMap<String, String>,
 }
@@ -62,10 +67,12 @@ impl Session {
             page: None,
             tile: None,
             last_job: None,
+            gifs: Default::default(),
             changes,
             replacements: Default::default(),
         };
         session.refresh_assets()?;
+        session.sync_gifs()?;
         session.reconcile_selection();
         Ok(session)
     }
@@ -124,12 +131,14 @@ impl Session {
         self.model.start(layout)?;
         self.refresh_assets()?;
         self.select_orientation(orientation);
+        self.sync_gifs()?;
         self.model.persist()
     }
     pub fn edit(&mut self, edit: Edit) -> Result<Option<String>, EditorError> {
         self.refresh_assets()?;
         let result = self.model.edit(self.orientation, edit);
         self.refresh_assets()?;
+        self.sync_gifs()?;
         self.reconcile_selection();
         if let Ok(Some(id)) = &result {
             self.tile = Some(id.clone());
@@ -141,6 +150,7 @@ impl Session {
         self.model.resolve(self.orientation, decision)?;
         self.refresh_assets()?;
         self.reconcile_selection();
+        self.sync_gifs()?;
         self.model.persist()
     }
     pub fn replace_assets(
@@ -162,6 +172,7 @@ impl Session {
             Err(_) => return Err(SessionError::Send("Companion stopped".into())),
         };
         self.refresh_assets()?;
+        self.sync_gifs()?;
         Ok(change)
     }
     fn refresh_assets(&mut self) -> Result<(), EditorError> {
@@ -231,6 +242,7 @@ impl Session {
         };
         self.model.receive(read.layout, read.revision)?;
         self.refresh_assets()?;
+        self.sync_gifs()?;
         self.reconcile_selection();
         self.model.persist()?;
         Ok(())
@@ -346,5 +358,11 @@ impl SessionError {
             }
             _ => None,
         }
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.cancel_gifs();
     }
 }
