@@ -11,7 +11,7 @@
 //!
 //! Every Integration call is synchronous, so it runs on `spawn_blocking`. Writes from this window
 //! run one at a time in the order they were asked for, and the switch is locked while one runs.
-use super::{Error, IntegrationSummary, IntegrationView, Service, Setup};
+use super::{Error, IntegrationSummary, IntegrationView, Service, Setup, SetupCancel};
 use crate::{
     companion::{Change, Handle},
     devices::DeviceId,
@@ -674,6 +674,8 @@ struct Detail {
     set_up: bool,
     /// Holds enable intent while the switch waits for setup. Taken while a save runs.
     setup: Option<Setup>,
+    /// Cancels that intent, even while a save holds the Setup. Dropping the page cancels it.
+    cancel: Option<SetupCancel>,
     view: Option<IntegrationView>,
     load: Load,
     fields: Vec<FormField>,
@@ -711,13 +713,52 @@ impl Detail {
             self.values = saved.clone();
             self.errors.clear();
         }
-        self.entered
-            .retain(|name, _| secret_fields.iter().any(|f| &f.name == name));
         self.fields = fields;
         self.secret_fields = secret_fields;
         self.saved = saved;
         self.load = Load::Ready;
         self.view = Some(view);
+        self.draft_secrets();
+    }
+    /// The custom Integration's secret fields come from the header references in its sources as
+    /// typed, so a secret can go in the same Save as the source that names it. Sources that
+    /// aren't valid JSON yet keep the fields shown before.
+    fn draft_secrets(&mut self) {
+        if self.id == "custom"
+            && let Some(FieldValue::Text(sources)) = self.values.get("sources")
+            && let Ok(Value::Array(sources)) = serde_json::from_str::<Value>(sources)
+        {
+            let names: std::collections::BTreeSet<&str> = sources
+                .iter()
+                .filter(|source| source["input"]["type"] == "http")
+                .filter_map(|source| source["input"]["headers"].as_object())
+                .flat_map(|headers| headers.values().filter_map(Value::as_str))
+                .collect();
+            let schema: Vec<ConfigField> = names
+                .into_iter()
+                .map(|name| ConfigField {
+                    name: name.into(),
+                    kind: "string".into(),
+                    secret: true,
+                })
+                .collect();
+            self.secret_fields = form_of(&self.id, &schema).1;
+        }
+        let fields = &self.secret_fields;
+        self.entered
+            .retain(|name, _| fields.iter().any(|f| &f.name == name));
+    }
+    /// Keeps a Setup's enable intent with this page.
+    fn intend(&mut self, setup: Setup) {
+        self.cancel = Some(setup.canceller());
+        self.setup = Some(setup);
+    }
+    /// Cancels the enable intent, including a save of it that's on its way.
+    fn drop_intent(&mut self) {
+        self.setup = None;
+        if let Some(cancel) = self.cancel.take() {
+            cancel.cancel();
+        }
     }
     fn secret_set(&self, field: &str) -> bool {
         self.view
@@ -731,6 +772,12 @@ impl Detail {
             .chain(&self.fields)
             .find(|f| f.name == field)
             .map_or_else(|| field.to_owned(), |f| f.label.to_lowercase())
+    }
+}
+
+impl Drop for Detail {
+    fn drop(&mut self) {
+        self.drop_intent();
     }
 }
 
@@ -808,9 +855,8 @@ async fn blocking<T: Send + 'static>(
 }
 
 impl IntegrationsSession {
-    /// Starts the window's session from the Companion's cached summaries. Inside a Tokio runtime
-    /// it follows the Companion's changes itself until the last clone is dropped; elsewhere the
-    /// window passes each change to [`observe`](Self::observe).
+    /// Starts the window's session from the Companion's cached summaries. Call it inside the Tokio
+    /// runtime: it follows the Companion's changes there until the last clone is dropped.
     pub fn new(handle: Handle) -> Self {
         let changes = handle.observe();
         let summaries = handle.integrations().summaries();
@@ -843,14 +889,27 @@ impl IntegrationsSession {
         self.inner.handle.integrations().clone()
     }
 
+    /// Changes the state and sends the view it makes, under one lock: a later change can't send
+    /// its view before an earlier one's.
     fn change<T>(&self, change: impl FnOnce(&mut State) -> T) -> T {
-        let out = change(&mut self.inner.state.lock());
-        self.publish();
+        let mut state = self.inner.state.lock();
+        let out = change(&mut state);
+        self.send(&state);
         out
     }
 
     fn publish(&self) {
-        let view = self.render();
+        self.send(&self.inner.state.lock());
+    }
+
+    fn send(&self, state: &State) {
+        let view = self.render(state);
+        #[cfg(any(test, feature = "test-hooks"))]
+        let _ = self
+            .inner
+            .handle
+            .checkpoints
+            .pass(crate::checkpoints::Checkpoint::IntegrationsPublish);
         self.inner.view.send_if_modified(|current| {
             let changed = *current != view;
             *current = view;
@@ -858,8 +917,7 @@ impl IntegrationsSession {
         });
     }
 
-    fn render(&self) -> IntegrationsView {
-        let state = self.inner.state.lock();
+    fn render(&self, state: &State) -> IntegrationsView {
         let rows = state
             .summaries
             .iter()
@@ -986,13 +1044,14 @@ impl IntegrationsSession {
         }
     }
 
-    /// Follows one Companion change. The session does this itself inside a Tokio runtime.
+    /// Follows one Companion change. The session does this itself, so a window only calls it
+    /// when it feeds changes by hand. Call it inside the Tokio runtime: the page's reload after a
+    /// status change is spawned there.
     pub fn observe(&self, change: &Change) {
         match change {
             Change::IntegrationStatus(event) => {
-                let summaries = self.inner.handle.integrations().summaries();
                 let reload = self.change(|state| {
-                    state.summaries = summaries;
+                    state.summaries = self.inner.handle.integrations().summaries();
                     let detail = state.detail.as_mut().filter(|d| d.id == event.0.id)?;
                     if detail.reloading {
                         detail.stale = true;
@@ -1019,13 +1078,13 @@ impl IntegrationsSession {
 
     /// Reads the cached summaries again, after missed changes.
     pub fn sync(&self) {
-        let summaries = self.inner.handle.integrations().summaries();
-        self.change(|state| state.summaries = summaries);
+        self.change(|state| state.summaries = self.inner.handle.integrations().summaries());
     }
 
     /// Reads the open page's view again, keeping what's typed.
     async fn reload(&self, id: String, opened: u64) {
         loop {
+            let _turn = self.inner.writes.lock().await;
             let service = self.service();
             let wanted = id.clone();
             let result = blocking(move || service.view(&wanted)).await;
@@ -1069,8 +1128,7 @@ impl IntegrationsSession {
             self.change(|state| {
                 state.pending = None;
                 if let Some(detail) = state.detail.as_mut().filter(|d| d.id == id) {
-                    // Dropping the Setup cancels its enable intent.
-                    detail.setup = None;
+                    detail.drop_intent();
                 }
             });
             if !summary.enabled {
@@ -1089,17 +1147,15 @@ impl IntegrationsSession {
             state.count(id, 1);
             state.notice = None;
         });
-        let result = {
-            let _turn = self.inner.writes.lock().await;
-            let service = self.service();
-            let wanted = id.to_owned();
-            blocking(move || service.set_enabled(&wanted, on)).await
-        };
-        let summaries = self.inner.handle.integrations().summaries();
+        // The gate stays held until the result is published, so writes publish in order.
+        let _turn = self.inner.writes.lock().await;
+        let service = self.service();
+        let wanted = id.to_owned();
+        let result = blocking(move || service.set_enabled(&wanted, on)).await;
         self.change(|state| {
             state.saving.remove(id);
             state.count(id, -1);
-            state.summaries = summaries;
+            state.summaries = self.inner.handle.integrations().summaries();
             match &result {
                 Ok(view) => {
                     if let Some(detail) = state.detail.as_mut().filter(|d| d.id == id) {
@@ -1142,11 +1198,16 @@ impl IntegrationsSession {
                 .detail
                 .take()
                 .filter(|d| d.id == id && state.pending.as_deref() == Some(id))
-                .and_then(|d| d.setup);
+                .and_then(|mut d| {
+                    // Moved, not cancelled: the old page's drop must not cancel it.
+                    d.cancel = None;
+                    d.setup.take()
+                });
             state.detail = Some(Detail {
                 id: id.into(),
                 opened: state.opened,
                 set_up,
+                cancel: carried.as_ref().map(Setup::canceller),
                 setup: carried,
                 view: None,
                 load: Load::Loading,
@@ -1167,6 +1228,7 @@ impl IntegrationsSession {
         let Some(opened) = opened else {
             return false;
         };
+        let _turn = self.inner.writes.lock().await;
         let service = self.service();
         let wanted = id.to_owned();
         let result = blocking(move || {
@@ -1183,8 +1245,10 @@ impl IntegrationsSession {
                 Ok((view, setup)) => {
                     detail.take(view, true);
                     // A switch turned off while this page opened keeps the Setup from enabling.
-                    if let Some(setup) = setup.filter(|_| still_pending) {
-                        detail.setup = Some(setup);
+                    match setup {
+                        Some(setup) if still_pending => detail.intend(setup),
+                        Some(setup) => setup.cancel(),
+                        None => {}
                     }
                     true
                 }
@@ -1227,6 +1291,7 @@ impl IntegrationsSession {
                 detail.values.insert(name.into(), value);
                 detail.errors.remove(name);
                 detail.notice = None;
+                detail.draft_secrets();
             }
         });
     }
@@ -1289,8 +1354,9 @@ impl IntegrationsSession {
             return false;
         };
         let intent = setup.is_some();
+        // The gate stays held until the result is published, so writes publish in order.
+        let _turn = self.inner.writes.lock().await;
         let (setup, result) = {
-            let _turn = self.inner.writes.lock().await;
             let service = self.service();
             let wanted = id.clone();
             tokio::task::spawn_blocking(move || {
@@ -1311,10 +1377,9 @@ impl IntegrationsSession {
             .await
             .unwrap_or((None, Err((Error::Storage, None))))
         };
-        let summaries = self.inner.handle.integrations().summaries();
         self.change(|state| {
             state.count(&id, -1);
-            state.summaries = summaries;
+            state.summaries = self.inner.handle.integrations().summaries();
             let pending = state.pending.as_deref() == Some(id.as_str());
             let Some(detail) = state.detail_of(&id, opened) else {
                 return false;
@@ -1412,20 +1477,18 @@ impl IntegrationsSession {
         let Some((id, opened)) = prepared else {
             return false;
         };
-        let result = {
-            let _turn = self.inner.writes.lock().await;
-            let service = self.service();
-            let (wanted, field) = (id.clone(), field.to_owned());
-            blocking(move || {
-                service.secret_delete(&wanted, &field)?;
-                service.view(&wanted)
-            })
-            .await
-        };
-        let summaries = self.inner.handle.integrations().summaries();
+        let _turn = self.inner.writes.lock().await;
+        let service = self.service();
+        let wanted = id.clone();
+        let forgotten = field.to_owned();
+        let result = blocking(move || {
+            service.secret_delete(&wanted, &forgotten)?;
+            service.view(&wanted)
+        })
+        .await;
         self.change(|state| {
             state.count(&id, -1);
-            state.summaries = summaries;
+            state.summaries = self.inner.handle.integrations().summaries();
             let Some(detail) = state.detail_of(&id, opened) else {
                 return false;
             };
@@ -1478,6 +1541,7 @@ impl IntegrationsSession {
         let Some((id, opened)) = prepared else {
             return false;
         };
+        let _turn = self.inner.writes.lock().await;
         let service = self.service();
         let wanted = id.clone();
         let result = blocking(move || {

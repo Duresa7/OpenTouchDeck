@@ -4,9 +4,10 @@
 use serde_json::json;
 use std::time::Duration;
 use td_companion::{
+    checkpoints::Checkpoint,
     integrations::session::{
-        FLOOR_TEXT, FieldValue, IntegrationsSession, IntegrationsView, Load, NoticeKind, Tone,
-        WAITING_FOR_APPROVAL,
+        Busy, FLOOR_TEXT, FieldValue, IntegrationsSession, IntegrationsView, Load, NoticeKind,
+        Tone, WAITING_FOR_APPROVAL,
     },
     testing::InProcessCompanion,
 };
@@ -499,4 +500,145 @@ async fn a_command_waits_for_approval_on_this_pc_and_can_show_its_prompt_again()
     assert_eq!(detail.status.detail.as_deref(), Some("Denied on this PC."));
     assert!(!session.show_prompt().await);
     td.shutdown().await;
+}
+
+/// One Save sends new sources together with the header secret they name.
+#[tokio::test]
+async fn one_save_sends_custom_sources_with_the_header_secret_they_name() {
+    let mut td = InProcessCompanion::start().await;
+    let session = IntegrationsSession::new(td.handle.clone());
+    assert!(session.flip("custom", true).await);
+    session.set_value("sources", text(&http_source()));
+    let detail = session.view().detail.unwrap();
+    assert_eq!(detail.secrets.len(), 1, "the draft names the secret");
+    assert_eq!(detail.secrets[0].field.name, "auth");
+    session.enter_secret("auth", KEY);
+    assert!(session.save().await);
+    assert!(td.handle.integrations().enabled("custom"));
+    assert!(td.handle.integrations().view("custom").unwrap().secrets["auth"].set);
+    assert!(session.view().detail.unwrap().secrets[0].set);
+    td.shutdown().await;
+}
+
+/// A Save that fails changes nothing: not the address, and not the key it would replace.
+#[tokio::test]
+async fn a_failed_save_leaves_settings_and_secrets_as_they_were() {
+    let mut td = InProcessCompanion::start().await;
+    let service = td.handle.integrations();
+    service
+        .configure(
+            "cliproxyapi",
+            json!({"url": "https://old.example", "interval_s": 120}),
+        )
+        .unwrap();
+    service
+        .secret_put("cliproxyapi", "management_key", "fixture-old")
+        .unwrap();
+    let session = IntegrationsSession::new(td.handle.clone());
+    assert!(session.open("cliproxyapi").await);
+    session.set_value("url", text("https://new.example"));
+    session.enter_secret("management_key", "invalid\nreplacement");
+    assert!(!session.save().await);
+    let view = service.view("cliproxyapi").unwrap();
+    assert_eq!(view.config["url"], "https://old.example");
+    assert!(view.secrets["management_key"].set, "the old key stays");
+    let detail = session.view().detail.unwrap();
+    assert_eq!(detail.notice.unwrap().event, "save-failed");
+    assert_eq!(
+        detail.values["url"],
+        text("https://new.example"),
+        "the form keeps what's typed"
+    );
+    assert!(detail.secrets[0].set);
+    td.shutdown().await;
+}
+
+/// Closing the setup page while its Save waits for a blocking thread cancels the enable.
+#[test]
+fn closing_setup_while_its_save_is_queued_does_not_enable() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut td = InProcessCompanion::start().await;
+        let session = IntegrationsSession::new(td.handle.clone());
+        assert!(session.flip("cliproxyapi", true).await);
+        session.set_value("url", text("https://hub.example"));
+        session.set_value("interval_s", text("120"));
+        session.enter_secret("management_key", KEY);
+
+        // Hold the only blocking thread, so the Save waits in its queue.
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (started, running) = tokio::sync::oneshot::channel();
+        let blocker = tokio::task::spawn_blocking(move || {
+            started.send(()).unwrap();
+            held.recv().unwrap();
+        });
+        running.await.unwrap();
+        let saving = tokio::spawn({
+            let session = session.clone();
+            async move { session.save().await }
+        });
+        until(&session, "the queued save", |v| {
+            v.detail
+                .as_ref()
+                .is_some_and(|d| d.busy == Some(Busy::Save))
+        })
+        .await;
+        session.close();
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        saving.await.unwrap();
+        assert!(!td.handle.integrations().enabled("cliproxyapi"));
+        assert!(!on(&session, "cliproxyapi"));
+        td.shutdown().await;
+    });
+}
+
+/// A view sent to the window is never older than one sent before it: a change waits while an
+/// earlier change's view is on its way.
+#[test]
+fn publication_never_runs_backwards() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut td = InProcessCompanion::start().await;
+        set_up_cliproxyapi(&td).await;
+        let session = IntegrationsSession::new(td.handle.clone());
+        assert!(session.open("cliproxyapi").await);
+        let points = td.checkpoints().clone();
+        points.hold_once(Checkpoint::IntegrationsPublish);
+        let first = std::thread::spawn({
+            let session = session.clone();
+            move || session.set_value("interval_s", text("111"))
+        });
+        td.until(|_| points.waiting(Checkpoint::IntegrationsPublish))
+            .await;
+        let (done, finished) = std::sync::mpsc::channel();
+        let second = std::thread::spawn({
+            let session = session.clone();
+            move || {
+                session.set_value("interval_s", text("222"));
+                done.send(()).unwrap();
+            }
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_millis(500)).is_err(),
+            "the newer change waits for the older one's view to be sent"
+        );
+        points.release(Checkpoint::IntegrationsPublish, false);
+        first.join().unwrap();
+        second.join().unwrap();
+        assert_eq!(
+            session.view().detail.unwrap().values["interval_s"],
+            text("222")
+        );
+        td.shutdown().await;
+    });
 }
