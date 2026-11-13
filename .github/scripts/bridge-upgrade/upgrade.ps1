@@ -59,7 +59,7 @@ $integration = @{ enabled = $false; url = 'http://127.0.0.1:8318'; interval_s = 
 
 $null = New-Item -ItemType Directory -Force -Path $ArtifactDir
 $ArtifactDir = (Resolve-Path -LiteralPath $ArtifactDir).Path
-$work = New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP 'bridge-upgrade')
+$work = New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP 'bridge-upgrade-work')
 $checks = [Collections.Generic.List[string]]::new()
 $notes = [ordered]@{}
 
