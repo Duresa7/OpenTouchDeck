@@ -442,6 +442,8 @@ fn publish(registry: &Registry, events: &Events) {
     }
 }
 
+pub mod session;
+
 #[cfg(test)]
 #[path = "integrations/tests.rs"]
 mod tests;
