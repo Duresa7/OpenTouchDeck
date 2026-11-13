@@ -10,6 +10,7 @@ mod dialog_text;
 pub mod editor;
 mod events;
 pub mod features;
+pub mod icon_packs;
 pub mod integrations;
 pub mod jobs;
 pub mod layouts;
