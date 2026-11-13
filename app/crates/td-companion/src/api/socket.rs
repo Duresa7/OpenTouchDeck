@@ -97,12 +97,13 @@ fn frame<E: Event>(event: &E) -> serde_json::Value {
 }
 
 /// JSON framing belongs to this adapter; the Companion only publishes typed changes.
-fn encode(change: &crate::companion::Change) -> (serde_json::Value, Topic, Option<String>) {
+fn encode(change: &crate::companion::Change) -> Option<(serde_json::Value, Topic, Option<String>)> {
     use crate::companion::Change;
     fn event<E: Event>(value: &E) -> (serde_json::Value, Topic, Option<String>) {
         (frame(value), E::TOPIC, value.device().map(str::to_owned))
     }
-    match change {
+    Some(match change {
+        Change::AssetsReplaced => return None,
         Change::DeviceAdded(value) => event(value),
         Change::DeviceUpdated(value) => event(value),
         Change::DeviceRemoved(value) => event(value),
@@ -119,7 +120,7 @@ fn encode(change: &crate::companion::Change) -> (serde_json::Value, Topic, Optio
         Change::Stopping => event(&CompanionStopping {
             reason: "shutdown".into(),
         }),
-    }
+    })
 }
 
 #[derive(Default)]
@@ -164,7 +165,9 @@ impl WebEvents {
             if matches!(change, crate::companion::Change::Stopping) {
                 return;
             }
-            let (value, topic, device) = encode(change);
+            let Some((value, topic, device)) = encode(change) else {
+                return;
+            };
             web.publish_frame(value, topic, device);
         }));
         Self {

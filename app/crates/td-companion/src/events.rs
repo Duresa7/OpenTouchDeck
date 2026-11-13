@@ -18,6 +18,7 @@ pub enum Change {
     ActionLogged(crate::actions::ActionLog),
     JobUpdated(crate::jobs::JobUpdated),
     IntegrationStatus(crate::integrations::IntegrationStatusEvent),
+    AssetsReplaced,
     Stopping,
 }
 impl From<crate::devices::DeviceAdded> for Change {

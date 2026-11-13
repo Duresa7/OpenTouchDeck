@@ -353,6 +353,10 @@ impl Service {
     pub fn mock_volume(&self) -> Option<td_host::integrations::volume::fake::FakeVolume> {
         self.volume.clone()
     }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn set_summary_fixture(&self, summaries: Vec<IntegrationSummary>) {
+        *self.summaries.lock().unwrap() = summaries;
+    }
     pub fn summaries(&self) -> Vec<IntegrationSummary> {
         self.summaries.lock().unwrap().clone()
     }

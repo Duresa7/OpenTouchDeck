@@ -6276,6 +6276,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "ts-rs",
+ "unicode-segmentation",
  "ureq",
  "url",
  "windows-sys 0.61.2",
