@@ -90,8 +90,11 @@ function Wait-Until([scriptblock]$Condition, [int]$Seconds, [string]$What) {
     throw "FAILED: timed out after $Seconds s waiting for $What"
 }
 
+# Runs node with its output on the console only. A command's output inside a PowerShell function becomes part of the
+# function's return value, so letting it through would put lines such as the signer's "Signed <file>" into whatever
+# a caller returns.
 function Invoke-Node([string[]]$Arguments) {
-    & node @Arguments
+    & node @Arguments | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE) { throw "node $($Arguments[0]) exited with $LASTEXITCODE" }
 }
 
@@ -260,7 +263,7 @@ function New-Release([string]$Source, [string]$Name, [string]$Key) {
         updater_public_key = (Get-Content -LiteralPath "$Key.pub" -Raw).Trim()
     }
     [IO.File]::WriteAllText((Join-Path $dir 'next.json'), ($next | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
-    $dir.FullName
+    return $dir.FullName
 }
 
 $OneXVersion = ''
