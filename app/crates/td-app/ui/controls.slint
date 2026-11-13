@@ -106,8 +106,11 @@ export component ActionButton inherits Rectangle {
     forward-focus: keys;
     // A button keeps its size in a row unless told to stretch.
     horizontal-stretch: 0;
-    min-height: max(32px, label.preferred-height + 12px);
-    min-width: max(96px, label.preferred-width + 24px);
+    // As wide as its words on one line, at least 96 px, but it can narrow to fit its space:
+    // the words then wrap, as a WinUI button's content does, and the button grows taller.
+    preferred-width: max(96px, label.preferred-width + 24px);
+    min-width: min(96px, self.preferred-width);
+    min-height: max(32px, content.min-height);
     border-radius: 4px;
     border-width: 1px;
     border-color: Theme.high-contrast ? (root.enabled ? (self.primary ? Theme.contrast.highlight : Theme.contrast.button-text) : Theme.contrast.gray-text) : Theme.control-stroke;
@@ -117,13 +120,20 @@ export component ActionButton inherits Rectangle {
         ? (touch.pressed ? Theme.accent.darker(0.15) : touch.has-hover ? Theme.accent.darker(0.08) : Theme.accent)
         : (touch.has-hover || touch.pressed ? Theme.control-hover : Theme.control);
 
-    label := Text {
-        accessible-role: none;
-        text: root.text;
-        font-size: Theme.body;
-        color: !root.enabled ? Theme.disabled-text : root.primary ? Theme.accent-text : Theme.control-text;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    content := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        label := Text {
+            accessible-role: none;
+            text: root.text;
+            font-size: Theme.body;
+            color: !root.enabled ? Theme.disabled-text : root.primary ? Theme.accent-text : Theme.control-text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
     }
 
     // Keyboard first and the pointer on top, so a click acts at once without taking focus.
@@ -803,32 +813,69 @@ component Divider inherits Rectangle {
     background: Theme.card-stroke;
 }
 
-// One setting in a card: what it is on the left, a small control (a switch) on the right.
-export component SettingRow inherits Rectangle {
+// An on/off setting in a card: its words on the left and the switch on the right, or the switch
+// under the words when the card is too narrow for both, as Windows 11 Settings stacks them.
+export component SwitchRow inherits Rectangle {
     in property <string> title;
     in property <string> description;
     // A problem with this setting, shown under it.
     in property <string> problem;
     in property <bool> first;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+    property <bool> stacked: root.width < 360px * Theme.text-scale;
 
     min-height: max(64px, layout.preferred-height);
 
-    layout := HorizontalLayout {
+    layout := VerticalLayout {
         padding-left: 16px;
         padding-right: 16px;
         padding-top: 12px;
         padding-bottom: 12px;
-        spacing: 16px;
-        SettingText {
-            title: root.title;
-            description: root.description;
-            problem: root.problem;
-        }
+        if !root.stacked: HorizontalLayout {
+            spacing: 16px;
+            SettingText {
+                horizontal-stretch: 1;
+                title: root.title;
+                description: root.description;
+                problem: root.problem;
+            }
 
-        VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-            @children
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                ToggleSwitch {
+                    label: root.title;
+                    description: root.description;
+                    checked: root.checked;
+                    enabled: root.enabled;
+                    toggled(on) => {
+                        root.toggled(on);
+                    }
+                }
+            }
+        }
+        if root.stacked: VerticalLayout {
+            spacing: 8px;
+            SettingText {
+                title: root.title;
+                description: root.description;
+                problem: root.problem;
+            }
+
+            HorizontalLayout {
+                alignment: start;
+                ToggleSwitch {
+                    label: root.title;
+                    description: root.description;
+                    checked: root.checked;
+                    enabled: root.enabled;
+                    toggled(on) => {
+                        root.toggled(on);
+                    }
+                }
+            }
         }
     }
 

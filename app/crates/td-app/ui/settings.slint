@@ -2,7 +2,7 @@
 // frame, paired apps and Firmware.
 import { ComboBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ActionButton, Body, Card, Choice, Choices, Details, GroupTitle, Hint, InfoBar, Link, PageTitle, ProgressBar, SectionTitle, SettingBlock, SettingRow, Severity, TextField, ToggleSwitch } from "controls.slint";
+import { ActionButton, Body, Card, Choice, Choices, Details, GroupTitle, Hint, InfoBar, Link, PageTitle, ProgressBar, SectionTitle, SettingBlock, Severity, SwitchRow, TextField, ToggleSwitch } from "controls.slint";
 import { ScrollingPage, Focus } from "page.slint";
 
 // This PC's settings.
@@ -281,32 +281,26 @@ export component SettingsPage inherits ScrollingPage {
 
         Group {
             title: "This PC";
-            if root.pc.start-shown: SettingRow {
+            if root.pc.start-shown: SwitchRow {
                 first: true;
                 title: "Start at sign-in";
                 description: "Runs in the tray when you sign in to Windows, so your Devices work right away.";
                 problem: root.pc.start-problem;
-                ToggleSwitch {
-                    label: "Start at sign-in";
-                    checked: root.pc.start-on;
-                    enabled: root.pc.start-enabled;
-                    toggled(on) => {
-                        root.set-start(on);
-                    }
+                checked: root.pc.start-on;
+                enabled: root.pc.start-enabled;
+                toggled(on) => {
+                    root.set-start(on);
                 }
             }
-            SettingRow {
+            SwitchRow {
                 first: !root.pc.start-shown;
                 title: "Check for updates";
                 description: "Asks GitHub for a newer Open TouchDeck every few hours. Nothing about you or your Devices is sent.";
                 problem: root.pc.update-problem;
-                ToggleSwitch {
-                    label: "Check for updates";
-                    checked: root.pc.update-on;
-                    enabled: root.pc.update-enabled;
-                    toggled(on) => {
-                        root.set-updates(on);
-                    }
+                checked: root.pc.update-on;
+                enabled: root.pc.update-enabled;
+                toggled(on) => {
+                    root.set-updates(on);
                 }
             }
 
@@ -434,21 +428,17 @@ export component SettingsPage inherits ScrollingPage {
                 title: "Photo frame";
                 description: root.device.photo-needs;
             }
-            if root.device.photo-needs == "": SettingRow {
+            if root.device.photo-needs == "": SwitchRow {
                 first: true;
                 title: "Photo frame";
                 description: root.device.photo-hint;
-                ToggleSwitch {
-                    label: "Photo frame";
-                    description: root.device.photo-hint;
-                    checked: root.device.photo-on;
-                    enabled: root.device.photo-enabled;
-                    toggled(on) => {
-                        root.set-photo(on);
-                    }
+                checked: root.device.photo-on;
+                enabled: root.device.photo-enabled;
+                toggled(on) => {
+                    root.set-photo(on);
                 }
             }
-            if root.device.photo-needs == "" && root.device.photo-on: SettingRow {
+            if root.device.photo-needs == "" && root.device.photo-on: SettingBlock {
                 title: "Start after";
                 ComboBox {
                     accessible-label: "Start after";

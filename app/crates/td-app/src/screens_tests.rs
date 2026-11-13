@@ -514,6 +514,7 @@ fn assert_fits(rig: &Rig, width: f32, page: &str) {
         AccessibleRole::Switch,
         AccessibleRole::RadioButton,
         AccessibleRole::TextInput,
+        AccessibleRole::Combobox,
     ] {
         for element in rig
             .app
@@ -555,6 +556,10 @@ fn at_the_largest_text_size_setup_and_settings_fit_the_narrowest_window() {
 
     rig.open_device_settings("Mock Device mock0001");
     rig.until("the paired apps", |r| r.has("Forget Laptop"));
+    // With the photo frame on, its Start after and Folder rows show too.
+    rig.one("Photo frame", AccessibleRole::Switch)
+        .invoke_accessible_default_action();
+    rig.until("the photo frame rows", |r| r.has("Choose folder"));
     assert_fits(&rig, 500.0, "Device settings");
     rig.app.ui.set_settings_device(SharedString::new());
     settle(&rig.app);
