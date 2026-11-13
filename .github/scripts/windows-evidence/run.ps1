@@ -34,7 +34,7 @@ foreach ($part in 'environment', 'look', 'memory', 'tray') {
     # A part's stderr is part of its log, not a reason to stop here.
     $ErrorActionPreference = 'Continue'
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "$part.ps1") -Exe $Exe -Out $Out 2>&1 |
-        ForEach-Object { "$_" } | Tee-Object -FilePath (Join-Path $logs "$part.log")
+        ForEach-Object { "$_"; Add-Content -LiteralPath (Join-Path $logs "$part.log") -Value "$_" -Encoding UTF8 }
     $code = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     $parts[$part] = [ordered]@{ exitCode = $code; seconds = [Math]::Round($clock.Elapsed.TotalSeconds) }

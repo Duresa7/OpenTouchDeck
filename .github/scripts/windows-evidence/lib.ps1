@@ -209,6 +209,28 @@ namespace TouchDeckEvidence {
             return SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT))) == 2;
         }
 
+        // Presses the left button at one point, moves to another in steps and lets go: a drag.
+        public static bool Drag(int fromX, int fromY, int toX, int toY) {
+            if (!SetCursorPos(fromX, fromY)) return false;
+            System.Threading.Thread.Sleep(200);
+            INPUT[] input = new INPUT[1];
+            input[0].type = 0; input[0].mi.dwFlags = 0x0002;
+            if (SendInput(1, input, Marshal.SizeOf(typeof(INPUT))) != 1) return false;
+            System.Threading.Thread.Sleep(200);
+            for (int step = 1; step <= 40; step++) {
+                SetCursorPos(fromX + (toX - fromX) * step / 40, fromY + (toY - fromY) * step / 40);
+                System.Threading.Thread.Sleep(20);
+            }
+            System.Threading.Thread.Sleep(300);
+            input[0].mi.dwFlags = 0x0004;
+            return SendInput(1, input, Marshal.SizeOf(typeof(INPUT))) == 1;
+        }
+
+        // DWMWA_SYSTEMBACKDROP_TYPE as DWM reports it for a window: the HRESULT and the value.
+        public static int BackdropType(IntPtr hwnd, out int value) {
+            return DwmGetWindowAttribute(hwnd, 38, out value, 4);
+        }
+
         // Whether the file carries a resource of this type and number (14 icon group, 16 version,
         // 24 manifest).
         public static bool HasResource(string path, int type, int id) {
@@ -216,6 +238,83 @@ namespace TouchDeckEvidence {
             if (module == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             try { return FindResourceW(module, new IntPtr(id), new IntPtr(type)) != IntPtr.Zero; }
             finally { FreeLibrary(module); }
+        }
+    }
+
+    // The COM UI Automation client, declared as far as the scripts use it. Win32 popup menus
+    // (class #32768) only show their items through this client; the .NET one sees an empty pane.
+    [ComImport, Guid("30cbe57d-d9d0-452a-ab13-7ac5ac4825ee"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IUIAutomation {
+        void CompareElements(); void CompareRuntimeIds(); void GetRootElement();
+        [PreserveSig] int ElementFromHandle(IntPtr hwnd, out IUIAutomationElement element);
+        void ElementFromPoint(); void GetFocusedElement(); void GetRootElementBuildCache();
+        void ElementFromHandleBuildCache(); void ElementFromPointBuildCache(); void GetFocusedElementBuildCache();
+        void CreateTreeWalker(); void ControlViewWalker(); void ContentViewWalker();
+        [PreserveSig] int RawViewWalker(out IUIAutomationTreeWalker walker);
+    }
+    [ComImport, Guid("d22108aa-8ac5-49a5-837b-37bbb3d7591e"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IUIAutomationElement {
+        void SetFocus(); void GetRuntimeId(); void FindFirst(); void FindAll(); void FindFirstBuildCache();
+        void FindAllBuildCache(); void BuildUpdatedCache();
+        [PreserveSig] int GetCurrentPropertyValue(int property, [MarshalAs(UnmanagedType.Struct)] out object value);
+    }
+    [ComImport, Guid("4042c624-389c-4afc-a630-9df854a541fc"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IUIAutomationTreeWalker {
+        void GetParentElement();
+        [PreserveSig] int GetFirstChildElement(IUIAutomationElement element, out IUIAutomationElement first);
+        void GetLastChildElement();
+        [PreserveSig] int GetNextSiblingElement(IUIAutomationElement element, out IUIAutomationElement next);
+    }
+
+    public class MenuItem {
+        public string Name;
+        // The MSAA state UI Automation passes on: 0x10 checked, 0x1 unavailable.
+        public int State;
+        public int X, Y, Width, Height;
+    }
+
+    public static class Menus {
+        static object Property(IUIAutomationElement element, int id) {
+            object value;
+            return element.GetCurrentPropertyValue(id, out value) == 0 ? value : null;
+        }
+        static void Collect(IUIAutomationTreeWalker walker, IUIAutomationElement element, int depth, List<MenuItem> items) {
+            // UIA_ControlTypePropertyId; 50011 is MenuItem.
+            object type = Property(element, 30003);
+            if (type is int && (int)type == 50011) {
+                MenuItem item = new MenuItem();
+                item.Name = Property(element, 30005) as string;             // UIA_NamePropertyId
+                object state = Property(element, 30096);                    // UIA_LegacyIAccessibleStatePropertyId
+                item.State = state is int ? (int)state : 0;
+                double[] rect = Property(element, 30001) as double[];       // UIA_BoundingRectanglePropertyId
+                if (rect != null && rect.Length == 4) {
+                    item.X = (int)rect[0]; item.Y = (int)rect[1]; item.Width = (int)rect[2]; item.Height = (int)rect[3];
+                }
+                items.Add(item);
+            }
+            if (depth >= 4) return;
+            IUIAutomationElement child;
+            if (walker.GetFirstChildElement(element, out child) != 0) return;
+            while (child != null && items.Count < 64) {
+                Collect(walker, child, depth + 1, items);
+                IUIAutomationElement next;
+                if (walker.GetNextSiblingElement(child, out next) != 0) break;
+                child = next;
+            }
+        }
+        // The menu items under a window, in order, as UI Automation presents them.
+        public static MenuItem[] Items(IntPtr hwnd) {
+            IUIAutomation automation = (IUIAutomation)Activator.CreateInstance(
+                Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e")));
+            IUIAutomationElement root;
+            int result = automation.ElementFromHandle(hwnd, out root);
+            if (result != 0) Marshal.ThrowExceptionForHR(result);
+            IUIAutomationTreeWalker walker;
+            result = automation.RawViewWalker(out walker);
+            if (result != 0) Marshal.ThrowExceptionForHR(result);
+            List<MenuItem> items = new List<MenuItem>();
+            Collect(walker, root, 0, items);
+            return items.ToArray();
         }
     }
 }
@@ -338,6 +437,10 @@ function Stop-App($Process) {
 function Wait-AppWindow($Process, [double]$Seconds = 30) {
     $hwnd = Wait-Until { $found = Get-AppWindow $Process.Id; if ($null -ne $found -and (Test-Shown $found)) { $found } } $Seconds
     if ($null -eq $hwnd) { throw 'The app window did not appear.' }
+    # Windows places a new window by cascade, which hangs off a small screen. Put all of it on
+    # screen: SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE.
+    [void][TouchDeckEvidence.Native]::SetWindowPos($hwnd, [IntPtr]::Zero, 20, 20, 0, 0, 0x15)
+    Start-Sleep -Milliseconds 500
     $hwnd
 }
 

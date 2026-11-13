@@ -92,15 +92,16 @@ function Open-TrayMenu([IntPtr]$Tray, [int]$ProcessId) {
     Start-Sleep -Milliseconds 500
     # MN_GETHMENU
     $menu = [TouchDeckEvidence.Native]::Send($window, 0x01e1, [IntPtr]::Zero, [IntPtr]::Zero)
-    $condition = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ControlTypeProperty), ([Windows.Automation.ControlType]::MenuItem)
-    $elements = @((Get-UiaElement $window).FindAll([Windows.Automation.TreeScope]::Descendants, $condition))
+    $elements = @([TouchDeckEvidence.Menus]::Items($window))
     $default = [TouchDeckEvidence.Native]::GetMenuDefaultItem($menu, 1, 1)
     $items = @(for ($i = 0; $i -lt $elements.Count; $i++) {
             # MF_BYPOSITION; MF_CHECKED is 8, MF_GRAYED 1 and MF_DISABLED 2.
             $state = [TouchDeckEvidence.Native]::GetMenuState($menu, [uint32]$i, 0x400)
             [ordered]@{
-                name = $elements[$i].Current.Name; checked = ($state -band 8) -ne 0
+                name = $elements[$i].Name; checked = ($state -band 8) -ne 0
                 enabled = ($state -band 3) -eq 0; default = $default -eq $i
+                # The same state as UI Automation reports it, for comparison.
+                checkedInUiAutomation = ($elements[$i].State -band 0x10) -ne 0
             }
         })
     [ordered]@{ window = $window; elements = $elements; items = $items; count = [TouchDeckEvidence.Native]::GetMenuItemCount($menu) }
@@ -124,7 +125,8 @@ function Select-TrayMenuItem($Menu, [string]$Name) {
     $index = 0
     foreach ($item in $Menu.items) { if ($item.name -eq $Name) { break }; $index++ }
     if ($index -ge $Menu.items.Count) { throw "The menu has no item named $Name." }
-    Invoke-UiaClick $Menu.elements[$index]
+    $element = $Menu.elements[$index]
+    if (-not [TouchDeckEvidence.Native]::Click($element.X + [int]($element.Width / 2), $element.Y + [int]($element.Height / 2))) { throw "Could not click $Name." }
     $closed = Wait-Until { -not [TouchDeckEvidence.Native]::IsWindow($Menu.window) -or -not [TouchDeckEvidence.Native]::IsWindowVisible($Menu.window) } 5
     if (-not $closed) { throw "Clicking $Name did not close the menu." }
     Start-Sleep -Milliseconds 300
@@ -148,8 +150,9 @@ function Save-NotificationArea([string]$Label) {
     Save-ScreenRect (Join-Path $shots "$Label-taskbar.png") $rect.x $rect.y $rect.width $rect.height
     $nodes = Get-UiaTree (Get-UiaElement $taskbar)
     Write-Utf8 (Join-Path $uia "$Label-taskbar.txt") (Format-UiaTree $nodes)
-    $onTaskbar = @($nodes | Where-Object { $_.name -like 'Open TouchDeck*' -and -not $_.offscreen }).Count -gt 0
-    $place = if ($onTaskbar) { 'taskbar' } else { 'not on the taskbar' }
+    # The icon's button is named by its tooltip. The app's taskbar button has a longer name.
+    $onTaskbar = @($nodes | Where-Object { $_.name -eq 'Open TouchDeck' -and -not $_.offscreen }).Count -gt 0
+    $place = if ($onTaskbar) { 'taskbar' } else { 'not found' }
     if (-not $onTaskbar) {
         # Windows 11 puts a new icon in the overflow flyout. Open it as a user does.
         $chevron = Find-UiaByName (Get-UiaElement $taskbar) 'Show Hidden Icons' 'Button'
@@ -161,7 +164,7 @@ function Save-NotificationArea([string]$Label) {
             if ($null -ne $overflow) {
                 $inside = Get-UiaTree (Get-UiaElement $overflow)
                 Write-Utf8 (Join-Path $uia "$Label-overflow.txt") (Format-UiaTree $inside)
-                if (@($inside | Where-Object { $_.name -like 'Open TouchDeck*' }).Count) { $place = 'overflow flyout' }
+                if (@($inside | Where-Object { $_.name -eq 'Open TouchDeck' }).Count) { $place = 'overflow flyout' }
             }
             Invoke-UiaClick $chevron
             Start-Sleep -Seconds 1
@@ -226,7 +229,7 @@ try {
         [void](Hide-ToTray $hwnd $null)
         $menu = Open-TrayMenu $tray $app.Id
         Save-Screen (Join-Path $shots 'tray-menu.png')
-        Write-Utf8 (Join-Path $uia 'tray-menu.txt') (Format-UiaTree (Get-UiaTree (Get-UiaElement $menu.window)))
+        Write-Json (Join-Path $uia 'tray-menu.json') $menu.elements
         $facts.menu = $menu.items
         $names = @($menu.items | ForEach-Object { $_.name })
         $exact = ($names -join '|') -ceq 'Open|Start at sign-in|Quit' -and $menu.count -eq 3

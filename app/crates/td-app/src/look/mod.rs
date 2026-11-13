@@ -93,8 +93,14 @@ pub(crate) fn watch(ui: &AppWindow) -> Watch {
     #[cfg(windows)]
     {
         apply(ui, &win::read());
+        let settings = win::watch(ui.as_weak());
+        #[cfg(feature = "mock")]
+        eprintln!(
+            "Open TouchDeck (mock): following settings changes: {}",
+            settings.is_some()
+        );
         Watch {
-            _settings: win::watch(ui.as_weak()),
+            _settings: settings,
         }
     }
     #[cfg(all(unix, not(target_vendor = "apple")))]

@@ -56,7 +56,7 @@ $lines.Add('# Windows evidence: Open TouchDeck 2.0 M1')
 $lines.Add('')
 if ($environment) {
     $os = $environment.os
-    $lines.Add("**Runner:** $($os.name), version $($os.displayVersion), build $($os.build) ($($os.installationType)), image ``$($os.runnerImage)``.")
+    $lines.Add("**Runner:** $($os.name), version $($os.displayVersion), build $($os.build) ($($os.installationType)), image $($os.runnerImage).")
     if ($os.productType -ne 1) {
         $lines.Add('')
         $lines.Add('This is Windows Server, not Windows 11. It shares the Windows 11 24H2 code base, but it is not the system users run. Read the screenshots as Server with the Windows 11 shell.')
@@ -68,7 +68,8 @@ $lines.Add('')
 $lines.Add('| Check | Result | What was seen |')
 $lines.Add('| --- | --- | --- |')
 foreach ($check in $checks) {
-    $lines.Add("| ``$($check.id)`` $(Format-Cell $check.name) | $(if ($check.pass) { 'pass' } else { '**FAIL**' }) | $(Format-Cell $check.detail) |")
+    $result = if ($check.pass) { 'pass' } else { '**FAIL**' }
+    $lines.Add("| $($check.id): $(Format-Cell $check.name) | $result | $(Format-Cell $check.detail) |")
 }
 
 if ($memory) {
@@ -82,12 +83,15 @@ if ($memory) {
     foreach ($state in @('windowOpenOnHome', 'Window open on Home'), @('windowHiddenToTray', 'Window hidden to the tray')) {
         $row = Get-Field $memory $state[0]
         if ($row) {
-            $lines.Add("| $($state[1]) | $($row.workingSetMiB) MiB | $($row.privateMiB) MiB | $(if (Get-Field $row 'privateWorkingSetMiB') { "$($row.privateWorkingSetMiB) MiB" } else { 'not read' }) |")
+            $privateSet = Get-Field $row 'privateWorkingSetMiB'
+            $privateSet = if ($privateSet) { "$privateSet MiB" } else { 'not read' }
+            $lines.Add("| $($state[1]) | $($row.workingSetMiB) MiB | $($row.privateMiB) MiB | $privateSet |")
         }
     }
     $modules = @(Get-Field $memory 'graphicsModules')
     $lines.Add('')
-    $lines.Add("Graphics libraries loaded by td-app: $(if ($modules.Count) { ($modules | ForEach-Object { "``$_``" }) -join ', ' } else { 'none recorded' }).")
+    $loaded = if ($modules.Count) { $modules -join ', ' } else { 'none recorded' }
+    $lines.Add("Graphics libraries loaded by td-app: $loaded.")
 }
 
 if ($environment) {
@@ -101,7 +105,8 @@ if ($environment) {
     $lines.Add('| --- | --- |')
     $lines.Add("| Desktop | $($display.width)x$($display.height) at $($display.systemDpi) DPI, session $($environment.session.id), Explorer running: $(Format-Bool $environment.session.explorerRunning), taskbar found: $(Format-Bool $environment.session.taskbarFound) |")
     $lines.Add("| Display adapter | $(Format-Cell ($display.adapters -join '; ')). DWM composition: $(Format-Bool $display.dwmComposition) |")
-    $lines.Add("| Mica | The app asks DWM for Mica from build 22621; this is build $($environment.os.build). Transparency effects: $(if ($facts.enableTransparency -eq 1) { 'on' } elseif ($null -eq $facts.enableTransparency) { 'not set' } else { 'off' }). Whether DWM draws it without a GPU is what the screenshots show |")
+    $transparency = if ($facts.enableTransparency -eq 1) { 'on' } elseif ($null -eq $facts.enableTransparency) { 'not set' } else { 'off' }
+    $lines.Add("| Mica | The app asks DWM for Mica from build 22621; this is build $($environment.os.build). Transparency effects: $transparency. $(Format-Cell ([string](Get-Field $look 'mica'))) |")
     $lines.Add("| Accent colour | $($facts.accent) (the Windows default; the runner has no user choice to follow) |")
     $lines.Add("| Segoe UI Variable | Text: $(Format-Bool $fonts.segoeUiVariableText), Display: $(Format-Bool $fonts.segoeUiVariableDisplay), font file present: $(Format-Bool $fonts.segoeUiVariableFile) |")
     $lines.Add("| Contrast themes | $(Format-Cell ($facts.contrastThemeFiles -join ', ')) |")
@@ -115,13 +120,13 @@ if ($look) {
     $lines.Add('| Change | How | The window followed without a restart |')
     $lines.Add('| --- | --- | --- |')
     foreach ($change in $look.changes.PSObject.Properties) {
-        $lines.Add("| $($change.Name) | $(Format-Cell ([string]$change.Value.method)) | $(Format-Bool $change.Value.followedLive) |")
+        $lines.Add("| $($change.Name) | $(Format-Cell ([string]$change.Value.method)) | $($change.Value.followedLive) |")
     }
     $contrast = Get-Field $look.changes 'contrastOn'
     if ($contrast) {
         $colors = ($contrast.systemColors.PSObject.Properties | ForEach-Object { "$($_.Name) $($_.Value)" }) -join ', '
         $lines.Add('')
-        $lines.Add("Contrast theme: scheme ``$($contrast.scheme)``, high contrast flag on: $(Format-Bool $contrast.on), system colours: $colors.")
+        $lines.Add("Contrast theme: $($contrast.theme), high contrast flag on: $(Format-Bool $contrast.on), system colours: $colors.")
     }
     $width = Get-Field $look 'minimumWidth'
     if ($width) {

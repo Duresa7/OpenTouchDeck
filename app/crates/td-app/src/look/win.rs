@@ -131,12 +131,17 @@ pub(super) fn backdrop(window: &slint::Window, dark: bool) -> bool {
         cyTopHeight: -1,
         cyBottomHeight: -1,
     };
-    unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) }.is_ok()
+    let extended = unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) };
+    let backdrop = extended.is_ok()
         && set_attribute::<DWM_SYSTEMBACKDROP_TYPE>(
             hwnd,
             DWMWA_SYSTEMBACKDROP_TYPE,
             &DWMSBT_MAINWINDOW,
-        )
+        );
+    // The Windows evidence scripts read this line (.github/scripts/windows-evidence).
+    #[cfg(feature = "mock")]
+    eprintln!("Open TouchDeck (mock): Mica: frame extended {extended:?}, backdrop set {backdrop}");
+    backdrop
 }
 
 /// Light or dark Mica and title bar.
@@ -217,6 +222,11 @@ impl Drop for Watch {
 pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Option<Watch> {
     let changed = move || {
         let look = read();
+        #[cfg(feature = "mock")]
+        eprintln!(
+            "Open TouchDeck (mock): settings changed: text scale {}, contrast theme {}",
+            look.text_scale, look.high_contrast
+        );
         let _ = ui.upgrade_in_event_loop(move |ui| super::apply(&ui, &look));
     };
     let settings = UISettings::new().ok()?;

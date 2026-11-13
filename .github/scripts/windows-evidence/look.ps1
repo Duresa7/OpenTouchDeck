@@ -6,8 +6,9 @@ size, one at the minimum width, and the UI Automation tree of both pages.
 .DESCRIPTION
 Runs td-app with two mock Devices and changes each Windows setting the way Settings does: the
 registry value plus the WM_SETTINGCHANGE broadcast, or SystemParametersInfo. The app keeps
-running across the changes, so the screenshots also show whether it follows them live; when a
-change is not seen within a few seconds, the app is restarted and look.json says so.
+running across the changes, so the run also shows whether it follows them live. When a change is
+not seen, the window is saved as <look>-not-followed.png, the app is restarted to get the
+screenshots, and look.json says so.
 
 Screenshots are copied from the screen, so they show what DWM composes, Mica included.
 
@@ -52,7 +53,7 @@ function Save-Pages([string]$Label, [string[]]$Pages = @('Home', 'About')) {
         $rect = Get-Rect $hwnd
         $image = Get-ImageFacts $file @(
             @('navigationPaneLow', 40, ($rect.height - 60)),
-            @('navigationPaneMiddle', 100, [int]($rect.height / 2)),
+            @('navigationPaneMiddle', 40, [int]($rect.height / 2)),
             @('pageCorner', ($rect.width - 30), ($rect.height - 30))
         )
         $facts.captures["$Label-$($page.ToLower())"] = [ordered]@{
@@ -68,6 +69,21 @@ function Get-Brightness {
     [void](Enter-Window $hwnd)
     Save-Window $file $hwnd
     (Get-ImageFacts $file @()).meanBrightness
+}
+
+# Whether the running window showed a settings change. It gets 15 s; then the broadcast is sent
+# once more, to tell a missed message from a change the app does not follow. When neither works
+# the window is saved as it is and the app restarts, so the look still gets its screenshots.
+function Wait-Followed([string]$Label, [scriptblock]$Seen, [string]$Area) {
+    if (Wait-Until $Seen 15 500) { return 'yes' }
+    if ($Area) {
+        [void][TouchDeckEvidence.Native]::BroadcastSettingChange($Area)
+        if (Wait-Until $Seen 8 500) { return 'only after a second broadcast' }
+    }
+    [void](Enter-Window $hwnd)
+    Save-Window (Join-Path $shots "$Label-not-followed.png") $hwnd
+    Restart-Look
+    'no: restarted the app'
 }
 
 function Get-NavItemHeight {
@@ -132,7 +148,8 @@ function Set-Contrast([bool]$On) {
         Get-Process -Name SystemSettings -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
     Start-Sleep -Seconds 4
-    [ordered]@{ method = $method; spiAccepted = $set; scheme = $scheme; on = (Test-ContrastOn); colorsChanged = [bool]$changed; systemColors = (Get-SystemColors) }
+    $theme = Split-Path -Leaf ([string](Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes' -Name CurrentTheme -ErrorAction SilentlyContinue).CurrentTheme)
+    [ordered]@{ method = $method; spiAccepted = $set; scheme = $scheme; theme = $theme; on = (Test-ContrastOn); colorsChanged = [bool]$changed; systemColors = (Get-SystemColors) }
 }
 
 try {
@@ -163,50 +180,55 @@ try {
     [void](Select-Page $hwnd 'Home')
     $lightBrightness = Get-Brightness
 
+    # What DWM and the app say about Mica, beside what the screenshots show.
+    $backdrop = 0
+    $read = [TouchDeckEvidence.Native]::BackdropType($hwnd, [ref]$backdrop)
+    $said = @(Get-Content -LiteralPath (Join-Path $Out 'logs/look-stderr.txt') -ErrorAction SilentlyContinue | Where-Object { $_ -like '*(mock): Mica:*' }) | Select-Object -First 1
+    $facts.mica = "td-app reported: $(if ($said) { ($said -replace '^.*\(mock\): Mica: ', '') } else { 'nothing' }). " +
+        "DWM reports DWMWA_SYSTEMBACKDROP_TYPE = $backdrop (2 is Mica; HRESULT $('0x{0:x8}' -f $read)). " +
+        "Navigation pane pixel in light: $($facts.captures['light-home'].pixels.navigationPaneLow)."
+
     # ---- dark -----------------------------------------------------------------------------------
     Set-ColorMode $false
-    $live = [bool](Wait-Until { (Get-Brightness) -lt ($lightBrightness - 60) } 8 500)
-    if (-not $live) { Restart-Look }
-    $facts.changes.dark = [ordered]@{ method = 'AppsUseLightTheme and SystemUsesLightTheme = 0, WM_SETTINGCHANGE "ImmersiveColorSet"'; followedLive = $live }
+    $facts.changes.dark = [ordered]@{
+        method       = 'AppsUseLightTheme and SystemUsesLightTheme = 0, WM_SETTINGCHANGE "ImmersiveColorSet"'
+        followedLive = Wait-Followed 'dark' { (Get-Brightness) -lt ($lightBrightness - 60) } 'ImmersiveColorSet'
+    }
     Save-Pages 'dark'
     Set-ColorMode $true
-    $backLive = [bool](Wait-Until { (Get-Brightness) -gt ($lightBrightness - 30) } 8 500)
-    if (-not $backLive) { Restart-Look }
-    $facts.changes.light = [ordered]@{ method = 'the same values = 1'; followedLive = $backLive }
+    $facts.changes.light = [ordered]@{
+        method       = 'the same values = 1'
+        followedLive = Wait-Followed 'light' { (Get-Brightness) -gt ($lightBrightness - 30) } 'ImmersiveColorSet'
+    }
 
     # ---- a contrast theme -----------------------------------------------------------------------
     $contrast = Set-Contrast $true
-    $live = [bool](Wait-Until { (Get-Brightness) -lt ($lightBrightness - 60) } 8 500)
-    if (-not $live) { Restart-Look }
-    $contrast.followedLive = $live
+    $contrast.followedLive = Wait-Followed 'contrast' { (Get-Brightness) -lt ($lightBrightness - 60) } $null
     $facts.changes.contrastOn = $contrast
     Save-Pages 'contrast'
     $contrast = Set-Contrast $false
     Set-ColorMode $true
-    $live = [bool](Wait-Until { (Get-Brightness) -gt ($lightBrightness - 30) } 8 500)
-    if (-not $live) { Restart-Look }
-    $contrast.followedLive = $live
+    $contrast.followedLive = Wait-Followed 'contrast-off' { (Get-Brightness) -gt ($lightBrightness - 30) } $null
     $facts.changes.contrastOff = $contrast
 
     # ---- text size 200% -------------------------------------------------------------------------
     $height = Get-NavItemHeight
     Set-TextScale 200
-    $live = [bool](Wait-Until { (Get-NavItemHeight) -gt $height } 8 500)
-    if (-not $live) { Restart-Look }
     $facts.changes.textScale200 = [ordered]@{
-        method = 'HKCU\Software\Microsoft\Accessibility\TextScaleFactor = 200, WM_SETTINGCHANGE "Accessibility"'
-        followedLive = $live; navigationItemHeightBefore = $height; navigationItemHeightAfter = (Get-NavItemHeight)
+        method       = 'HKCU\Software\Microsoft\Accessibility\TextScaleFactor = 200, WM_SETTINGCHANGE "Accessibility"'
+        followedLive = Wait-Followed 'text-200' { (Get-NavItemHeight) -gt $height } 'Accessibility'
+        navigationItemHeightBefore = $height; navigationItemHeightAfter = (Get-NavItemHeight)
     }
     Save-Pages 'text-200'
 
     # ---- the minimum width ----------------------------------------------------------------------
-    # Asks for a 100 px wide window, as dragging the border all the way in does. Windows stops at
-    # the minimum the app gives it.
+    # Drags the right border as far left as it goes, with the mouse. Windows stops at the
+    # minimum the app gives it. Returns the client width that is left.
     function Set-NarrowWindow {
-        $outer = New-Object TouchDeckEvidence.Native+RECT
-        [void][TouchDeckEvidence.Native]::GetWindowRect($hwnd, [ref]$outer)
-        # SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
-        [void][TouchDeckEvidence.Native]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 100, $outer.Bottom - $outer.Top, 0x16)
+        [void](Enter-Window $hwnd)
+        $rect = Get-Rect $hwnd
+        $y = $rect.y + [int]($rect.height / 2)
+        [void][TouchDeckEvidence.Native]::Drag($rect.x + $rect.width + 2, $y, $rect.x + 40, $y)
         Start-Sleep -Seconds 1
         $client = New-Object TouchDeckEvidence.Native+RECT
         [void][TouchDeckEvidence.Native]::GetClientRect($hwnd, [ref]$client)
@@ -217,9 +239,10 @@ try {
     Save-Pages 'min-width-text-200' @('About')
 
     Set-TextScale 100
-    $live = [bool](Wait-Until { (Get-NavItemHeight) -le $height } 8 500)
-    if (-not $live) { Restart-Look }
-    $facts.changes.textScale100 = [ordered]@{ method = 'the same value = 100'; followedLive = $live }
+    $facts.changes.textScale100 = [ordered]@{
+        method       = 'the same value = 100'
+        followedLive = Wait-Followed 'text-100' { (Get-NavItemHeight) -le $height } 'Accessibility'
+    }
     $narrow = Set-NarrowWindow
     Save-Pages 'min-width' @('Home')
     $dpi = [TouchDeckEvidence.Native]::GetDpiForSystem()
