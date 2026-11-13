@@ -402,7 +402,6 @@ impl SetupSession {
             view.error = None;
         });
         let settings = &self.inner.settings;
-        let before = settings.view().notice;
         settings.choose_orientation(orientation);
         let mut restarts = settings.subscribe();
         let me = self.clone();
@@ -414,19 +413,25 @@ impl SetupSession {
                 }
             }
         });
-        settings.confirm_orientation().await;
+        let kept = settings.confirm_orientation().await;
         watching.abort();
         self.set(|view| view.busy = None);
-        let notice = settings.view().notice;
-        if notice != before
-            && let Some(notice) = notice.filter(|n| n.kind == NoticeKind::Error)
-        {
-            return self.set(|view| {
-                view.error = Some(Problem {
-                    text: notice.text,
-                    detail: notice.detail.unwrap_or_default(),
-                })
-            });
+        if !kept {
+            // The settings session words the failure; the outcome above decides it.
+            let notice = settings
+                .view()
+                .notice
+                .filter(|n| n.kind == NoticeKind::Error);
+            let (text, detail) = notice.map_or_else(
+                || {
+                    (
+                        format!("Couldn't save to {}. {PLUG_IN}", self.called()),
+                        String::new(),
+                    )
+                },
+                |n| (n.text, n.detail.unwrap_or_default()),
+            );
+            return self.set(|view| view.error = Some(Problem { text, detail }));
         }
         self.step(true);
     }

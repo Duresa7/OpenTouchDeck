@@ -487,7 +487,9 @@ impl Screens {
         on!(on_confirm_orientation, |s| {
             if let Some(device) = s.selected() {
                 let session = s.settings(&device.id);
-                s.spawn(async move { session.confirm_orientation().await });
+                s.spawn(async move {
+                    session.confirm_orientation().await;
+                });
             }
         });
         on!(on_set_photo, |s, on: bool| s.photo(PhotoFramePatch {
@@ -537,7 +539,9 @@ impl Screens {
         on!(on_restart_device, |s| {
             if let Some(device) = s.selected() {
                 let session = s.settings(&device.id);
-                s.spawn(async move { session.restart().await });
+                s.spawn(async move {
+                    session.restart().await;
+                });
             }
         });
     }

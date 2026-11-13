@@ -534,7 +534,10 @@ async fn orientation_failures_in_a_row_leave_the_session_ready_for_a_retry() {
     for attempt in 0..2 {
         deck.delay_replies(Duration::from_secs(3));
         session.choose_orientation(td_core::Orientation::Portrait);
-        session.confirm_orientation().await;
+        assert!(
+            !session.confirm_orientation().await,
+            "attempt {attempt} failed"
+        );
         let view = session.view();
         assert_eq!(view.confirm, None, "attempt {attempt}");
         assert_eq!(view.restart, Restart::Idle, "attempt {attempt}");
@@ -560,7 +563,10 @@ async fn orientation_failures_in_a_row_leave_the_session_ready_for_a_retry() {
         .checkpoints
         .release(Checkpoint::AfterOrientationPut, true);
     session.choose_orientation(td_core::Orientation::Portrait);
-    session.confirm_orientation().await;
+    assert!(
+        session.confirm_orientation().await,
+        "saved, restarted and back"
+    );
     let view = session.view();
     assert_eq!(view.shown, view.saved, "nothing pending");
     assert_eq!(view.shown.as_ref().unwrap().orientation, "portrait");
@@ -573,10 +579,43 @@ async fn orientation_failures_in_a_row_leave_the_session_ready_for_a_retry() {
         session.view().confirm,
         Some(td_core::Orientation::Landscape)
     );
-    session.confirm_orientation().await;
+    assert!(session.confirm_orientation().await, "the retry saved");
     let view = session.view();
     assert_eq!(view.shown.unwrap().orientation, "landscape");
     assert_eq!(view.notice, None);
     assert_eq!(deck.settings().orientation, td_core::Orientation::Landscape);
+    td.shutdown().await;
+}
+
+#[tokio::test]
+async fn setup_stays_on_orientation_through_the_same_failure_twice() {
+    let mut td = InProcessCompanion::start().await;
+    let id = td.plug_device("mock0001").await;
+    let setup = SetupSession::new(
+        td.handle.device_operations().clone(),
+        td.device(&id).unwrap(),
+        false,
+    );
+    setup.next();
+    assert_eq!(setup.view().flow.at, Step::Orientation);
+    let deck = td.deck("mock0001");
+    // The same timeout twice gives the same words twice: each must still keep setup here.
+    for attempt in 0..2 {
+        deck.delay_replies(Duration::from_secs(3));
+        setup.choose_orientation(td_core::Orientation::Portrait);
+        setup.submit_orientation().await;
+        let view = setup.view();
+        assert_eq!(view.flow.at, Step::Orientation, "attempt {attempt}");
+        assert!(view.error.is_some(), "attempt {attempt}");
+        assert_eq!(deck.settings().orientation, td_core::Orientation::Landscape);
+        deck.delay_replies(Duration::ZERO);
+        // Let the late answers drain before the next try.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+    }
+    setup.submit_orientation().await;
+    let view = setup.view();
+    assert_eq!(view.error, None);
+    assert_eq!(view.flow.at, Step::Done);
+    assert_eq!(deck.settings().orientation, td_core::Orientation::Portrait);
     td.shutdown().await;
 }

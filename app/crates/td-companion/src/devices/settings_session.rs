@@ -431,9 +431,13 @@ impl SettingsSession {
     }
 
     /// Saves the chosen orientation and, when the Device needs it, restarts it and waits.
-    pub async fn confirm_orientation(&self) {
+    ///
+    /// Returns whether the Device now keeps the orientation: saved, and restarted when it needed
+    /// a restart. With nothing to confirm (it already shows it) that is `true`. Callers branch
+    /// on this, not on the notice, which reads the same for the same failure twice.
+    pub async fn confirm_orientation(&self) -> bool {
         let Some(orientation) = self.view().confirm else {
-            return;
+            return true;
         };
         self.set(|view| view.confirm = None);
         let name = orientation_name(orientation);
@@ -450,8 +454,11 @@ impl SettingsSession {
             .await;
         match reply {
             Some(reply) if reply.restart_required => self.restart().await,
-            Some(_) => self.say(Some(saved())),
-            None => {}
+            Some(_) => {
+                self.say(Some(saved()));
+                true
+            }
+            None => false,
         }
     }
 
@@ -493,9 +500,11 @@ impl SettingsSession {
 
     /// Restarts the Device and waits until it is back, then reads its settings again. It fails
     /// when the Device went away and didn't come back in time.
-    pub async fn restart(&self) {
+    ///
+    /// Returns whether the Device came back. `false` when a restart was already under way.
+    pub async fn restart(&self) -> bool {
         if self.view().restart == Restart::Restarting {
-            return;
+            return false;
         }
         self.set(|view| {
             view.restart = Restart::Restarting;
@@ -526,7 +535,7 @@ impl SettingsSession {
                 view.restart = Restart::Failed;
                 view.notice = Some(notice);
             });
-            return;
+            return false;
         }
         let deadline = tokio::time::Instant::now() + self.inner.restart_timeout;
         let mut dropped = false;
@@ -555,6 +564,7 @@ impl SettingsSession {
                 view.notice = Some(notice);
             });
         }
+        back
     }
 }
 
