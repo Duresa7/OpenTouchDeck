@@ -15,6 +15,7 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 td-core = { workspace = true, features = ["ts"] }
 td-host.workspace = true
+td-updater = { path = "../td-updater" }
 td-link.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 ts-rs = { version = "11", features = ["serde-json-impl"] }

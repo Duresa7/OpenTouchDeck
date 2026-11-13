@@ -9,7 +9,7 @@ name: release
 # throwaway key, and never publishes.
 #
 # Every job runs on a GitHub-hosted runner and none restores a cache.
-# For now the MSI is a pipeline proof, not a product: it installs td-companion.exe alone.
+# The MSI ships the native app, including the Companion in-process.
 on:
   push:
     tags: ["v2.*"]
@@ -20,6 +20,10 @@ on:
       - .github/workflows/sign-hook.yml
       - .github/release-signer/**
       - app/installer/**
+      - app/crates/td-app/**
+      - app/crates/td-updater/**
+      - app/crates/td-companion/**
+      - app/Cargo.lock
       - app/scripts/check_exe.ps1
       - app/scripts/msi_check.ps1
 
@@ -92,13 +96,13 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $version = ($metadata.packages | Where-Object name -eq 'td-companion').version
+          $version = ($metadata.packages | Where-Object name -eq 'td-app').version
           # An MSI version is three numbers: 2.0.0-rc.1 installs as 2.0.0.
           $msiVersion = ($version -split '[-+]')[0]
           if ($msiVersion -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,5}$') { throw "Version $version has no three-number form an MSI accepts." }
           $revision = git rev-parse HEAD
           if ($env:IS_RELEASE -eq 'true') {
-            if ($env:RELEASE_TAG -cne "v$version") { throw "Tag $env:RELEASE_TAG is not v$version, the version of td-companion." }
+            if ($env:RELEASE_TAG -cne "v$version") { throw "Tag $env:RELEASE_TAG is not v$version, the version of td-app." }
             # Release builds come only from tags on main.
             git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -108,17 +112,17 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "msi-version=$msiVersion" >> $env:GITHUB_OUTPUT
           "revision=$revision" >> $env:GITHUB_OUTPUT
-          "Building td-companion $version from $revision (release: $env:IS_RELEASE)"
+          "Building td-app $version from $revision (release: $env:IS_RELEASE)"
 
       - name: Build the release program
         working-directory: app
-        run: cargo build --release --locked --package td-companion
+        run: cargo build --release --locked --package td-app
 
       - name: Check the program's version resource and subsystem
         shell: pwsh
         env:
           VERSION: ${{ steps.identity.outputs.version }}
-        run: ./app/scripts/check_exe.ps1 -Path app/target/release/td-companion.exe -Subsystem gui -Version $env:VERSION
+        run: ./app/scripts/check_exe.ps1 -Path app/target/release/td-app.exe -Subsystem gui -Version $env:VERSION
 
       - name: Collect the unsigned program
         id: stage
@@ -126,10 +130,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/unsigned-binaries"
-          Copy-Item -LiteralPath app/target/release/td-companion.exe -Destination $out
-          $hash = (Get-FileHash -LiteralPath "$out/td-companion.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Copy-Item -LiteralPath app/target/release/td-app.exe -Destination $out
+          $hash = (Get-FileHash -LiteralPath "$out/td-app.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           "sha256=$hash" >> $env:GITHUB_OUTPUT
-          "td-companion.exe sha256 $hash"
+          "td-app.exe sha256 $hash"
 
       # The unsigned programs are a workflow artifact before anything signs them: a signing service fetches them
       # from GitHub by this artifact's id, which proves this run built them.
@@ -197,7 +201,7 @@ jobs:
           $name = "OpenTouchDeck-$env:VERSION-windows-x64.msi"
           $out = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/unsigned-installer"
           & "$env:RUNNER_TEMP/wix/wix.exe" build -acceptEula wix7 -arch x64 `
-            -d "Version=$env:MSI_VERSION" -d "CompanionExe=$(Resolve-Path binaries/td-companion.exe)" `
+            -d "AppIcon=$(Resolve-Path app/icons/app/open-touchdeck.ico)" -d "Version=$env:MSI_VERSION" -d "AppExe=$(Resolve-Path binaries/td-app.exe)" `
             -o "$out/$name" app/installer/OpenTouchDeck.wxs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # WiX leaves a .wixpdb beside the MSI. Only the MSI moves on.
@@ -402,7 +406,7 @@ jobs:
           $msi = "release-assets/$env:MSI"
           $msiHash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($msiHash -ne $env:SIGNED_SHA256) { throw 'The installer is not the one that got the update signature.' }
-          $exe = 'binaries/td-companion.exe'
+          $exe = 'binaries/td-app.exe'
           $exeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           # With no provider both files are unsigned, and the program is byte for byte the built one.
           # With a provider both carry a valid signature.

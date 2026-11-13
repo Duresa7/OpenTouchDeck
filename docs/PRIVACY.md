@@ -9,11 +9,10 @@ behalf; those services have their own privacy policies.
 ## Native 2.0 update checks
 
 Automatic update checks default to on. The Rust updater checks on its first enabled
-poll, then at most once every six hours while the app runs. Failed checks count
-toward that interval. Restarting the app resets the interval. This M5 foundation
-provides the polling API and stored preference; connecting it to native startup and
-the Settings screen is later work. It makes no requests merely by being built or
-loaded, and it does not install updates.
+poll, then at most once every 24 hours while the Windows app runs. Linux never checks. Failed checks count
+toward that interval. Restarting the app resets the interval. The Windows host starts the updater on a blocking worker after startup and reloads
+the preference before every poll. Checks download and verify available updates;
+installation requires an explicit install operation. No update UI is included yet.
 
 An enabled check sends HTTPS GET requests to
 `https://api.github.com/repos/Duresa7/OpenTouchDeck/releases?per_page=100&page=1`.

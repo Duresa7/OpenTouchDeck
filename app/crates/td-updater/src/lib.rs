@@ -17,7 +17,7 @@ use serde::Deserialize;
 use td_core::settings::AppSettings;
 
 pub const PUBLIC_KEY: &str = include_str!("../updater.pub");
-pub const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const RELEASES: &str = "https://api.github.com/repos/Duresa7/OpenTouchDeck/releases";
 const DOWNLOADS: &str = "https://github.com/Duresa7/OpenTouchDeck/releases/download";
 const PAGE_SIZE: usize = 100;
@@ -60,6 +60,13 @@ pub struct UpdateReady {
 }
 
 impl UpdateReady {
+    /// Recheck the kept key immediately before handing the MSI to Windows Installer.
+    pub fn verify(&self) -> Result<(), Failure> {
+        let wrapped = std::fs::read(&self.signature_path)?;
+        let filename = format!("OpenTouchDeck-{}-windows-x64.msi", self.version);
+        signature::verify(&self.path, &wrapped, PUBLIC_KEY, &filename, &self.version)
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -160,7 +167,7 @@ impl<H: HttpClient, C: Clock> Updater<H, C> {
         }
     }
 
-    /// First enabled poll checks immediately; later attempts are six hours apart,
+    /// First enabled poll checks immediately; later attempts are 24 hours apart,
     /// including failures. None means disabled or not due, with no HTTP request.
     /// This is a polling API, not a background scheduler.
     pub fn poll(&mut self, settings: &AppSettings) -> Option<UpdateResult> {
