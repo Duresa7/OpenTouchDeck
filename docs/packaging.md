@@ -5,8 +5,8 @@ Windows, `td-app` checks after it starts and then about once a day, unless the
 user turned checks off. It selects a stable 2.x GitHub release, downloads its MSI
 and verifies it with the existing updater key. Installing re-verifies the MSI, runs
 Windows Installer and quits the app. The opt-out preference and what a check sends
-are described in [PRIVACY](PRIVACY.md). The update UI and the 1.x bridge remain M5
-work.
+are described in [PRIVACY](PRIVACY.md). The update UI remains M5 work. 1.x copies move
+to 2.0 through the bridge described in [The move from 1.x](#the-move-from-1x).
 
 The updater defends against a network attacker and against a release asset that
 the updater key did not sign. Code already running as the same Windows user is
@@ -17,15 +17,42 @@ because the staging folder is in the user's own `%TEMP%`.
 
 End users download the [Windows x64 installer](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the latest GitHub release and run it. It installs for the current user only and needs no administrator rights, Node, Rust, Python or ESP-IDF.
 
-The installer on Releases today is the 1.x installer. Its source, recipe and release workflows are not on `main`: they live on the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/blob/release/1.x/docs/packaging.md), whose copy of this page describes what the installer holds, how its update is signed and how a 1.x release is made ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). A `vX.Y.Z` tag pushed on that branch runs its **windows release** workflow from the tagged commit. The bridge release that moves 1.x to 2.0 is built there too.
+The installer on Releases today is the 1.x installer. Its source, recipe and release workflows are not on `main`: they live on the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/blob/release/1.x/docs/packaging.md), whose copy of this page describes what the installer holds, how its update is signed and how a 1.x release is made ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). A `v1.Y.Z` tag pushed on that branch runs its **windows release** workflow from the tagged commit, which refuses a commit that is not on `release/1.x`. The bridge release that moves 1.x to 2.0, 1.3.0, is built there too.
 
 The rest of this page describes Open TouchDeck 2.0, which ships as an MSI.
+
+## The move from 1.x
+
+1.x moves to 2.0 in two updates. 1.x copies update to the bridge release, 1.3.0, through their usual `latest.json`. On Windows 11, 1.3.0's updater then offers the newest stable 2.x: it finds the MSI in the repository's GitHub releases with the same rules as `td-updater` and verifies it with the updater key, including the signed file name and version. After the Companion stops, it hands the MSI and the SHA-256 its signature check read to `bridge.ps1`. That script renames the 1.x folder aside and runs the MSI. If the MSI fails or is cancelled, it renames the folder back and 1.x starts as it was. Otherwise it removes what 1.x left and starts 2.0. Windows 10 is never offered 2.0, and 1.x keeps updating there. The bridge's code and the full sequence are on `release/1.x`, in its [packaging page](https://github.com/Duresa7/OpenTouchDeck/blob/release/1.x/docs/packaging.md#the-bridge-to-20).
+
+The bridge does not run the 1.x uninstaller. That uninstaller always removes `%LOCALAPPDATA%\Programs\Open TouchDeck` and the Start menu shortcut named Open TouchDeck, which are this MSI's folder and shortcut too, so it can't run after the MSI. Running it before the MSI would leave nothing installed if the MSI then failed.
+
+The **bridge upgrade** workflow (`.github/workflows/bridge-upgrade.yml`) proves the move on a Windows runner: it installs the published 1.2.0, seeds user data, updates to a bridge build, refuses a tampered MSI, rolls back from a failing one, then installs this commit's MSI and checks that 2.0 reads the data and nothing of 1.x is left. Its [README](../.github/scripts/bridge-upgrade/README.md) lists what it proves and what it can't.
+
+### Where the user's data lives
+
+2.0 needs no import. It reads every piece of user data at the path and in the format 1.x wrote it, and the bridge never touches them. `%LOCALAPPDATA%` and `%APPDATA%` below are the current user's; `data` is `%LOCALAPPDATA%\io.github.duresa7.touchdeck`. Credential Manager entries use the service `touchdeck`.
+
+| Data | 1.x keeps it in | 2.0 reads it from | At the move |
+|---|---|---|---|
+| Devices: id, name, setup state | `data\devices.json` | The same file | Stays |
+| Layouts this PC last saw, and Pushed copies | `data\layouts\<device>\<orientation>.json`, `data\layouts\pushed-v1\` | The same files. 2.0 adds an optional `sink` to key and media key actions; a 1.x Layout has none and keeps its meaning | Stays |
+| Assets | `data\assets\` | The same folder | Stays |
+| Pairings | `data\network.json`, and the key in Credential Manager as `net-pairing:<device>` | The same file and entry. 2.0's extra Pairing state lives in memory | Stays |
+| Integration settings | `%APPDATA%\io.github.duresa7.touchdeck\sources.json` | The same file | Stays |
+| Integration secrets | Credential Manager: `integration:<integration>:<field>`, `cliproxyapi-management-key`, `app:<owner>:<field>` | The same entries | Stays |
+| Photo frame, command approvals, Icon packs, Brandfetch | `data\photo-frame.json`, `data\allowed-actions.json`, `data\packs\`, `data\brandfetch\` and its Credential Manager key | The same files and entry | Stays |
+| Start at sign-in | The Run value `Open TouchDeck`, running `"<install folder>\td-companion.exe" --packaged`; the marker `data\startup-initialized`; Explorer's `StartupApproved\Run` record | The same Run value name, running `"<install folder>\td-app.exe" --packaged`; the same marker and record | When 1.x's value is there, the bridge removes it and the marker, so 2.0 turns start at sign-in on at its first start. When it isn't, the marker stays and 2.0 leaves it off. Explorer's record stays either way |
+| The window | The Electron profile `%APPDATA%\Open TouchDeck`. The window's session lives in memory, so its UI choices (recent icons, which icon sources are on, skipped Device setups, the inspector's width) last only until the window closes, even in 1.x | `data\window.json`, new in 2.0 | The bridge removes the profile |
+| The local web API's port and runtime file | `data\companion-settings.json`, `data\runtime\` | Not read by `td-app`; the standalone `td-companion` still reads them | Stay, unused |
+| App settings | None | `%APPDATA%\io.github.duresa7.touchdeck\app-settings.json`: automatic update checks, on until turned off | 2.0 starts with its defaults |
+| Device settings, Wi-Fi networks, Keyboard hosts | On the Device | On the Device | Nothing on the PC changes |
 
 ## The 2.0 release pipeline
 
 Open TouchDeck 2.0 is one Rust program, installed on Windows 11 by an MSI. Its releases come from **release** (`.github/workflows/release.yml`), which a `v2` tag on `main` starts. A 1.x tag starts the 1.x workflow on `release/1.x`.
 
-The MSI ships `td-app.exe`, which runs the Companion in-process; the standalone Companion is not needed. Its Start menu shortcut passes `--packaged` and carries `io.github.duresa7.touchdeck` as its AUMID. The app registers start at sign-in on its first packaged start. Uninstall removes its Run and StartupApproved values and leaves user data alone. The existing 1.x uninstaller guard still refuses coexistence in the shared installation folder; the separate bridge must remove 1.x first.
+The MSI ships `td-app.exe`, which runs the Companion in-process; the standalone Companion is not needed. Its Start menu shortcut passes `--packaged` and carries `io.github.duresa7.touchdeck` as its AUMID. The app registers start at sign-in on its first packaged start. Uninstall removes its Run and StartupApproved values and leaves user data alone. The package still refuses to install beside 1.x in the shared installation folder; the bridge moves 1.x aside first ([The move from 1.x](#the-move-from-1x)).
 
 ### Stages
 
@@ -123,7 +150,7 @@ The public half of the updater key is committed at `.github/release-signer/updat
 
 ### Not done yet
 
-- **The 1.x to 2.0 update.** A 2.0 release has no `latest.json`. Installed 1.x copies read that file and run what it names as the 1.x installer, so publishing one for an MSI would break their updates. The bridge from 1.x to 2.0 is its own piece of work.
+- **The 1.x feed on a 2.x release.** Installed 1.x copies read `releases/latest/download/latest.json` and run what it names with the NSIS installer's flags, so a 2.x release must never name its MSI there. Once a 2.x release is the latest, that URL is the 2.x release's, so 1.x copies that never reached the bridge release find nothing. The publish job should attach a copy of the newest 1.x release's `latest.json`, which names the bridge, before 2.0 is published. Until it does, publish 2.0 only after most 1.x copies have had time to reach 1.3.0.
 - **Update UI.** The native host checks after startup and about daily on Windows, with status in the Companion snapshot. `updates().install_now(&handle)` reverifies the staged MSI, launches Windows Installer and requests the normal bounded shutdown. The update UI is separate work.
 - **Firmware.** The 1.x release builds the Firmware and ships `touchdeck.tdfw`. The 2.0 pipeline doesn't yet.
 - **Pre-release versions.** Two release candidates of one version get the same MSI version, so one does not replace the other.
