@@ -350,6 +350,7 @@ fn checks_off_makes_no_requests_even_when_due() {
     let mut updater = fixture();
     let off = AppSettings {
         automatic_update_checks: false,
+        ..Default::default()
     };
     assert!(updater.poll(&off, &|| false).is_none());
     updater.clock.0.set(CHECK_INTERVAL * 2);
@@ -393,6 +394,7 @@ fn app_preference_defaults_on_and_persists_an_opt_out() {
     assert!(AppSettings::load(&dirs).unwrap().automatic_update_checks);
     let off = AppSettings {
         automatic_update_checks: false,
+        ..Default::default()
     };
     off.save(&dirs).unwrap();
     let loaded = AppSettings::load(&dirs).unwrap();
