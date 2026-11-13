@@ -48,6 +48,20 @@
     <Launch Condition="Installed OR NOT OPENTOUCHDECK1"
             Message="Open TouchDeck 1.x is installed on this PC. Uninstall it, then run this installer again." />
 
+    <!-- These values are app-owned. RemoveRegistryValue only runs on install; use
+         impersonated uninstall actions to delete exactly these two values. Missing values
+         are normal when start at sign-in was disabled. Never delete the shared keys. -->
+    <CustomAction Id="RemoveAppRun" Directory="SystemFolder" Execute="deferred" Impersonate="yes"
+                  ExeCommand='&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v &quot;Open TouchDeck&quot; /f'
+                  Return="ignore" />
+    <CustomAction Id="RemoveAppStartupApproved" Directory="SystemFolder" Execute="deferred" Impersonate="yes"
+                  ExeCommand='&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run&quot; /v &quot;Open TouchDeck&quot; /f'
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RemoveAppRun" Before="RemoveFiles" Condition='REMOVE="ALL"' />
+      <Custom Action="RemoveAppStartupApproved" After="RemoveAppRun" Condition='REMOVE="ALL"' />
+    </InstallExecuteSequence>
+
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="UserProgramsFolder" Name="Programs">
         <Directory Id="INSTALLFOLDER" Name="Open TouchDeck" />
@@ -63,10 +77,6 @@
                   Target="[#AppExe]" Arguments="--packaged" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon">
           <ShortcutProperty Key="System.AppUserModel.ID" Value="io.github.duresa7.touchdeck" />
         </Shortcut>
-        <RemoveRegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
-                             Name="Open TouchDeck" Action="removeOnUninstall" />
-        <RemoveRegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
-                             Name="Open TouchDeck" Action="removeOnUninstall" />
         <!--
           A component in the user's profile has a registry value under HKCU as its key path, and removes the
           folders it created. Windows Installer's validation asks for both.
