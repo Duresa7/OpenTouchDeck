@@ -98,12 +98,16 @@ pub(super) fn spawn(
 
 /// A key mirror for a Device, unless it types through its own USB HID or the PC has no sink.
 pub(super) fn mirror(
+    inner: &Arc<Inner>,
     input: &InputFactory,
     hello: &td_core::Hello,
 ) -> (Option<Mirror>, KeyMirrorState) {
     match input() {
         Ok(sink) => {
-            let mut mirror = Mirror::new(sink);
+            let mut mirror = Mirror::new(Box::new(StoppingSink {
+                inner: Arc::downgrade(inner),
+                sink,
+            }));
             let wanted = Mirror::wanted(&hello.sinks);
             mirror.set_enabled(wanted);
             let reason = if wanted {
@@ -124,6 +128,25 @@ pub(super) fn mirror(
             };
             (None, state)
         }
+    }
+}
+
+/// A report may resume after shutdown timed out inside an OS input call.
+struct StoppingSink {
+    inner: std::sync::Weak<Inner>,
+    sink: Box<dyn td_host::InputSink>,
+}
+impl td_host::InputSink for StoppingSink {
+    fn send(&mut self, event: td_host::KeyEvent) -> Result<(), String> {
+        if matches!(event, td_host::KeyEvent::Down(_))
+            && self
+                .inner
+                .upgrade()
+                .is_none_or(|inner| inner.stop.load(std::sync::atomic::Ordering::Acquire))
+        {
+            return Ok(());
+        }
+        self.sink.send(event)
     }
 }
 
@@ -295,3 +318,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "shutdown_tests.rs"]
+mod shutdown_tests;
