@@ -144,6 +144,16 @@ if ($tray) {
     $lines.Add("Where Windows put the icon: $(Get-Field $tray 'iconPlace'). After the Explorer restart: $(Get-Field (Get-Field $tray 'explorerRestart') 'iconPlace').")
 }
 
+# What td-app itself wrote: its mock-only notes on Mica and settings changes, and any error.
+$said = @(Get-ChildItem -Path (Join-Path $Out 'logs') -Filter '*stderr*.txt' -ErrorAction SilentlyContinue | ForEach-Object {
+        $file = $_.Name
+        Get-Content -LiteralPath $_.FullName | Where-Object { $_ -match '^Open TouchDeck|panicked|^thread ' } | Sort-Object -Unique | ForEach-Object { "- ${file}: $_" }
+    })
+$lines.Add('')
+$lines.Add('## What td-app wrote to stderr')
+$lines.Add('')
+if ($said.Count) { foreach ($line in $said) { $lines.Add($line) } } else { $lines.Add('Nothing from the app itself.') }
+
 $lines.Add('')
 $lines.Add('## Files in the artifact')
 $lines.Add('')

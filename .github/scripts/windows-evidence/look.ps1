@@ -30,9 +30,11 @@ $data = Join-Path ([IO.Path]::GetTempPath()) "td-evidence-look-$PID"
 $facts = [ordered]@{ captures = [ordered]@{}; changes = [ordered]@{}; restarts = 0 }
 $app = $null
 $hwnd = $null
+$starts = 0
 
 function Start-Look {
-    $script:app = Start-App $Exe @('--mock-devices', '2') $data (Join-Path $Out 'logs/look-stderr.txt')
+    $script:starts++
+    $script:app = Start-App $Exe @('--mock-devices', '2') $data (Join-Path $Out "logs/look-stderr-$script:starts.txt")
     $script:hwnd = Wait-AppWindow $script:app
     Start-Sleep -Seconds 3
 }
@@ -75,7 +77,7 @@ function Get-Brightness {
 # once more, to tell a missed message from a change the app does not follow. When neither works
 # the window is saved as it is and the app restarts, so the look still gets its screenshots.
 function Wait-Followed([string]$Label, [scriptblock]$Seen, [string]$Area) {
-    if (Wait-Until $Seen 15 500) { return 'yes' }
+    if (Wait-Until $Seen 10 500) { return 'yes' }
     if ($Area) {
         [void][TouchDeckEvidence.Native]::BroadcastSettingChange($Area)
         if (Wait-Until $Seen 8 500) { return 'only after a second broadcast' }
@@ -183,7 +185,7 @@ try {
     # What DWM and the app say about Mica, beside what the screenshots show.
     $backdrop = 0
     $read = [TouchDeckEvidence.Native]::BackdropType($hwnd, [ref]$backdrop)
-    $said = @(Get-Content -LiteralPath (Join-Path $Out 'logs/look-stderr.txt') -ErrorAction SilentlyContinue | Where-Object { $_ -like '*(mock): Mica:*' }) | Select-Object -First 1
+    $said = @(Get-Content -LiteralPath (Join-Path $Out 'logs/look-stderr-1.txt') -ErrorAction SilentlyContinue | Where-Object { $_ -like '*(mock): Mica:*' }) | Select-Object -First 1
     $facts.mica = "td-app reported: $(if ($said) { ($said -replace '^.*\(mock\): Mica: ', '') } else { 'nothing' }). " +
         "DWM reports DWMWA_SYSTEMBACKDROP_TYPE = $backdrop (2 is Mica; HRESULT $('0x{0:x8}' -f $read)). " +
         "Navigation pane pixel in light: $($facts.captures['light-home'].pixels.navigationPaneLow)."

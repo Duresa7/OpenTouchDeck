@@ -118,9 +118,16 @@ pub(super) fn app_icon(window: &slint::Window) {
 /// keeps a solid background.
 pub(super) fn backdrop(window: &slint::Window, dark: bool) -> bool {
     if !mica_supported() {
+        #[cfg(feature = "mock")]
+        eprintln!(
+            "Open TouchDeck (mock): Mica: not asked for on build {}",
+            build()
+        );
         return false;
     }
     let Some(hwnd) = hwnd(window) else {
+        #[cfg(feature = "mock")]
+        eprintln!("Open TouchDeck (mock): Mica: the window has no handle");
         return false;
     };
     set_attribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &BOOL::from(dark));
@@ -219,7 +226,7 @@ impl Drop for Watch {
 /// Rereads everything when the text size, the system colours or the contrast theme change.
 /// The events arrive on a background thread, so the look reaches the window through its event
 /// loop.
-pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Option<Watch> {
+pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Result<Watch, String> {
     let changed = move || {
         let look = read();
         #[cfg(feature = "mock")]
@@ -229,33 +236,38 @@ pub(super) fn watch(ui: slint::Weak<AppWindow>) -> Option<Watch> {
         );
         let _ = ui.upgrade_in_event_loop(move |ui| super::apply(&ui, &look));
     };
-    let settings = UISettings::new().ok()?;
-    let accessibility = AccessibilitySettings::new().ok()?;
-    let on_text = changed.clone();
-    let text_scale = settings
-        .TextScaleFactorChanged(&TypedEventHandler::new(move |_, _| {
-            on_text();
-            Ok(())
-        }))
-        .ok()?;
-    let on_colors = changed.clone();
-    let colors = settings
-        .ColorValuesChanged(&TypedEventHandler::new(move |_, _| {
+    // The step that failed goes into the error, so a log line names it.
+    let mut step = "UISettings";
+    let watch = (|| -> windows::core::Result<Watch> {
+        let settings = UISettings::new()?;
+        step = "AccessibilitySettings";
+        let accessibility = AccessibilitySettings::new()?;
+        step = "TextScaleFactorChanged";
+        let on_text = changed.clone();
+        let text_scale =
+            settings.TextScaleFactorChanged(&TypedEventHandler::new(move |_, _| {
+                on_text();
+                Ok(())
+            }))?;
+        step = "ColorValuesChanged";
+        let on_colors = changed.clone();
+        let colors = settings.ColorValuesChanged(&TypedEventHandler::new(move |_, _| {
             on_colors();
             Ok(())
-        }))
-        .ok()?;
-    let contrast = accessibility
-        .HighContrastChanged(&TypedEventHandler::new(move |_, _| {
-            changed();
-            Ok(())
-        }))
-        .ok()?;
-    Some(Watch {
-        settings,
-        accessibility,
-        text_scale,
-        colors,
-        contrast,
-    })
+        }))?;
+        step = "HighContrastChanged";
+        let contrast =
+            accessibility.HighContrastChanged(&TypedEventHandler::new(move |_, _| {
+                changed();
+                Ok(())
+            }))?;
+        Ok(Watch {
+            settings,
+            accessibility,
+            text_scale,
+            colors,
+            contrast,
+        })
+    })();
+    watch.map_err(|error| format!("{step}: {error}"))
 }

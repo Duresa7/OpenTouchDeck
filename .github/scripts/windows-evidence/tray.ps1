@@ -92,19 +92,23 @@ function Open-TrayMenu([IntPtr]$Tray, [int]$ProcessId) {
     Start-Sleep -Milliseconds 500
     # MN_GETHMENU
     $menu = [TouchDeckEvidence.Native]::Send($window, 0x01e1, [IntPtr]::Zero, [IntPtr]::Zero)
-    $elements = @([TouchDeckEvidence.Menus]::Items($window))
+    $place = Get-Rect $window
+    $reading = [TouchDeckEvidence.Menus]::Read($window, $place.x + [int]($place.width / 2), $place.y + 14)
     $default = [TouchDeckEvidence.Native]::GetMenuDefaultItem($menu, 1, 1)
-    $items = @(for ($i = 0; $i -lt $elements.Count; $i++) {
+    $items = @(for ($i = 0; $i -lt $reading.Items.Count; $i++) {
             # MF_BYPOSITION; MF_CHECKED is 8, MF_GRAYED 1 and MF_DISABLED 2.
             $state = [TouchDeckEvidence.Native]::GetMenuState($menu, [uint32]$i, 0x400)
+            $rect = New-Object TouchDeckEvidence.Native+RECT
+            [void][TouchDeckEvidence.Native]::GetMenuItemRect([IntPtr]::Zero, $menu, [uint32]$i, [ref]$rect)
             [ordered]@{
-                name = $elements[$i].Name; checked = ($state -band 8) -ne 0
+                name = $reading.Items[$i].Name; checked = ($state -band 8) -ne 0
                 enabled = ($state -band 3) -eq 0; default = $default -eq $i
-                # The same state as UI Automation reports it, for comparison.
-                checkedInUiAutomation = ($elements[$i].State -band 0x10) -ne 0
+                # The checked state again, as the accessibility interface reports it.
+                checkedForScreenReaders = ($reading.Items[$i].State -band 0x10) -ne 0
+                x = [int](($rect.Left + $rect.Right) / 2); y = [int](($rect.Top + $rect.Bottom) / 2)
             }
         })
-    [ordered]@{ window = $window; elements = $elements; items = $items; count = [TouchDeckEvidence.Native]::GetMenuItemCount($menu) }
+    [ordered]@{ window = $window; items = $items; readThrough = $reading.Source; tree = $reading.Tree; count = [TouchDeckEvidence.Native]::GetMenuItemCount($menu) }
 }
 
 function Format-Menu($Menu) {
@@ -125,8 +129,7 @@ function Select-TrayMenuItem($Menu, [string]$Name) {
     $index = 0
     foreach ($item in $Menu.items) { if ($item.name -eq $Name) { break }; $index++ }
     if ($index -ge $Menu.items.Count) { throw "The menu has no item named $Name." }
-    $element = $Menu.elements[$index]
-    if (-not [TouchDeckEvidence.Native]::Click($element.X + [int]($element.Width / 2), $element.Y + [int]($element.Height / 2))) { throw "Could not click $Name." }
+    if (-not [TouchDeckEvidence.Native]::Click($Menu.items[$index].x, $Menu.items[$index].y)) { throw "Could not click $Name." }
     $closed = Wait-Until { -not [TouchDeckEvidence.Native]::IsWindow($Menu.window) -or -not [TouchDeckEvidence.Native]::IsWindowVisible($Menu.window) } 5
     if (-not $closed) { throw "Clicking $Name did not close the menu." }
     Start-Sleep -Milliseconds 300
@@ -229,8 +232,8 @@ try {
         [void](Hide-ToTray $hwnd $null)
         $menu = Open-TrayMenu $tray $app.Id
         Save-Screen (Join-Path $shots 'tray-menu.png')
-        Write-Json (Join-Path $uia 'tray-menu.json') $menu.elements
-        $facts.menu = $menu.items
+        Write-Utf8 (Join-Path $uia 'tray-menu.txt') "read through: $($menu.readThrough)`n$($menu.tree)"
+        $facts.menu = [ordered]@{ readThrough = $menu.readThrough; items = $menu.items }
         $names = @($menu.items | ForEach-Object { $_.name })
         $exact = ($names -join '|') -ceq 'Open|Start at sign-in|Quit' -and $menu.count -eq 3
         $defaults = @($menu.items | Where-Object { $_.default } | ForEach-Object { $_.name })
@@ -238,7 +241,7 @@ try {
         $opened = [bool](Wait-Until { (Test-Shown $hwnd) -and [TouchDeckEvidence.Native]::GetForegroundWindow() -eq $hwnd } 5)
         @{
             pass   = $exact -and ($defaults -join '|') -ceq 'Open' -and $opened
-            detail = "items read through UI Automation: $(Format-Menu $menu); choosing Open showed the window in front: $opened"
+            detail = "items read through $($menu.readThrough): $(Format-Menu $menu); choosing Open showed the window in front: $opened"
         }
     }
 
@@ -317,6 +320,7 @@ try {
             param([string]$Step)
             $menu = Open-TrayMenu $tray $app.Id
             $item = $menu.items | Where-Object { $_.name -eq 'Start at sign-in' }
+            if (-not $item) { throw "The menu has no Start at sign-in item: $(Format-Menu $menu)" }
             if ($Step -eq 'first run') { Save-Screen (Join-Path $shots 'tray-menu-start-at-sign-in.png') }
             $state = [ordered]@{ step = $Step; run = (Get-RunValue); approvedState = (Get-ApprovedState); checked = $item.checked; enabled = $item.enabled }
             $steps.Add($state)
@@ -373,15 +377,22 @@ try {
         }
         $taskbar = [bool](Wait-Until { $null -ne (Get-WindowOfClass 0 'Shell_TrayWnd') } 60)
         $clock = [Diagnostics.Stopwatch]::StartNew()
-        $back = [bool](Wait-Until { Test-Icon } 60)
+        $back = [bool](Wait-Until { Test-Icon } 45)
         $seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1)
         Start-Sleep -Seconds 5
         Save-Screen (Join-Path $shots 'tray-after-explorer-restart.png')
+        # This opens the overflow flyout, where the new Explorer lists the icon again.
         $place = Save-NotificationArea 'tray-after-explorer-restart'
-        $facts.explorerRestart = [ordered]@{ iconBefore = $iconBefore; iconLostWhileExplorerWasDown = $lost; explorer = $how; taskbarBack = $taskbar; iconBack = $back; secondsAfterTaskbar = $seconds; iconPlace = $place; icon = (Get-IconRect) }
+        $when = "$seconds s after the taskbar"
+        if (-not $back) {
+            # The new Explorer answers for an overflow icon only once its flyout has been shown.
+            $back = [bool](Wait-Until { Test-Icon } 15)
+            $when = 'once the overflow flyout had been opened'
+        }
+        $facts.explorerRestart = [ordered]@{ iconBefore = $iconBefore; iconLostWhileExplorerWasDown = $lost; explorer = $how; taskbarBack = $taskbar; iconBack = $back; iconBackWhen = $when; iconPlace = $place; icon = (Get-IconRect) }
         @{
-            pass   = $iconBefore -and $taskbar -and $back -and -not $app.HasExited
-            detail = "Explorer was stopped and $how; the taskbar came back: $taskbar; Shell_NotifyIconGetRect succeeds again: $back ($seconds s after the taskbar); process still running: $(-not $app.HasExited)"
+            pass   = $iconBefore -and $taskbar -and $back -and $place -ne 'not found' -and -not $app.HasExited
+            detail = "Explorer was stopped and $how; the taskbar came back: $taskbar; the new Explorer lists the icon in: $place; Shell_NotifyIconGetRect succeeds again: $back ($when); process still running: $(-not $app.HasExited)"
         }
     }
 } finally {

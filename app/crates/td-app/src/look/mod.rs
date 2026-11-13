@@ -93,12 +93,13 @@ pub(crate) fn watch(ui: &AppWindow) -> Watch {
     #[cfg(windows)]
     {
         apply(ui, &win::read());
-        let settings = win::watch(ui.as_weak());
-        #[cfg(feature = "mock")]
-        eprintln!(
-            "Open TouchDeck (mock): following settings changes: {}",
-            settings.is_some()
-        );
+        // Without the watch the window still opens with the right look; it only stops
+        // following changes made while it runs.
+        let settings = win::watch(ui.as_weak())
+            .inspect_err(|error| {
+                eprintln!("Open TouchDeck: cannot follow changes to Windows settings: {error}");
+            })
+            .ok();
         Watch {
             _settings: settings,
         }

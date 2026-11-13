@@ -100,7 +100,7 @@ namespace TouchDeckEvidence {
         [DllImport("user32.dll")]
         public static extern uint GetMenuDefaultItem(IntPtr menu, uint byPosition, uint flags);
         [DllImport("user32.dll")]
-        public static extern uint GetMenuItemID(IntPtr menu, int position);
+        public static extern bool GetMenuItemRect(IntPtr hwnd, IntPtr menu, uint item, out RECT rect);
         [DllImport("dwmapi.dll")]
         static extern int DwmGetWindowAttribute(IntPtr hwnd, uint attribute, out RECT value, int size);
         [DllImport("dwmapi.dll")]
@@ -241,13 +241,13 @@ namespace TouchDeckEvidence {
         }
     }
 
-    // The COM UI Automation client, declared as far as the scripts use it. Win32 popup menus
-    // (class #32768) only show their items through this client; the .NET one sees an empty pane.
+    // The COM UI Automation client, declared as far as the scripts use it.
     [ComImport, Guid("30cbe57d-d9d0-452a-ab13-7ac5ac4825ee"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IUIAutomation {
         void CompareElements(); void CompareRuntimeIds(); void GetRootElement();
         [PreserveSig] int ElementFromHandle(IntPtr hwnd, out IUIAutomationElement element);
-        void ElementFromPoint(); void GetFocusedElement(); void GetRootElementBuildCache();
+        [PreserveSig] int ElementFromPoint(Native.POINT point, out IUIAutomationElement element);
+        void GetFocusedElement(); void GetRootElementBuildCache();
         void ElementFromHandleBuildCache(); void ElementFromPointBuildCache(); void GetFocusedElementBuildCache();
         void CreateTreeWalker(); void ControlViewWalker(); void ContentViewWalker();
         [PreserveSig] int RawViewWalker(out IUIAutomationTreeWalker walker);
@@ -260,7 +260,7 @@ namespace TouchDeckEvidence {
     }
     [ComImport, Guid("4042c624-389c-4afc-a630-9df854a541fc"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IUIAutomationTreeWalker {
-        void GetParentElement();
+        [PreserveSig] int GetParentElement(IUIAutomationElement element, out IUIAutomationElement parent);
         [PreserveSig] int GetFirstChildElement(IUIAutomationElement element, out IUIAutomationElement first);
         void GetLastChildElement();
         [PreserveSig] int GetNextSiblingElement(IUIAutomationElement element, out IUIAutomationElement next);
@@ -268,53 +268,108 @@ namespace TouchDeckEvidence {
 
     public class MenuItem {
         public string Name;
-        // The MSAA state UI Automation passes on: 0x10 checked, 0x1 unavailable.
+        // The MSAA state: 0x10 checked, 0x1 unavailable.
         public int State;
-        public int X, Y, Width, Height;
     }
 
+    public class MenuReading {
+        public MenuItem[] Items;
+        // Which accessibility interface showed the items.
+        public string Source;
+        // What UI Automation showed under the menu window, one element per line.
+        public string Tree;
+    }
+
+    // Reads a Win32 popup menu (window class #32768) through the accessibility interfaces a
+    // screen reader uses.
     public static class Menus {
+        [DllImport("oleacc.dll")]
+        static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint id, ref Guid iid,
+            [MarshalAs(UnmanagedType.IDispatch)] out object accessible);
+
         static object Property(IUIAutomationElement element, int id) {
             object value;
             return element.GetCurrentPropertyValue(id, out value) == 0 ? value : null;
         }
-        static void Collect(IUIAutomationTreeWalker walker, IUIAutomationElement element, int depth, List<MenuItem> items) {
-            // UIA_ControlTypePropertyId; 50011 is MenuItem.
+        static void Collect(IUIAutomationTreeWalker walker, IUIAutomationElement element, int depth,
+            List<MenuItem> items, StringBuilder tree) {
+            // UIA_ControlTypePropertyId (50011 is MenuItem), UIA_NamePropertyId and
+            // UIA_LegacyIAccessibleStatePropertyId.
             object type = Property(element, 30003);
+            string name = Property(element, 30005) as string;
+            tree.Append(' ', depth * 2).Append("type ").Append(type).Append(" \"").Append(name).Append("\"\n");
             if (type is int && (int)type == 50011) {
                 MenuItem item = new MenuItem();
-                item.Name = Property(element, 30005) as string;             // UIA_NamePropertyId
-                object state = Property(element, 30096);                    // UIA_LegacyIAccessibleStatePropertyId
+                item.Name = name;
+                object state = Property(element, 30096);
                 item.State = state is int ? (int)state : 0;
-                double[] rect = Property(element, 30001) as double[];       // UIA_BoundingRectanglePropertyId
-                if (rect != null && rect.Length == 4) {
-                    item.X = (int)rect[0]; item.Y = (int)rect[1]; item.Width = (int)rect[2]; item.Height = (int)rect[3];
-                }
                 items.Add(item);
             }
             if (depth >= 4) return;
             IUIAutomationElement child;
             if (walker.GetFirstChildElement(element, out child) != 0) return;
             while (child != null && items.Count < 64) {
-                Collect(walker, child, depth + 1, items);
+                Collect(walker, child, depth + 1, items, tree);
                 IUIAutomationElement next;
                 if (walker.GetNextSiblingElement(child, out next) != 0) break;
                 child = next;
             }
         }
-        // The menu items under a window, in order, as UI Automation presents them.
-        public static MenuItem[] Items(IntPtr hwnd) {
-            IUIAutomation automation = (IUIAutomation)Activator.CreateInstance(
-                Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e")));
-            IUIAutomationElement root;
-            int result = automation.ElementFromHandle(hwnd, out root);
-            if (result != 0) Marshal.ThrowExceptionForHR(result);
-            IUIAutomationTreeWalker walker;
-            result = automation.RawViewWalker(out walker);
-            if (result != 0) Marshal.ThrowExceptionForHR(result);
+
+        static MenuItem[] FromMsaa(IntPtr hwnd) {
+            Guid iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+            object accessible;
+            // OBJID_CLIENT
+            int result = AccessibleObjectFromWindow(hwnd, 0xFFFFFFFC, ref iid, out accessible);
+            if (result != 0 || accessible == null) return new MenuItem[0];
+            Type type = accessible.GetType();
+            System.Reflection.BindingFlags get = System.Reflection.BindingFlags.GetProperty;
+            int count = Convert.ToInt32(type.InvokeMember("accChildCount", get, null, accessible, null));
             List<MenuItem> items = new List<MenuItem>();
-            Collect(walker, root, 0, items);
+            for (int child = 1; child <= count; child++) {
+                MenuItem item = new MenuItem();
+                item.Name = type.InvokeMember("accName", get, null, accessible, new object[] { child }) as string;
+                item.State = Convert.ToInt32(type.InvokeMember("accState", get, null, accessible, new object[] { child }));
+                items.Add(item);
+            }
             return items.ToArray();
+        }
+
+        public static MenuReading Read(IntPtr hwnd, int x, int y) {
+            MenuReading reading = new MenuReading();
+            StringBuilder tree = new StringBuilder();
+            List<MenuItem> items = new List<MenuItem>();
+            try {
+                IUIAutomation automation = (IUIAutomation)Activator.CreateInstance(
+                    Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e")));
+                IUIAutomationTreeWalker walker;
+                IUIAutomationElement root;
+                if (automation.RawViewWalker(out walker) == 0 && automation.ElementFromHandle(hwnd, out root) == 0 && root != null) {
+                    Collect(walker, root, 0, items, tree);
+                    reading.Source = "UI Automation, from the menu window";
+                    if (items.Count == 0) {
+                        // Ask what is at a point inside the menu, then read its parent's children.
+                        Native.POINT point = new Native.POINT();
+                        point.X = x; point.Y = y;
+                        IUIAutomationElement hit, parent;
+                        if (automation.ElementFromPoint(point, out hit) == 0 && hit != null) {
+                            tree.Append("at the point:\n");
+                            if (walker.GetParentElement(hit, out parent) == 0 && parent != null) Collect(walker, parent, 0, items, tree);
+                            else Collect(walker, hit, 0, items, tree);
+                            reading.Source = "UI Automation, from the element under the pointer";
+                        }
+                    }
+                }
+            } catch (Exception error) {
+                tree.Append("UI Automation failed: ").Append(error.Message).Append('\n');
+            }
+            if (items.Count == 0) {
+                items.AddRange(FromMsaa(hwnd));
+                reading.Source = "MSAA (IAccessible); UI Automation showed no items";
+            }
+            reading.Items = items.ToArray();
+            reading.Tree = tree.ToString();
+            return reading;
         }
     }
 }
@@ -612,7 +667,7 @@ function Get-UiaTree($Root, [int]$MaxNodes = 4000) {
                 $child = $walker.GetNextSibling($child)
             }
         } catch { }
-        for ($i = $children.Count - 1; $i -ge 0; $i--) { $stack.Push(@($children[$i], $depth + 1)) }
+        for ($i = $children.Count - 1; $i -ge 0; $i--) { $stack.Push(@($children[$i], ($depth + 1))) }
     }
     , $nodes.ToArray()
 }
