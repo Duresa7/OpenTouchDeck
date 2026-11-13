@@ -146,8 +146,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("package version"),
             );
             // A download still blocked in a read when an earlier run hit the shutdown limit
-            // leaves its staging folder behind. This process holds the single-instance lock,
-            // so no other run is using one now.
+            // leaves its staging folder behind. td-app takes no single-instance lock, so this
+            // assumes no other copy is downloading an update right now.
             updater = match tokio::task::spawn_blocking(move || {
                 updater.remove_stale_staging();
                 updater
