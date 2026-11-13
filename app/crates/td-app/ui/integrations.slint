@@ -287,8 +287,13 @@ component Field inherits SettingBlock {
         }
     }
     if root.field.kind != "boolean" && root.field.kind != "json": HorizontalLayout {
+        // A number is short, so its field is too, with its unit beside it.
+        alignment: root.field.kind == "text" ? stretch : start;
         spacing: 8px;
         TextField {
+            horizontal-stretch: 1;
+            min-width: 80px;
+            preferred-width: 160px * Theme.text-scale;
             label: root.field.label;
             value: root.field.value;
             placeholder: root.field.placeholder;
