@@ -97,6 +97,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 td_updater::SystemClock::default(),
                 semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("package version"),
             );
+            // A download still blocked in a read when an earlier run hit the shutdown limit
+            // leaves its staging folder behind. This process holds the single-instance lock,
+            // so no other run is using one now.
+            updater = match tokio::task::spawn_blocking(move || {
+                updater.remove_stale_staging();
+                updater
+            })
+            .await
+            {
+                Ok(updater) => updater,
+                Err(_) => return,
+            };
             loop {
                 if work.shutdown_requested() {
                     break;

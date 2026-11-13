@@ -25,6 +25,13 @@ const MAX_PAGES: usize = 10;
 const MAX_FEED: u64 = 2 * 1024 * 1024;
 const MAX_SIGNATURE: u64 = 16 * 1024;
 const MAX_MSI: u64 = 256 * 1024 * 1024;
+/// Every staging folder is `<temp>/touchdeck-update-<random>`, so a later run can find
+/// folders that a killed process left behind.
+const STAGING_PREFIX: &str = "touchdeck-update-";
+/// Longest wait for any single read. TCP retransmits a lost segment within about 7 s
+/// (1 + 2 + 4 s), so a healthy slow link still makes progress, while a stalled body
+/// read fails in seconds rather than holding the worker for the 5-minute global limit.
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Failure {
@@ -101,6 +108,7 @@ impl Default for GitHubClient {
                 .https_only(true)
                 .max_redirects(5)
                 .timeout_global(Some(Duration::from_secs(5 * 60)))
+                .timeout_per_read(Some(READ_TIMEOUT))
                 .build()
                 .into(),
         )
@@ -169,6 +177,23 @@ impl<H: HttpClient, C: Clock> Updater<H, C> {
             public_key: PUBLIC_KEY,
             staging_root: std::env::temp_dir(),
         }
+    }
+
+    /// Removes staging folders that an earlier run left behind, for example when the
+    /// process exited while a download was still blocked in a read. Call it once at
+    /// startup, before the first poll, while holding the single-instance lock: it
+    /// assumes no other staging folder of this app is in use. Only folders named with
+    /// this app's prefix that hold nothing but this app's MSI and signature files are
+    /// touched. Returns how many were removed; a folder that cannot be removed is skipped.
+    pub fn remove_stale_staging(&self) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.staging_root) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .filter(|entry| is_stale_staging(&entry.path()))
+            .filter(|entry| std::fs::remove_dir_all(entry.path()).is_ok())
+            .count()
     }
 
     /// First enabled poll checks immediately; later attempts are 24 hours apart,
@@ -312,7 +337,7 @@ impl<H: HttpClient, C: Clock> Updater<H, C> {
         check_cancelled(cancelled)?;
         // TempDir removes partial staging on cancellation or any other error.
         let directory = tempfile::Builder::new()
-            .prefix("touchdeck-update-")
+            .prefix(STAGING_PREFIX)
             .tempdir_in(&self.staging_root)?;
         let path = directory.path().join(&filename);
         let signature_path = directory.path().join(format!("{filename}.sig"));
@@ -351,6 +376,36 @@ impl<H: HttpClient, C: Clock> Updater<H, C> {
             version,
         }))
     }
+}
+
+/// A real directory (not a link) named like this app's staging folders, containing only
+/// regular files named like this app's installer or its signature.
+fn is_stale_staging(path: &Path) -> bool {
+    let named = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix(STAGING_PREFIX))
+        .is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+        });
+    if !named
+        || !std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
+    {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return false;
+    };
+    entries.into_iter().all(|entry| {
+        entry.is_ok_and(|entry| {
+            let ours = entry.file_name().to_str().is_some_and(|name| {
+                name.strip_prefix("OpenTouchDeck-").is_some_and(|rest| {
+                    rest.ends_with("-windows-x64.msi") || rest.ends_with("-windows-x64.msi.sig")
+                })
+            });
+            ours && entry.file_type().is_ok_and(|kind| kind.is_file())
+        })
+    })
 }
 
 fn check_cancelled(cancelled: &dyn Fn() -> bool) -> Result<(), Failure> {

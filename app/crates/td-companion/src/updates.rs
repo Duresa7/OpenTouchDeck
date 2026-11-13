@@ -89,7 +89,7 @@ impl Updates {
             .spawn()?;
             handle.request_shutdown();
             // The host exits through Companion::shutdown. This thread keeps the private MSI
-            // alive while msiexec reads it; process exit leaves staging for OS cleanup.
+            // alive while msiexec reads it; the next start removes the staging left at exit.
             std::thread::spawn(move || {
                 let _ = child.wait();
                 drop(ready);

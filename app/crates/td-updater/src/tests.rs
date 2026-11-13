@@ -513,3 +513,115 @@ fn shutdown_before_poll_makes_no_request_or_staging_directory() {
     assert_eq!(updater.http.requests.get(), 0);
     assert_eq!(std::fs::read_dir(staging.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn startup_sweep_removes_staging_left_by_a_read_blocked_through_shutdown() {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+
+    let staging = tempfile::tempdir().unwrap();
+    let root = staging.path();
+    // Folders and files the sweep must leave alone.
+    let foreign = root.join(format!("{STAGING_PREFIX}keep"));
+    std::fs::create_dir(&foreign).unwrap();
+    std::fs::write(foreign.join("notes.txt"), b"not ours").unwrap();
+    let nested = root.join(format!("{STAGING_PREFIX}nest"));
+    std::fs::create_dir_all(nested.join("OpenTouchDeck-2.1.0-windows-x64.msi")).unwrap();
+    let unsuffixed = root.join(STAGING_PREFIX);
+    std::fs::create_dir(&unsuffixed).unwrap();
+    let other_app = root.join("other-app-update-abc123");
+    std::fs::create_dir(&other_app).unwrap();
+    std::fs::write(other_app.join("OpenTouchDeck-2.1.0-windows-x64.msi"), b"x").unwrap();
+    let plain_file = root.join(format!("{STAGING_PREFIX}file"));
+    std::fs::write(&plain_file, b"a file, not a folder").unwrap();
+    #[cfg(unix)]
+    let link = {
+        let target = tempfile::tempdir().unwrap();
+        let link = root.join(format!("{STAGING_PREFIX}link"));
+        std::os::unix::fs::symlink(target.path(), &link).unwrap();
+        (target, link)
+    };
+    let unrelated: Vec<_> = {
+        let mut names: Vec<_> = std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+
+    // First run: the MSI body read stalls after one byte is staged and stays blocked
+    // through shutdown, so the process would exit before TempDir could clean up.
+    let first = fixture();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let worker_stop = stopped.clone();
+    let mut updater = Updater::new(
+        BlockingHttp {
+            inner: first.http,
+            block_at: BlockAt::MsiBody,
+            entered: entered_tx,
+            release: Arc::new(Mutex::new(release_rx)),
+        },
+        first.clock,
+        first.current,
+    );
+    updater.public_key = first.public_key;
+    updater.staging_root = root.to_owned();
+    let worker = std::thread::spawn(move || {
+        updater.poll(&AppSettings::default(), &|| {
+            worker_stop.load(Ordering::SeqCst)
+        })
+    });
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    stopped.store(true, Ordering::SeqCst);
+    // Shutdown gives up here; the read is still blocked and the staging folder remains.
+    let leftover: Vec<_> = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| is_stale_staging(path))
+        .collect();
+    assert_eq!(leftover.len(), 1);
+    let msi = leftover[0].join(format!("OpenTouchDeck-{VERSION}-windows-x64.msi"));
+    assert_eq!(std::fs::metadata(msi).unwrap().len(), 1);
+    assert!(
+        leftover[0]
+            .join(format!("OpenTouchDeck-{VERSION}-windows-x64.msi.sig"))
+            .exists()
+    );
+
+    // Next run: the startup sweep removes only the leftover.
+    let mut next = fixture();
+    next.staging_root = root.to_owned();
+    assert_eq!(next.remove_stale_staging(), 1);
+    assert!(!leftover[0].exists());
+    let mut remaining: Vec<_> = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    remaining.sort();
+    assert_eq!(remaining, unrelated);
+    assert_eq!(
+        std::fs::read(foreign.join("notes.txt")).unwrap(),
+        b"not ours"
+    );
+    assert!(nested.join("OpenTouchDeck-2.1.0-windows-x64.msi").is_dir());
+    #[cfg(unix)]
+    assert!(link.0.path().is_dir());
+    assert_eq!(next.remove_stale_staging(), 0);
+    assert_eq!(next.http.requests.get(), 0);
+
+    // Let the old worker finish so the test owns no thread; it publishes nothing.
+    release_tx.send(()).unwrap();
+    assert!(worker.join().unwrap().is_none());
+    let mut remaining: Vec<_> = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    remaining.sort();
+    assert_eq!(remaining, unrelated);
+}

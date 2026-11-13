@@ -42,8 +42,14 @@ settings.save(&dirs)?;
 Companion shutdown signal through the cancellation callback. Cancellation is
 checked before each request and staging operation, and between MSI reads and
 writes; partial staging is removed when the worker returns. A blocking request or
-read must return before the worker can observe cancellation. Shutdown waits for
-the worker within the runtime shutdown limit. Enabled polling checks
+read must return before the worker can observe cancellation, so `GitHubClient`
+fails any single read that waits more than 10 seconds. Shutdown waits for the
+worker within the runtime shutdown limit; if a read is still blocked when that
+limit ends, the process exits and leaves its staging folder. Call
+`remove_stale_staging` once at startup, before the first poll and while holding the
+single-instance lock, to remove such folders. It only removes real folders named
+`touchdeck-update-<random>` that hold nothing but `OpenTouchDeck-*-windows-x64.msi`
+files and their `.sig` files. Enabled polling checks
 immediately and then at most every 24 hours per updater instance, including
 failures. Keep one instance alive for the app's lifetime. The injected clock is
 monotonic; the signed timestamp is authenticated metadata, not a freshness policy.
@@ -56,11 +62,11 @@ Only stable 2.x releases are eligible. An older selected version returns a typed
 failure; an equal version (ignoring build metadata) or no eligible release returns
 up to date. Missing/duplicate assets, oversized responses, download errors and
 signature failures fail closed. The transport enforces HTTPS across redirects and
-a five-minute request deadline. Limits are 10 pages, 2 MiB per feed page, 16 KiB per
+a five-minute request deadline with a 10-second limit per read. Limits are 10 pages, 2 MiB per feed page, 16 KiB per
 signature and 256 MiB per MSI.
 
 `UpdateReady` owns a unique temporary directory and exposes the MSI path, signature
 path and version; dropping it cleans up. Installation, verification immediately
 before launch, startup scheduling, native Settings UI, update presentation and the
 1.x migration bridge remain later M5 work. An abrupt process termination can leave
-temporary files for the OS's temporary-folder cleanup. See [privacy](../../../../docs/PRIVACY.md).
+temporary files until the next start removes them. See [privacy](../../../../docs/PRIVACY.md).
