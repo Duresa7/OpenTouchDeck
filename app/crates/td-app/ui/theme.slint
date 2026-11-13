@@ -29,7 +29,9 @@ export global Theme {
     in property <string> text-font: "";
     in property <string> display-font: "";
 
-    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+    // The resolved scheme. Settings > Appearance may set `Palette.color-scheme` to `unknown`,
+    // which follows the system, so the palette's own background says which it is.
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark || (Palette.color-scheme != ColorScheme.light && Palette.background.to-hsv().value < 0.5);
     out property <ContrastColors> contrast: has-system-contrast ? system-contrast : dark ? {
         window: #000000,
         window-text: #ffffff,
@@ -67,6 +69,11 @@ export global Theme {
     out property <brush> control-stroke: high-contrast ? contrast.button-text : dark ? #ffffff17 : #00000024;
     out property <brush> dialog: high-contrast ? contrast.window : dark ? #2b2b2b : #ffffff;
     out property <brush> smoke: high-contrast ? transparent : #0000004d;
+    out property <brush> disabled-text: high-contrast ? contrast.gray-text : dark ? #ffffff5d : #0000005c;
+    out property <brush> disabled-fill: high-contrast ? contrast.gray-text : dark ? #ffffff28 : #00000037;
+    out property <brush> field-focused: high-contrast ? contrast.window : dark ? #1e1e1eb3 : #ffffff;
+    out property <brush> critical-fill: high-contrast ? contrast.window : dark ? #442726 : #fde7e9;
+    out property <brush> good-fill: high-contrast ? contrast.window : dark ? #393d1b : #dff6dd;
     out property <brush> focus: high-contrast ? contrast.window-text : dark ? #ffffff : #000000e6;
     // Device states: success, caution and critical. A contrast theme keeps text colour, so the
     // words, not the colour, carry the state.

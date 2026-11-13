@@ -1,0 +1,574 @@
+// Setup: New boards that need Firmware, and the first-run setup of a Device (name and
+// orientation, and newer Firmware when this Companion carries it).
+import { Theme } from "theme.slint";
+import { ActionButton, ButtonPair, Body, Card, Choice, Choices, Details, GroupTitle, Hint, InfoBar, PageTitle, ProgressBar, SectionTitle, Severity, TextField } from "controls.slint";
+import { ScrollingPage } from "page.slint";
+
+// One New board, as its card shows it.
+export struct BoardCard {
+    id: string,
+    port: string,
+    // detected, waiting, installing, done, declined or failed.
+    step: string,
+    status: string,
+    pct: int,
+    log: string,
+}
+
+// A Device whose setup was closed before the end, to open again.
+export struct SetupLater {
+    id: string,
+    name: string,
+}
+
+// The setup of one Device.
+export struct Wizard {
+    id: string,
+    device-name: string,
+    device-status: string,
+    // firmware, name, orientation or done.
+    step: string,
+    step-n: int,
+    step-total: int,
+    first: bool,
+    name: string,
+    name-hint: string,
+    name-invalid: bool,
+    name-disabled: bool,
+    orientation: string,
+    firmware-intro: string,
+    // idle, waiting, running, done, failed or cancelled.
+    firmware-step: string,
+    firmware-status: string,
+    firmware-pct: int,
+    firmware-log: string,
+    keep-plugged: string,
+    busy: string,
+    error: string,
+    error-detail: string,
+    offline: string,
+    live: bool,
+    updating: bool,
+    done-title: string,
+    done-text: string,
+}
+
+component BoardItem inherits Card {
+    in property <BoardCard> board;
+    callback install();
+    callback ignore();
+    callback cancel();
+
+    accessible-role: groupbox;
+    accessible-label: title.text;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+        title := SectionTitle {
+            text: root.board.step == "done" ? "Firmware installed" : "New board found";
+        }
+
+        if root.board.step == "detected": Body {
+            text: "The board on " + root.board.port + " doesn't run Open TouchDeck Firmware yet.";
+        }
+        if root.board.step == "waiting": Body {
+            accessible-role: AccessibleRole.text;
+            accessible-label: self.text;
+            text: root.board.status;
+            color: Theme.caution;
+        }
+        if root.board.step == "installing": VerticalLayout {
+            spacing: 8px;
+            Body {
+                text: root.board.status;
+            }
+
+            ProgressBar {
+                label: title.text;
+                value: root.board.pct;
+                value-text: root.board.status;
+            }
+
+            Hint {
+                text: "Keep the board plugged in. This takes about a minute.";
+            }
+        }
+        if root.board.step == "done": Body {
+            accessible-role: AccessibleRole.text;
+            accessible-label: self.text;
+            text: "Next, name your Device.";
+        }
+        if root.board.step == "failed" || root.board.step == "declined": InfoBar {
+            text: root.board.status;
+            severity: Severity.error;
+            details: root.board.log;
+        }
+
+        if root.board.step == "detected": ButtonPair {
+            first: "Install Firmware";
+            second: "Ignore";
+            first-clicked => {
+                root.install();
+            }
+            second-clicked => {
+                root.ignore();
+            }
+        }
+        if root.board.step == "failed" || root.board.step == "declined": ButtonPair {
+            first: "Retry";
+            second: "Cancel";
+            first-clicked => {
+                root.install();
+            }
+            second-clicked => {
+                root.cancel();
+            }
+        }
+    }
+}
+
+// The title of the setup card, with the Device it sets up.
+component WizardTitle inherits VerticalLayout {
+    in property <string> status;
+    spacing: 2px;
+    SectionTitle {
+        text: "Set up your Device";
+    }
+
+    Hint {
+        text: root.status;
+    }
+}
+
+component CloseSetup inherits ActionButton {
+    text: "Close";
+    label: "Close setup";
+    description: "Setup won't open again by itself. You can open it here.";
+}
+
+// Back on the left and the step's actions on the right, or, when the card is narrow, the
+// actions stacked full width with the primary one first and Back last.
+component WizardFooter inherits VerticalLayout {
+    in property <bool> narrow;
+    in property <bool> back-shown;
+    in property <bool> back-enabled;
+    in property <bool> skip-shown;
+    in property <bool> skip-enabled;
+    in property <string> primary;
+    in property <bool> primary-enabled;
+    // The last step's Done takes focus, so Enter finishes.
+    in property <bool> primary-focused;
+    callback back();
+    callback skip();
+    callback primary-clicked();
+    padding-top: 4px;
+
+    if !root.narrow: HorizontalLayout {
+        spacing: 8px;
+        if root.back-shown: ActionButton {
+            text: "Back";
+            enabled: root.back-enabled;
+            clicked => {
+                root.back();
+            }
+        }
+        Rectangle { }
+
+        if root.skip-shown: ActionButton {
+            text: "Skip";
+            enabled: root.skip-enabled;
+            clicked => {
+                root.skip();
+            }
+        }
+        ActionButton {
+            text: root.primary;
+            primary: true;
+            enabled: root.primary-enabled;
+            clicked => {
+                root.primary-clicked();
+            }
+            init => {
+                if root.primary-focused {
+                    self.focus();
+                }
+            }
+        }
+    }
+    if root.narrow: VerticalLayout {
+        spacing: 8px;
+        ActionButton {
+            text: root.primary;
+            primary: true;
+            horizontal-stretch: 1;
+            enabled: root.primary-enabled;
+            clicked => {
+                root.primary-clicked();
+            }
+            init => {
+                if root.primary-focused {
+                    self.focus();
+                }
+            }
+        }
+        if root.skip-shown: ActionButton {
+            text: "Skip";
+            horizontal-stretch: 1;
+            enabled: root.skip-enabled;
+            clicked => {
+                root.skip();
+            }
+        }
+        if root.back-shown: ActionButton {
+            text: "Back";
+            horizontal-stretch: 1;
+            enabled: root.back-enabled;
+            clicked => {
+                root.back();
+            }
+        }
+    }
+}
+
+component WizardCard inherits Card {
+    in property <Wizard> wizard;
+    // Too narrow for a row of buttons beside each other.
+    property <bool> narrow: self.width < 400px * Theme.text-scale;
+    callback name-edited(string);
+    callback next();
+    callback back();
+    callback close();
+    callback choose-orientation(string);
+    callback update();
+    callback skip();
+
+    accessible-role: groupbox;
+    accessible-label: "Set up " + root.wizard.device-name;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+        // Close beside the title, or under it when the card is narrow.
+        if !root.narrow: HorizontalLayout {
+            spacing: 12px;
+            WizardTitle {
+                horizontal-stretch: 1;
+                status: root.wizard.device-name + " · " + root.wizard.device-status;
+            }
+
+            VerticalLayout {
+                alignment: start;
+                horizontal-stretch: 0;
+                CloseSetup {
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+        }
+        if root.narrow: VerticalLayout {
+            spacing: 8px;
+            WizardTitle {
+                status: root.wizard.device-name + " · " + root.wizard.device-status;
+            }
+
+            HorizontalLayout {
+                alignment: start;
+                CloseSetup {
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+        }
+
+        Text {
+            accessible-role: AccessibleRole.text;
+            accessible-label: self.text;
+            text: "Step " + root.wizard.step-n + " of " + root.wizard.step-total;
+            font-size: Theme.caption;
+            color: Theme.secondary-text;
+        }
+
+        if root.wizard.step == "name": VerticalLayout {
+            spacing: 8px;
+            GroupTitle {
+                text: "Name this Device";
+            }
+
+            name := TextField {
+                label: "Name";
+                value: root.wizard.name;
+                placeholder: "Desk";
+                description: root.wizard.name-hint;
+                enabled: !root.wizard.name-disabled;
+                invalid: root.wizard.name-invalid;
+                commit-on-leave: false;
+                edited(text) => {
+                    root.name-edited(text);
+                }
+                accepted(text) => {
+                    root.name-edited(text);
+                    root.next();
+                }
+                init => {
+                    self.focus();
+                }
+            }
+
+            Text {
+                accessible-role: none;
+                text: root.wizard.name-hint;
+                font-size: Theme.caption;
+                color: root.wizard.name-invalid ? Theme.critical : Theme.secondary-text;
+                wrap: word-wrap;
+            }
+        }
+
+        if root.wizard.step == "orientation": VerticalLayout {
+            spacing: 8px;
+            orientation-title := GroupTitle {
+                text: "How does it stand?";
+            }
+
+            Choices {
+                label: orientation-title.text;
+                tiles: true;
+                autofocus: true;
+                enabled: root.wizard.busy == "";
+                value: root.wizard.orientation;
+                choices: [
+                    { value: "landscape", label: "Landscape", hint: "" },
+                    { value: "portrait", label: "Portrait", hint: "" },
+                ];
+                chose(value) => {
+                    root.choose-orientation(value);
+                }
+            }
+
+            Hint {
+                text: "Each orientation keeps its own Layout. You can change it later in Settings.";
+            }
+        }
+
+        if root.wizard.step == "firmware": VerticalLayout {
+            spacing: 8px;
+            firmware-title := GroupTitle {
+                text: "Update Firmware";
+            }
+
+            if root.wizard.firmware-step == "idle": Body {
+                text: root.wizard.firmware-intro;
+            }
+            if root.wizard.firmware-step == "running" || root.wizard.firmware-step == "waiting": VerticalLayout {
+                spacing: 8px;
+                Body {
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: self.text;
+                    text: root.wizard.firmware-status;
+                }
+
+                ProgressBar {
+                    label: firmware-title.text;
+                    value: root.wizard.firmware-step == "running" ? root.wizard.firmware-pct : -1;
+                    value-text: root.wizard.firmware-status;
+                }
+
+                Hint {
+                    text: root.wizard.keep-plugged;
+                }
+            }
+            if root.wizard.firmware-step == "done" || root.wizard.firmware-step == "cancelled": Body {
+                accessible-role: AccessibleRole.text;
+                accessible-label: self.text;
+                text: root.wizard.firmware-status;
+            }
+            if root.wizard.firmware-step == "failed": InfoBar {
+                text: root.wizard.firmware-status;
+                severity: Severity.error;
+                details: root.wizard.firmware-log;
+            }
+        }
+
+        if root.wizard.step == "done": VerticalLayout {
+            spacing: 8px;
+            GroupTitle {
+                text: root.wizard.done-title;
+            }
+
+            Body {
+                text: root.wizard.done-text;
+            }
+        }
+
+        if root.wizard.offline != "": Text {
+            accessible-role: AccessibleRole.text;
+            accessible-label: self.text;
+            text: root.wizard.offline;
+            font-size: Theme.body;
+            color: Theme.caution;
+            wrap: word-wrap;
+        }
+        if root.wizard.error != "": InfoBar {
+            text: root.wizard.error;
+            severity: Severity.error;
+            details: root.wizard.error-detail;
+        }
+
+        WizardFooter {
+            narrow: root.narrow;
+            back-shown: !root.wizard.first && root.wizard.step != "done";
+            back-enabled: root.wizard.busy == "" && !root.wizard.updating;
+            // The Firmware step can be skipped until its update is done.
+            skip-shown: root.wizard.step == "firmware" && root.wizard.firmware-step != "done";
+            skip-enabled: !root.wizard.updating;
+            primary: root.wizard.step == "done" ? "Done"
+                : self.skip-shown ? (root.wizard.updating ? "Updating…" : root.wizard.firmware-step == "failed" ? "Retry" : "Update")
+                : root.wizard.busy != "" ? root.wizard.busy : "Next";
+            primary-enabled: root.wizard.step == "done" || (root.wizard.live && root.wizard.busy == "" && !root.wizard.updating);
+            primary-focused: root.wizard.step == "done";
+            back => {
+                root.back();
+            }
+            skip => {
+                root.skip();
+            }
+            primary-clicked => {
+                if root.wizard.step == "done" {
+                    root.close();
+                } else if self.skip-shown {
+                    root.update();
+                } else {
+                    root.next();
+                }
+            }
+        }
+    }
+}
+
+export component SetupPage inherits ScrollingPage {
+    in property <[BoardCard]> boards;
+    in property <[string]> ignored;
+    in property <bool> wizard-open;
+    in property <Wizard> wizard;
+    in property <[SetupLater]> later;
+    callback install(string);
+    callback ignore(string);
+    callback restore(string);
+    callback cancel-board(string);
+    callback name-edited(string);
+    callback next();
+    callback back();
+    callback close();
+    callback choose-orientation(string);
+    callback update();
+    callback skip();
+    callback start-setup(string);
+    title: "Setup";
+
+    PageTitle {
+        text: "Setup";
+    }
+
+    if root.wizard-open: WizardCard {
+        wizard: root.wizard;
+        name-edited(text) => {
+            root.name-edited(text);
+        }
+        next => {
+            root.next();
+        }
+        back => {
+            root.back();
+        }
+        close => {
+            root.close();
+        }
+        choose-orientation(value) => {
+            root.choose-orientation(value);
+        }
+        update => {
+            root.update();
+        }
+        skip => {
+            root.skip();
+        }
+    }
+
+    for board in root.boards: BoardItem {
+        board: board;
+        install => {
+            root.install(board.id);
+        }
+        ignore => {
+            root.ignore(board.id);
+        }
+        cancel => {
+            root.cancel-board(board.id);
+        }
+    }
+
+    if root.later.length > 0: VerticalLayout {
+        spacing: 8px;
+        GroupTitle {
+            text: "Not set up yet";
+        }
+
+        for device in root.later: Card {
+            HorizontalLayout {
+                padding: 12px;
+                padding-left: 16px;
+                spacing: 12px;
+                Body {
+                    text: device.name;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                ActionButton {
+                    text: "Set up";
+                    label: "Set up " + device.name;
+                    horizontal-stretch: 0;
+                    clicked => {
+                        root.start-setup(device.id);
+                    }
+                }
+            }
+        }
+    }
+
+    if root.ignored.length > 0: VerticalLayout {
+        spacing: 8px;
+        GroupTitle {
+            text: "Ignored New boards";
+        }
+
+        for id in root.ignored: HorizontalLayout {
+            alignment: start;
+            ActionButton {
+                text: "New board";
+                label: "New board on " + id;
+                description: "Ignored. Choose it to install Firmware.";
+                clicked => {
+                    root.restore(id);
+                }
+            }
+        }
+    }
+
+    if !root.wizard-open && root.boards.length == 0 && root.later.length == 0: Card {
+        VerticalLayout {
+            padding: 24px;
+            spacing: 8px;
+            SectionTitle {
+                text: "Nothing to set up";
+            }
+
+            Body {
+                text: "Plug in a new board or a Device with a USB data cable. Setup starts here by itself.";
+                color: Theme.secondary-text;
+            }
+        }
+    }
+}

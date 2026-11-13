@@ -82,12 +82,16 @@ class ReleaseVersionTest(unittest.TestCase):
         relative = "app/crates/td-core/Cargo.toml"
         path = self.root / relative
         text = path.read_bytes().decode("utf-8")
-        text += '\n[dev-dependencies]\nsome-dep = { version = "0.1.0" }\n\n[dependencies.other]\nversion = "2.0.0"\n'
+        # Tables of their own, so the crate's own [dependencies] or [dev-dependencies] can't clash.
+        text += (
+            "\n[target.'cfg(any())'.dev-dependencies]\nsome-dep = { version = \"0.1.0\" }\n"
+            '\n[target.\'cfg(any())\'.dependencies.other]\nversion = "2.0.0"\n'
+        )
         path.write_bytes(text.encode("utf-8"))
         self.assertEqual(self.run_cli("bump", "7.8.9")[0], 0)
         updated = path.read_bytes().decode("utf-8")
         self.assertIn('some-dep = { version = "0.1.0" }', updated)
-        self.assertIn('[dependencies.other]\nversion = "2.0.0"', updated)
+        self.assertIn('[target.\'cfg(any())\'.dependencies.other]\nversion = "2.0.0"', updated)
         self.assertEqual(updated.count('version = "7.8.9"'), 1)
 
     def test_bump_updates_lock_entries_only_for_workspace_crates(self):

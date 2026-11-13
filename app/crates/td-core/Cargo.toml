@@ -15,3 +15,6 @@ ts-rs = { version = "11", optional = true, features = ["serde-json-impl"] }
 [features]
 # TypeScript declarations for the types the Companion API carries.
 ts = ["dep:ts-rs"]
+
+[dev-dependencies]
+tempfile = "3"
