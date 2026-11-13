@@ -258,6 +258,24 @@ impl Session {
         }
         self.cancel_gif(&key);
         let aimed = self.gif_aim(o, &key.1, fit);
+        if source.bytes.len() <= 16 * 1024 * 1024
+            && let Some((aim, _)) = &aimed
+            && self.gifs.work.values().any(|r| r.job.is_some())
+        {
+            self.gifs.work.insert(
+                key,
+                Run {
+                    fit,
+                    aim: aim.clone(),
+                    job: None,
+                    work: GifWork::Queued {
+                        file: source.file.clone(),
+                    },
+                    source,
+                },
+            );
+            return Ok(());
+        }
         let result = if source.bytes.len() > 16 * 1024 * 1024 {
             Err(ErrorBody {
                 code: "request.too_large".into(),
@@ -280,6 +298,12 @@ impl Session {
         };
         let (job, work) = match result {
             Ok(job) => (Some(job.id.clone()), work_for(&job, &source.file)),
+            Err(error) if error.code == "limits.exceeded" => (
+                None,
+                GifWork::Queued {
+                    file: source.file.clone(),
+                },
+            ),
             Err(error) => (
                 None,
                 GifWork::Failed {
@@ -322,7 +346,13 @@ impl Session {
                 continue;
             }
             let run = &self.gifs.work[&key];
-            let Some(id) = &run.job else { continue };
+            let Some(id) = &run.job else {
+                if matches!(run.work, GifWork::Queued { .. }) {
+                    let (source, fit) = (run.source.clone(), run.fit);
+                    self.start_gif(key, source, fit)?;
+                }
+                continue;
+            };
             let aim = self.gif_aim(o, &key.1, run.fit);
             if aim.as_ref().map(|a| &a.0) != Some(&run.aim) {
                 let (source, fit) = (run.source.clone(), run.fit);
@@ -419,9 +449,20 @@ impl Session {
             let fit = source.fit;
             self.start_gif(key, source, fit)?;
         }
+        if !self.gifs.work.values().any(|r| r.job.is_some()) {
+            let next = self
+                .gifs
+                .work
+                .iter()
+                .find(|(_, r)| matches!(r.work, GifWork::Queued { .. }))
+                .map(|(key, r)| (key.clone(), r.source.clone(), r.fit));
+            if let Some((key, source, fit)) = next {
+                self.start_gif(key, source, fit)?;
+            }
+        }
         Ok(())
     }
-    fn device_name(&self) -> String {
+    pub(super) fn device_name(&self) -> String {
         self.handle
             .devices()
             .get(&crate::devices::DeviceId::parse(&self.device).unwrap())
@@ -452,6 +493,7 @@ impl Session {
             "asset.refused" if reason == Some("memory") => large(),
             _ if push => return None,
             "request.too_large" => large(),
+            "client.unreachable" => "Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry.".into(),
             "limits.exceeded" => "Other Assets are still being prepared. Wait a moment, then retry.".into(),
             "device.not_connected" | "device.not_found" => format!("Couldn't prepare this GIF. Check that {device} is plugged in, then retry."),
             _ => "Couldn't prepare this GIF. Choose another GIF.".into(),
