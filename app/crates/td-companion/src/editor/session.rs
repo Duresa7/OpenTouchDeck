@@ -42,6 +42,8 @@ pub enum SessionError {
     Asset(#[from] crate::features::assets::AssetError),
 }
 
+/// Blocking: `edit`, `resolve`, `begin_send` and the other changes write the drafts file before
+/// they return. Run it on the editor [`Worker`](super::Worker)'s thread, never on a UI thread.
 pub struct Session {
     handle: Handle,
     device: String,
@@ -170,6 +172,11 @@ impl Session {
         }
         self.model.persist()?;
         result
+    }
+    /// Drops this orientation's refused Label and Action values; admitted values stay.
+    pub fn discard_rejected(&mut self) -> Result<(), EditorError> {
+        self.model.discard_rejected(self.orientation)?;
+        self.model.persist()
     }
     pub fn resolve(&mut self, decision: Decision) -> Result<(), EditorError> {
         let replacing = matches!(decision, Decision::UseDevice)
