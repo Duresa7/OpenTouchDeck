@@ -6217,7 +6217,7 @@ dependencies = [
 
 [[package]]
 name = "td-app"
-version = "1.2.0"
+version = "2.0.0-preview.1"
 dependencies = [
  "embed-resource",
  "i-slint-backend-testing",
@@ -6240,7 +6240,7 @@ dependencies = [
 
 [[package]]
 name = "td-companion"
-version = "1.2.0"
+version = "2.0.0-preview.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -6286,7 +6286,7 @@ dependencies = [
 
 [[package]]
 name = "td-core"
-version = "1.2.0"
+version = "2.0.0-preview.1"
 dependencies = [
  "dirs 6.0.0",
  "serde",
@@ -6298,7 +6298,7 @@ dependencies = [
 
 [[package]]
 name = "td-host"
-version = "1.2.0"
+version = "2.0.0-preview.1"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -6332,7 +6332,7 @@ dependencies = [
 
 [[package]]
 name = "td-link"
-version = "1.2.0"
+version = "2.0.0-preview.1"
 dependencies = [
  "aes-gcm",
  "espflash",
@@ -6359,7 +6359,7 @@ dependencies = [
 
 [[package]]
 name = "td-updater"
-version = "1.2.0"
+version = "2.0.0-preview.1"
 dependencies = [
  "base64 0.22.1",
  "blake2",
