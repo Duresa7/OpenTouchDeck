@@ -1,0 +1,61 @@
+name: codeql
+
+# CodeQL code scanning for every language main holds. It replaced GitHub's default setup, which cannot skip a pull
+# request by path. A pull request that changes only docs, images or agent skills has no code to analyse, so it
+# starts no run. paths-ignore skips a run only when every changed path matches it, and a new code folder is
+# analysed without a change here.
+# Every push to main, a weekly run and a run from the Actions tab analyse the whole tree.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - docs/**
+      - "**/*.png"
+      - "**/*.gif"
+      - "**/*.jpg"
+      - "**/*.svg"
+      - "**/*.ico"
+      - .agents/skills/**
+      - .claude/skills/**
+      - LICENSE
+      - .env.example
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels the run of the push before it. Runs on main queue instead, and a waiting run
+# gives way to a newer one, which analyses the newer tree.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: ${{ matrix.language }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every language reads the source without a build. The categories match the default setup's, so alerts
+        # keep their history.
+        language: [actions, c-cpp, javascript-typescript, python, rust]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
