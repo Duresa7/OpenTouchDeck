@@ -2,25 +2,26 @@
 <!--
   The Open TouchDeck 2.0 installer: an MSI for the current user, built with WiX (docs/packaging.md).
 
-  A pipeline proof, not a product. For now it installs td-companion.exe alone, with no shortcut and no start at
-  sign-in, so the release pipeline can be proved end to end before the native app exists.
+  Installs the native app, including the Companion in-process.
 
   Build variables, passed as `wix build -d Name=value`:
-    Version       the version of td-companion as three numbers, such as 2.0.0
-    CompanionExe  the path of the built td-companion.exe
+    Version       the version of td-app as three numbers, such as 2.0.0
+    AppExe  the path of the built td-app.exe
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <!--
-    Name, Manufacturer and Version are the program's version resource too (app/crates/td-companion/build.rs).
+    Name, Manufacturer and Version are the program's version resource too (app/crates/td-app/build.rs).
     Never change UpgradeCode: Windows finds the installed copy an update replaces by it.
   -->
   <Package Name="Open TouchDeck" Manufacturer="Duresa Kadi" Version="$(Version)"
            UpgradeCode="FA97B489-E1B1-43CA-97AA-6D5FEE4A9836" Scope="perUser" Language="1033">
-    <SummaryInformation Description="Open TouchDeck installer (pipeline proof)" />
+    <SummaryInformation Description="Open TouchDeck installer" />
     <MajorUpgrade DowngradeErrorMessage="A newer Open TouchDeck is installed on this PC. Uninstall it first to go back." />
     <MediaTemplate EmbedCab="yes" />
+    <Icon Id="AppIcon" SourceFile="$(AppIcon)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
-    <Property Id="ARPCOMMENTS" Value="Pipeline proof: installs td-companion.exe only." />
+    <Property Id="ARPCOMMENTS" Value="Open TouchDeck native app and Companion." />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/Duresa7/OpenTouchDeck" />
     <Property Id="ARPNOMODIFY" Value="1" />
 
@@ -36,8 +37,8 @@
             Message="Open TouchDeck needs Windows 11, and this PC runs an older Windows. Open TouchDeck 1.x works on Windows 10: download it from the Releases page." />
 
     <!--
-      Open TouchDeck 1.x installs td-companion.exe into the same folder with its own installer, and this package
-      doesn't replace it yet. Refuse to install beside it rather than overwrite its files.
+      Open TouchDeck 1.x owns this same folder. Refuse coexistence even though the native
+      payload has a different filename; the separate bridge must remove 1.x first.
     -->
     <Property Id="OPENTOUCHDECK1">
       <DirectorySearch Id="OpenTouchDeck1Folder" Path="[LocalAppDataFolder]Programs\Open TouchDeck">
@@ -53,9 +54,19 @@
       </Directory>
     </StandardDirectory>
 
+    <StandardDirectory Id="ProgramMenuFolder" />
+
     <Feature Id="Main" Title="Open TouchDeck">
-      <Component Id="Companion" Directory="INSTALLFOLDER" Guid="EFA57886-2B72-4519-B090-B68A3DE0CA56">
-        <File Id="CompanionExe" Source="$(CompanionExe)" Name="td-companion.exe" />
+      <Component Id="App" Directory="INSTALLFOLDER" Guid="E874C18B-196D-4333-9219-08CF30B6EFAC">
+        <File Id="AppExe" Source="$(AppExe)" Name="td-app.exe" />
+        <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="Open TouchDeck"
+                  Target="[#AppExe]" Arguments="--packaged" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="io.github.duresa7.touchdeck" />
+        </Shortcut>
+        <RemoveRegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                             Name="Open TouchDeck" Action="removeOnUninstall" />
+        <RemoveRegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+                             Name="Open TouchDeck" Action="removeOnUninstall" />
         <!--
           A component in the user's profile has a registry value under HKCU as its key path, and removes the
           folders it created. Windows Installer's validation asks for both.

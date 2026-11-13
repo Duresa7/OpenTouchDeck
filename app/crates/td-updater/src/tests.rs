@@ -344,7 +344,7 @@ fn checks_off_makes_no_requests_even_when_due() {
 }
 
 #[test]
-fn waits_six_hours_between_attempts_including_failures() {
+fn waits_24_hours_between_attempts_including_failures() {
     let mut updater = Updater::new(
         FakeHttp::default(),
         FakeClock::default(),
