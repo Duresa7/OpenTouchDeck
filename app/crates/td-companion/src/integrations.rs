@@ -24,6 +24,8 @@ pub struct Service {
     summaries: Arc<Mutex<Vec<IntegrationSummary>>>,
     pending: Arc<Pending>,
     events: Events,
+    /// The store behind every Integration's secrets, so a failed save can put them back.
+    secrets: Arc<dyn td_host::integrations::secrets::SecretStore>,
     pub(crate) controls: Controls,
     #[cfg(any(test, feature = "test-hooks"))]
     media: Option<td_host::integrations::media::fake::FakeMedia>,
@@ -93,12 +95,24 @@ pub struct Setup {
     service: Service,
     integration: String,
     enable_when_ready: bool,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Cancels a [`Setup`]'s enable intent from outside it, even while its save waits to run. A save
+/// checks it under the registry lock before enabling, so a cancel that comes first always wins.
+#[derive(Clone)]
+pub struct SetupCancel(Arc<std::sync::atomic::AtomicBool>);
+impl SetupCancel {
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
 }
 impl Setup {
-    /// Saves configuration first (which may change the secret's origin), then secrets,
-    /// then enables if requested and ready. Poll results and other user writes cannot
-    /// interleave these steps. Settings and secrets already saved before an error stay
-    /// saved; enabling is always last. `enabled` in a form is ignored: setup owns intent.
+    /// Validates every secret, then saves configuration (which may change the secret's origin),
+    /// then secrets, then enables if requested, still wanted and ready. Poll results and other
+    /// user writes cannot interleave these steps. The save is all or nothing: on any error the
+    /// settings and every secret it would touch are put back as they were. `enabled` in a form
+    /// is ignored: setup owns intent.
     pub fn save(
         &mut self,
         mut config: Value,
@@ -107,27 +121,78 @@ impl Setup {
         if let Some(fields) = config.as_object_mut() {
             fields.remove("enabled");
         }
+        if secrets.values().any(|value| {
+            value.trim().is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
+        }) {
+            return Err(Error::ConfigInvalid);
+        }
+        let store = self.service.secrets.clone();
+        let id = self.integration.clone();
+        let enable = self.enable_when_ready && !self.cancelled();
+        let cancelled = self.cancelled.clone();
         let view = self.service.with_registry(|registry| {
-            let integration = registry.get(&self.integration)?;
-            configure(integration.as_mut(), config)?;
-            for (field, value) in secrets {
-                integration.secret_put(&field, &value)?;
-            }
-            if self.enable_when_ready {
-                if integration.summary().status.state == "not_configured" {
-                    return Err(Error::ConfigInvalid);
+            let integration = registry.get(&id)?;
+            let before = integration.view()?;
+            let mut fields: BTreeSet<String> = before.secrets.keys().cloned().collect();
+            fields.extend(secrets.keys().cloned());
+            let kept = fields
+                .into_iter()
+                .map(|field| {
+                    let secret = store.get(&id, &field).map_err(|_| Error::Credentials)?;
+                    Ok((field, secret))
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            let wanted = || enable && !cancelled.load(std::sync::atomic::Ordering::Acquire);
+            let result = apply(integration.as_mut(), config, &secrets, wanted);
+            if result.is_err() {
+                // Settings first: moving back to the old address forgets the key again.
+                let _ = configure(integration.as_mut(), before.config);
+                for (field, secret) in kept {
+                    let _ = match secret {
+                        Some(secret) => store.put(&id, &field, secret),
+                        None => store.delete(&id, &field),
+                    };
                 }
-                integration.set_enabled(true)
-            } else {
-                integration.view()
             }
+            result
         })?;
         self.enable_when_ready = false;
         Ok(view)
     }
 
+    /// A handle that cancels this Setup's enable intent while a save of it is on its way.
+    pub fn canceller(&self) -> SetupCancel {
+        SetupCancel(self.cancelled.clone())
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     /// Discards pending enable intent. Previously saved settings are not rolled back.
-    pub fn cancel(self) {}
+    pub fn cancel(self) {
+        self.canceller().cancel();
+    }
+}
+
+fn apply(
+    integration: &mut dyn td_host::integrations::Integration,
+    config: Value,
+    secrets: &BTreeMap<String, String>,
+    enable: impl FnOnce() -> bool,
+) -> Result<IntegrationView, Error> {
+    configure(integration, config)?;
+    for (field, value) in secrets {
+        integration.secret_put(field, value)?;
+    }
+    if enable() {
+        if integration.summary().status.state == "not_configured" {
+            return Err(Error::ConfigInvalid);
+        }
+        integration.set_enabled(true)
+    } else {
+        integration.view()
+    }
 }
 
 impl Service {
@@ -174,6 +239,7 @@ impl Service {
             service: self.clone(),
             integration: id.to_owned(),
             enable_when_ready,
+            cancelled: Arc::default(),
         })
     }
 
@@ -199,16 +265,17 @@ impl Service {
     pub(crate) fn new(mock: bool, events: Events) -> Self {
         let media = mock.then(td_host::integrations::media::fake::FakeMedia::default);
         let volume = mock.then(td_host::integrations::volume::fake::FakeVolume::default);
+        let secrets: Arc<dyn td_host::integrations::secrets::SecretStore> = if mock {
+            Arc::new(MemorySecrets::default())
+        } else {
+            Arc::new(OsSecrets)
+        };
         let registry = Registry::new(Environment {
             media_provider: media.as_ref().map(|fake| {
                 Arc::new(fake.clone()) as Arc<dyn td_host::integrations::media::MediaProvider>
             }),
             volume: volume.as_ref().map(|fake| fake.factory()),
-            secrets: if mock {
-                Arc::new(MemorySecrets::default())
-            } else {
-                Arc::new(OsSecrets)
-            },
+            secrets: secrets.clone(),
             config_file: (!mock).then(|| td_core::app_dirs::Dirs::current().sources_config()),
             fetch: if mock {
                 Arc::new(|| Box::new(FakeFetch))
@@ -228,6 +295,7 @@ impl Service {
             summaries: Arc::default(),
             pending: Arc::default(),
             events: events.clone(),
+            secrets,
             controls,
             #[cfg(any(test, feature = "test-hooks"))]
             media,
@@ -441,6 +509,8 @@ fn publish(registry: &Registry, events: &Events) {
         events.publish(&IntegrationStatusEvent(summary));
     }
 }
+
+pub mod session;
 
 #[cfg(test)]
 #[path = "integrations/tests.rs"]
