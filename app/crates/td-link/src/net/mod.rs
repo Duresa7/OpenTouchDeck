@@ -7,6 +7,7 @@
 //! [`Credential`], and [`mdns::browse`] finds Devices on the LAN. With the `fake` feature,
 //! `fake::FakeNetDevice` is a Device on loopback for tests; release builds leave it out.
 
+pub mod ble_discovery;
 mod client;
 #[cfg(feature = "fake")]
 pub mod fake;

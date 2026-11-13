@@ -1459,6 +1459,43 @@ static void test_advert(void)
     uint8_t mine[TD_NETLINK_HINT_LEN];
     CHECK(td_netlink_hint(ltk, nonce, mine) && !memcmp(mine, hint, sizeof mine));
 
+    VEC(ble_nonce, "ble_discovery.nonce");
+    VEC(ble_rotated, "ble_discovery.rotated_nonce");
+    uint8_t ble_out[TD_NETLINK_BLE_DISCOVERY_LEN], expected[TD_NETLINK_BLE_DISCOVERY_LEN];
+    uint8_t filler[TD_NETLINK_BLE_HINT_LEN];
+    fresh_deck(true, 0, 0);
+    for (unsigned i = 0; i < 4; i++) {
+        unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.fillers"), i)->valuestring, filler, sizeof filler);
+        unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.slots"), i)->valuestring, expected, sizeof expected);
+        CHECK(td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, i, ble_out));
+        CHECK(!memcmp(ble_out, expected, sizeof expected));
+    }
+    unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.fillers"), 0)->valuestring, filler, sizeof filler);
+    unhex(at(g_vectors, "ble_discovery.rotated")->valuestring, expected, sizeof expected);
+    CHECK(td_netlink_ble_advert_build(&g_deck, ble_rotated, filler, 0, ble_out));
+    CHECK(!memcmp(ble_out, expected, sizeof expected));
+    g_deck.window.open = true;
+    unhex(at(g_vectors, "ble_discovery.pairing")->valuestring, expected, sizeof expected);
+    CHECK(td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, 0, ble_out));
+    CHECK(!memcmp(ble_out, expected, sizeof expected));
+    g_deck.window.open = false;
+    g_deck.pairings.count = 0;
+    unhex(at(g_vectors, "ble_discovery.unpaired")->valuestring, expected, sizeof expected);
+    CHECK(td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, 0, ble_out));
+    CHECK(!memcmp(ble_out, expected, sizeof expected));
+    CHECK(!td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, 4, ble_out));
+    fresh_deck(true, 0, 0);
+    for (unsigned i = 0; i < 4; i++) {
+        unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.full_ltks"), i)->valuestring,
+              g_deck.pairings.entries[i].ltk, TD_NETLINK_KEY_LEN);
+    }
+    g_deck.pairings.count = 4;
+    for (unsigned i = 0; i < 4; i++) {
+        unhex(cJSON_GetArrayItem(at(g_vectors, "ble_discovery.full"), i)->valuestring, expected, sizeof expected);
+        CHECK(td_netlink_ble_advert_build(&g_deck, ble_nonce, filler, i, ble_out));
+        CHECK(!memcmp(ble_out, expected, sizeof expected));
+    }
+
     /* The fixture's free slots get the vector fillers; the first slot's bytes are overwritten by its hint. */
     uint8_t fillers[TD_NETLINK_HINT_SLOTS * TD_NETLINK_HINT_LEN];
     memset(fillers, 0xee, sizeof fillers);
