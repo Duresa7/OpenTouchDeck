@@ -1508,7 +1508,7 @@ async fn starter_geometry_duplicate_navigation_and_page_toolbar_rules_cross_sess
         },
     })
     .unwrap();
-    s.select("extra", None);
+    assert_eq!(s.selection(), (Some("extra"), None));
     s.edit(Edit::PageTitle {
         page: "extra".into(),
         title: "Renamed".into(),
@@ -1537,6 +1537,7 @@ async fn starter_geometry_duplicate_navigation_and_page_toolbar_rules_cross_sess
         s.draft().unwrap().effective_tile("next").unwrap().action,
         Action::None
     );
+    assert_eq!(s.selection(), (Some("media"), None));
     s.new_layout(NewLayout::Blank).unwrap();
     assert!(
         s.edit(Edit::RemovePage {
@@ -1836,4 +1837,29 @@ async fn gif_queue_prepares_all_tiles_serially_and_cancelling_one_keeps_the_othe
         s.draft().unwrap().effective_tile(&c).unwrap().render,
         Some(TileRender::Gif)
     );
+}
+
+#[tokio::test]
+async fn loading_and_replacing_reset_selection_while_keep_mine_preserves_it() {
+    use td_companion::editor::{Decision, NewLayout};
+    use td_core::editing::Capabilities;
+    let (_td, mut s) = session().await;
+    s.new_layout(NewLayout::Starter).unwrap();
+    s.send(Capabilities::default()).await.unwrap();
+    s.select("shortcuts", Some("copy"));
+    s.load().await.unwrap();
+    assert_eq!(s.selection(), (Some("media"), None));
+    s.select("shortcuts", Some("copy"));
+    s.edit(Edit::Name {
+        name: "Mine".into(),
+    })
+    .unwrap();
+    s.load().await.unwrap();
+    assert_eq!(s.selection(), (Some("shortcuts"), Some("copy")));
+    s.resolve(Decision::KeepMine).unwrap();
+    assert_eq!(s.selection(), (Some("shortcuts"), Some("copy")));
+    s.load().await.unwrap();
+    s.resolve(Decision::UseDevice).unwrap();
+    assert_eq!(s.selection(), (Some("media"), None));
+    assert_eq!(s.draft().unwrap().layout().name, "Starter");
 }

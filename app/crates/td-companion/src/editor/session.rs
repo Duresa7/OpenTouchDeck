@@ -145,18 +145,35 @@ impl Session {
     }
     pub fn edit(&mut self, edit: Edit) -> Result<Option<String>, EditorError> {
         self.refresh_assets()?;
+        let added_page = match &edit {
+            Edit::AddPage { page } => Some(page.id().to_owned()),
+            _ => None,
+        };
+        let removes_page = matches!(&edit, Edit::RemovePage { .. });
         let result = self.model.edit(self.orientation, edit);
         self.refresh_assets()?;
         self.sync_gifs()?;
         self.reconcile_selection();
-        if let Ok(Some(id)) = &result {
-            self.tile = Some(id.clone());
+        if result.is_ok() {
+            if let Some(page) = added_page {
+                self.select(&page, None);
+            } else if removes_page {
+                self.tile = None;
+            } else if let Ok(Some(id)) = &result {
+                self.tile = Some(id.clone());
+            }
         }
         self.model.persist()?;
         result
     }
     pub fn resolve(&mut self, decision: Decision) -> Result<(), EditorError> {
+        let replacing = matches!(decision, Decision::UseDevice)
+            && self.draft().is_some_and(|draft| draft.conflict().is_some());
         self.model.resolve(self.orientation, decision)?;
+        if replacing {
+            self.page = None;
+            self.tile = None;
+        }
         self.refresh_assets()?;
         self.reconcile_selection();
         self.sync_gifs()?;
@@ -258,6 +275,10 @@ impl Session {
             Err(error) => return Err(error.into()),
         };
         self.model.receive(read.layout, read.revision)?;
+        if self.draft().is_some_and(|draft| draft.conflict().is_none()) {
+            self.page = None;
+            self.tile = None;
+        }
         self.refresh_assets()?;
         self.sync_gifs()?;
         self.reconcile_selection();
