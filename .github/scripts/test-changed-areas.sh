@@ -23,11 +23,10 @@ check none app/README.md docs/setup.md
 
 # The Rust workspace.
 check "rust" app/crates/td-core/src/layout.rs
-check "rust" app/crates/td-companion/tests/version_info.rs
+check "rust" app/crates/td-companion/tests/companion.rs
 check "rust" app/Cargo.toml
 check "rust" app/rust-toolchain.toml
 check "rust" app/icons/builtin/play.svg
-check "rust" docs/companion-api.md
 check "rust scripts" app/Cargo.lock
 check "rust scripts" app/crates/td-companion/Cargo.toml
 check "rust scripts" app/crates/td-host/src/packs.json

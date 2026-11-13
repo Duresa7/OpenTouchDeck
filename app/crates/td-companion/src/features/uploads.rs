@@ -61,6 +61,7 @@ impl UploadClaim {
     }
 }
 impl Uploads {
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn sweep(&self, now: Instant, active: impl Fn(&str) -> bool) {
         self.0
             .lock()

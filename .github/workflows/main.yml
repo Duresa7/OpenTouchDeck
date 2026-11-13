@@ -49,7 +49,6 @@ jobs:
     uses: ./.github/workflows/rust.yml
     with:
       cache: true
-      release-exe: true
 
   scripts:
     needs: changes

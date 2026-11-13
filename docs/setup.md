@@ -46,10 +46,10 @@ CI installs `libudev-dev`, for serial discovery, in [its Rust setup](../.github/
 From `app/`, the ordinary source build is:
 
 ```sh
-cargo build -p td-companion
+cargo build -p td-app
 ```
 
-`libfontconfig-dev` is for the native app's Slint UI (`td-app`), which `cargo test --workspace` builds. Use `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace` to check changes. [app/README.md](../app/README.md) shows how to run the app.
+`libfontconfig-dev` is for the native app's Slint UI (`td-app`). Use `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace` to check changes. [app/README.md](../app/README.md) shows how to run the app.
 
 Do not enable `test-hooks` for a distributed app.
 
