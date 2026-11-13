@@ -137,6 +137,8 @@ component Outcome inherits InfoBar {
 // The question before a secret is forgotten.
 component ForgetQuestion inherits Rectangle {
     in property <IntegrationSecret> secret;
+    // Room for both buttons on one line.
+    property <bool> wide: self.width >= 260px * Theme.text-scale;
 
     accessible-role: groupbox;
     accessible-label: "Forget the " + self.secret.label.to-lowercase() + "?";
@@ -161,8 +163,31 @@ component ForgetQuestion inherits Rectangle {
             text: Integrations.page.name + " stops until you add it again.";
         }
 
-        HorizontalLayout {
+        if root.wide: HorizontalLayout {
             alignment: end;
+            spacing: 8px;
+            padding-top: 4px;
+            ActionButton {
+                text: "Cancel";
+                clicked => {
+                    Integrations.confirming-forget = "";
+                }
+                init => {
+                    self.focus();
+                }
+            }
+
+            ActionButton {
+                text: "Forget";
+                primary: true;
+                enabled: !Integrations.page.saving && !Integrations.page.switch-locked;
+                clicked => {
+                    Integrations.confirming-forget = "";
+                    Integrations.forget-secret(root.secret.name);
+                }
+            }
+        }
+        if !root.wide: VerticalLayout {
             spacing: 8px;
             padding-top: 4px;
             ActionButton {
@@ -339,27 +364,51 @@ component SavedWords inherits Text {
     vertical-alignment: center;
 }
 
-// Replace and Forget, for a secret that is stored.
-component SecretButtons inherits HorizontalLayout {
+// Replace and Forget, for a secret that is stored. Side by side, or one above the other when
+// the text is large.
+component SecretButtons inherits VerticalLayout {
     in property <IntegrationSecret> secret;
     in property <bool> enabled;
-    alignment: start;
-    spacing: 8px;
-    ActionButton {
-        text: "Replace";
-        label: "Replace the " + root.secret.label.to-lowercase();
-        enabled: root.enabled;
-        clicked => {
-            Integrations.replace-secret(root.secret.name);
+    in property <bool> column;
+    if !root.column: HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        ActionButton {
+            text: "Replace";
+            label: "Replace the " + root.secret.label.to-lowercase();
+            enabled: root.enabled;
+            clicked => {
+                Integrations.replace-secret(root.secret.name);
+            }
+        }
+
+        ActionButton {
+            text: "Forget";
+            label: "Forget the " + root.secret.label.to-lowercase();
+            enabled: root.enabled;
+            clicked => {
+                Integrations.confirming-forget = root.secret.name;
+            }
         }
     }
+    if root.column: VerticalLayout {
+        spacing: 8px;
+        ActionButton {
+            text: "Replace";
+            label: "Replace the " + root.secret.label.to-lowercase();
+            enabled: root.enabled;
+            clicked => {
+                Integrations.replace-secret(root.secret.name);
+            }
+        }
 
-    ActionButton {
-        text: "Forget";
-        label: "Forget the " + root.secret.label.to-lowercase();
-        enabled: root.enabled;
-        clicked => {
-            Integrations.confirming-forget = root.secret.name;
+        ActionButton {
+            text: "Forget";
+            label: "Forget the " + root.secret.label.to-lowercase();
+            enabled: root.enabled;
+            clicked => {
+                Integrations.confirming-forget = root.secret.name;
+            }
         }
     }
 }
@@ -397,6 +446,7 @@ component Secret inherits SettingBlock {
                 }
 
                 SecretButtons {
+                    column: true;
                     secret: root.secret;
                     enabled: root.enabled;
                 }
@@ -428,6 +478,45 @@ component Secret inherits SettingBlock {
     }
     if Integrations.confirming-forget == root.secret.name: ForgetQuestion {
         secret: root.secret;
+    }
+}
+
+// Save, with "Unsaved changes" beside it, or above it when the text is large.
+component SaveRow inherits Rectangle {
+    property <bool> wide: self.width >= 320px * Theme.text-scale;
+    property <bool> dirty: Integrations.page.dirty && !Integrations.page.saving;
+    min-height: layout.preferred-height;
+    layout := VerticalLayout {
+        spacing: 8px;
+        if !root.wide && root.dirty: Text {
+            accessible-role: AccessibleRole.text;
+            accessible-label: self.text;
+            text: "Unsaved changes";
+            font-size: Theme.body;
+            color: Theme.secondary-text;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 12px;
+            if root.wide && root.dirty: Text {
+                accessible-role: AccessibleRole.text;
+                accessible-label: self.text;
+                text: "Unsaved changes";
+                font-size: Theme.body;
+                color: Theme.secondary-text;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+            ActionButton {
+                text: Integrations.page.saving ? "Saving…" : "Save";
+                primary: true;
+                enabled: Integrations.page.can-save;
+                clicked => {
+                    Integrations.save();
+                }
+            }
+        }
     }
 }
 
@@ -521,27 +610,7 @@ component Detail inherits VerticalLayout {
 
                     if Integrations.page.notice != "" && Integrations.page.notice-at == "settings": Outcome { }
 
-                    HorizontalLayout {
-                        alignment: end;
-                        spacing: 12px;
-                        if Integrations.page.dirty && !Integrations.page.saving: Text {
-                            accessible-role: AccessibleRole.text;
-                            accessible-label: self.text;
-                            text: "Unsaved changes";
-                            font-size: Theme.body;
-                            color: Theme.secondary-text;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                        }
-                        ActionButton {
-                            text: Integrations.page.saving ? "Saving…" : "Save";
-                            primary: true;
-                            enabled: Integrations.page.can-save;
-                            clicked => {
-                                Integrations.save();
-                            }
-                        }
-                    }
+                    SaveRow { }
                 }
             }
         }

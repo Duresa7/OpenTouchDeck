@@ -74,6 +74,8 @@ export component IntegrationItem inherits Rectangle {
     callback toggled(bool);
     callback open-settings();
     property <bool> stacked: root.width < 440px * Theme.text-scale;
+    // Too narrow even for the button and the switch side by side: one above the other.
+    property <bool> tight: root.width < 280px * Theme.text-scale;
 
     min-height: max(64px, layout.preferred-height);
 
@@ -138,7 +140,29 @@ export component IntegrationItem inherits Rectangle {
             }
         }
 
-        if root.stacked && (root.settings || root.has-switch): HorizontalLayout {
+        if root.stacked && root.tight && root.has-switch: HorizontalLayout {
+            alignment: start;
+            ToggleSwitch {
+                label: root.name;
+                description: root.line;
+                checked: root.checked;
+                enabled: root.enabled;
+                toggled(on) => {
+                    root.toggled(on);
+                }
+            }
+        }
+        if root.stacked && root.tight && root.settings: HorizontalLayout {
+            alignment: start;
+            ActionButton {
+                text: root.settings-text;
+                label: root.settings-label;
+                clicked => {
+                    root.open-settings();
+                }
+            }
+        }
+        if root.stacked && !root.tight && (root.settings || root.has-switch): HorizontalLayout {
             alignment: space-between;
             spacing: 12px;
             if root.settings: ActionButton {
