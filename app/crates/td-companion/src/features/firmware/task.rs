@@ -82,6 +82,9 @@ const WAITING: &str = "Waiting for confirmation on this PC.";
 const CHOOSING: &str = "Choose a Firmware file on this PC…";
 /// This Companion carries no bundle of the build asked for. A task-level code, never an API one.
 pub const NOT_BUNDLED: &str = "firmware.not_bundled";
+/// What a Device page says when this copy of Open TouchDeck carries no Firmware.
+pub const NOT_BUNDLED_TEXT: &str =
+    "This copy of Open TouchDeck doesn't include Firmware. Update from a file instead.";
 pub const DECLINED: &str = "Declined on this PC. Nothing changed on the board.";
 pub const INSTALL_FAILED: &str =
     "Couldn't install Firmware. Unplug the board, plug it back in, then retry.";
@@ -208,10 +211,7 @@ impl Words {
                 "This copy of Open TouchDeck doesn't include the radio build. Update from a file instead."
                     .into()
             }
-            NOT_BUNDLED => {
-                "This copy of Open TouchDeck doesn't include Firmware. Update from a file instead."
-                    .into()
-            }
+            NOT_BUNDLED => NOT_BUNDLED_TEXT.into(),
             "firmware.rolled_back" => format!(
                 "The new Firmware didn't start, so {device} went back to {version}. It still works. Retry, or repair it from Troubleshooting."
             ),

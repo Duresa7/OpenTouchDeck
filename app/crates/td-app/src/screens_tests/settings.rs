@@ -262,7 +262,8 @@ fn at_the_largest_text_size_every_device_settings_state_fits() {
             SharedString::from("30 s"),
             SharedString::from("1 min"),
         ])));
-    let page = |firmware: &str| DevicePage {
+    let page = |firmware: &str| {
+        DevicePage {
         id: "mock0001".into(),
         name: "Desk".into(),
         status: "Connected over USB".into(),
@@ -294,16 +295,42 @@ fn at_the_largest_text_size_every_device_settings_state_fits() {
         restart_enabled: true,
         firmware_step: firmware.into(),
         firmware_pct: 42,
+        firmware_file_enabled: true,
         firmware_hint: "Keep Desk plugged in. Takes about a minute. Desk restarts once.".into(),
+        firmware_result: "Declined on this PC. Desk still runs 1.2.0.".into(),
         firmware_log: "Sending 42%".into(),
+        firmware_waiting: if firmware == "waiting" {
+            "Answer the Open TouchDeck Firmware dialog on this PC. Nothing changes on Desk until you confirm."
+        } else {
+            ""
+        }
+        .into(),
+        build_shown: true,
+        build_title: "Radio build".into(),
+        build_note: "Adds Wi-Fi and Bluetooth, both off until you set them up. The normal build has no radio code.".into(),
+        build_action: "Switch to the normal build".into(),
+        build_enabled: true,
+        build_confirm_title: "Switch Desk back to the normal build?".into(),
+        build_confirm_note: "The Wi-Fi and Bluetooth setup stays stored on Desk but unused. Desk restarts once.".into(),
+        build_confirm_action: "Switch".into(),
         notice: "Couldn't save to Desk. Check that it's plugged in, then retry.".into(),
         notice_kind: "error".into(),
         notice_detail: "The Device didn't reply in time.".into(),
         ..Default::default()
+    }
     };
     for confirming in [false, true] {
         rig.app.ui.set_confirming_forget_all(confirming);
-        for firmware in ["idle", "waiting", "running", "done", "failed", "cancelled"] {
+        rig.app.ui.set_confirming_build(confirming);
+        for firmware in [
+            "idle",
+            "choosing",
+            "waiting",
+            "running",
+            "done",
+            "failed",
+            "cancelled",
+        ] {
             rig.app.ui.set_device_page(page(firmware));
             settle(&rig.app);
             assert_eq!(
@@ -311,10 +338,15 @@ fn at_the_largest_text_size_every_device_settings_state_fits() {
                 firmware == "idle",
                 "Update, Firmware {firmware}"
             );
+            assert!(rig.has("Update from a file…"));
+            assert_eq!(rig.has("Cancel the update"), firmware == "waiting");
+            assert_eq!(rig.has("Switch Desk back to the normal build?"), confirming);
             assert_fits(
                 &rig,
                 500.0,
-                &format!("Device settings, Firmware {firmware}, forget all {confirming}"),
+                &format!(
+                    "Device settings, Firmware {firmware}, forget all and build switch {confirming}"
+                ),
             );
         }
     }

@@ -22,8 +22,9 @@ use std::{
     time::{Duration, Instant},
 };
 pub use task::{
-    BoardStep, BuildChoice, Context, FirmwareTask, JobView, Source, Target, TaskView, Words,
-    board_step, build_choice, compare_versions, offered, short_version, view_of,
+    BoardStep, BuildChoice, Context, FirmwareTask, JobView, NOT_BUNDLED, NOT_BUNDLED_TEXT, Source,
+    Target, TaskView, Words, board_step, build_choice, compare_versions, offered, short_version,
+    view_of,
 };
 use td_link::bundle::Bundle;
 use ts_rs::TS;
