@@ -267,6 +267,24 @@ fn equal_versions_ignore_build_metadata() {
 }
 
 #[test]
+fn a_pre_release_copy_is_offered_the_final_but_not_another_pre_release() {
+    // A 2.0.0-preview.1 install finds the final once it is published as a stable release.
+    let mut updater = fixture();
+    updater.current = Version::parse(&format!("{VERSION}-preview.1")).unwrap();
+    let UpdateResult::UpdateReady(ready) = poll(&mut updater) else {
+        panic!("expected the final release")
+    };
+    assert_eq!(ready.version().to_string(), VERSION);
+
+    // A later preview published as a GitHub pre-release is never offered.
+    let mut updater = fixture();
+    updater.current = Version::parse(&format!("{VERSION}-preview.1")).unwrap();
+    edit_release(&mut updater, |release| release["prerelease"] = json!(true));
+    assert!(matches!(poll(&mut updater), UpdateResult::UpToDate));
+    assert_eq!(updater.http.requests.get(), 1);
+}
+
+#[test]
 fn selects_the_highest_stable_2x_across_pages() {
     let mut updater = fixture();
     let newest: Vec<Value> = serde_json::from_slice(
@@ -332,6 +350,7 @@ fn checks_off_makes_no_requests_even_when_due() {
     let mut updater = fixture();
     let off = AppSettings {
         automatic_update_checks: false,
+        ..Default::default()
     };
     assert!(updater.poll(&off, &|| false).is_none());
     updater.clock.0.set(CHECK_INTERVAL * 2);
@@ -375,6 +394,7 @@ fn app_preference_defaults_on_and_persists_an_opt_out() {
     assert!(AppSettings::load(&dirs).unwrap().automatic_update_checks);
     let off = AppSettings {
         automatic_update_checks: false,
+        ..Default::default()
     };
     off.save(&dirs).unwrap();
     let loaded = AppSettings::load(&dirs).unwrap();

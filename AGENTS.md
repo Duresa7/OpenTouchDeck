@@ -28,7 +28,7 @@
 
 - **App.** Main is Rust only. From `app/`: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace`. `cargo run -p td-app --features mock -- --mock-devices 2` runs the 2.0 window with mock Devices. The 1.x Electron app and React UI live on the `release/1.x` branch ([ADR 0012](docs/adr/0012-electron-and-react-leave-main-before-cutover.md)). PR CI runs the Linux checks; `app/scripts/linux-check.sh` runs them on `HEAD` in Docker when you chase a Linux-only failure. See [app/README.md](app/README.md) and [docs/setup.md](docs/setup.md).
 - **Firmware.** See [docs/firmware.md](docs/firmware.md).
-- **Proof on the real hardware.** The `verify-touchdeck` skill builds, flashes and drives the Device. `verify-touchdeck-app` drives the 1.x app on `release/1.x` against the mock or real Device.
+- **Proof on the real hardware.** The `verify-touchdeck` skill builds, flashes and drives the Device. `verify-touchdeck-app` verifies the 2.0 Rust and Slint app on main with mock Devices, headless tests, snapshots and td-link on Windows or Linux. Verify 1.x from `release/1.x` with that branch's skill.
 - Each ticket that changes these commands updates this section in the same PR.
 
 ## Resume notes

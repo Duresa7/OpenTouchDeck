@@ -482,6 +482,8 @@ The Firmware draws these on the Device's own screen. A gear at the right end of 
 
 ### Browser pairing
 
+1.x only: 2.0 has no browser version. The **Open in browser** tray item and the **Paired browsers** Settings category above are 1.x only too.
+
 | Element | String |
 | --- | --- |
 | Prompt title | Pair this browser |

@@ -4,6 +4,8 @@
 //! See docs/companion-api.md, "Brandfetch".
 mod client;
 mod refresh;
+mod session;
+pub use session::{BrandfetchSession, BrandfetchView, KeyTestResult, Operation, Problem};
 
 use crate::{
     api::{ApiError, CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req},
@@ -157,6 +159,7 @@ struct Inner {
     /// Serializes every read-modify-write of the provenance file.
     book: Mutex<()>,
     refreshing: Mutex<()>,
+    operations: Arc<tokio::sync::Mutex<()>>,
 }
 /// The Brandfetch settings, the API key and each Brandfetch Asset's provenance, kept under
 /// `<data>/brandfetch/`. The key lives in the OS credential store.
@@ -214,6 +217,7 @@ impl Brandfetch {
             mock,
             book: Mutex::new(()),
             refreshing: Mutex::new(()),
+            operations: Arc::new(tokio::sync::Mutex::new(())),
         }))
     }
     /// Whether the user turned Brandfetch search on by saving a client ID. The Companion's CSP
@@ -284,7 +288,16 @@ impl Brandfetch {
     }
     /// Keeps the key in the keychain, bound to the Brand API's origin. Saving never calls
     /// Brandfetch: each call costs a request. Logos the old key failed for refresh again.
-    fn save_key(&self, value: String) -> Result<(), BrandfetchError> {
+    /// Blocking: callers on a UI thread should use [`BrandfetchSession::save_key`].
+    pub fn save_key(&self, key: ApiKey) -> Result<(), BrandfetchError> {
+        let value = key.expose().trim().to_owned();
+        if !valid_key(&value) {
+            return Err(CommonError::invalid(
+                "value",
+                "Paste the API key from the Brandfetch developer portal.",
+            )
+            .into());
+        }
         let secret = Secret {
             origin: API_BASE.into(),
             value,
@@ -298,26 +311,52 @@ impl Brandfetch {
         }
         Ok(())
     }
-    fn forget_key(&self) -> Result<(), BrandfetchError> {
+    /// Blocking keychain operation. The native window uses the session.
+    pub fn forget_key(&self) -> Result<(), BrandfetchError> {
         self.0
             .secrets
             .delete(OWNER, KEY_FIELD)
             .map_err(|_| BrandfetchError::NoKeychain)
     }
-    /// One Brand API call for Brandfetch's own brand, which Brandfetch doesn't count.
+    /// Blocking network call for Brandfetch's own brand. Use the session from a UI thread.
     pub fn test_key(&self) -> Result<(), BrandfetchError> {
         let key = self.key()?.ok_or(BrandfetchError::NoKey)?;
         let net = self.0.net.read().clone();
         client::check(net.http.as_ref(), &net.base, &key)
     }
+    /// Saves a validated client ID without making a network call. Blocking disk I/O.
+    pub fn save_client_id(&self, client_id: String) -> Result<(), BrandfetchError> {
+        let id = client_id.trim().to_owned();
+        if !valid_client_id(&id) {
+            return Err(CommonError::invalid("client_id", "Use the client ID from the Brandfetch developer portal: letters, digits, '-', '_' or '.', up to 128.").into());
+        }
+        self.save_settings(Some(id))
+    }
+    /// Forgets only the client ID. Blocking disk I/O.
+    pub fn forget_client_id(&self) -> Result<(), BrandfetchError> {
+        self.save_settings(None)
+    }
     fn save_settings(&self, client_id: Option<String>) -> Result<(), BrandfetchError> {
         let mut current = self.0.client_id.write();
-        let bytes = serde_json::to_vec(&Settings {
-            client_id: client_id.clone(),
-        })
-        .map_err(|e| BrandfetchError::Store(e.to_string()))?;
-        td_core::app_dirs::write_atomic(&self.0.dir.join("settings.json"), &bytes)
-            .map_err(|e| BrandfetchError::Store(e.to_string()))?;
+        let path = self.0.dir.join("settings.json");
+        let damaged = || BrandfetchError::Store("Couldn't read Brandfetch settings.".into());
+        let mut fields = match std::fs::read(&path) {
+            Ok(bytes) => {
+                let value: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|_| damaged())?;
+                serde_json::from_value::<Settings>(value.clone()).map_err(|_| damaged())?;
+                match value {
+                    serde_json::Value::Object(fields) => fields,
+                    _ => return Err(damaged()),
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
+            Err(_) => return Err(damaged()),
+        };
+        fields.insert("client_id".into(), serde_json::json!(client_id));
+        let bytes = serde_json::to_vec(&fields).map_err(|_| damaged())?;
+        td_core::app_dirs::write_atomic(&path, &bytes)
+            .map_err(|_| BrandfetchError::Store("Couldn't write Brandfetch settings.".into()))?;
         *current = client_id;
         Ok(())
     }
@@ -403,7 +442,7 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// What the Settings section shows. The API key itself is never returned.
-#[derive(Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct BrandfetchStatus {
     /// The client ID the UI searches with; not a secret.
     pub client_id: Option<String>,
@@ -453,16 +492,8 @@ impl Endpoint for ClientIdPut {
     type Ok = BrandfetchStatus;
     type Error = BrandfetchError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        let id = req.body.client_id.trim().to_owned();
-        if !valid_client_id(&id) {
-            return Err(CommonError::invalid(
-                "client_id",
-                "Use the client ID from the Brandfetch developer portal: letters, digits, '-', '_' or '.', up to 128.",
-            )
-            .into());
-        }
         blocking(move || {
-            ctx.brandfetch.save_settings(Some(id))?;
+            ctx.brandfetch.save_client_id(req.body.client_id)?;
             ctx.brandfetch.status(ctx.clock.unix_s())
         })
         .await?
@@ -481,7 +512,7 @@ impl Endpoint for ClientIdDelete {
     type Error = BrandfetchError;
     async fn handle(ctx: Ctx, _: Req<Self>) -> Result<Self::Ok, Self::Error> {
         blocking(move || {
-            ctx.brandfetch.save_settings(None)?;
+            ctx.brandfetch.forget_client_id()?;
             ctx.brandfetch.status(ctx.clock.unix_s())
         })
         .await?
@@ -499,16 +530,8 @@ impl Endpoint for KeyPut {
     type Ok = BrandfetchStatus;
     type Error = BrandfetchError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        let value = req.body.value.trim().to_owned();
-        if !valid_key(&value) {
-            return Err(CommonError::invalid(
-                "value",
-                "Paste the API key from the Brandfetch developer portal.",
-            )
-            .into());
-        }
         blocking(move || {
-            ctx.brandfetch.save_key(value)?;
+            ctx.brandfetch.save_key(ApiKey::new(req.body.value))?;
             ctx.brandfetch.status(ctx.clock.unix_s())
         })
         .await?

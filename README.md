@@ -16,7 +16,7 @@ I made this project to get around the limitations of numpads and keyboards that 
 - Show CPU, memory and network readings, AI usage limits from your own CLIProxyAPI hub or values from HTTP and approved commands.
 - Use Graph and other Live tiles, a draggable Volume bar and now-playing controls.
 - Choose icons, import animated GIF Tiles or show pictures from a folder when the Device is idle.
-- Open the same editor in a paired browser on this PC while the Companion runs in the tray.
+- In 1.x, open the same editor in a paired browser on this PC while the Companion runs in the tray. 2.0 has no browser version.
 - Install Firmware on a New board and update the app and Firmware separately. Firmware updates can roll back after a failed start.
 
 ## Get started

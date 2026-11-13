@@ -1,52 +1,159 @@
 ---
 name: verify-touchdeck-app
-description: Build and verify the Electron app, Rust td-companion and React UI with isolated mock Devices, authenticated API calls, Playwright specs and screenshots. Use to prove app behavior or identify the Companion build under test.
+description: Verify the 2.0 Rust and Slint app on main with mock Devices, headless screen and model tests, native snapshots and td-link. Use to prove app behaviour or identify the build under test on Windows or Linux.
 ---
 
-# Verify the Open TouchDeck app
+# Verify the 2.0 app
 
-The Rust Companion in `app/crates/td-companion` owns Devices, actions, Integrations and OS access. It serves the authenticated API and the embedded React UI from `app/ui/dist`. The thin Electron window in `app/electron` is an API client. React Playwright specs live in `app/ui/e2e`; fake mode uses demo data, while Companion mode uses a real debug Companion with mock Devices. The CLI in `app/crates/td-link` is a separate USB client.
+`app/crates/td-app` runs the Companion and Slint window in one process. Read the
+[feature map](features/README.md) before choosing evidence. It distinguishes
+implemented screens from models awaiting a Slint page. Use typed Companion
+sessions and Rust tests for behaviour, and the mock app for rendered evidence.
 
-Run from PowerShell. `$TA` means `pwsh -NoProfile -File .claude/skills/verify-touchdeck-app/scripts/tdapp.ps1`, run from the repo root. It works on the checkout it lives in; set `$env:TOUCHDECK_ROOT` to test another one. Stdout is one JSON result, chatter is stderr. Node 22+ (built-in WebSocket) and the repository's pinned pnpm and Rust must be on PATH. Pass absolute data and evidence paths.
+## Build and identify
 
-## Commands
+Use the pinned Rust toolchain and platform dependencies in `docs/setup.md`.
+The helper needs Python 3.11 or newer, with `python` on PATH. Commands below
+start at the repository root unless a block changes directory. Keep evidence
+under a git-ignored `.verify/<task>/` directory; use a fresh `--out` for each run.
 
-| Command | Behavior |
-| --- | --- |
-| `$TA build [--firmware-bundle <abs .tdfw>]` | Frozen dependency install, `pnpm build:ui`, debug `cargo build -p td-companion --features test-hooks`, debug `cargo build -p td-link`. `--firmware-bundle` sets `TOUCHDECK_FIRMWARE_BUNDLE` for the Companion build, so a real Companion offers that bundle; see [board pass tools](features/board-pass-tools.md). |
-| `$TA doctor [--out <json>]` | Read `/api/v1/system` build SHA against checkout HEAD: exit 0 match, 1 differ, 2 missing/unusable. If stopped, launch a temporary isolated mock Companion and stop it afterward. |
-| `$TA start [--mock] [--device-console] [--port <n>] [--data <dir>] [--log <file>]` | Start the debug Companion, wait for authenticated API readiness, record PID, executable and process creation time in `app/target/tdapp-state.json`. Mock supplies three Devices. `--device-console` (real Companion only) passes `--test-real-device-console`, so `devcmd` reaches the real Device. Default API port 50744; default data `app/target/tdapp-data`. The Companion's stdout and stderr are appended to `--log`, default `<data>/companion.log`, and the result's `log` names it. |
-| `$TA stop` | Graceful API shutdown, with process termination fallback only for the recorded PID whose path and creation time still match. Reports remaining owned processes. Idempotent. |
-| `$TA api <METHOD> <path> [--body <json>]` | Call the running Companion, with `/devices` or `/api/v1/devices` as path. Result has HTTP status and body. |
-| `$TA devcmd "<line>" [--device <id>] [--wait-ms <n>]` | Send one Firmware console line through the running Companion's `test.console` and print `reply` (the `@td` JSON whose `cmd` is the line's first word, or null) and `lines` (console lines up to the reply, at most 256). Waits up to `--wait-ms`, default 3000, at most 15000. Without `--device`, needs exactly one connected Device. Exit 0 reply `ok`, 1 reply not ok or none in time, 2 refused. Mock Companion, or real one started with `--device-console`. See [device console](features/device-console.md). |
-| `$TA events --seconds <n>` | Capture events directly through Node: hello, sync and subsequent state frames for up to 300 seconds. |
-| `$TA ui-e2e <spec> [--companion] [--port <n>] --out <dir>` | One exact basename from `app/ui/e2e`, fake mode by default. Companion specs require `--companion`. Writes `report.json`, `results/` screenshots, failure traces and optional TD_SHOTS captures. Owns and tears down its temporary servers. |
-| `$TA screenshot --out <png>` | Headless Edge screenshot of the running Companion's embedded React UI using a verification window-session bridge. Captures once every connected Device's Home card has drawn its Layout miniature or "No Layout yet"; fails after 15 s otherwise. |
-| `$TA link <td-link args>` | Debug CLI passthrough, collected as one JSON result with a results array; retains CLI exit code. Example: `link --mock ping --count 10`. |
-| `$TA test` | `pnpm test`, then `cargo test --workspace`, with both exit codes. |
+Build in the foreground, then identify the exact debug executable:
 
-API operations verify the runtime file's HMAC proof before minting a window verification session, and revoke it on completion. Session and pairing tokens stay out of the command's JSON. The runtime file under the data directory remains private local material.
+```sh
+cd app
+cargo build --locked -p td-app --features mock
+cd ..
+python .agents/skills/verify-touchdeck-app/scripts/tdapp.py identity
+```
 
-## Isolation and real Devices
+The identity JSON records checkout HEAD, dirty state, Rust and Cargo versions,
+package version, expected profile/features and the executable's SHA-256. It
+resolves the target directory through Cargo metadata, including a custom
+`CARGO_TARGET_DIR`. Build immediately before collecting identity and keep the
+source unchanged during the run. This is local build provenance, not an embedded
+commit check. About currently shows the Cargo package version, which can still
+be `1.2.0` in the 2.0 app. It cannot identify a commit or a running installed copy.
 
-Use distinct API ports and data folders for mock lanes in different checkouts. One recorded start per checkout; use another checkout for a second started Companion. Companion ports are 49152..65535. Fake e2e defaults to UI port 5184. Companion e2e defaults to 50844 (UI) and 50845 (Companion); `--port` selects the UI port and reserves the next port for its Companion. Servers refuse occupied ports rather than attaching to another lane. Use fresh evidence directories.
+## Run and capture
 
-Real Device work requires ownership of the hardware lock: `.verify/hardware.lock` in the main checkout, which every worktree shares (override the path with `$env:TOUCHDECK_HARDWARE_LOCK`). The lock records the holder and time. The helper requires its presence; the operator/agent must establish ownership. Follow the board-pass standing orders before any hardware access. `$TD` is the PowerShell Firmware wrapper in the sibling `verify-touchdeck` skill. Run `$TA stop` before any `$TD serial` call or a real `link` call. While the real Companion owns the port, send single-reply console commands (`touch`, `ui`, `keys`, `power`, `perf`, `layout state`) with `$TA start --device-console` and `$TA devcmd` instead; streaming commands (`screenshot`, `keys record dump`, `store put|get`) still need `$TD` with the Companion stopped. The Companion discovers ports automatically; `start --port` selects the HTTP API, not a COM port. Record Firmware Doctor identity alongside Companion Doctor identity. Mock proof never establishes physical USB, Firmware rendering, OS key injection or native confirmation behavior.
+```sh
+python .agents/skills/verify-touchdeck-app/scripts/tdapp.py run --out .verify/app-2/window
+python .agents/skills/verify-touchdeck-app/scripts/tdapp.py screenshot --page settings --out .verify/app-2/settings
+```
 
-## Evidence and feature routing
+`run` executes `cargo run -p td-app --features mock -- --mock-devices 2` from
+`app/`, with build output attached to the terminal. Inspect Home for two mock
+Devices, then use Ctrl+C to stop. On Linux, closing the window also exits; on
+Windows, closing hides it in the tray, so use Quit or Ctrl+C.
 
-Save command JSON, stderr logs, screenshot PNGs and e2e output in `.verify/<task>/lane-<n>/`. [The feature map](features/README.md) links every current React spec and Companion API feature. Read the relevant file before selecting a spec. [Board pass tools](features/board-pass-tools.md) covers the Companion log, staging a Firmware bundle newer than the Device, the console flood, and which board-pass steps each unblocks. Return paths and actual exit codes, plus skipped behavior.
+Both helper commands isolate app data and source configuration in a temporary
+directory, set `SLINT_BACKEND=winit-software`, and write `build.json` and
+`result.json` under `--out`. They stop their owned process on completion or
+interruption and remove temporary data. A forced termination is reported in
+`cleanup`; treat it separately from a graceful app exit. The helper never
+attaches to another app instance.
 
-## Gotchas
+`screenshot` launches the prebuilt mock executable, requests a PNG through the
+app's existing `TOUCHDECK_SNAPSHOT_DIR/request` hook, waits for the complete file,
+and stops the app. Exit 0 means a complete PNG was captured; exit 2 means the
+command failed. Inspect `snapshots/screen.png`, `app.log` and the dimensions in
+`result.json`; a PNG alone does not establish the expected state.
 
-- Build the UI before Rust: the Companion embeds it at compile time. A successful Rust build alone can still serve the UI-not-built placeholder.
-- `--mock-devices` and `--test-real-device-console` need `test-hooks`; this debug verification build is unsuitable for distribution. A build without `test-hooks` rejects both as `Unknown Companion argument.`, and `package_windows.py` refuses a binary that contains either.
-- Doctor compares HEAD, not uncommitted source changes. With no usable build identity it fails instead of inferring from timestamps or build records.
-- The Companion exposes no standalone build-info CLI. Doctor starts a temporary mock to query a stopped binary. An ordinary binary without test-hooks can be checked only while already running through this helper's state.
-- A screenshot proves the served UI, not Electron preload isolation, the native frame, focus or desktop feel. Electron-specific checks are `pnpm --filter @touchdeck/electron e2e` after the debug build; these are separate from `ui-e2e`.
-- Events use the bearer subprotocol directly from Node. A plain browser page redirects to `/pair` without a session bridge, destroying page-based captures.
-- The helper uses installed Edge through repo Playwright, so no browser download is needed for these proof lanes. Pairing specs also need Chromium installed via repo Playwright.
-- Broken pnpm (empty version or app-picker dialog) is a coordinator repair; leave global pnpm unchanged.
-- Keep build output on E:, retain the user's Cargo job cap, and use debug builds. Run the workspace test command once for a full gate.
-- The Windows npm shim may point to `node_modules/pnpm/pnpm.exe` rather than putting that executable on PATH. The helper resolves it without changing the global installation.
-- Playwright may log a NO_COLOR/FORCE_COLOR environment warning, and mock Devices may log identity fallback diagnostics. These are runtime diagnostics; the debug build must still complete without compiler warnings.
+Choose `--page home`, `setup`, `settings`, `about` or `device:mock0001`.
+`--mock` accepts comma-separated `device`, `radio`, `v1`, `board`, `fresh` kinds;
+its default is `device,device`. Use `radio` for paired apps and `fresh` for Setup
+following Firmware install. `--settle-seconds` delays the request, default 3;
+increase it for asynchronous install/discovery. `--timeout` bounds the whole
+capture wait, default 30 seconds. Inspect the state actually captured and use a
+new output directory for each page or mock combination.
+
+Rendering needs a desktop session on Windows or X11/Wayland on Linux. A Linux
+agent without a desktop can run the screenshot command under an available
+Xvfb session. The app renders its contents off the desktop through Slint's
+snapshot API, but still creates a window. The headless testing backend below
+does not render pixels. These captures prove app content, not DWM Mica, native
+frame, OS focus, tray behaviour or physical Device rendering.
+
+## Headless behaviour and checks
+
+From `app/`, these work on Windows and Linux without a display. Use debug tests
+because release builds omit element IDs that the UI tests search.
+
+```sh
+cd app
+cargo test --locked -p td-app --lib screens_tests::
+cargo test --locked -p td-app --lib ui_tests::
+cargo test --locked -p td-companion --features test-hooks --test editor_session --test integrations_session --test integration_setup
+cargo fmt --check
+cargo clippy --workspace -- -D warnings
+cargo test --workspace
+cd ..
+```
+
+M2's `screens_tests` use `i_slint_backend_testing::init_no_event_loop` through
+`ui_tests::init`. They invoke controls by accessible role and label against an
+in-process Companion with mock Devices. They prove Setup, Settings and Pairings
+without opening a window. The session tests prove the Layout editor and
+Integrations models through typed interfaces. The workspace run covers sibling
+crates too. Save actual test counts and failures; a filtered run with zero tests
+is not evidence. `mock` and `test-hooks` builds are local verification builds.
+
+## Drive td-link
+
+From `app/`, these exercise the separate link CLI against its own mock Device:
+
+```sh
+cd app
+cargo run --locked -p td-link --bin td-link -- --mock hello
+cargo run --locked -p td-link --bin td-link -- --mock ping --count 100
+cargo run --locked -p td-link --bin td-link -- --mock settings get
+cd ..
+```
+
+Require the expected JSON, including all 100 matching ping replies. Exit codes
+are 0 for success, 1 for a Device refusal and 2 for other failures. Each CLI
+invocation creates a fresh mock; its changes do not affect the mock app.
+
+For real USB work, close the app connection and serial monitors first, select
+the Device's port locally with the CLI's `--port` option, and follow the sibling
+`verify-touchdeck` skill's hardware ownership and Firmware identity procedure.
+Keep port names and raw Device identity in ignored evidence. Mock runs establish
+neither USB operation nor real OS key injection.
+
+## Windows desktop evidence
+
+For native Windows look, accessibility tree, tray and memory, reuse
+`.github/workflows/windows-evidence.yml` and
+`.github/scripts/windows-evidence/README.md`. The suite captures Home and About
+through desktop screen copying; the helper above uses the app's existing content
+snapshot hook for other screens. There is no second desktop capture system.
+
+Only on a disposable Windows desktop, build from `app/`, then run the existing
+suite from the repository root in Windows PowerShell 5.1:
+
+```powershell
+cd app
+cargo build --release --locked --package td-app --features mock
+cd ..
+powershell -ExecutionPolicy Bypass -File .github/scripts/windows-evidence/run.ps1 -Exe app/target/release/td-app.exe -Out .verify/app-2/windows
+```
+
+The suite changes theme, contrast, text scale and Start at sign-in, restarts
+Explorer, and leaves those changes in place. It writes `summary.md`,
+`results.json`, logs, UI Automation trees and `screenshots/`. Report each failed
+or unavailable check. GitHub's Windows Server runner records its OS/build;
+its flat Mica fallback does not prove Windows 11 GPU appearance. The suite uses
+the default Cargo target directory; adjust `-Exe` if yours differs.
+
+## Report and clean up
+
+Report checkout HEAD and dirty state, executable digest, platform, exact commands,
+exit codes and test counts, screenshot paths, observed behaviour and remaining
+platform or hardware checks. Keep raw logs local and cite repo-relative evidence
+paths publicly. Require the app and test processes you started to be stopped.
+List Windows-only checks as pending when working on Linux.
+
+## 1.x verification
+
+Verify the Electron and React app from `release/1.x`, using that branch's copy of
+`verify-touchdeck-app`. Its HTTP, Playwright and Node tooling belongs there.
