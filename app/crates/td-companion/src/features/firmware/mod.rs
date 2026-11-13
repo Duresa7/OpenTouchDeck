@@ -22,8 +22,8 @@ use std::{
     time::{Duration, Instant},
 };
 pub use task::{
-    BoardStep, Context, FirmwareTask, JobView, Target, TaskView, Words, board_step,
-    compare_versions, offered, short_version, view_of,
+    BoardStep, BuildChoice, Context, FirmwareTask, JobView, Source, Target, TaskView, Words,
+    board_step, build_choice, compare_versions, offered, short_version, view_of,
 };
 use td_link::bundle::Bundle;
 use ts_rs::TS;
@@ -163,6 +163,12 @@ impl Prompter for Scripted {
         }
     }
 }
+/// The Firmware this Companion carries. A build made without the bundle variables carries none.
+#[derive(Default)]
+struct Bundles {
+    normal: Option<Arc<Bundle>>,
+    radio: Option<Arc<Bundle>>,
+}
 struct Picked {
     target: DeviceId,
     until: Instant,
@@ -179,9 +185,8 @@ pub struct Firmware {
     picked: Arc<Mutex<HashMap<String, Picked>>>,
     dialog: Arc<AtomicBool>,
     prompter: Arc<Mutex<Arc<dyn Prompter>>>,
-    bundled: Option<Arc<Bundle>>,
-    /// The radio build this Companion carries, if it carries one.
-    radio: Option<Arc<Bundle>>,
+    /// The normal build and, when it carries one, the radio build. Fixed at build time; only tests change it.
+    bundles: Arc<Mutex<Bundles>>,
     #[cfg(any(test, feature = "test-hooks"))]
     scripted: Arc<Scripted>,
 }
@@ -217,8 +222,10 @@ impl Firmware {
             picked: Default::default(),
             dialog: Default::default(),
             prompter: Arc::new(Mutex::new(Arc::new(Native))),
-            bundled: parse(bytes),
-            radio: parse(radio),
+            bundles: Arc::new(Mutex::new(Bundles {
+                normal: parse(bytes),
+                radio: parse(radio),
+            })),
             #[cfg(any(test, feature = "test-hooks"))]
             scripted: Default::default(),
         }
@@ -234,12 +241,27 @@ impl Firmware {
         *self.scripted.0.lock() = answers.into();
         self.set_prompter(self.scripted.clone());
     }
+    /// Replaces the Firmware this Companion carries, as a build made with other bundle variables would. `None` carries
+    /// no bundle for that channel, like a release built without `TOUCHDECK_FIRMWARE_BUNDLE`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn set_bundles(&self, normal: Option<&[u8]>, radio: Option<&[u8]>) {
+        let parse = |bytes: &[u8]| Arc::new(Bundle::parse(bytes).expect("a test bundle parses"));
+        *self.bundles.lock() = Bundles {
+            normal: normal.map(parse),
+            radio: radio.map(parse),
+        };
+    }
+    /// Whether this Companion carries a bundle of this build.
+    pub fn carries(&self, channel: FirmwareChannel) -> bool {
+        self.bundled(channel).is_ok()
+    }
     /// The bundle this Companion carries for a channel. build.rs refused a bundle of the other build, and this checks the
     /// mark again, so a radio image can never be the normal channel's bundle.
     fn bundled(&self, channel: FirmwareChannel) -> Result<Arc<Bundle>, FirmwareError> {
+        let bundles = self.bundles.lock();
         match channel {
-            FirmwareChannel::Normal => &self.bundled,
-            FirmwareChannel::Radio => &self.radio,
+            FirmwareChannel::Normal => &bundles.normal,
+            FirmwareChannel::Radio => &bundles.radio,
         }
         .clone()
         .filter(|bundle| bundle.manifest.radio == channel.is_radio())

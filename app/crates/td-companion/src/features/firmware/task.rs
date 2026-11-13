@@ -1,7 +1,7 @@
 //! A Firmware Job as a screen follows it: one install on a New board or one update of a Device,
 //! with the words for each step. Ported from the 1.x app's `lib/device/firmware.ts` and
 //! `new-board.ts`, so setup and Settings word progress and failures the same way.
-use super::{FirmwareBuild, FirmwareError, FirmwareRequest, Operation};
+use super::{FirmwareBuild, FirmwareError, FirmwareRequest, Operation, PickResult};
 use crate::{
     api::{ApiError, ErrorBody},
     companion::{Change, Handle, RecvError},
@@ -18,6 +18,11 @@ use tokio::sync::watch;
 pub enum JobView {
     #[default]
     Idle,
+    /// The file dialog is open on this PC.
+    Choosing {
+        text: String,
+    },
+    /// The consent dialog is open on this PC.
     Waiting {
         text: String,
     },
@@ -39,12 +44,16 @@ pub enum JobView {
 }
 impl JobView {
     pub fn in_progress(&self) -> bool {
-        matches!(self, Self::Waiting { .. } | Self::Running { .. })
+        matches!(
+            self,
+            Self::Choosing { .. } | Self::Waiting { .. } | Self::Running { .. }
+        )
     }
     pub fn text(&self) -> &str {
         match self {
             Self::Idle => "",
-            Self::Waiting { text }
+            Self::Choosing { text }
+            | Self::Waiting { text }
             | Self::Running { text, .. }
             | Self::Done { text, .. }
             | Self::Failed { text, .. }
@@ -69,7 +78,10 @@ pub enum Words {
     Install,
 }
 
-const WAITING: &str = "Confirm on this PC to continue.";
+const WAITING: &str = "Waiting for confirmation on this PC.";
+const CHOOSING: &str = "Choose a Firmware file on this PC…";
+/// This Companion carries no bundle of the build asked for. A task-level code, never an API one.
+pub const NOT_BUNDLED: &str = "firmware.not_bundled";
 pub const DECLINED: &str = "Declined on this PC. Nothing changed on the board.";
 pub const INSTALL_FAILED: &str =
     "Couldn't install Firmware. Unplug the board, plug it back in, then retry.";
@@ -112,6 +124,8 @@ fn raw(phase: Phase) -> &'static str {
 pub struct Context {
     pub device: String,
     pub version: String,
+    /// The build a switch installs. `None` for an update within the build the Device runs.
+    pub switch_to: Option<FirmwareChannel>,
 }
 
 fn reason(details: Option<&Value>) -> &str {
@@ -119,6 +133,12 @@ fn reason(details: Option<&Value>) -> &str {
         .and_then(|d| d.get("reason"))
         .and_then(Value::as_str)
         .unwrap_or("")
+}
+fn channel_word(channel: FirmwareChannel) -> &'static str {
+    match channel {
+        FirmwareChannel::Normal => "normal",
+        FirmwareChannel::Radio => "radio",
+    }
 }
 fn channel_in(details: Option<&Value>, key: &str) -> &'static str {
     match details.and_then(|d| d.get(key)).and_then(Value::as_str) {
@@ -151,9 +171,13 @@ impl Words {
             }
         }
     }
-    fn done(self, message: &str, version: &str) -> String {
+    fn done(self, message: &str, version: &str, context: &Context) -> String {
         match self {
             Words::Install => "Firmware installed".into(),
+            Words::Update if context.switch_to.is_some() => format!(
+                "Now on the {} build, {version}",
+                channel_word(context.switch_to.unwrap_or_default())
+            ),
             Words::Update => match message {
                 "Firmware updated" => format!("Updated to {version}"),
                 "Already on this build" => format!("Already on Firmware {version}"),
@@ -164,14 +188,30 @@ impl Words {
     /// The words for a failure, from its error code and details.
     pub fn failed(self, code: &str, details: Option<&Value>, context: &Context) -> String {
         if self == Words::Install {
-            return if code == "firmware.declined" {
-                DECLINED.into()
-            } else {
-                INSTALL_FAILED.into()
+            return match code {
+                "firmware.declined" => DECLINED.into(),
+                NOT_BUNDLED => {
+                    "This copy of Open TouchDeck doesn't include Firmware to install.".into()
+                }
+                _ => INSTALL_FAILED.into(),
             };
         }
-        let Context { device, version } = context;
+        let Context {
+            device, version, ..
+        } = context;
         match code {
+            NOT_BUNDLED if context.switch_to.is_some() => format!(
+                "This copy of Open TouchDeck doesn't include the {} build.",
+                channel_in(details, "channel")
+            ),
+            NOT_BUNDLED if channel_in(details, "channel") == "radio" => {
+                "This copy of Open TouchDeck doesn't include the radio build. Update from a file instead."
+                    .into()
+            }
+            NOT_BUNDLED => {
+                "This copy of Open TouchDeck doesn't include Firmware. Update from a file instead."
+                    .into()
+            }
             "firmware.rolled_back" => format!(
                 "The new Firmware didn't start, so {device} went back to {version}. It still works. Retry, or repair it from Troubleshooting."
             ),
@@ -246,7 +286,7 @@ pub fn view_of(job: &Job, context: &Context, words: Words) -> (JobView, String) 
             };
             (
                 JobView::Done {
-                    text: words.done(&message, &version),
+                    text: words.done(&message, &version, context),
                     version,
                 },
                 message,
@@ -288,7 +328,7 @@ pub enum BoardStep {
 pub fn board_step(view: &JobView) -> BoardStep {
     match view {
         JobView::Idle | JobView::Cancelled { .. } => BoardStep::Detected,
-        JobView::Waiting { .. } => BoardStep::Waiting,
+        JobView::Choosing { .. } | JobView::Waiting { .. } => BoardStep::Waiting,
         JobView::Running { .. } => BoardStep::Installing,
         JobView::Done { .. } => BoardStep::Done,
         JobView::Failed { code, .. } if code == "firmware.declined" => BoardStep::Declined,
@@ -344,6 +384,79 @@ pub fn offered(device: &DeviceSummary, builds: Option<&FirmwareBuild>) -> Option
         .then(|| bundled.to_owned())
 }
 
+/// The Firmware build row on a Device's page: the build it runs and the switch to the other one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuildChoice {
+    /// The build the Device runs now.
+    pub current: FirmwareChannel,
+    /// The build a switch installs.
+    pub target: FirmwareChannel,
+    /// "Normal build" or "Radio build".
+    pub title: String,
+    pub note: String,
+    /// The button's words.
+    pub action: String,
+    /// The question before the switch, in the window, before the native consent.
+    pub confirm_title: String,
+    pub confirm_note: String,
+    /// The confirm button's words.
+    pub confirm_action: String,
+    /// Switching back leaves the radio setup stored but unused, so the note warns.
+    pub warn: bool,
+}
+
+const TURNS_ON: &str = "Wi-Fi and Bluetooth, both off until you set them up";
+
+/// The build switch for a Device, or `None` when there is nothing to switch to: only when this Companion carries the
+/// other build, and only for a Device that reports its Firmware.
+pub fn build_choice(
+    device: &DeviceSummary,
+    builds: Option<&FirmwareBuild>,
+    name: &str,
+) -> Option<BuildChoice> {
+    let current = device.firmware.as_ref()?.channel;
+    let builds = builds?;
+    Some(match current {
+        // `builds` always holds the normal build.
+        FirmwareChannel::Radio => BuildChoice {
+            current,
+            target: FirmwareChannel::Normal,
+            title: "Radio build".into(),
+            note: format!("Adds {TURNS_ON}. The normal build has no radio code."),
+            action: "Switch to the normal build".into(),
+            confirm_title: format!("Switch {name} back to the normal build?"),
+            confirm_note: format!(
+                "The Wi-Fi and Bluetooth setup stays stored on {name} but unused. {name} restarts once."
+            ),
+            confirm_action: "Switch".into(),
+            warn: true,
+        },
+        FirmwareChannel::Normal => {
+            builds.radio.as_ref()?;
+            BuildChoice {
+                current,
+                target: FirmwareChannel::Radio,
+                title: "Normal build".into(),
+                note: format!("The radio build adds {TURNS_ON}. You can switch back any time."),
+                action: "Install the radio build".into(),
+                confirm_title: format!("Install the radio build on {name}?"),
+                confirm_note: format!("It adds {TURNS_ON}. {name} restarts once."),
+                confirm_action: "Install".into(),
+                warn: false,
+            }
+        }
+    })
+}
+
+/// Where a task's Firmware comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// The Firmware this Companion carries.
+    Bundled,
+    /// A `.tdfw` file the person picks in the native file dialog on this PC.
+    File,
+}
+
 /// What a task acts on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -383,6 +496,7 @@ impl FirmwareTask {
                 context: Mutex::new(Context {
                     device: "the Device".into(),
                     version: String::new(),
+                    switch_to: None,
                 }),
             }),
         }
@@ -403,6 +517,7 @@ impl FirmwareTask {
             Target::NewBoard(_) => Context {
                 device: "the board".into(),
                 version: String::new(),
+                switch_to: None,
             },
             Target::Device(id) => {
                 let device = self.inner.handle.devices().get(id);
@@ -415,6 +530,7 @@ impl FirmwareTask {
                         .and_then(|d| d.firmware)
                         .map(|f| f.version)
                         .unwrap_or_default(),
+                    switch_to: None,
                 }
             }
         }
@@ -470,15 +586,82 @@ impl FirmwareTask {
         }
     }
 
-    /// Installs or updates to the Firmware this Companion carries, and follows the Job to its
-    /// end. Does nothing while a Job is in progress.
+    /// Installs or updates to the Firmware this Companion carries, of the build the Device runs, and follows the Job
+    /// to its end. Does nothing while a Job is in progress.
     pub async fn start(&self) {
-        if self.view().view.in_progress() {
+        self.start_from(Source::Bundled, None).await;
+    }
+
+    /// Installs or updates from `source` and follows the Job to its end. `channel` names the build to install; naming
+    /// the other build than the Device runs switches builds, which always asks for consent on this PC. Left out, it is
+    /// the build the Device runs. Does nothing while a Job, or its file dialog, is in progress.
+    pub async fn start_from(&self, source: Source, channel: Option<FirmwareChannel>) {
+        let mut context = self.context();
+        let running = self.running();
+        context.switch_to = channel.filter(|channel| running.is_some_and(|r| r != *channel));
+        let first = match source {
+            Source::Bundled => TaskView {
+                view: JobView::Running {
+                    text: self.inner.words.progress(None),
+                    pct: None,
+                },
+                log: Vec::new(),
+            },
+            Source::File => TaskView {
+                view: JobView::Choosing {
+                    text: CHOOSING.into(),
+                },
+                log: Vec::new(),
+            },
+        };
+        // Claims the task, or leaves the one in progress alone.
+        let mut before = None;
+        let claimed = self.inner.view.send_if_modified(|task| {
+            if task.view.in_progress() {
+                return false;
+            }
+            before = Some(std::mem::replace(task, first));
+            true
+        });
+        if !claimed {
             return;
         }
-        let context = self.context();
         *self.inner.context.lock() = context.clone();
         *self.inner.job.lock() = None;
+        let firmware = self.inner.handle.firmware();
+        let bundle = match source {
+            Source::Bundled => {
+                let wanted = channel.or(running).unwrap_or_default();
+                if !firmware.carries(wanted) {
+                    let details = serde_json::json!({ "channel": wanted });
+                    self.fail(
+                        NOT_BUNDLED,
+                        Some(&details),
+                        "No bundled Firmware of this build.",
+                        &context,
+                    );
+                    return;
+                }
+                "bundled".to_owned()
+            }
+            Source::File => match firmware.pick(self.id().clone()).await {
+                Ok(PickResult {
+                    bundle: Some(bundle),
+                }) => bundle.id,
+                // The dialog closed without a file: back to what the task showed before.
+                Ok(PickResult { bundle: None }) => {
+                    self.inner
+                        .view
+                        .send_replace(before.take().unwrap_or_default());
+                    return;
+                }
+                Err(error) => {
+                    let body = error.body();
+                    self.fail(&body.code, body.details.as_ref(), &body.message, &context);
+                    return;
+                }
+            },
+        };
         self.inner.view.send_replace(TaskView {
             view: JobView::Running {
                 text: self.inner.words.progress(None),
@@ -491,13 +674,10 @@ impl FirmwareTask {
             Target::Device(_) => Operation::Update,
             Target::NewBoard(_) => Operation::Install,
         };
-        let started = self.inner.handle.firmware().start(
+        let started = firmware.start(
             operation,
             self.id().clone(),
-            FirmwareRequest {
-                bundle: "bundled".into(),
-                channel: None,
-            },
+            FirmwareRequest { bundle, channel },
         );
         match started {
             Ok(job) => self.follow(job, changes).await,
@@ -505,18 +685,42 @@ impl FirmwareTask {
             Err(FirmwareError::Job(JobError::Busy(job))) => self.follow(*job, changes).await,
             Err(error) => {
                 let body = error.body();
-                let text = self
-                    .inner
-                    .words
-                    .failed(&body.code, body.details.as_ref(), &context);
-                self.inner.view.send_replace(TaskView {
-                    view: JobView::Failed {
-                        text,
-                        code: body.code,
-                    },
-                    log: vec![format!("Failed: {}", body.message)],
-                });
+                self.fail(&body.code, body.details.as_ref(), &body.message, &context);
             }
+        }
+    }
+
+    /// The build the target runs, when it reports one.
+    fn running(&self) -> Option<FirmwareChannel> {
+        match &self.inner.target {
+            Target::NewBoard(_) => None,
+            Target::Device(id) => self
+                .inner
+                .handle
+                .devices()
+                .get(id)
+                .and_then(|d| d.firmware)
+                .map(|f| f.channel),
+        }
+    }
+
+    fn fail(&self, code: &str, details: Option<&Value>, message: &str, context: &Context) {
+        let text = self.inner.words.failed(code, details, context);
+        self.inner.view.send_replace(TaskView {
+            view: JobView::Failed {
+                text,
+                code: code.to_owned(),
+            },
+            log: vec![format!("Failed: {message}")],
+        });
+    }
+
+    /// Stops the followed Job while it can stop, such as while the consent dialog waits. That closes the dialog, and
+    /// nothing changes on the Device.
+    pub fn cancel(&self) {
+        let job = self.inner.job.lock().clone();
+        if let Some(job) = job {
+            let _ = self.inner.handle.jobs().cancel(&job);
         }
     }
 
@@ -565,6 +769,7 @@ mod tests {
         Context {
             device: "Desk".into(),
             version: "1.2.0".into(),
+            switch_to: None,
         }
     }
 
