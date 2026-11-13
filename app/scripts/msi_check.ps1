@@ -82,12 +82,25 @@ function Read-Package([string]$Path) {
     while ($record = Invoke-ComMethod $view 'Fetch' $null) {
         $properties[(Get-ComProperty $record 'StringData' @(1))] = Get-ComProperty $record 'StringData' @(2)
     }
+    # The Upgrade table rows that find an installed copy to replace.
+    $view2 = Invoke-ComMethod $database 'OpenView' @('SELECT `UpgradeCode`, `VersionMin`, `VersionMax`, `Attributes`, `ActionProperty` FROM `Upgrade`')
+    $null = Invoke-ComMethod $view2 'Execute' $null
+    $upgrades = [Collections.Generic.List[object]]::new()
+    while ($record = Invoke-ComMethod $view2 'Fetch' $null) {
+        $upgrades.Add([pscustomobject]@{
+            UpgradeCode    = Get-ComProperty $record 'StringData' @(1)
+            VersionMin     = Get-ComProperty $record 'StringData' @(2)
+            VersionMax     = Get-ComProperty $record 'StringData' @(3)
+            Attributes     = [int](Get-ComProperty $record 'IntegerData' @(4))
+            ActionProperty = Get-ComProperty $record 'StringData' @(5)
+        })
+    }
     $summary = Get-ComProperty $database 'SummaryInformation' @(0)
     # Summary property 15 is the word count: bit 8 marks a package that never asks for elevation.
     $wordCount = [int](Get-ComProperty $summary 'Property' @(15))
     # Let go of the file before msiexec opens it.
-    foreach ($object in @($summary, $view, $database, $installer)) { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($object) }
-    [pscustomobject]@{ Properties = $properties; NoElevation = [bool]($wordCount -band 8) }
+    foreach ($object in @($summary, $view2, $view, $database, $installer)) { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($object) }
+    [pscustomobject]@{ Properties = $properties; Upgrades = $upgrades; NoElevation = [bool]($wordCount -band 8) }
 }
 
 # Windows Installer names a product's registry keys by its product code with the digits regrouped.
@@ -166,6 +179,12 @@ else {
     Assert-That ($package.Properties['Manufacturer'] -ceq $manufacturer) "Manufacturer is '$manufacturer'."
     Assert-That ($package.Properties['ProductVersion'] -ceq $numbers) "ProductVersion is $numbers, the program's version."
     Assert-That ($package.Properties['UpgradeCode'] -ieq $upgradeCode) 'UpgradeCode is the committed one.'
+    # 0x200 is msidbUpgradeAttributesVersionMaxInclusive: an installed copy of this same MSI version is replaced too,
+    # so the final 2.0.0 replaces 2.0.0-preview.1, which also installs as 2.0.0.
+    $replaces = @($package.Upgrades | Where-Object {
+            $_.UpgradeCode -ieq $upgradeCode -and $_.VersionMax -ceq $numbers -and ($_.Attributes -band 0x200) -and $_.ActionProperty -ceq 'WIX_UPGRADE_DETECTED'
+        })
+    Assert-That ($replaces.Count -eq 1) "The package replaces an installed copy up to and including version $numbers."
     Assert-That (-not $package.Properties.ContainsKey('ALLUSERS')) 'The package sets no ALLUSERS: it installs for the current user.'
     Assert-That $package.NoElevation 'The package is marked as never needing elevation.'
     Assert-That (-not (Test-Path -LiteralPath $installDir)) 'The install folder does not exist before the install.'
