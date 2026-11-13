@@ -185,6 +185,7 @@ fn settle(app: &App) {
 }
 
 mod firmware;
+mod integrations;
 mod settings;
 mod setup;
 

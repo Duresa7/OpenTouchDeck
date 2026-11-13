@@ -7,10 +7,15 @@ import { AboutPage, Component } from "about.slint";
 import { SetupPage, BoardCard, SetupLater, Wizard } from "setup.slint";
 import { SettingsPage, PcSettings, DeviceEntry, DevicePage, PairedApp } from "settings.slint";
 import { CloseNotice } from "close-notice.slint";
+import { IntegrationsPage, Integrations, IntegrationRow, IntegrationField, IntegrationSecret, IntegrationPage, DeliveryProblem, UsageAccount } from "integrations.slint";
+import { TableCell } from "controls.slint";
+import { IconPacks } from "icon-packs.slint";
+import { Brandfetch } from "brandfetch.slint";
 
 export { Theme, ContrastColors, DeviceRow, Tone, Component, BoardCard, SetupLater, Wizard, PcSettings, DeviceEntry, DevicePage, PairedApp }
+export { Integrations, IntegrationRow, IntegrationField, IntegrationSecret, IntegrationPage, DeliveryProblem, UsageAccount, TableCell, IconPacks, Brandfetch }
 
-export enum Page { home, setup, settings, about }
+export enum Page { home, setup, settings, integrations, about }
 
 export component AppWindow inherits Window {
     title: "Open TouchDeck";
@@ -131,6 +136,14 @@ export component AppWindow inherits Window {
                     selected: root.page == Page.settings;
                     activated => {
                         root.page = Page.settings;
+                    }
+                }
+
+                NavItem {
+                    text: "Integrations";
+                    selected: root.page == Page.integrations;
+                    activated => {
+                        root.page = Page.integrations;
                     }
                 }
 
@@ -269,6 +282,7 @@ export component AppWindow inherits Window {
                     root.restart-device();
                 }
             }
+            if root.page == Page.integrations: IntegrationsPage { }
             if root.page == Page.about: AboutPage {
                 version: root.version;
                 components: root.components;

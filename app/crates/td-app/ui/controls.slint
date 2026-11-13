@@ -508,8 +508,9 @@ export component Choices inherits Rectangle {
     }
 }
 
-// A single-line text field. It shows `value` until the person edits it; Enter or leaving it
-// commits the words, Escape puts `value` back.
+// A text field. It shows `value` until the person edits it; Enter or leaving it commits the
+// words, Escape puts `value` back. `password` hides the words, from screen readers too;
+// `multi-line` takes several lines, where Enter starts a new line and Ctrl+Enter commits.
 export component TextField inherits Rectangle {
     in property <string> label;
     in property <string> value;
@@ -517,6 +518,10 @@ export component TextField inherits Rectangle {
     in property <string> description;
     in property <bool> enabled: true;
     in property <bool> invalid;
+    in property <bool> password;
+    in property <bool> multi-line;
+    // How many lines a multi-line field shows before it grows with its text.
+    in property <int> lines: 6;
     // Commit when focus leaves, as Settings does. Setup commits with its Next button.
     in property <bool> commit-on-leave: true;
     out property <string> text <=> input.text;
@@ -526,7 +531,8 @@ export component TextField inherits Rectangle {
     accessible-role: text-input;
     accessible-label: self.label;
     accessible-description: self.description;
-    accessible-value: input.text;
+    // A password field never reads its words aloud.
+    accessible-value: self.password ? "" : input.text;
     accessible-placeholder-text: self.placeholder;
     accessible-enabled: self.enabled;
     // Setting the value is typing: it commits only as the field would, on Enter or leaving it.
@@ -535,7 +541,7 @@ export component TextField inherits Rectangle {
         self.edited(text);
     }
     forward-focus: input;
-    min-height: max(32px, input.preferred-height + 12px);
+    min-height: self.multi-line ? max(self.lines * Theme.body * 1.4 + 12px, input.preferred-height + 12px) : max(32px, input.preferred-height + 12px);
     border-radius: 4px;
     border-width: 1px;
     border-color: !self.enabled ? Theme.disabled-text : self.invalid ? Theme.critical : input.has-focus && !Theme.high-contrast ? Theme.accent : Theme.control-stroke;
@@ -560,26 +566,30 @@ export component TextField inherits Rectangle {
 
     if input.text == "" && !input.has-focus: Text {
         x: 11px;
+        y: root.multi-line ? 6px : 0;
         accessible-role: none;
         text: root.placeholder;
         font-size: Theme.body;
         color: Theme.secondary-text;
-        vertical-alignment: center;
-        height: parent.height;
+        vertical-alignment: root.multi-line ? top : center;
+        height: root.multi-line ? self.preferred-height : parent.height;
     }
 
     input := TextInput {
         x: 11px;
+        y: root.multi-line ? 6px : 0;
         width: parent.width - 22px;
-        height: parent.height;
+        height: root.multi-line ? parent.height - 12px : parent.height;
         accessible-role: none;
         enabled: root.enabled;
-        single-line: true;
+        single-line: !root.multi-line;
+        wrap: root.multi-line ? word-wrap : no-wrap;
+        input-type: root.password ? InputType.password : InputType.text;
         font-size: Theme.body;
         color: root.enabled ? Theme.text : Theme.disabled-text;
         selection-background-color: Theme.accent;
         selection-foreground-color: Theme.accent-text;
-        vertical-alignment: center;
+        vertical-alignment: root.multi-line ? top : center;
         edited => {
             root.edited(self.text);
         }
@@ -587,8 +597,15 @@ export component TextField inherits Rectangle {
             root.accepted(self.text);
         }
         key-pressed(event) => {
+            if root.multi-line && event.text == Key.Return && event.modifiers.control {
+                // A held Ctrl+Enter commits once, not again on every repeat.
+                if !event.repeat {
+                    root.accepted(self.text);
+                }
+                return accept;
+            }
             // A held Enter commits once, not again on every repeat.
-            if event.text == Key.Return && event.repeat {
+            if !root.multi-line && event.text == Key.Return && event.repeat {
                 return accept;
             }
             if event.text == Key.Escape {
@@ -606,6 +623,16 @@ export component TextField inherits Rectangle {
             }
         }
     }
+}
+
+// A field for a password or key. Its words show as dots and screen readers never hear them.
+export component PasswordField inherits TextField {
+    password: true;
+}
+
+// A field for several lines, such as JSON. Enter starts a new line; Ctrl+Enter commits.
+export component MultiLineField inherits TextField {
+    multi-line: true;
 }
 
 // A determinate progress bar, or a moving one while the amount is unknown.
@@ -967,4 +994,104 @@ export component ButtonPair inherits Rectangle {
             }
         }
     }
+}
+
+// One column of a `StackedRow`: the column's name and this row's value, with a line under it.
+export struct TableCell {
+    label: string,
+    value: string,
+    hint: string,
+}
+
+// A table row that fits a narrow window: its title, then each column's name and value. Side by
+// side while there is room, and the name above the value when the text is large.
+export component StackedRow inherits Rectangle {
+    in property <string> title;
+    in property <[TableCell]> cells;
+    in property <bool> first;
+    property <bool> wide: root.width >= 400px * Theme.text-scale;
+
+    accessible-role: list-item;
+    accessible-label: self.title;
+    min-height: layout.preferred-height;
+
+    layout := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 6px;
+        Text {
+            accessible-role: none;
+            text: root.title;
+            font-size: Theme.body;
+            font-weight: Theme.semibold;
+            color: Theme.text;
+            wrap: word-wrap;
+        }
+
+        for cell in root.cells: Rectangle {
+            accessible-role: AccessibleRole.text;
+            accessible-label: cell.label + ": " + cell.value + (cell.hint != "" ? ". " + cell.hint : "");
+            min-height: column.preferred-height;
+            column := VerticalLayout {
+                if root.wide: HorizontalLayout {
+                    spacing: 12px;
+                    Text {
+                        accessible-role: none;
+                        width: 35%;
+                        text: cell.label;
+                        font-size: Theme.body;
+                        color: Theme.secondary-text;
+                        wrap: word-wrap;
+                    }
+
+                    VerticalLayout {
+                        Text {
+                            accessible-role: none;
+                            text: cell.value;
+                            font-size: Theme.body;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                        }
+
+                        if cell.hint != "": Text {
+                            accessible-role: none;
+                            text: cell.hint;
+                            font-size: Theme.caption;
+                            color: Theme.secondary-text;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                if !root.wide: VerticalLayout {
+                    Text {
+                        accessible-role: none;
+                        text: cell.label;
+                        font-size: Theme.caption;
+                        color: Theme.secondary-text;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        accessible-role: none;
+                        text: cell.value;
+                        font-size: Theme.body;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+
+                    if cell.hint != "": Text {
+                        accessible-role: none;
+                        text: cell.hint;
+                        font-size: Theme.caption;
+                        color: Theme.secondary-text;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+
+    if !root.first: Divider { }
 }

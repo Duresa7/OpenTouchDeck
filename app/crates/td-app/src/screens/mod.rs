@@ -1,12 +1,15 @@
-//! Setup and Settings, fed from the Companion. Every rule they follow lives in td-companion
-//! (`setup`, the Device settings and Pairings sessions, Firmware tasks) or td-core (the update
-//! setting); this module only turns those views into the window's properties and sends the
-//! window's callbacks back as typed operations.
+//! Setup, Settings and Integrations, fed from the Companion. Every rule they follow lives in
+//! td-companion (`setup`, the Device settings and Pairings sessions, Firmware tasks, the
+//! Integrations session) or td-core (the update setting); this module only turns those views into
+//! the window's properties and sends the window's callbacks back as typed operations.
 //!
 //! The Companion's work runs on Tokio. Each session publishes its view on a `watch` channel; a
 //! small task per channel wakes the UI thread, which then rebuilds the window's properties from
 //! the current views in [`Screens::refresh`]. The headless tests call `refresh` themselves.
-use crate::{AppWindow, BoardCard, DeviceEntry, PairedApp, SetupLater, home, window};
+use crate::{
+    AppWindow, BoardCard, DeliveryProblem, DeviceEntry, IntegrationField, IntegrationRow,
+    IntegrationSecret, PairedApp, SetupLater, UsageAccount, home, window,
+};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::{
     cell::{Cell, RefCell},
@@ -21,6 +24,7 @@ use td_companion::{
     companion::{Change, Handle, RecvError},
     devices::{DeviceId, DeviceSummary, LinkState, NewBoard},
     features::firmware::{FirmwareBuild, FirmwareTask, Target, offered},
+    integrations::session::IntegrationsSession,
     setup::SetupSession,
 };
 use td_core::{app_dirs::Dirs, settings::AppSettings};
@@ -36,6 +40,9 @@ macro_rules! on {
     }};
 }
 
+mod brandfetch;
+mod icon_packs;
+mod integrations;
 mod settings;
 mod setup;
 
@@ -112,6 +119,11 @@ struct Models {
     devices: Rc<VecModel<DeviceEntry>>,
     paired: Rc<VecModel<PairedApp>>,
     after: Rc<VecModel<SharedString>>,
+    integrations: Rc<VecModel<IntegrationRow>>,
+    fields: Rc<VecModel<IntegrationField>>,
+    secrets: Rc<VecModel<IntegrationSecret>>,
+    deliveries: Rc<VecModel<DeliveryProblem>>,
+    accounts: Rc<VecModel<UsageAccount>>,
 }
 
 pub(crate) struct Screens {
@@ -133,6 +145,9 @@ pub(crate) struct Screens {
     live: RefCell<BTreeMap<DeviceId, bool>>,
     start: Arc<std::sync::Mutex<StartAtSignIn>>,
     updates: RefCell<UpdateChecks>,
+    integrations: IntegrationsSession,
+    /// Secrets whose Replace was chosen, so their field shows instead of "Saved".
+    replacing: RefCell<BTreeSet<String>>,
     models: Models,
     refreshing: Cell<bool>,
 }
@@ -163,6 +178,7 @@ impl Screens {
                 config.app_settings().display()
             )),
         };
+        let integrations = Self::integrations_session(&handle, &runtime);
         let screens = Rc::new(Self {
             ui: ui.as_weak(),
             handle,
@@ -181,6 +197,8 @@ impl Screens {
             live: RefCell::default(),
             start: Arc::new(std::sync::Mutex::new(StartAtSignIn::Reading)),
             updates: RefCell::new(updates),
+            integrations,
+            replacing: RefCell::default(),
             models: Models::default(),
             refreshing: Cell::new(false),
         });
@@ -194,6 +212,10 @@ impl Screens {
         ui.set_appearance(scheme(screens.window.appearance()));
         screens.wire_setup(ui);
         screens.wire_settings(ui);
+        screens.wire_integrations(ui);
+        screens.wire_icon_packs(ui);
+        screens.wire_brandfetch(ui);
+        screens.watch("integrations".into(), screens.integrations.subscribe());
         screens.follow();
         screens.read_start();
         screens.refresh();
@@ -298,7 +320,7 @@ impl Screens {
         }
     }
 
-    /// Rebuilds Setup and Settings from the Companion and the sessions.
+    /// Rebuilds Setup, Settings and Integrations from the Companion and the sessions.
     pub(crate) fn refresh(&self) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -315,6 +337,9 @@ impl Screens {
         }
         self.refresh_setup(&ui, &devices, &boards);
         self.refresh_settings(&ui, &devices);
+        self.refresh_integrations(&ui);
+        self.refresh_icon_packs(&ui);
+        self.refresh_brandfetch(&ui);
         self.refreshing.set(false);
     }
 }
