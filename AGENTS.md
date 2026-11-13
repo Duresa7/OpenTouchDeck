@@ -33,11 +33,13 @@
 
 ## Resume notes
 
-- On a branch you work on for more than one session, keep `.verify/<branch>/NOTES.md` (git-ignored) current: the goal, the ticket or PR, what is done, what is next, and any open question. Update it before you stop, and read it first when you resume, so a new session or a different model can pick up where you left off.
+- On a branch you work on for more than one session, keep `.verify/<branch>/NOTES.md` (git-ignored) current: the goal, the ticket or PR, what is done, what is next, and any open question. Update it at every commit and each finished step, because a usage or credit limit can end a turn without warning. When told to resume from notes, read the note, `git status` and `git log origin/main..HEAD` first, then continue.
 
 ## Agent skills
 
 `.agents/skills/` is the canonical copy and Claude Code reads the copy in `.claude/skills/`. Edit a skill in `.agents/skills/`, then run `python .github/scripts/skills_mirror.py sync`; CI fails when the two differ. [.agents/skills/README.md](.agents/skills/README.md) lists each third-party set with its source and license.
+
+If `.claude/skills` can't be read (some sandboxes block it), read `.agents/skills/<name>/SKILL.md`, which is the canonical copy.
 
 ### Issue tracker
 
