@@ -213,7 +213,11 @@ else {
     $env:TOUCHDECK_APP_DATA_DIR = Join-Path $env:RUNNER_TEMP 'msi-app-data'
     $null = New-Item -ItemType Directory -Force -Path (Join-Path $env:TOUCHDECK_APP_DATA_DIR 'config')
     Set-Content -LiteralPath (Join-Path $env:TOUCHDECK_APP_DATA_DIR 'config/app-settings.json') -Value '{"automatic_update_checks":false}'
-    $app = Start-Process -FilePath $installedExe -ArgumentList '--packaged' -PassThru
+    # Hosted runners have no guaranteed OpenGL device. Exercise the real winit window
+    # with Slint's shipped software renderer.
+    $env:SLINT_BACKEND = 'winit-software'
+    $appErrors = Join-Path $env:RUNNER_TEMP 'msi-app-stderr.txt'
+    $app = Start-Process -FilePath $installedExe -ArgumentList '--packaged' -RedirectStandardError $appErrors -PassThru
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(60)
         do {
@@ -225,6 +229,11 @@ else {
         Assert-That ($run -eq "`"$installedExe`" --packaged") 'First packaged start registers the app Run command.'
     } finally {
         if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force; $app.WaitForExit() }
+        if (Test-Path -LiteralPath $appErrors) {
+            $diagnostic = Protect-Text (Get-Content -LiteralPath $appErrors -Raw)
+            Set-Content -LiteralPath (Join-Path $ArtifactDir 'app-stderr.txt') -Value $diagnostic
+            Write-Host $diagnostic
+        }
     }
     $null = New-Item -Path $approvedKey -Force
     $null = New-ItemProperty -LiteralPath $approvedKey -Name 'Open TouchDeck' -PropertyType Binary -Value ([byte[]](2,0,0,0,0,0,0,0,0,0,0,0)) -Force
