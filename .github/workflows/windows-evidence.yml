@@ -1,0 +1,68 @@
+name: windows evidence
+
+# Proves Open TouchDeck 2.0's M1 on a real Windows desktop (issue #353, ADR 0011): builds td-app, runs it with
+# mock Devices on a GitHub-hosted runner and uploads screenshots, memory figures, UI Automation trees and the
+# tray checks as one artifact. The scripts are in .github/scripts/windows-evidence; its README says how to run
+# them by hand.
+#
+# It runs after a merge to main that changes the app window or the tray, and by hand from the Actions tab. It is
+# not a pull request check and not part of `gate`: it takes about 25 minutes and its screenshots need a person.
+# The job fails when a check fails, so a broken tray or an unnamed control still shows up as a red run on main.
+#
+# windows-latest is Windows Server 2025, not Windows 11. It is built from the Windows 11 24H2 code (build 26100)
+# and the runner signs in to a desktop session with Explorer, 1024x768 at 100%. What that means:
+#
+#   It can prove
+#   - The notification area: the Windows 11 taskbar and its overflow flyout, Shell_NotifyIcon, the popup menu,
+#     Start at sign-in's registry values and an Explorer restart all behave as on Windows 11.
+#   - Light and dark, a contrast theme (Windows 11's four are installed), 200% text size and the minimum width.
+#   - Segoe UI Variable: the Text and Display faces are installed, so the screenshots show the real font.
+#   - The UI Automation tree Narrator reads, and the app's identity (AppUserModelID, icons, version resource).
+#
+#   It cannot prove
+#   - How Mica looks. The runner has no GPU (Microsoft Hyper-V Video). DWM accepts the Mica request, which the
+#     job records, but draws its flat fallback colour with no wallpaper tint.
+#   - The accent colour following the user: the runner only has the default blue.
+#   - Memory with a GPU renderer. The figures are for a window drawn in software.
+#   - The Settings app. Themes and text size are changed with the registry value and broadcast, or the
+#     SystemParametersInfo call, behind each setting. The summary says which changes reached the running window.
+#   - Narrator itself, or a real sign-in: the tree and the Run value are checked, not the speech or the start.
+on:
+  push:
+    branches: [main]
+    paths:
+      - app/crates/td-app/**
+      - app/crates/td-companion/src/tray/**
+      - .github/workflows/windows-evidence.yml
+      - .github/scripts/windows-evidence/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  evidence:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No build cache: this is the only release build with the mock feature, and it runs too seldom to keep one.
+      - uses: ./.github/actions/rust-setup
+      - name: Build td-app
+        working-directory: app
+        run: cargo build --release --locked --package td-app --features mock
+      # Windows PowerShell 5.1: it ships the UI Automation client the scripts use.
+      - name: Collect the evidence
+        shell: powershell
+        run: ./.github/scripts/windows-evidence/run.ps1 -Exe app/target/release/td-app.exe -Out "$env:RUNNER_TEMP/evidence"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: windows-evidence
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: error

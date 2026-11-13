@@ -362,7 +362,7 @@ impl Inner {
         }
         reg.generation += 1;
         let generation = reg.generation;
-        let (mirror, key_mirror) = actor::mirror(&self.config().input, &hello);
+        let (mirror, key_mirror) = actor::mirror(self, &self.config().input, &hello);
         let session_id = crate::now_ms();
         let handle = actor::spawn(
             self.clone(),

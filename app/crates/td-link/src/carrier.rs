@@ -156,15 +156,22 @@ impl FrameWriter for UsbWriter {
                 Ok(0) => return Err(ErrorKind::WriteZero.into()),
                 Ok(n) => rest = &rest[n..],
                 Err(error)
-                    if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::Interrupted)
-                        && Instant::now() < window.deadline() => {}
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::TimedOut | ErrorKind::Interrupted | ErrorKind::WouldBlock
+                    ) =>
+                {
+                    std::thread::sleep(crate::READ_TICK);
+                }
                 Err(error) => return Err(error),
             }
         }
         if !window.is_open() {
             return Err(ErrorKind::BrokenPipe.into());
         }
-        self.0.flush()
+        // Serial drain calls can block indefinitely. Writes enqueue the entire frame;
+        // the protocol acknowledgement confirms delivery.
+        Ok(())
     }
 }
 
