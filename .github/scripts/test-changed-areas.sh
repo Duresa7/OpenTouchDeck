@@ -43,6 +43,12 @@ check "scripts" app/scripts/release_version.py
 check "scripts" app/scripts/tests/test_release_workflow.py
 check "scripts" app/scripts/setup-windows.ps1
 
+# The agent skills and their copy. AGENTS.md and the docs the skills read need no check.
+check "scripts" .agents/skills/tdd/SKILL.md
+check "scripts" .claude/skills/verify-touchdeck/scripts/touchdeck.ps1
+check "scripts actionlint" .github/scripts/skills_mirror.py
+check none AGENTS.md docs/agents/issue-tracker.md skills-lock.json
+
 # Firmware, and the schema two areas read.
 check "firmware" firmware/main/main.c
 check "firmware" firmware/sdkconfig.defaults

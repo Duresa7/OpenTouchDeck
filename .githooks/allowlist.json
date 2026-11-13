@@ -46,5 +46,65 @@
     "rule": "minisign-secret-wrapped",
     "line_sha256": "9eeb3920b097b844458cf37ae204098cbbce221424b95141ca3c05d39fed2f39",
     "comment": "Disposable test-only updater key for the release-signer tests; published on purpose."
+  },
+  {
+    "file": ".agents/skills/break-ui/CATALOG.md",
+    "rule": "email",
+    "line_sha256": "71fa5c42e1bc6dc993ddaaa9879b161a37b3d1f07b3cf67d45fc40e6777f28a3",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
+  },
+  {
+    "file": ".agents/skills/break-ui/CATALOG.md",
+    "rule": "email",
+    "line_sha256": "c775ef63848fbde8f888b60e52d48cf5af3224c5098aaf6fa75efd019fe5ff87",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
+  },
+  {
+    "file": ".agents/skills/break-ui/CATALOG.md",
+    "rule": "email",
+    "line_sha256": "a0047672cde5c598922c6964bee52a07a3b1af36fd98e085685c9856f2a01faf",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
+  },
+  {
+    "file": ".agents/skills/break-ui/SKILL.md",
+    "rule": "email",
+    "line_sha256": "532b8788b428ff4875f6aa4bdeff1056ef14403801837dbc635a40f96f724364",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
+  },
+  {
+    "file": ".agents/skills/break-ui/SKILL.md",
+    "rule": "email",
+    "line_sha256": "eab2b2beed8f60c7e5d7654af0311e3e303876d81c42d9f729567491ea55e96b",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
+  },
+  {
+    "file": ".claude/skills/break-ui/CATALOG.md",
+    "rule": "email",
+    "line_sha256": "71fa5c42e1bc6dc993ddaaa9879b161a37b3d1f07b3cf67d45fc40e6777f28a3",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
+  },
+  {
+    "file": ".claude/skills/break-ui/CATALOG.md",
+    "rule": "email",
+    "line_sha256": "c775ef63848fbde8f888b60e52d48cf5af3224c5098aaf6fa75efd019fe5ff87",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
+  },
+  {
+    "file": ".claude/skills/break-ui/CATALOG.md",
+    "rule": "email",
+    "line_sha256": "a0047672cde5c598922c6964bee52a07a3b1af36fd98e085685c9856f2a01faf",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
+  },
+  {
+    "file": ".claude/skills/break-ui/SKILL.md",
+    "rule": "email",
+    "line_sha256": "532b8788b428ff4875f6aa4bdeff1056ef14403801837dbc635a40f96f724364",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
+  },
+  {
+    "file": ".claude/skills/break-ui/SKILL.md",
+    "rule": "email",
+    "line_sha256": "eab2b2beed8f60c7e5d7654af0311e3e303876d81c42d9f729567491ea55e96b",
+    "comment": "Fictional worst-case address in Emil Kowalski's break-ui skill (third-party, MIT)."
   }
 ]

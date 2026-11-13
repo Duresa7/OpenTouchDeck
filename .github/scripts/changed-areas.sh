@@ -3,7 +3,7 @@
 # firmware= and actionlint= lines for $GITHUB_OUTPUT.
 #
 #   rust        the Rust workspace under app/: fmt, clippy and tests on Windows and Linux
-#   scripts     the release and data scripts under app/scripts, and the release signer
+#   scripts     the release and data scripts under app/scripts, the release signer, and the agent skills copy
 #   firmware    the ESP-IDF builds, the QEMU check and the layout schema
 #   actionlint  the workflow files
 #
@@ -23,6 +23,8 @@ while IFS= read -r -d '' path; do
   case "$path" in
     # The Windows evidence scripts run only in windows-evidence.yml, after a merge or by hand.
     .github/scripts/windows-evidence/*) ;;
+    # The agent skills check runs in the scripts job alone.
+    .github/scripts/skills_mirror.py) scripts=true ;;
     .github/workflows/pr.yml|.github/scripts/*) rust=true; scripts=true; firmware=true ;;
   esac
   case "$path" in
@@ -44,6 +46,8 @@ while IFS= read -r -d '' path; do
     app/scripts/*|app/crates/*/Cargo.toml|app/Cargo.lock) scripts=true ;;
     app/crates/td-host/src/catalog/*|app/crates/td-host/src/packs.json) scripts=true ;;
     .github/release-signer/*|.github/release-signer-test/*|.github/workflows/scripts.yml) scripts=true ;;
+    # .claude/skills must stay a copy of .agents/skills.
+    .agents/*|.claude/*) scripts=true ;;
   esac
 
   # The Firmware embeds schema/ files.
