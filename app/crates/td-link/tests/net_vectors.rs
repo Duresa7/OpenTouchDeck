@@ -1003,7 +1003,33 @@ fn ble_discovery_recognizes_only_paired_devices_across_rotation() {
             .unwrap()
             .matches(&key)
     );
+    // A Companion's whole-scan matcher: its own Pairing in one slot, every Pairing of a
+    // full store, and nothing from an unpaired Device or another Companion's key.
+    let payloads =
+        |name: &str| -> Vec<Vec<u8>> { d[name].as_array().unwrap().iter().map(bytes).collect() };
+    let slots = payloads("slots");
+    assert_eq!(
+        ble_discovery::recognise(
+            slots.iter().map(Vec::as_slice),
+            &[("paired", key), ("other", wrong)]
+        ),
+        ["paired"].into()
+    );
+    let full_keys: Vec<(usize, [u8; 32])> = d["full_ltks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|ltk| wire::discovery_key(&array(ltk)))
+        .enumerate()
+        .collect();
+    assert_eq!(
+        ble_discovery::recognise(payloads("full").iter().map(Vec::as_slice), &full_keys).len(),
+        4
+    );
+    let unpaired = bytes(&d["unpaired"]);
+    assert!(ble_discovery::recognise([unpaired.as_slice()], &[((), key)]).is_empty());
     let pairing = bytes(&d["pairing"]);
+    assert!(ble_discovery::recognise([pairing.as_slice()], &[((), key)]).is_empty());
     assert!(matches!(
         ble_discovery::read(&pairing),
         Some(Advert::Pairing { paired: 1, .. })

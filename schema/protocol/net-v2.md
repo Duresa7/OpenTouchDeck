@@ -158,55 +158,90 @@ Device, and the Companion drops it. A record with `id` is a Device in pairing
 mode, which the Companion may list for pairing. A record without `n` and `h`
 is malformed and dropped.
 
-**BLE legacy scan response.** Service data has exactly 13 bytes after the
-128-bit service UUID (31 bytes including AD length, type and UUID):
+**The BLE scan response.** BLE uses the same discovery key with its own,
+smaller layout, because a legacy scan response holds 31 bytes and the service
+data's AD header and 128-bit UUID take 18 of them. The service data after the
+UUID is exactly 13 bytes:
 
-* Outside pairing: `0x02 || nonce[6] || hint[6]`.
-* In pairing mode: `0x82 || device_id[6] || paired:u8 || padding[5]`.
-  Padding is fresh random data at each rotation. No name is included.
+| Mode | Service data |
+|---|---|
+| outside pairing mode | `0x02 \|\| nonce[6] \|\| hint[6]` |
+| pairing mode | `0x82 \|\| device_id[6] \|\| paired:u8 \|\| padding[5]` |
 
-For BLE only, `hint = first 6 bytes of MAC(K_disc, "ble-hint" || nonce)`.
-The domain separates BLE from TCP. Use independent random nonces for the two
-Carriers. Draw one BLE nonce and four random six-byte fillers at boot, every
-900000 ms, and on every pairing-window or Pairing-store change. Replace each
-occupied slot's filler with its hint. Cycle all four slots, one per second,
-including empty slots, with the same cadence regardless of Pairing count.
-Never transmit a slot number. Do not reuse the old nonce after reboot.
+```text
+ble_hint = the first 6 bytes of MAC(K_disc, "ble-hint" || nonce)
+```
 
-The six-byte nonce and hint fit legacy advertisements without requiring
-extended-advertising support. For one key, ten years of uninterrupted
-15-minute rotations gives a nonce collision probability about 0.00022;
-additional restarts and Pairing changes increase this bound. A repeat can
-link two epochs. This is a deliberate privacy trade-off for legacy BLE.
-For four stored Companion keys and 32 Devices with four slots each, accidental
-hint matching has probability at most 512 / 2^48 per complete browse. Hints
-are routing hints, never authentication tags: a session still needs its full
-proofs and pinned identity. A malicious advertiser can replay hints.
+The label `ble-hint` keeps BLE hints apart from TXT hints, and the BLE nonce is
+drawn independently of the TXT nonce, so an observer of both radios can't link
+them through the payload. The Device draws one BLE nonce and four random
+six-byte fillers at the same moments as the TXT nonce: at boot, every 900000 ms
+of uptime, when a pairing window opens or closes, and when a Pairing is added
+or removed. Slot `i` carries Pairing `i`'s hint, or filler `i` when the slot is
+free. The scan response shows one slot at a time and moves to the next slot
+every 1000 ms, cycling all four whatever the Pairing count, so neither the
+cadence nor the payloads say how many Pairings there are. No slot number is
+sent. Pairing mode carries no name and no nonce; its padding is fresh random
+bytes at each rotation. `paired` is at most 4.
 
-A Companion scans actively for at least five seconds, processes changed
-service data even at an already-seen BLE address, compares hints in constant
-time against every stored discovery key, and deduplicates matched Devices by
-pinned identity. Unknown hints are omitted. Reject every other length or
-marker and Pairing counts above four; do not fall back to the old id format.
-An address is only a temporary endpoint. Rotation MUST replace cached scan
-response data and rotate the private BLE address together; a fixed address
-would defeat payload privacy. Closing pairing mode MUST immediately remove the id
-payload. The separate Bluetooth keyboard role MUST NOT supply a stable name
-to these advertisements outside its explicit pairing window.
+Two rules belong to the radio code that drives this builder:
 
-**Existing Pairings.** Deriving `K_disc` from the stored LTK is the migration:
-no extra key exchange, credential-store field, NVS rewrite or re-pairing is
-needed. The Companion derives and caches it in memory when loading an older
-Pairing, just as for a new Pairing, and never logs or serializes that cache.
-A missing LTK cannot recognize hints and requires re-pairing. Old firmware
-that broadcasts ids must be upgraded; neither side falls back to public ids
-outside pairing mode.
+* Each rotation replaces the scan response and the Device's resolvable or
+  non-resolvable private BLE address together. A fixed address would link
+  every nonce, and a new address with an old payload would link the
+  addresses.
+* Closing a pairing window removes the pairing-mode payload at once.
 
-**Implementation boundary.** The portable Firmware advertisement builders
-and Rust matchers implement these formats. Firmware mDNS publishing and the
-BLE net-v2 advertiser/scanner must wire their rotation and matching lifecycles
-when those radio integrations land; the existing BLE HID service is separate.
-A codec test alone does not establish real-radio discovery or address privacy.
+The Bluetooth keyboard role advertises separately, under its own rules; it
+doesn't add its name or any other stable value to these advertisements.
+
+**Why 15 minutes on BLE too.** One period for both Carriers keeps one rotation
+rule in the Firmware, and the linkable window is the same whichever radio an
+observer listens to. A shorter period would buy little: a person who sits near
+the Device for longer than a period can see it anyway.
+
+**Why a 6-byte nonce and a 6-byte hint.** They are what fits beside the
+marker, and they keep BLE discovery on legacy advertising, which every
+Bluetooth adapter supports, instead of requiring extended advertising. The
+cost is in two places, both acceptable:
+
+* A repeated nonce lets an observer link the two periods it appears in. Over
+  ten years of uninterrupted 15-minute rotations a Device draws about 350000
+  nonces, and the chance that any two of them are equal is about 2.2 * 10^-4.
+  Reboots and Pairing changes add draws and raise this slightly.
+* A Companion with four Pairings that sees 32 Devices with four slots each
+  makes 512 comparisons per scan, so the chance of any false match is at most
+  512 / 2^48 = 2^-39. A false match costs one failed session.
+
+A hint chooses which BLE address to try and is never authentication; anyone
+can replay one. The session still proves the LTK and pins `device_id`.
+
+**The Companion on BLE.** It scans actively for at least 5000 ms, so it sees
+every slot, and handles changed service data even from an address it has
+already seen. For each payload it computes the BLE hint for each of its
+Pairings with that payload's nonce and compares it with the payload's hint in
+constant time, checking every Pairing, and it merges matches by Pairing. A
+matching Device answered at that address for now; the Companion never pins a
+BLE address. A pairing-mode payload is a Device the Companion may list for
+pairing. A payload with any other length or marker, or with `paired` above 4,
+is dropped. In particular, the earlier draft's `proto || device_id || paired`
+payload is never read, so neither side falls back to a stable id outside
+pairing mode.
+
+**Existing Pairings.** No migration step is needed. `K_disc` comes from the
+LTK, which every Pairing already stores, so the Device and the Companion
+derive it when they load a Pairing, whenever it was made. Nothing is added to
+NVS or the credential store, and nobody re-pairs. The Companion keeps derived
+keys in memory only and never logs or serializes them. Firmware from before
+this rule, which advertised its id at all times, must be updated: the
+Companion no longer reads that format.
+
+**What exists today.** The Firmware's `td_netlink_advert_build` and
+`td_netlink_ble_advert_build` build both formats, and td-link's
+`net::mdns::Advert::matches` and `net::ble_discovery::recognise` match them.
+The Firmware's mDNS publisher comes with its network service, and the BLE
+net-v2 advertiser and scanner, with the rotation timers and address changes
+above, come with the BLE Carrier.
 
 **Passive privacy only.** Someone who records a valid `session.open` can
 send it to a Device later: the paired Device answers with a challenge, while
