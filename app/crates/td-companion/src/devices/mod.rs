@@ -714,6 +714,12 @@ pub struct DeviceManager {
     inner: Arc<Inner>,
 }
 impl DeviceManager {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn set_capability_fixture(&self, id: &DeviceId, capabilities: Option<Capabilities>) {
+        let mut reg = self.inner.reg.lock();
+        self.inner
+            .update(&mut reg, id, |d| d.capabilities = capabilities);
+    }
     #[cfg(test)]
     pub(crate) fn pause_key_reports(&self) -> parking_lot::MutexGuard<'_, ()> {
         self.inner.input_gate.lock()
