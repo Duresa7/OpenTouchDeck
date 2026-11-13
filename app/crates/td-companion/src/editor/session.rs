@@ -1,4 +1,7 @@
-//! Device-coupled editor facade. Keep one owner per Device; render its draft and selection.
+#[path = "placement.rs"]
+mod placement;
+pub use placement::{AddKind, AddTarget};
+// Device-coupled editor facade. Keep one owner per Device; render its draft and selection.
 use super::{Decision, Draft, Editor, EditorError};
 use crate::{
     companion::Handle,

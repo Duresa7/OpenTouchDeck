@@ -5,7 +5,7 @@ mod presets;
 pub use presets::placed_appearance;
 mod session;
 use serde::{Deserialize, Serialize};
-pub use session::{Session, SessionError};
+pub use session::{AddKind, AddTarget, Session, SessionError};
 use std::{collections::BTreeMap, io, path::PathBuf};
 use td_core::{
     Layout, Orientation,
@@ -126,6 +126,7 @@ impl PushPlan {
     }
 }
 
+#[derive(Clone)]
 pub struct Editor {
     path: PathBuf,
     device: String,
