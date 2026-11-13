@@ -1631,3 +1631,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "shutdown_tests.rs"]
+mod shutdown_tests;

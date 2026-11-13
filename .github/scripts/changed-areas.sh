@@ -21,6 +21,8 @@ actionlint=false
 while IFS= read -r -d '' path; do
   # The pull request workflow and this filter decide what runs, so a change to them runs everything.
   case "$path" in
+    # The Windows evidence scripts run only in windows-evidence.yml, after a merge or by hand.
+    .github/scripts/windows-evidence/*) ;;
     .github/workflows/pr.yml|.github/scripts/*) rust=true; scripts=true; firmware=true ;;
   esac
   case "$path" in

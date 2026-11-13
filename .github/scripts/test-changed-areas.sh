@@ -62,6 +62,8 @@ check "rust actionlint" .github/actions/rust-setup/action.yml
 check "scripts actionlint" .github/workflows/scripts.yml
 check "rust scripts firmware actionlint" .github/workflows/pr.yml
 check "rust scripts firmware actionlint" .github/scripts/changed-areas.sh
+# The Windows evidence workflow and its scripts run after a merge or by hand, never as a pull request check.
+check "actionlint" .github/workflows/windows-evidence.yml .github/scripts/windows-evidence/tray.ps1
 
 # The 2.0 installer: release.yml starts its own dry run for these, so they need no area here.
 check none app/installer/OpenTouchDeck.wxs
