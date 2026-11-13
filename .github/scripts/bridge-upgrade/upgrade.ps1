@@ -197,7 +197,7 @@ function Assert-OneXIntact([string]$When) {
     Assert-That (-not (Test-Path -LiteralPath (Join-Path $installDir 'td-app.exe'))) "$When`: no 2.0 program is in the install folder"
     Assert-That (-not (Test-Path -LiteralPath $backupDir)) "$When`: no backup folder is left"
     Assert-That (@(Get-ChildItem -LiteralPath (Split-Path $installDir) | Where-Object Name -like 'Open TouchDeck.2x-failed-*').Count -eq 0) "$When`: no failed-install folder is left"
-    Assert-That ((Get-OneXUninstallKeys).Count -eq 1) "$When`: the 1.x uninstall entry is in place"
+    Assert-That (@(Get-OneXUninstallKeys).Count -eq 1) "$When`: the 1.x uninstall entry is in place"
     $link = Get-ShortcutInfo $startMenuShortcut
     Assert-That ($null -ne $link -and $link.Target -ieq (Join-Path $installDir 'Open TouchDeck.exe')) "$When`: the Start menu shortcut opens 1.x"
     Assert-That ([string](Get-RunValue) -like "`"$installDir\td-companion.exe`"*") "$When`: start at sign-in still runs the 1.x Companion"
@@ -213,7 +213,7 @@ function Assert-DataKept([string]$When, $Before) {
     foreach ($seeded in @("io.github.duresa7.touchdeck\layouts\$device\landscape.json")) {
         Assert-That ($after[$seeded] -eq $Before[$seeded]) "$When`: the seeded Layout file is unchanged"
     }
-    $credentials = Get-Credentials
+    $credentials = @(Get-Credentials)
     foreach ($target in $script:credentialsBefore) {
         Assert-That ($credentials -contains $target) "$When`: Credential Manager still holds $target"
     }
@@ -286,9 +286,9 @@ try {
     $summary.oneXVersion = "$OldVersion, then $OneXVersion"
     $process = Start-Process -FilePath $OldInstaller -ArgumentList '/S' -Wait -PassThru
     Assert-That ($process.ExitCode -eq 0) "$OldVersion installs silently"
-    Assert-That ((Get-OneXUninstallKeys).Count -eq 1) "$OldVersion has one uninstall entry"
-    $notes['1.x uninstall entries'] = Get-OneXUninstallKeys
-    $notes['1.x install records'] = Get-OneXInstallRecords
+    Assert-That (@(Get-OneXUninstallKeys).Count -eq 1) "$OldVersion has one uninstall entry"
+    $notes['1.x uninstall entries'] = @(Get-OneXUninstallKeys)
+    $notes['1.x install records'] = @(Get-OneXInstallRecords)
     $notes['1.x desktop shortcut'] = [bool](Get-ShortcutInfo $desktopShortcut)
 
     # Devices, the Layout and the Pairing go in before 1.x first starts, as files in 1.x's formats and the Pairing key
@@ -326,7 +326,7 @@ try {
     Copy-Item -LiteralPath $toBridge -Destination $ArtifactDir
     # The installer closes the old window itself, as it does when the window quits slowly.
     Assert-That ((Read-Json $toBridge).quit -eq $true) "the $OldVersion updater verified the bridge release and started its installer"
-    Wait-Until { (Get-Item -LiteralPath (Join-Path $uninstallRoot (Get-OneXUninstallKeys)[0])).GetValue('DisplayVersion') -eq $OneXVersion } 300 "the $OneXVersion installer"
+    Wait-Until { (Get-Item -LiteralPath (Join-Path $uninstallRoot @(Get-OneXUninstallKeys)[0])).GetValue('DisplayVersion') -eq $OneXVersion } 300 "the $OneXVersion installer"
     Wait-Until { Test-Path -LiteralPath (Join-Path $installDir 'resources\bridge.ps1') } 60 'bridge.ps1 in the installed resources'
     $checks.Add("$OldVersion updated to $OneXVersion, which ships bridge.ps1")
     Wait-OneXRunning
@@ -334,7 +334,7 @@ try {
     Assert-That ((@($updated.devices | Where-Object id -eq $device)[0]).layout_name -eq $layoutName -and $updated.integration.secrets.management_key.set -eq $true) "$OneXVersion reads the data $OldVersion kept"
 
     $dataBefore = Get-DataFiles
-    $script:credentialsBefore = Get-Credentials
+    $script:credentialsBefore = @(Get-Credentials)
     $notes['user data files'] = @($dataBefore.Keys)
     $notes['Credential Manager targets'] = $script:credentialsBefore
     Assert-That ($script:credentialsBefore.Count -ge 2) 'Credential Manager holds the Pairing key and the Integration secret'
@@ -393,8 +393,8 @@ try {
     Assert-That (($left -join ',') -eq 'td-app.exe') 'good: the install folder holds td-app.exe and nothing of 1.x'
     Assert-That (-not (Test-Path -LiteralPath $backupDir)) 'good: the 1.x program files are gone'
     Assert-That (@(Get-ChildItem -LiteralPath (Split-Path $installDir) | Where-Object Name -like 'Open TouchDeck.*').Count -eq 0) 'good: no other Open TouchDeck folder is left in Programs'
-    Assert-That ((Get-OneXUninstallKeys).Count -eq 0) 'good: the 1.x uninstall entry is gone'
-    Assert-That ((Get-OneXInstallRecords).Count -eq 0) "good: the 1.x install record under HKCU\Software is gone"
+    Assert-That (@(Get-OneXUninstallKeys).Count -eq 0) 'good: the 1.x uninstall entry is gone'
+    Assert-That (@(Get-OneXInstallRecords).Count -eq 0) "good: the 1.x install record under HKCU\Software is gone"
     $uninstallNames = @(Get-ChildItem -LiteralPath $uninstallRoot | ForEach-Object { [string]$_.GetValue('DisplayName') } | Where-Object { $_ -like 'Open TouchDeck*' })
     Assert-That ($uninstallNames.Count -eq 1) "good: Installed apps lists one Open TouchDeck ($($uninstallNames -join ', '))"
     $link = Get-ShortcutInfo $startMenuShortcut

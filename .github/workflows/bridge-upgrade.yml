@@ -40,6 +40,8 @@ jobs:
     name: build the 1.x bridge release (test-signed)
     runs-on: windows-latest
     timeout-minutes: 60
+    outputs:
+      revision: ${{ steps.revision.outputs.revision }}
     env:
       # Python on Windows decodes tool output with the ANSI code page unless told to use UTF-8.
       PYTHONUTF8: "1"
@@ -48,6 +50,11 @@ jobs:
         with:
           ref: ${{ env.BRIDGE_REF }}
           persist-credentials: false
+      # The upgrade job checks out this same commit, so the updater it drives is the one this job builds.
+      - name: Pin the bridge commit
+        id: revision
+        shell: pwsh
+        run: '"revision=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -149,7 +156,7 @@ jobs:
       # The 1.x updater the check drives, from the same commit as the bridge build.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.BRIDGE_REF }}
+          ref: ${{ needs.bridge.outputs.revision }}
           path: onex
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
