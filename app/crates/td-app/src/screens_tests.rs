@@ -654,7 +654,7 @@ fn at_the_largest_text_size_every_setup_step_and_button_state_fits() {
     };
     let mut states = Vec::new();
     for step in ["name", "orientation", "done"] {
-        states.push((format!("{step}"), wizard(step, "idle")));
+        states.push((step.to_string(), wizard(step, "idle")));
     }
     for firmware in ["idle", "waiting", "running", "done", "failed", "cancelled"] {
         let mut state = wizard("firmware", firmware);
