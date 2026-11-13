@@ -1,5 +1,4 @@
-# Agent instructions and rules
-AGENTS.md
+# Agent instructions for other tools. AGENTS.md and docs/agents/ are tracked.
 CLAUDE.md
 CLAUDE.local.md
 GEMINI.md
@@ -8,15 +7,19 @@ GEMINI.md
 .cursor/
 /.github/copilot-instructions.md
 /.github/instructions/
-/docs/agents/
 
-# Local agent skills, settings and installation metadata
+# Agent settings stay local. Only the root .agents/skills/ and its copy in .claude/skills/ are tracked.
 .agents/
+!/.agents/
+/.agents/*
+!/.agents/skills/
 .claude/
+!/.claude/
+/.claude/*
+!/.claude/skills/
 .codex/
 .gemini/
 .mcp.json
-skills-lock.json
 
 # Maintainer docs and research, kept local
 /GLOSSARY.md

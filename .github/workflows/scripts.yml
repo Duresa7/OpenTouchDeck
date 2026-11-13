@@ -1,6 +1,7 @@
 name: scripts
 
-# The release and data scripts under app/scripts, the Windows setup script, and the release signer.
+# The release and data scripts under app/scripts, the Windows setup script, the release signer, and the check that
+# .claude/skills copies .agents/skills.
 # It always checks the commit that started the run and takes no ref from its caller (ADR 0007).
 on:
   workflow_call:
@@ -45,6 +46,9 @@ jobs:
       - name: Test the release signer
         working-directory: .
         run: node --test .github/release-signer-test/signer.test.mjs
+      - name: Check that .claude/skills copies .agents/skills
+        working-directory: .
+        run: python .github/scripts/skills_mirror.py check
       - name: Test the Windows setup script
         if: runner.os == 'Windows'
         shell: pwsh
