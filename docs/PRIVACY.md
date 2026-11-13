@@ -11,8 +11,9 @@ behalf; those services have their own privacy policies.
 Automatic update checks default to on. The Rust updater checks on its first enabled
 poll, then at most once every six hours while the app runs. Failed checks count
 toward that interval. Restarting the app resets the interval. This M5 foundation
-provides the polling API and stored preference; connecting it to native startup and
-the Settings screen is later work. It makes no requests merely by being built or
+provides the polling API and stored preference, and the native Settings screen has
+the switch for it (Settings > This PC > Check for updates); connecting the updater to
+native startup is later work. It makes no requests merely by being built or
 loaded, and it does not install updates.
 
 An enabled check sends HTTPS GET requests to
@@ -39,8 +40,10 @@ altered, differently signed or older updates.
 ## Turn checks off
 
 The native preference is `automatic_update_checks` in `app-settings.json` in the
-app's configuration folder. Until the native Settings screen is connected, close
-the app and create or edit that file, preserving any other fields:
+app's configuration folder. Turn off Settings > This PC > Check for updates; the
+switch writes that field and keeps any other fields in the file. If the file is
+damaged, the switch is off and says so, and nothing rewrites the file. You can also
+close the app and create or edit that file, preserving any other fields:
 
 ```json
 { "automatic_update_checks": false }

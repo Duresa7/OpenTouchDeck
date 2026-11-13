@@ -351,8 +351,23 @@ component ChoiceItem inherits Rectangle {
     in property <bool> checked;
     in property <bool> enabled;
     in property <bool> tile;
+    in property <bool> autofocus;
+    // The arrow keys just moved the choice, so focus follows it.
+    in-out property <bool> moving;
     callback chosen();
     callback move(int);
+
+    init => {
+        if self.autofocus && self.checked {
+            keys.focus();
+        }
+    }
+    changed checked => {
+        if self.checked && self.moving {
+            self.moving = false;
+            keys.focus();
+        }
+    }
 
     accessible-role: radio-button;
     accessible-label: self.choice.label;
@@ -453,7 +468,10 @@ export component Choices inherits Rectangle {
     in property <bool> enabled: true;
     // Each choice in a bordered tile, as setup shows them.
     in property <bool> tiles;
+    // The chosen one takes keyboard focus when the group appears, as a setup step does.
+    in property <bool> autofocus;
     callback chose(string);
+    property <bool> moving;
 
     accessible-role: radio-group;
     accessible-label: self.label;
@@ -465,11 +483,14 @@ export component Choices inherits Rectangle {
             checked: choice.value == root.value;
             enabled: root.enabled;
             tile: root.tiles;
+            autofocus: root.autofocus;
+            moving <=> root.moving;
             chosen => {
                 root.chose(choice.value);
             }
             move(step) => {
                 if root.enabled {
+                    root.moving = true;
                     root.chose(root.choices[mod(index + step + root.choices.length, root.choices.length)].value);
                 }
             }

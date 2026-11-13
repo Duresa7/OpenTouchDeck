@@ -203,13 +203,32 @@ fn a_new_board_installs_and_setup_names_and_turns_it() {
     assert_eq!(device.name.as_deref(), Some("Desk"));
     assert_eq!(device.setup, SetupState::Ready);
 
-    let portrait = rig.one("Portrait", AccessibleRole::RadioButton);
-    portrait.invoke_accessible_default_action();
+    // The chosen orientation has focus, and the arrow keys move the choice.
+    for (event, key) in [(true, Key::DownArrow), (false, Key::DownArrow)] {
+        let text: SharedString = key.into();
+        rig.app.ui.window().dispatch_event(if event {
+            WindowEvent::KeyPressed { text }
+        } else {
+            WindowEvent::KeyReleased { text }
+        });
+    }
     rig.until("Portrait chosen", |r| {
         r.one("Portrait", AccessibleRole::RadioButton)
             .accessible_checked()
             == Some(true)
     });
+    // Focus followed the choice: Down wraps round to Landscape, Up comes back to Portrait.
+    for (key, expected) in [(Key::DownArrow, "Landscape"), (Key::UpArrow, "Portrait")] {
+        let text: SharedString = key.into();
+        let window = rig.app.ui.window();
+        window.dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+        window.dispatch_event(WindowEvent::KeyReleased { text });
+        rig.until(expected, |r| {
+            r.one(expected, AccessibleRole::RadioButton)
+                .accessible_checked()
+                == Some(true)
+        });
+    }
     rig.press("Next");
     rig.until("the last step", |r| r.has("Desk is ready"));
     assert_eq!(

@@ -98,6 +98,55 @@ impl App {
             .clone()
     }
 
+    /// Opens `setup`, `settings` or `device:<id>` (that Device's settings), for screenshots.
+    #[cfg(feature = "mock")]
+    pub fn open_page(&self, page: &str) {
+        match page {
+            "setup" => self.ui.set_page(Page::Setup),
+            "settings" => self.ui.set_page(Page::Settings),
+            "about" => self.ui.set_page(Page::About),
+            _ => {
+                if let Some(id) = page.strip_prefix("device:") {
+                    self.ui.set_page(Page::Settings);
+                    self.ui.set_settings_device(id.into());
+                    self.ui.invoke_open_device(id.into());
+                }
+            }
+        }
+    }
+
+    /// Mock builds only: while running, writing a file name into `<dir>/request` saves the
+    /// window as drawn to that PNG file in `dir`, for screenshots that don't need the desktop's
+    /// own screenshot service.
+    #[cfg(feature = "mock")]
+    pub fn snapshots(&self, dir: PathBuf) -> slint::Timer {
+        let timer = slint::Timer::default();
+        let weak = self.ui.as_weak();
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(200),
+            move || {
+                let request = dir.join("request");
+                let Ok(name) = std::fs::read_to_string(&request) else {
+                    return;
+                };
+                let _ = std::fs::remove_file(&request);
+                let Some(ui) = weak.upgrade() else { return };
+                match ui.window().take_snapshot() {
+                    Ok(image) => {
+                        let (width, height) = (image.width(), image.height());
+                        let path = dir.join(name.trim());
+                        if let Err(error) = write_png(&path, image.as_bytes(), width, height) {
+                            eprintln!("Open TouchDeck: snapshot failed: {error}");
+                        }
+                    }
+                    Err(error) => eprintln!("Open TouchDeck: snapshot failed: {error}"),
+                }
+            },
+        );
+        timer
+    }
+
     /// The handle that opens the window from any thread.
     pub fn opener(&self) -> Opener {
         Opener(self.ui.as_weak())
@@ -140,6 +189,17 @@ impl App {
         stop.abort();
         result
     }
+}
+
+/// Writes RGBA pixels as a PNG.
+#[cfg(feature = "mock")]
+fn write_png(path: &std::path::Path, rgba: &[u8], width: u32, height: u32) -> std::io::Result<()> {
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut encoder = png::Encoder::new(file, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(std::io::Error::other)?;
+    writer.write_image_data(rgba).map_err(std::io::Error::other)
 }
 
 /// Opens a web page in the default browser. Only https links leave the app.

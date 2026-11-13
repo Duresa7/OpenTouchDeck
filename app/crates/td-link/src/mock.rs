@@ -491,11 +491,6 @@ impl MockDeck {
         self.state().wifi.stored.clone()
     }
 
-    /// Sets the Firmware version `hello` reports, as a Device running an older release.
-    pub fn set_version(&self, version: &str) {
-        self.state().hello.version = version.into();
-    }
-
     /// Sets the name a v2 hello reports, as a Device someone already named.
     pub fn set_name(&self, name: &str) {
         self.state().device_name = name.into();

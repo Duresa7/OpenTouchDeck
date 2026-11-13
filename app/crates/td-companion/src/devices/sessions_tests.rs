@@ -464,3 +464,31 @@ async fn setup_moves_on_when_the_firmware_cannot_keep_a_name() {
     assert_eq!(setup.view().flow.at, Step::Orientation);
     td.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_device_on_older_firmware_of_its_build_is_offered_the_bundled_one() {
+    use crate::features::firmware::{FirmwareBuild, RadioBuild, offered};
+    let mut td = InProcessCompanion::start().await;
+    let id = td.plug_device("mock0001").await;
+    let mut device = td.device(&id).unwrap();
+    let builds = FirmwareBuild {
+        version: "1.3.0".into(),
+        build: String::new(),
+        radio: Some(RadioBuild {
+            version: "1.4.0".into(),
+            build: String::new(),
+        }),
+    };
+    let firmware = device.firmware.as_mut().unwrap();
+    firmware.version = "1.2.9".into();
+    assert_eq!(offered(&device, Some(&builds)).as_deref(), Some("1.3.0"));
+    device.firmware.as_mut().unwrap().channel = FirmwareChannel::Radio;
+    assert_eq!(offered(&device, Some(&builds)).as_deref(), Some("1.4.0"));
+    device.firmware.as_mut().unwrap().version = "1.4.0".into();
+    assert_eq!(offered(&device, Some(&builds)), None, "already on it");
+    device.firmware.as_mut().unwrap().version = "mock".into();
+    assert_eq!(offered(&device, Some(&builds)), None, "not a version");
+    device.firmware.as_mut().unwrap().update_available = Some("2.0.0".into());
+    assert_eq!(offered(&device, None).as_deref(), Some("2.0.0"));
+    td.shutdown().await;
+}

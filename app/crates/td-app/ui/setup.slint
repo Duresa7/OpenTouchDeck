@@ -224,6 +224,7 @@ component WizardCard inherits Card {
             Choices {
                 label: orientation-title.text;
                 tiles: true;
+                autofocus: true;
                 enabled: root.wizard.busy == "";
                 value: root.wizard.orientation;
                 choices: [

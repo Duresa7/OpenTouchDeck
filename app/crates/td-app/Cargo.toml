@@ -13,10 +13,11 @@ description = "Open TouchDeck 2.0: the Companion and its native Slint window in 
 
 [features]
 # `--mock-devices N`: run on mock Devices for development and screenshots. Never in a release.
-mock = ["td-companion/test-hooks"]
+mock = ["td-companion/test-hooks", "dep:png"]
 
 [dependencies]
 open = "5"
+png = { version = "0.17", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "renderer-software", "accessibility", "unstable-winit-030"] }

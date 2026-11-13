@@ -879,9 +879,18 @@ impl Screens {
             let live = connected(device);
             let was = self.live.borrow_mut().insert(device.id.clone(), live);
             let opened = ui.get_settings_device() == device.id.as_str();
-            if opened && live && was == Some(false) {
+            if opened && live {
+                // Read when the page opened before its first read, or when the Device returns.
                 let session = self.settings(&device.id);
-                self.spawn(async move { session.load().await });
+                if was == Some(false) || session.view().load == td_companion::devices::Load::Idle {
+                    self.spawn(async move { session.load().await });
+                }
+                let pairings = self.pairings(&device.id);
+                if offers_pairings(device)
+                    && pairings.view().load == td_companion::devices::Load::Idle
+                {
+                    self.spawn(async move { pairings.load().await });
+                }
             }
             if self
                 .watched

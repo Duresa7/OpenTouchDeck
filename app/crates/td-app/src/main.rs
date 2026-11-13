@@ -2,9 +2,11 @@
 //!
 //! Usage: `td-app`, or in a build with the `mock` feature `td-app --mock-devices N` or
 //! `td-app --mock KIND,KIND…`, where a KIND is `device`, `radio` (the radio build, with two
-//! paired apps), `v1` (Firmware too old to keep a name), `old` (Firmware with an update offered)
-//! or `board` (a New board). Mock builds accept every Firmware install and update on their own,
-//! and `TOUCHDECK_TEXT_SCALE` overrides the text size for screenshots.
+//! paired apps), `v1` (Firmware too old to keep a name), `board` (a New board) or `fresh` (a New
+//! board whose Firmware install starts at once, so setup opens). Mock builds accept every
+//! Firmware install on their own. For screenshots, `TOUCHDECK_MOCK_PAGE` opens `setup`,
+//! `settings` or `device:<id>` first, `TOUCHDECK_TEXT_SCALE` sets the text size, and
+//! `TOUCHDECK_SNAPSHOT_DIR` saves the window to `<dir>/<name>` when `<dir>/request` names a file.
 //! `--packaged` marks an installed copy, as Start at sign-in runs it.
 //! `TOUCHDECK_APP_DATA_DIR` moves the app data folder, as it does for the Companion.
 //!
@@ -53,7 +55,7 @@ fn parse(args: &[String]) -> Result<Args, Box<dyn std::error::Error>> {
             let kinds: Vec<String> = kinds.split(',').map(str::to_owned).collect();
             if let Some(unknown) = kinds
                 .iter()
-                .find(|k| !["device", "radio", "v1", "old", "board"].contains(&k.as_str()))
+                .find(|k| !["device", "radio", "v1", "board", "fresh"].contains(&k.as_str()))
             {
                 return Err(format!("unknown mock kind {unknown:?}").into());
             }
@@ -101,19 +103,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let board = match kind.as_str() {
                 "radio" => BoardKind::DeviceRadio,
                 "v1" => BoardKind::DeviceV1,
-                "board" => BoardKind::Silent,
+                "board" | "fresh" => BoardKind::Silent,
                 _ => BoardKind::Device,
             };
-            let deck = ports.board(&serial, board);
-            match kind.as_str() {
-                "old" => deck.set_version("0.1.0"),
-                "radio" => {
-                    deck.add_net_pairing([0x21; 16], "Laptop");
-                    deck.add_net_pairing([0x42; 16], "Studio PC");
-                }
-                _ => {}
+            if kind == "radio" {
+                let deck = ports.board(&serial, board);
+                deck.add_net_pairing([0x21; 16], "Laptop");
+                deck.add_net_pairing([0x42; 16], "Studio PC");
             }
             ports.plug(&serial, board);
+            if kind == "fresh" {
+                let install = td_companion::features::firmware::FirmwareTask::new(
+                    handle.clone(),
+                    td_companion::features::firmware::Target::NewBoard(
+                        td_companion::devices::DeviceId::parse(&serial).expect("a mock serial"),
+                    ),
+                );
+                let devices = handle.devices().clone();
+                let id = td_companion::devices::DeviceId::parse(&serial).expect("a mock serial");
+                runtime.spawn(async move {
+                    // Once the scan has found the board.
+                    for _ in 0..100 {
+                        if devices.new_boards().iter().any(|b| b.id == id) {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    install.start().await;
+                });
+            }
         }
     }
 
@@ -150,6 +168,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             })
         })
         .and_then(|app| {
+            #[cfg(feature = "mock")]
+            if let Ok(page) = std::env::var("TOUCHDECK_MOCK_PAGE") {
+                app.open_page(&page);
+            }
+            #[cfg(feature = "mock")]
+            let _snapshots =
+                std::env::var_os("TOUCHDECK_SNAPSHOT_DIR").map(|dir| app.snapshots(dir.into()));
             #[cfg(windows)]
             {
                 let opener = app.opener();
