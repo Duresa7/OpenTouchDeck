@@ -452,3 +452,129 @@ fn a_conflicting_send_to_a_now_empty_slot_keeps_the_draft_and_drops_the_stale_re
     assert_eq!(retry.expected_revision(), None);
     assert_eq!(tile(retry.layout(), "t").label, "Mine");
 }
+
+#[test]
+fn a_saved_rejection_that_is_now_valid_is_applied_on_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut editor = editor(&dir);
+    editor.start(layout(Landscape)).unwrap();
+    editor.persist().unwrap();
+    let path = dir.path().join("editor-drafts-v1/mock0001.json");
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stored["drafts"][0]["rejected"] = serde_json::json!([rename("Recovered")]);
+    std::fs::write(path, serde_json::to_vec(&stored).unwrap()).unwrap();
+    let editor = Editor::open(dir.path().into(), "mock0001").unwrap();
+    let draft = editor.draft(Landscape).unwrap();
+    assert!(draft.rejected().is_empty());
+    assert_eq!(draft.effective_tile("t").unwrap().label, "Recovered");
+}
+
+#[test]
+fn identical_receive_during_send_keeps_the_newer_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut editor = editor(&dir);
+    editor.receive(layout(Landscape), "before".into()).unwrap();
+    editor.edit(Landscape, rename("Sending")).unwrap();
+    let plan = editor
+        .prepare_push(Landscape, Capabilities::default())
+        .unwrap();
+    let displayed = plan.layout().clone();
+    editor.receive(displayed.clone(), "newer".into()).unwrap();
+    editor.finish_push(plan, displayed, "older".into()).unwrap();
+    assert!(editor.draft(Landscape).unwrap().is_sent());
+    assert_eq!(
+        editor
+            .prepare_push(Landscape, Capabilities::default())
+            .unwrap()
+            .expected_revision(),
+        Some("newer")
+    );
+}
+
+#[tokio::test]
+async fn native_session_sends_reads_back_and_restores_per_device_drafts() {
+    let td = td_companion::testing::TestCompanion::start().await;
+    let device = td.plug_device("mock0001").await;
+    let handle = td.handle();
+    let mut session = handle.open_editor(&device).unwrap();
+    session.start(layout(Landscape)).unwrap();
+    assert_eq!(session.selection(), (Some("main"), None));
+    session.select("main", Some("t"));
+    session.edit(Edit::Duplicate { tile: "t".into() }).unwrap();
+    assert!(session.selection().1.is_some());
+    session.send(Capabilities::default()).await.unwrap();
+    assert!(session.draft().unwrap().is_sent());
+    session.edit(rename("Unsent")).unwrap();
+    drop(session);
+    let mut restored = handle.open_editor(&device).unwrap();
+    assert!(!restored.draft().unwrap().is_sent());
+    restored.load().await.unwrap();
+    assert!(restored.draft().unwrap().conflict().is_some());
+    restored.resolve(Decision::UseDevice).unwrap();
+    assert!(restored.draft().unwrap().is_sent());
+    assert!(handle.open_editor("mock0002").unwrap().draft().is_none());
+}
+
+#[test]
+fn preset_fallback_preserves_interactive_renderers_and_refuses_bad_bindings() {
+    use td_companion::editor::placed_appearance;
+    use td_core::layout::{StreamType, TileRender};
+    use td_host::integrations::{DataStream, PresetTile};
+    let mut preset = PresetTile {
+        id: "level".into(),
+        name: "Level".into(),
+        action: serde_json::json!({"type":"widget","source":"volume","field":"level","account":""}),
+        render: Some(TileRender::Graph),
+        streams: None,
+        input: false,
+    };
+    let streams = [DataStream {
+        id: "level".into(),
+        kind: "numeric".into(),
+        unit: None,
+        settable: true,
+    }];
+    assert!(placed_appearance(&preset, "volume", &streams, true).is_some());
+    assert!(placed_appearance(&preset, "volume", &streams, false).is_none());
+    assert!(placed_appearance(&preset, "other", &streams, true).is_none());
+    assert!(placed_appearance(&preset, "volume", &[], true).is_none());
+    preset.render = Some(TileRender::Bar);
+    preset.input = true;
+    assert!(placed_appearance(&preset, "volume", &streams, false).is_some());
+    preset.streams = Some(BTreeMap::from([("value".into(), StreamType::Series)]));
+    assert!(placed_appearance(&preset, "volume", &streams, true).is_none());
+    preset.render = Some(TileRender::NowPlaying);
+    preset.streams = Some(BTreeMap::from([
+        ("title".into(), StreamType::Text),
+        ("artist".into(), StreamType::Text),
+        ("cover".into(), StreamType::Image),
+        ("state".into(), StreamType::Number),
+    ]));
+    assert!(placed_appearance(&preset, "volume", &streams, false).is_none());
+    preset.input = false;
+    assert!(placed_appearance(&preset, "volume", &streams, false).is_some());
+}
+
+#[tokio::test]
+async fn session_conditional_send_captures_conflict_and_keep_mine_retries() {
+    let td = td_companion::testing::TestCompanion::start().await;
+    let device = td.plug_device("mock0001").await;
+    let handle = td.handle();
+    let mut mine = handle.open_editor(&device).unwrap();
+    mine.start(layout(Landscape)).unwrap();
+    mine.send(Capabilities::default()).await.unwrap();
+    let mut other = handle.open_editor(&device).unwrap();
+    other.edit(rename("Other")).unwrap();
+    other.send(Capabilities::default()).await.unwrap();
+    mine.edit(rename("Mine")).unwrap();
+    assert!(mine.send(Capabilities::default()).await.is_err());
+    assert!(mine.draft().unwrap().conflict().is_some());
+    mine.resolve(Decision::KeepMine).unwrap();
+    mine.send(Capabilities::default()).await.unwrap();
+    assert!(mine.draft().unwrap().is_sent());
+    assert_eq!(
+        mine.draft().unwrap().effective_tile("t").unwrap().label,
+        "Mine"
+    );
+}

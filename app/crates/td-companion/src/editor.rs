@@ -1,8 +1,15 @@
-//! Native Layout editor session for one Device. UI adapters own selection and rendering;
-//! this module owns admitted drafts, effective rejected values, persistence and revision decisions.
-//! It does no Device I/O: a caller executes a PushPlan through the Device lane, then returns
-//! the Layout actually observed after sending. Keep one session owner per Device.
+//! Headless Layout editing. Session couples a persisted Editor to the Companion Device lane.
+//! Editor remains usable independently for deterministic lifecycle tests and offline drafts.
+//! Keep one owner per Device; UI adapters render snapshots and own dialogs and window state.
+mod presets;
+pub use presets::placed_appearance;
+mod session;
 use serde::{Deserialize, Serialize};
+pub(crate) use session::GifSource;
+pub use session::{
+    AddKind, AddTarget, GifEdit, GifPreview, GifProblem, GifWork, NewLayout, Notice, PendingSend,
+    SaveState, SendReceipt, Session, SessionError, StreamChoice,
+};
 use std::{collections::BTreeMap, io, path::PathBuf};
 use td_core::{
     Layout, Orientation,
@@ -16,6 +23,10 @@ pub enum EditorError {
     InvalidDevice,
     #[error("no draft for this orientation")]
     NoDraft,
+    #[error("a Layout send is already running")]
+    Sending,
+    #[error("Device work requires a running Tokio runtime")]
+    RuntimeUnavailable,
     #[error(transparent)]
     Edit(#[from] EditError),
     #[error(transparent)]
@@ -39,6 +50,17 @@ pub struct Rejected {
     pub edit: Edit,
     pub reason: EditError,
 }
+impl Rejected {
+    /// The form field a refused action names, independent of its message wording.
+    pub fn action_field(&self) -> Option<&str> {
+        let EditError::Invalid(problems) = &self.reason else {
+            return None;
+        };
+        let path = &problems.first()?.path;
+        let (_, suffix) = path.split_once("/action/")?;
+        suffix.split('/').next().filter(|field| !field.is_empty())
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceCopy {
     document: Document,
@@ -52,12 +74,13 @@ impl DeviceCopy {
         &self.revision
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Draft {
     document: Document,
     known: Option<DeviceCopy>,
     rejected: Vec<Rejected>,
     conflict: Option<DeviceCopy>,
+    unconfirmed: bool,
 }
 impl Draft {
     pub fn layout(&self) -> &Layout {
@@ -69,8 +92,13 @@ impl Draft {
     pub fn conflict(&self) -> Option<&DeviceCopy> {
         self.conflict.as_ref()
     }
+    /// A write may have reached the Device without a confirming observation.
+    pub fn is_unconfirmed(&self) -> bool {
+        self.unconfirmed
+    }
     pub fn is_sent(&self) -> bool {
-        self.rejected.is_empty()
+        !self.unconfirmed
+            && self.rejected.is_empty()
             && self.conflict.is_none()
             && self
                 .known
@@ -112,6 +140,7 @@ pub struct PushPlan {
     device: String,
     document: Document,
     baseline: Option<DeviceCopy>,
+    receive_serial: u64,
 }
 impl PushPlan {
     pub fn layout(&self) -> &Layout {
@@ -122,10 +151,12 @@ impl PushPlan {
     }
 }
 
+#[derive(Clone)]
 pub struct Editor {
     path: PathBuf,
     device: String,
     drafts: [Option<Draft>; 2],
+    receive_serial: [u64; 2],
 }
 impl Editor {
     /// Blocking disk read. Corrupt/unsupported storage is reported, never silently overwritten.
@@ -143,6 +174,7 @@ impl Editor {
             path,
             device: device.into(),
             drafts: [None, None],
+            receive_serial: [0, 0],
         };
         match std::fs::read(&editor.path) {
             Ok(bytes) => {
@@ -151,7 +183,9 @@ impl Editor {
                     return Err(bad_storage("unsupported editor storage version").into());
                 }
                 for draft in stored.drafts {
-                    let document = Document::parse(draft.layout.as_bytes())?;
+                    let Ok(document) = Document::parse(draft.layout.as_bytes()) else {
+                        continue;
+                    };
                     let orientation = document.layout().orientation;
                     let slot = &mut editor.drafts[index(orientation)];
                     if slot.is_some() {
@@ -169,6 +203,7 @@ impl Editor {
                         document,
                         known,
                         conflict,
+                        unconfirmed: draft.unconfirmed,
                         rejected: Vec::new(),
                     };
                     // Recompute diagnostics through today's interface; don't trust saved error text.
@@ -176,14 +211,15 @@ impl Editor {
                         if field(&edit).is_none() {
                             return Err(bad_storage("invalid rejected edit").into());
                         }
-                        if let Err(reason) = restored.document.apply(&edit) {
-                            if field(&edit)
-                                .is_some_and(|(tile, _)| restored.effective_tile(tile).is_some())
-                            {
-                                remember(&mut restored.rejected, Rejected { edit, reason });
+                        match restored.document.apply(&edit) {
+                            Err(reason) => {
+                                if field(&edit).is_some_and(|(tile, _)| {
+                                    restored.effective_tile(tile).is_some()
+                                }) {
+                                    remember(&mut restored.rejected, Rejected { edit, reason });
+                                }
                             }
-                        } else {
-                            return Err(bad_storage("saved rejection is now valid").into());
+                            Ok(change) => restored.document = change.document,
                         }
                     }
                     *slot = Some(restored);
@@ -208,10 +244,12 @@ impl Editor {
         let slot = &mut self.drafts[index(document.layout().orientation)];
         let known = slot.as_ref().and_then(|draft| draft.known.clone());
         let conflict = slot.as_ref().and_then(|draft| draft.conflict.clone());
+        let unconfirmed = slot.as_ref().is_some_and(|draft| draft.unconfirmed);
         *slot = Some(Draft {
             document,
             known,
             conflict,
+            unconfirmed,
             rejected: Vec::new(),
         });
         Ok(())
@@ -252,7 +290,11 @@ impl Editor {
                 }
                 if let Edit::Renderer {
                     tile,
-                    appearance: td_core::editing::Appearance::Live { .. },
+                    appearance:
+                        td_core::editing::Appearance::Live { .. }
+                        | td_core::editing::Appearance::Plain {
+                            action: Some(_), ..
+                        },
                 } = &edit
                 {
                     draft
@@ -321,6 +363,10 @@ impl Editor {
         let document = Document::admit(layout)?;
         let slot = &mut self.drafts[index(document.layout().orientation)];
         let remote = DeviceCopy { document, revision };
+        self.receive_serial[index(remote.document.layout().orientation)] += 1;
+        if let Some(draft) = slot {
+            draft.unconfirmed = false;
+        }
         match slot {
             Some(draft) if draft.document != remote.document || !draft.rejected.is_empty() => {
                 draft.conflict = Some(remote)
@@ -335,6 +381,7 @@ impl Editor {
                     known: Some(remote),
                     rejected: Vec::new(),
                     conflict: None,
+                    unconfirmed: false,
                 })
             }
         }
@@ -346,6 +393,7 @@ impl Editor {
         let draft = self.draft_mut(orientation)?;
         draft.known = None;
         draft.conflict = None;
+        draft.unconfirmed = false;
         Ok(())
     }
     pub fn resolve(
@@ -360,7 +408,12 @@ impl Editor {
                 draft.rejected.clear();
             }
             draft.known = Some(remote);
+            draft.unconfirmed = false;
         }
+        Ok(())
+    }
+    fn mark_unconfirmed(&mut self, orientation: Orientation) -> Result<(), EditorError> {
+        self.draft_mut(orientation)?.unconfirmed = true;
         Ok(())
     }
     pub fn prepare_push(
@@ -380,6 +433,7 @@ impl Editor {
                 device: self.device.clone(),
                 document: draft.document.clone(),
                 baseline: draft.known.clone(),
+                receive_serial: self.receive_serial[index(orientation)],
             }),
             Compatibility::Unknown => Err(EditorError::UnknownCapabilities),
             Compatibility::Unsupported(problems) => Err(EditorError::Incompatible(problems)),
@@ -395,12 +449,24 @@ impl Editor {
         if plan.device != self.device {
             return Err(EditorError::StalePush);
         }
+        let received_since =
+            self.receive_serial[index(plan.layout().orientation)] != plan.receive_serial;
         let draft = self.draft_mut(plan.layout().orientation)?;
-        if draft.known != plan.baseline || draft.conflict.is_some() {
+        let identical_receive = received_since
+            && draft
+                .known
+                .as_ref()
+                .is_some_and(|known| known.document == plan.document)
+            && draft.known != plan.baseline;
+        if (draft.known != plan.baseline && !identical_receive) || draft.conflict.is_some() {
             return Err(EditorError::StalePush);
         }
         if Document::admit(displayed)? != plan.document {
             return Err(EditorError::PushMismatch);
+        }
+        draft.unconfirmed = false;
+        if identical_receive {
+            return Ok(());
         }
         draft.known = Some(DeviceCopy {
             document: plan.document,
@@ -418,6 +484,7 @@ impl Editor {
                 .flatten()
                 .map(|draft| StoredDraft {
                     layout: text(&draft.document),
+                    unconfirmed: draft.unconfirmed,
                     known: draft.known.as_ref().map(StoredCopy::from),
                     conflict: draft.conflict.as_ref().map(StoredCopy::from),
                     rejected: draft.rejected.iter().map(|r| r.edit.clone()).collect(),
@@ -483,6 +550,8 @@ struct Stored {
 #[derive(Serialize, Deserialize)]
 struct StoredDraft {
     layout: String,
+    #[serde(default)]
+    unconfirmed: bool,
     known: Option<StoredCopy>,
     conflict: Option<StoredCopy>,
     rejected: Vec<Edit>,

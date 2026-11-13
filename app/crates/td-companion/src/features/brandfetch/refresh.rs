@@ -126,7 +126,10 @@ pub(crate) async fn run(ctx: Handle, tick: Duration) {
         let _ = tokio::task::spawn_blocking(move || {
             // A queued blocking task can first run after shutdown was requested.
             if !work.shutdown_requested() {
-                work.brandfetch.refresh(&work.assets, now);
+                let report = work.brandfetch.refresh(&work.assets, now);
+                if !report.replaced.is_empty() {
+                    work.events.publish(&crate::events::Change::AssetsReplaced);
+                }
             }
         })
         .await;
@@ -138,6 +141,13 @@ pub(crate) async fn run(ctx: Handle, tick: Duration) {
 }
 
 impl Brandfetch {
+    pub(crate) fn replacements(&self) -> BTreeMap<String, String> {
+        self.read_book()
+            .replaced_by
+            .into_iter()
+            .map(|(old, new)| (format!("sha256:{old}"), format!("sha256:{new}")))
+            .collect()
+    }
     fn book_path(&self) -> PathBuf {
         self.0.dir.join("provenance.json")
     }
