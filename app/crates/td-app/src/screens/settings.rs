@@ -8,7 +8,7 @@ use td_companion::{
         PhotoFramePatch, Restart, SettingsSession, duration_label, offers_pairings,
         orientation_name, orientation_of, over_usb, start_after_choices,
     },
-    features::firmware::{JobView, Target},
+    features::firmware::{JobView, NOT_BUNDLED_TEXT, Source, Target, build_choice},
 };
 use td_core::{Orientation, settings::AppSettings};
 
@@ -112,6 +112,26 @@ impl Screens {
             if let Some(device) = s.selected() {
                 let task = s.task(Target::Device(device.id.clone()));
                 s.spawn(async move { task.start().await });
+            }
+        });
+        on!(self, ui, on_update_firmware_file, |s| {
+            if let Some(device) = s.selected() {
+                let task = s.task(Target::Device(device.id.clone()));
+                s.spawn(async move { task.start_from(Source::File, None).await });
+            }
+        });
+        on!(self, ui, on_cancel_firmware, |s| {
+            if let Some(device) = s.selected() {
+                s.task(Target::Device(device.id.clone())).cancel();
+            }
+        });
+        on!(self, ui, on_switch_build, |s| {
+            if let Some(device) = s.selected()
+                && let Some(choice) =
+                    build_choice(&device, s.builds().as_ref(), &shown_name(&device))
+            {
+                let task = s.task(Target::Device(device.id.clone()));
+                s.spawn(async move { task.start_from(Source::Bundled, Some(choice.target)).await });
             }
         });
         on!(self, ui, on_restart_device, |s| {
@@ -396,6 +416,7 @@ impl Screens {
         );
 
         // Firmware.
+        let builds = self.builds();
         let offered = self.offered(device);
         let version = device.firmware.as_ref().map(|f| f.version.clone());
         let wifi = live && !over_usb(device);
@@ -406,11 +427,30 @@ impl Screens {
             task.view.text().to_owned()
         } else if let Some(offered) = &offered {
             format!("{offered} available")
+        } else if version.is_some() && builds.is_none() {
+            // A build made without the bundle variables carries no Firmware to compare.
+            NOT_BUNDLED_TEXT.into()
         } else if version.is_some() {
             "Up to date".into()
         } else {
             "Not reported".into()
         };
+        let firmware_result = match &task.view {
+            JobView::Failed { text, .. } | JobView::Cancelled { text } => text.clone(),
+            _ => String::new(),
+        };
+        let firmware_waiting = if matches!(task.view, JobView::Waiting { .. }) {
+            format!(
+                "Answer the Open TouchDeck Firmware dialog on this PC. Nothing changes on {name} until you confirm."
+            )
+        } else {
+            String::new()
+        };
+        let usb_ready = live && !wifi && !updating;
+        let build = build_choice(device, builds.as_ref(), &name);
+        if build.is_none() || !usb_ready {
+            ui.set_confirming_build(false);
+        }
         let firmware_hint = if matches!(task.view, JobView::Running { .. }) {
             format!("Keep {name} plugged in. Takes about a minute. {name} restarts once.")
         } else if wifi && !busy {
@@ -509,9 +549,11 @@ impl Screens {
             firmware_status: firmware_status.into(),
             firmware_offer: offered.is_some() && !busy && !done,
             firmware_usb: live && !wifi,
+            firmware_file_enabled: usb_ready,
             restart_enabled: live && !wifi && !updating && !restarting,
             firmware_step: match task.view {
                 JobView::Idle => "idle",
+                JobView::Choosing { .. } => "choosing",
                 JobView::Waiting { .. } => "waiting",
                 JobView::Running { .. } => "running",
                 JobView::Done { .. } => "done",
@@ -524,7 +566,17 @@ impl Screens {
                 _ => -1,
             },
             firmware_hint: firmware_hint.into(),
+            firmware_result: firmware_result.into(),
             firmware_log: task.log.join("\n").into(),
+            firmware_waiting: firmware_waiting.into(),
+            build_shown: build.is_some(),
+            build_title: build.as_ref().map_or("", |b| &b.title).into(),
+            build_note: build.as_ref().map_or("", |b| &b.note).into(),
+            build_action: build.as_ref().map_or("", |b| &b.action).into(),
+            build_enabled: usb_ready,
+            build_confirm_title: build.as_ref().map_or("", |b| &b.confirm_title).into(),
+            build_confirm_note: build.as_ref().map_or("", |b| &b.confirm_note).into(),
+            build_confirm_action: build.as_ref().map_or("", |b| &b.confirm_action).into(),
             notice: notice
                 .as_ref()
                 .map_or(String::new(), |n| n.text.clone())

@@ -253,7 +253,8 @@ impl Screens {
         };
         let (firmware_step, firmware_status, pct) = match &task.view {
             JobView::Idle => ("idle", String::new(), -1),
-            JobView::Waiting { text } => ("waiting", text.clone(), -1),
+            // Setup only updates from the bundled Firmware, so it never opens a file dialog.
+            JobView::Choosing { text } | JobView::Waiting { text } => ("waiting", text.clone(), -1),
             JobView::Running { text, pct } => ("running", text.clone(), pct.map_or(-1, i32::from)),
             JobView::Done { version, .. } => ("done", format!("Updated to {version}"), 100),
             JobView::Failed { .. } => (

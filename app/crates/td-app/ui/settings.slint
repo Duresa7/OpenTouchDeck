@@ -73,12 +73,27 @@ export struct DevicePage {
     firmware-status: string,
     firmware-offer: bool,
     firmware-usb: bool,
+    // "Update from a file…" can open the file dialog now.
+    firmware-file-enabled: bool,
     restart-enabled: bool,
-    // idle, waiting, running, done, failed or cancelled.
+    // idle, choosing, waiting, running, done, failed or cancelled.
     firmware-step: string,
     firmware-pct: int,
     firmware-hint: string,
+    // What a failed or stopped update did, or "".
+    firmware-result: string,
     firmware-log: string,
+    // While the consent dialog is open on this PC: what to do, or "".
+    firmware-waiting: string,
+    // The Firmware build row, shown only when this Companion carries the other build.
+    build-shown: bool,
+    build-title: string,
+    build-note: string,
+    build-action: string,
+    build-enabled: bool,
+    build-confirm-title: string,
+    build-confirm-note: string,
+    build-confirm-action: string,
     notice: string,
     // info, ok or error.
     notice-kind: string,
@@ -153,6 +168,49 @@ component Confirm inherits Rectangle {
                 enabled: root.enabled;
                 clicked => {
                     root.confirm();
+                }
+            }
+        }
+    }
+}
+
+// While the native consent dialog is open on this PC: what to do there, and Cancel.
+component Waiting inherits Rectangle {
+    in property <string> title;
+    in property <string> text;
+    callback cancel();
+
+    accessible-role: groupbox;
+    accessible-label: self.title;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.high-contrast ? Theme.contrast.window-text : Theme.card-stroke;
+    background: Theme.high-contrast ? Theme.contrast.window : Theme.subtle-selected;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        Text {
+            accessible-role: none;
+            text: root.title;
+            font-size: Theme.body;
+            font-weight: Theme.semibold;
+            color: Theme.text;
+            wrap: word-wrap;
+        }
+
+        Hint {
+            text: root.text;
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            padding-top: 4px;
+            ActionButton {
+                text: "Cancel";
+                label: "Cancel the update";
+                clicked => {
+                    root.cancel();
                 }
             }
         }
@@ -257,6 +315,8 @@ export component SettingsPage inherits ScrollingPage {
     in property <[PairedApp]> paired;
     in property <[string]> after-choices;
     in-out property <bool> confirming-forget-all;
+    // The build switch's question is open.
+    in-out property <bool> confirming-build;
     callback set-start(bool);
     callback set-updates(bool);
     callback set-appearance(string);
@@ -272,6 +332,9 @@ export component SettingsPage inherits ScrollingPage {
     callback forget(string);
     callback forget-all();
     callback update-firmware();
+    callback update-firmware-file();
+    callback cancel-firmware();
+    callback switch-build();
     callback restart();
     title: root.device-id == "" ? "Settings" : root.device.name;
 
@@ -556,21 +619,28 @@ export component SettingsPage inherits ScrollingPage {
                 first: true;
                 title: root.device.firmware-title;
                 description: root.device.firmware-status;
-                if root.device.firmware-step == "running" || root.device.firmware-step == "waiting": ProgressBar {
+                if root.device.firmware-step == "running": ProgressBar {
                     label: "Updating " + root.device.name;
-                    value: root.device.firmware-step == "running" ? root.device.firmware-pct : -1;
+                    value: root.device.firmware-pct;
                     value-text: root.device.firmware-status;
+                }
+                if root.device.firmware-waiting != "": Waiting {
+                    title: "Waiting for confirmation on this PC";
+                    text: root.device.firmware-waiting;
+                    cancel => {
+                        root.cancel-firmware();
+                    }
                 }
                 if root.device.firmware-hint != "": Hint {
                     text: root.device.firmware-hint;
                 }
                 if root.device.firmware-step == "failed": InfoBar {
-                    text: root.device.firmware-status;
+                    text: root.device.firmware-result;
                     severity: Severity.error;
                     details: root.device.firmware-log;
                 }
                 if root.device.firmware-step == "cancelled": InfoBar {
-                    text: root.device.firmware-status;
+                    text: root.device.firmware-result;
                     severity: Severity.info;
                     details: root.device.firmware-log;
                 }
@@ -592,6 +662,52 @@ export component SettingsPage inherits ScrollingPage {
                         clicked => {
                             root.restart();
                         }
+                    }
+                }
+            }
+
+            SettingBlock {
+                title: "From a file";
+                description: "A .tdfw file from an Open TouchDeck release.";
+                HorizontalLayout {
+                    alignment: start;
+                    ActionButton {
+                        text: "Update from a file…";
+                        enabled: root.device.firmware-file-enabled;
+                        clicked => {
+                            root.update-firmware-file();
+                        }
+                    }
+                }
+            }
+
+            if root.device.build-shown: SettingBlock {
+                title: "Firmware build";
+                description: root.device.build-title;
+                Hint {
+                    text: root.device.build-note;
+                }
+                if !root.confirming-build: HorizontalLayout {
+                    alignment: start;
+                    ActionButton {
+                        text: root.device.build-action;
+                        enabled: root.device.build-enabled;
+                        clicked => {
+                            root.confirming-build = true;
+                        }
+                    }
+                }
+                if root.confirming-build: Confirm {
+                    title: root.device.build-confirm-title;
+                    text: root.device.build-confirm-note;
+                    action: root.device.build-confirm-action;
+                    enabled: root.device.build-enabled;
+                    cancel => {
+                        root.confirming-build = false;
+                    }
+                    confirm => {
+                        root.confirming-build = false;
+                        root.switch-build();
                     }
                 }
             }

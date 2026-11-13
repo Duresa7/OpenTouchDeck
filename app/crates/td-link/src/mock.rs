@@ -501,6 +501,11 @@ impl MockDeck {
         self.state().device_name.clone()
     }
 
+    /// Sets the Firmware version `hello` reports, as a Device on an older or newer release.
+    pub fn set_version(&self, version: &str) {
+        self.state().hello.version = version.into();
+    }
+
     /// Answers `hello` as a board running other Firmware with this product.
     pub fn set_product(&self, product: &str) {
         self.state().hello.product = product.into();
