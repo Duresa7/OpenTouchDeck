@@ -54,6 +54,7 @@ pub const COMPONENTS: &[(&str, &str)] = &[
         "unicode-normalization",
         "(MIT OR Apache-2.0) AND Unicode-3.0",
     ),
+    ("unicode-segmentation", "MIT OR Apache-2.0"),
     ("ureq", "MIT OR Apache-2.0"),
     ("url", "MIT OR Apache-2.0"),
     ("windows", "MIT OR Apache-2.0"),
