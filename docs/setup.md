@@ -4,7 +4,7 @@ Open TouchDeck connects through USB-Serial/JTAG. The running Companion sends the
 
 ## Running a distributed app versus building it
 
-A distributed app does not need Rust or a C++ compiler. The 1.x Windows installer on Releases carries the Electron window, the Companion and the Firmware bundle; it is built from the `release/1.x` branch, whose copy of this page covers its Node and pnpm setup ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). The [packaging guide](packaging.md) describes the 2.0 MSI.
+A distributed app does not need Rust or a C++ compiler. The 2.0 Windows 11 MSI on Releases carries the native app, the Companion in-process and the normal Firmware bundle; see the [packaging guide](packaging.md). Windows 10 users stay on the 1.x installer on Releases, which is built from the `release/1.x` branch ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)).
 
 Source builds on `main` are Rust only: no Node and no pnpm. The Rust version is pinned in [app/rust-toolchain.toml](../app/rust-toolchain.toml); rustup installs it the first time you run cargo under `app/`. Linux source builds need a graphical desktop, USB serial access and permission to create a virtual keyboard through `/dev/uinput`. Firmware build prerequisites are separate from desktop setup. The layout schema checks under `schema/` are the one place that uses Node; [the schema guide](../schema/README.md) covers them.
 
@@ -41,7 +41,7 @@ sudo apt-get update
 sudo apt-get install -y build-essential libudev-dev libfontconfig-dev
 ```
 
-CI installs `libudev-dev`, for serial discovery, in [its Rust setup](../.github/actions/rust-setup/action.yml), next to the packages the native app's Slint UI will need. Other distributions need their equivalent packages. Install rustup using its upstream instructions.
+CI installs `libudev-dev`, for serial discovery, in [its Rust setup](../.github/actions/rust-setup/action.yml), next to the packages the native app's Slint UI needs. Other distributions need their equivalent packages. Install rustup using its upstream instructions.
 
 From `app/`, the ordinary source build is:
 

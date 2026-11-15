@@ -2,7 +2,7 @@
 
 A customizable touchscreen Device for your desk. Design its Layout in the app, then use its Tiles for shortcuts, live readings and controls on this PC.
 
-[**Download for Windows**](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) · [**User guide**](docs/usage.md) · [**Releases**](https://github.com/Duresa7/OpenTouchDeck/releases)
+[**Download for Windows 11**](https://github.com/Duresa7/OpenTouchDeck/releases/latest) · [**User guide**](docs/usage.md) · [**Releases**](https://github.com/Duresa7/OpenTouchDeck/releases)
 
 ![Layout editor in light mode, with demo data](docs/images/app-layout-light.png)
 
@@ -10,32 +10,32 @@ I made this project to get around the limitations of numpads and keyboards that 
 
 ## Features
 
-- Edit Pages and Tiles in landscape or portrait. Preview a Layout, import or export it and send it over USB.
-- Assign shortcuts, modifiers, app launches, file and website opens or commands approved on this PC.
-- Add Preset tiles from This PC, CLIProxyAPI, Custom, Volume and Media Integrations.
-- Show CPU, memory and network readings, AI usage limits from your own CLIProxyAPI hub or values from HTTP and approved commands.
-- Use Graph and other Live tiles, a draggable Volume bar and now-playing controls.
-- Choose icons, import animated GIF Tiles or show pictures from a folder when the Device is idle.
-- In 1.x, open the same editor in a paired browser on this PC while the Companion runs in the tray. 2.0 has no browser version.
-- Install Firmware on a New board and update the app and Firmware separately. Firmware updates can roll back after a failed start.
+- Native Windows 11 app in Rust and Slint, with the Companion running in the same process and staying in the tray when you close the window.
+- Install the bundled Firmware on a New board over USB, and run guided setup to name a Device and pick Landscape or Portrait.
+- Read a Layout from a Device or start from the Starter or blank Layout, add and remove Pages, and add, move, resize and delete Tiles on the Device canvas with the mouse or keyboard before sending over USB.
+- Configure This PC, CLIProxyAPI, Custom (HTTP and command sources), Volume and Media Integrations, with secrets kept in Windows Credential Manager or the system keyring and command execution gated by a native approval prompt on this PC.
+- Manage each Device from its Settings page: rename it, switch orientation, pick an idle Photo frame folder, manage Wireless paired apps on the radio Firmware build, and update or restart Firmware from the bundled build or a `.tdfw` file with automatic rollback if a new start fails.
+- Drive shortcuts, modifiers, media keys, app launches, links, approved commands and Live tiles (CPU, memory, network, CLIProxyAPI usage limits, Custom readings, a draggable Volume bar and Media now-playing controls) from the Device's Layout.
 
 ## Get started
 
-You need a **Waveshare ESP32-S3-Touch-LCD-5B** (16 MB flash, 8 MB PSRAM, 1024 × 600 display), a USB data cable and a Windows x64 PC.
+You need a **Waveshare ESP32-S3-Touch-LCD-5B** (16 MB flash, 8 MB PSRAM, 1024 × 600 display), a USB data cable and a Windows 11 x64 PC. Windows 10 users stay on the 1.x installer on [Releases](https://github.com/Duresa7/OpenTouchDeck/releases).
 
-1. Download and run the Windows installer. It installs for the current user without administrator rights.
-2. Open Open TouchDeck and connect the Device through USB-Serial/JTAG. It connects automatically.
-3. For a New board, choose **Install Firmware** and confirm on this PC. This replaces the board's existing project.
-4. Follow setup to name the Device, choose its orientation and pick a starting Layout.
-5. Open the Device's Layout, edit its Tiles and choose **Send to Device**. If **Controls need Send to Device** appears, choose **Review Layout** and check its Controls list before sending.
+If you have Open TouchDeck 1.x installed on Windows 11, quit it and uninstall it from Windows **Installed apps** first (choose **No** when asked whether to delete your Layouts and settings), then install the 2.0 MSI.
 
-The [user guide](docs/usage.md) covers every step, Integrations, pairing, updates and troubleshooting. If upgrading from 0.2, read [the upgrade steps](docs/usage.md#upgrading-from-02), including the required first Layout send for Volume and Media controls.
+1. Download and run `OpenTouchDeck-2.0.0-windows-x64.msi` from the [latest release](https://github.com/Duresa7/OpenTouchDeck/releases/latest). It installs for the current user without administrator rights.
+2. Open Open TouchDeck and connect the Device through its USB-Serial/JTAG port. It connects automatically.
+3. For a New board, open **Setup**, choose **Install Firmware** and confirm in the native dialog on this PC. This replaces the board's existing project.
+4. Follow setup to update Firmware if offered, name the Device and choose **Landscape** or **Portrait**.
+5. Open **Layout**, read the Device's Layout or choose **Start a Layout**, arrange Pages and Tiles on the canvas and choose **Send to Device**.
 
-Keep the Companion running and USB connected for actions on this PC and live readings. Closing the window leaves the Companion in the tray. It reconnects automatically if the Device drops the connection. Turning an Integration off makes its readings on the Device stale within about a second. Swiping Pages and stored animations work on the Device. Wi-Fi, battery support and standalone USB HID are not part of 1.0. Bluetooth is not supported.
+The [user guide](docs/usage.md) covers Home, Setup, the Layout editor, Settings, the Device page and Integrations.
+
+Keep Open TouchDeck running and USB connected for actions on this PC and live readings. Closing the window leaves the app in the tray. It reconnects automatically if the Device drops the connection. Turning an Integration off makes its readings on the Device stale within about a second. Swiping Pages and stored animations work on the Device.
 
 ## Device screen examples
 
-These captures show the built-in Layout on a real Device. The app screenshots above and in the guide use the current UI with demo data.
+These captures show the built-in Layout on a real Device.
 
 <p>
   <img src="docs/images/deck-media.png" width="49%" alt="Media Page with playback and Volume controls">
@@ -44,9 +44,9 @@ These captures show the built-in Layout on a real Device. The app screenshots ab
 
 ## Build from source
 
-The packaged app is Windows x64. Linux source builds need a desktop session and Device permissions; see [setup](docs/setup.md).
+The packaged 2.0 app is a Windows 11 x64 MSI. Linux source builds need a desktop session and Device permissions; see [setup](docs/setup.md).
 
-`main` holds Open TouchDeck 2.0, a native Rust app that is still being built, and the Firmware. The 1.x app on Releases, with its Electron window and React UI, is built from the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/tree/release/1.x).
+`main` holds Open TouchDeck 2.0, the native Rust and Slint app, and the Firmware. The 1.x app for Windows 10, with its Electron window and React UI, is built from the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/tree/release/1.x).
 
 - [App development](app/README.md)
 - [Firmware](docs/firmware.md)
@@ -66,8 +66,8 @@ The Windows programs and installers are not Authenticode-signed yet. The [code s
 
 ## Icon sources
 
-The icon picker searches [Simple Icons](https://simpleicons.org) and [selfh.st/icons](https://selfh.st/icons) by selfh.st. Simple Icons uses CC0 1.0 for most icons; individual licenses and attribution links are carried in the [bundled catalog](app/crates/td-host/src/catalog/index.json). selfh.st icons use [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Icons are resized, padded or tinted to fit a Tile, so they are modified from the originals. Logos are trademarks of their owners. Open TouchDeck is not affiliated with or endorsed by them.
+The bundled catalog in [`td-host`](app/crates/td-host/src/catalog/index.json) carries icons from [Simple Icons](https://simpleicons.org) and [selfh.st/icons](https://selfh.st/icons) by selfh.st. Simple Icons uses CC0 1.0 for most icons, with individual licenses and attribution links in the catalog. selfh.st icons use [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Icons are resized, padded or tinted to fit a Tile, so they are modified from the originals. Logos are trademarks of their owners. Open TouchDeck is not affiliated with or endorsed by them.
 
-Icon packs add more icons on request. **Integrations > Icon packs** downloads curated [Iconify](https://iconify.design) sets from the npm registry: SVG Logos (CC0), Devicon (MIT), Skill Icons (MIT), Font Awesome 6 Brands (CC BY 4.0), Material Design Icons (Apache 2.0), Tabler Icons (MIT) and Lucide (ISC). Each download is pinned by version and checksum, and nothing is installed by default. You can also import your own Iconify JSON file or upload an SVG. The picker then searches every installed pack offline, and credits the packs whose license asks for it.
+The Companion also supports curated [Iconify](https://iconify.design) Icon packs from the npm registry (SVG Logos, Devicon, Skill Icons, Font Awesome 6 Brands, Material Design Icons, Tabler Icons and Lucide), custom Iconify JSON files and Brandfetch logos. In 2.0.0, **Integrations > Icon packs** and **Integrations > Brandfetch logos** are placeholder pages; their 2.0 UI and the Layout editor's icon picker land in 2.0.1.
 
-The app also uses [Lucide](https://lucide.dev/license) interface icons and the [Archivo](https://github.com/Omnibus-Type/Archivo) font. See [fonts and licenses](docs/design.md#fonts-and-licenses) and the [icon-source research](docs/research/icon-sources.md).
+The app uses [Lucide](https://lucide.dev/license) interface icons and the [Archivo](https://github.com/Omnibus-Type/Archivo) font. See [fonts and licenses](docs/design.md#fonts-and-licenses) and the [icon-source research](docs/research/icon-sources.md).

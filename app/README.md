@@ -3,19 +3,16 @@
 This folder is the Rust workspace for Open TouchDeck 2.0: one program that runs the Companion and a native
 Slint window ([ADR 0011](../docs/adr/0011-native-windows-app-in-rust-and-slint.md)). It talks
 to the Device over USB-Serial/JTAG, edits and transfers Layouts, runs PC actions, feeds Integrations and
-updates Firmware.
+updates Firmware. For everyday use, follow the [user guide](../docs/usage.md).
 
-**The app people install today is 1.x**, an Electron window and React UI in front of the same Companion. Its
-source is not on `main`: it lives on the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/tree/release/1.x/app), where 1.x fixes and the release
-that moves 1.x to 2.0 are built
+The 1.x Electron and React app stays on Releases for Windows 10. Its source lives on the
+[`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/tree/release/1.x/app)
 ([ADR 0012](../docs/adr/0012-electron-and-react-leave-main-before-cutover.md)). To build or change the 1.x
-app, check out that branch and follow its copy of this page. For everyday use, follow the
-[USB user guide](../docs/usage.md).
+app, check out that branch and follow its copy of this page.
 
-The program is `td-app`, described under [Native app](#native-app-20-in-development). `td-companion` is
+The program is `td-app`, described under [Native app](#native-app). `td-companion` is
 the library it runs in-process: the Devices, Integrations, actions and the tray. Many of its integration
-tests still drive it through the 1.x local JSON API, which nothing else serves
-([retired contract](../docs/companion-api.md)).
+tests still drive it through the 1.x test-only local JSON API, which nothing else serves.
 
 ## Build
 
@@ -42,12 +39,11 @@ cargo build -p td-app
 The program is `target/debug/td-app.exe` on Windows or `target/debug/td-app` on Linux. The
 [packaging guide](../docs/packaging.md) describes the 2.0 MSI and its release pipeline.
 
-## Native app (2.0, in development)
+## Native app
 
 `crates/td-app` is the Open TouchDeck 2.0 program from
 [ADR 0011](../docs/adr/0011-native-windows-app-in-rust-and-slint.md): the Companion and a
-Slint window in one process. It is not released yet; the 1.x app on `release/1.x` is what people
-install until the cutover. It has Home, Setup, Settings and About so far. Linux builds need `libfontconfig-dev` as well.
+Slint window in one process, with Home, Layout, Setup, Settings, Integrations and About. Linux builds need `libfontconfig-dev` as well.
 
 ```sh
 cargo run -p td-app                                    # with your real Devices

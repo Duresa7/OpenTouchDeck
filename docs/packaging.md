@@ -14,11 +14,9 @@ and Windows Installer, but it can just as well replace the installed `td-app.exe
 which lives in the same user's writable folders. Other users can't reach either,
 because the staging folder is in the user's own `%TEMP%`.
 
-End users download the [Windows x64 installer](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the latest GitHub release and run it. It installs for the current user only and needs no administrator rights, Node, Rust, Python or ESP-IDF.
+End users on Windows 11 download `OpenTouchDeck-X.Y.Z-windows-x64.msi` from the [latest GitHub release](https://github.com/Duresa7/OpenTouchDeck/releases/latest) and run it. It installs for the current user only and needs no administrator rights, Rust, Python or ESP-IDF.
 
-The installer on Releases today is the 1.x installer. Its source, recipe and release workflows are not on `main`: they live on the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/blob/release/1.x/docs/packaging.md), whose copy of this page describes what the installer holds, how its update is signed and how a 1.x release is made ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). A `vX.Y.Z` tag pushed on that branch runs its **windows release** workflow from the tagged commit.
-
-The rest of this page describes Open TouchDeck 2.0, which ships as an MSI.
+Windows 10 users stay on the 1.x installer on [Releases](https://github.com/Duresa7/OpenTouchDeck/releases). Its source, recipe and release workflows live on the [`release/1.x` branch](https://github.com/Duresa7/OpenTouchDeck/blob/release/1.x/docs/packaging.md), whose copy of this page describes what the 1.x installer holds, how its update is signed and how a 1.x release is made ([ADR 0012](adr/0012-electron-and-react-leave-main-before-cutover.md)). A `v1.Y.Z` tag pushed on that branch runs its **windows release** workflow from the tagged commit.
 
 ## Replacing the maintainer's 1.x install
 
