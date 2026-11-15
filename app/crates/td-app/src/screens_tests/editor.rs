@@ -434,6 +434,8 @@ fn tiles_select_move_resize_and_go_with_the_keyboard() {
     start_blank(&rig);
     rig.one("Add Tile, row 1, column 1", AccessibleRole::Button)
         .invoke_accessible_default_action();
+    rig.until("the picker", |r| r.has("Add Tile picker"));
+    rig.press("Key");
     rig.until("the new Tile, selected", |r| {
         r.app.ui.get_editor().tile_selected
     });
@@ -509,6 +511,8 @@ fn send_shows_the_save_state_and_a_refused_label_blocks_it() {
 
     rig.one("Add Tile, row 2, column 2", AccessibleRole::Button)
         .invoke_accessible_default_action();
+    rig.until("the picker", |r| r.has("Add Tile picker"));
+    rig.press("Key");
     rig.until("the Tile", |r| tiles(r).len() == 1);
     let id = tiles(&rig)[0].id.to_string();
     // The Label field arrives with the toolbar; the Worker takes the same command.
@@ -574,6 +578,8 @@ fn keep_mine_after_a_refused_send_sends_again_and_replace_takes_the_device_layou
         .seed_layout(Orientation::Landscape, Some(elsewhere()));
     rig.one("Add Tile, row 1, column 1", AccessibleRole::Button)
         .invoke_accessible_default_action();
+    rig.until("the picker", |r| r.has("Add Tile picker"));
+    rig.press("Key");
     rig.until("the Tile", |r| tiles(r).len() == 1);
     rig.press("Send to Device");
     let title = "Mock Device mock0001 has \u{201c}Elsewhere\u{201d}";
@@ -623,6 +629,8 @@ fn quitting_saves_an_edit_queued_behind_a_device_read() {
     });
     rig.one("Add Tile, row 1, column 1", AccessibleRole::Button)
         .invoke_accessible_default_action();
+    rig.until("the picker", |r| r.has("Add Tile picker"));
+    rig.press("Key");
     let view = worker(&rig).subscribe();
     // The event loop has ended; the read comes back while the window closes its editors.
     checkpoints.release(Checkpoint::BeforeEditorLoad, false);
@@ -707,6 +715,8 @@ fn the_corner_handle_follows_the_pointer_one_to_one() {
     start_blank(&rig);
     rig.one("Add Tile, row 1, column 1", AccessibleRole::Button)
         .invoke_accessible_default_action();
+    rig.until("the picker", |r| r.has("Add Tile picker"));
+    rig.press("Key");
     rig.until("the new Tile, selected", |r| {
         r.app.ui.get_editor().tile_selected
     });
@@ -746,4 +756,446 @@ fn the_corner_handle_follows_the_pointer_one_to_one() {
             .map(|t| t.name.to_string())
             .collect::<Vec<_>>()
     );
+}
+use crate::EditorTools;
+
+fn tools(rig: &Rig) -> crate::ToolbarState {
+    rig.app.ui.global::<EditorTools>().get_state()
+}
+fn escape(rig: &Rig) {
+    rig.app.ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+    rig.app
+        .ui
+        .window()
+        .dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Escape.into(),
+        });
+    settle(&rig.app);
+}
+fn add_at(rig: &Rig, row: u8, col: u8, action: &str) {
+    rig.app.ui.invoke_editor_add_tile(row.into(), col.into());
+    rig.until("the picker", |r| r.has("Add Tile picker"));
+    rig.press(action);
+    rig.until("Tile mode", |r| r.app.ui.get_editor().tile_selected);
+}
+
+#[test]
+fn page_toolbar_edits_the_page_grid_layout_and_orientation() {
+    let rig = Rig::start(800.0);
+    rig.plug("mock0001", BoardKind::Device);
+    start_blank(&rig);
+    rig.one("Page: Page 1", AccessibleRole::Groupbox);
+    rig.type_and_enter("Page name", "Media");
+    rig.until("the Page name", |r| {
+        r.app.ui.get_editor().page_title == "Media"
+    });
+    rig.press("Rows and columns");
+    rig.type_and_enter("Rows", "4");
+    rig.until("four rows", |r| r.app.ui.get_editor().rows == 4);
+    rig.type_and_enter("Columns", "5");
+    rig.until("five columns", |r| r.app.ui.get_editor().cols == 5);
+    rig.press("Close");
+    rig.press("More");
+    rig.type_and_enter("Layout name", "Desk");
+    rig.until("the Layout name", |r| tools(r).layout == "Desk");
+    rig.one("Full screen", AccessibleRole::Switch)
+        .invoke_accessible_default_action();
+    rig.until("full screen", |r| {
+        tools(r).full_screen && r.app.ui.get_editor().title_h == 0.0
+    });
+    rig.press("Preview");
+    settle(&rig.app);
+    assert!(rig.app.ui.global::<EditorTools>().get_preview());
+    // Escape leaves Preview before clearing selection.
+    rig.one("Device canvas", AccessibleRole::Groupbox)
+        .mock_single_click(slint::platform::PointerEventButton::Left);
+    escape(&rig);
+    assert!(!rig.app.ui.global::<EditorTools>().get_preview());
+    rig.press("More");
+    rig.press("Orientation");
+    rig.until("the portrait orientation", |r| {
+        worker(r).view().orientation == Orientation::Portrait
+    });
+    assert!(matches!(
+        worker(&rig).view().orientation,
+        Orientation::Portrait
+    ));
+}
+
+#[test]
+fn tile_toolbar_edits_label_action_sink_geometry_duplicate_and_remove() {
+    let rig = Rig::start(800.0);
+    rig.plug("mock0001", BoardKind::Device);
+    start_blank(&rig);
+    add_at(&rig, 0, 0, "Key");
+    rig.one("Tile: Tile", AccessibleRole::Groupbox);
+    rig.type_and_enter("Label", "Mute");
+    rig.until("the Label", |r| tools(r).label == "Mute");
+    rig.press("Action");
+    rig.type_and_enter("Key usage", "4");
+    rig.until("the key usage", |r| {
+        matches!(
+            worker(r).view().layout.unwrap().pages[0].tiles[0]
+                .tile
+                .action,
+            Action::Key { usage: 4, .. }
+        )
+    });
+    rig.type_and_enter("Modifiers", "ctrl, shift");
+    rig.until("the modifiers", |r| matches!(worker(r).view().layout.unwrap().pages[0].tiles[0].tile.action, Action::Key { ref mods, .. } if mods.len() == 2));
+    rig.one(
+        "Send to Bluetooth computer or phone",
+        AccessibleRole::Switch,
+    )
+    .invoke_accessible_default_action();
+    rig.until("the Bluetooth sink", |r| tools(r).bluetooth);
+    rig.press("Close");
+    rig.press("More");
+    rig.type_and_enter("Column", "2");
+    rig.until("column two", |r| tools(r).col == 2);
+    rig.type_and_enter("Row", "2");
+    rig.until("row two", |r| tools(r).row == 2);
+    rig.type_and_enter("Row span", "2");
+    rig.until("two rows tall", |r| tools(r).row_span == 2);
+    rig.type_and_enter("Column span", "2");
+    rig.until("two columns wide", |r| tools(r).col_span == 2);
+    // Return to 1 by 1 so the default grid has room for a duplicate.
+    rig.type_and_enter("Row span", "1");
+    rig.until("one row tall", |r| tools(r).row_span == 1);
+    rig.type_and_enter("Column span", "1");
+    rig.until("one column wide", |r| tools(r).col_span == 1);
+    rig.press("Close");
+    rig.press("More");
+    rig.press("Duplicate");
+    rig.until("a duplicate", |r| tiles(r).len() == 2);
+    rig.press("More");
+    rig.press("Remove Tile");
+    rig.until("the removal", |r| tiles(r).len() == 1);
+    // The Session decides selection after removal. Select the remaining Tile to use Done.
+    let id = tiles(&rig)[0].id.clone();
+    rig.app.ui.invoke_editor_select_tile(id);
+    rig.until("Tile mode", |r| tools(r).selected);
+    rig.press("Done");
+    rig.until("Page mode", |r| !tools(r).selected);
+}
+
+#[test]
+fn picker_uses_the_clicked_cell_then_add_target_and_creates_a_page_when_full() {
+    let rig = Rig::start(800.0);
+    rig.plug("mock0001", BoardKind::Device);
+    start_blank(&rig);
+    add_at(&rig, 1, 2, "Media key");
+    assert_eq!((tiles(&rig)[0].row, tiles(&rig)[0].col), (1, 2));
+    rig.press("Done");
+    rig.until("Page mode", |r| !tools(r).selected);
+    rig.press("Add Tile");
+    rig.press("Go to Page");
+    rig.until("auto placement", |r| tiles(r).len() == 2);
+    assert_eq!((tools(&rig).row, tools(&rig).col), (1, 1));
+    rig.press("Done");
+    rig.until("Page mode", |r| !tools(r).selected);
+    // A full 1 by 1 Page asks for a new Page.
+    worker(&rig).dispatch(Command::NewLayout(td_companion::editor::NewLayout::Blank));
+    rig.until("a blank Page", |r| tiles(r).is_empty());
+    rig.app
+        .ui
+        .global::<EditorTools>()
+        .invoke_edit("rows".into(), "1".into());
+    rig.until("one row", |r| r.app.ui.get_editor().rows == 1);
+    rig.app
+        .ui
+        .global::<EditorTools>()
+        .invoke_edit("cols".into(), "1".into());
+    rig.until("one column", |r| r.app.ui.get_editor().cols == 1);
+    add_at(&rig, 0, 0, "No action");
+    rig.press("Done");
+    rig.until("Page mode", |r| !tools(r).selected);
+    rig.press("Add Tile");
+    assert_eq!(tools(&rig).destination, "Add on a new Page");
+    rig.press("Modifier");
+    rig.until("a second Page", |r| r.app.ui.get_editor().page_count == 2);
+    assert_eq!(tools(&rig).action, "Modifier");
+}
+
+#[test]
+fn escape_closes_a_popover_before_clearing_the_tile_and_toolbar_fits_at_800() {
+    let rig = Rig::start(800.0);
+    rig.plug("mock0001", BoardKind::Device);
+    start_blank(&rig);
+    assert_fits(&rig, 800.0, "Page toolbar");
+    let canvas = rig.one("Device canvas", AccessibleRole::Groupbox);
+    let bar = rig.one("Page: Page 1", AccessibleRole::Groupbox);
+    assert!(bar.absolute_position().x >= canvas.absolute_position().x);
+    assert!(bar.size().width <= canvas.size().width + 0.5);
+    add_at(&rig, 0, 0, "Key");
+    assert_fits(&rig, 800.0, "Tile toolbar");
+    let canvas = rig.one("Device canvas", AccessibleRole::Groupbox);
+    let bar = rig.one("Tile: Tile", AccessibleRole::Groupbox);
+    assert!(bar.absolute_position().x >= canvas.absolute_position().x);
+    assert!(bar.size().width <= canvas.size().width + 0.5);
+    rig.press("More");
+    assert_fits(&rig, 800.0, "Position and size popover");
+    let row = rig.one("Row", AccessibleRole::TextInput);
+    row.mock_single_click(slint::platform::PointerEventButton::Left);
+    escape(&rig);
+    assert_eq!(rig.app.ui.global::<EditorTools>().get_popup(), "");
+    assert!(
+        tools(&rig).selected,
+        "the first Escape keeps the Tile selected"
+    );
+    escape(&rig);
+    rig.until("the second Escape clears selection", |r| !tools(r).selected);
+    rig.app
+        .ui
+        .window()
+        .set_size(LogicalSize::new(799.0, 2000.0));
+    settle(&rig.app);
+    assert!(!rig.has("Orientation") && !rig.has("Preview"));
+    rig.press("More");
+    rig.one("Orientation", AccessibleRole::Button);
+    rig.one("Preview", AccessibleRole::Button);
+}
+
+#[test]
+fn picker_actions_expose_all_supported_action_fields_and_keep_rejections() {
+    let rig = Rig::start(800.0);
+    rig.plug("mock0001", BoardKind::Device);
+    start_blank(&rig);
+    for (kind, fields) in [
+        (
+            "Launch program",
+            vec![
+                ("Program path", "example-program"),
+                ("Arguments", "[\"--help\"]"),
+                ("Working folder", ""),
+            ],
+        ),
+        (
+            "Open URL or file",
+            vec![("URL or file", "https://example.invalid")],
+        ),
+        (
+            "Run command",
+            vec![
+                ("Program", "example-command"),
+                ("Arguments", "[\"--version\"]"),
+                ("Working folder", ""),
+                ("Use shell", "false"),
+            ],
+        ),
+        ("Modifier", vec![("Modifier", "alt")]),
+        ("Go to Page", vec![("Target Page ID", "page1")]),
+        ("Media key", vec![("Media usage", "205")]),
+        ("No action", vec![]),
+    ] {
+        add_at(&rig, 0, 0, kind);
+        assert_fits(&rig, 800.0, kind);
+        if rig.app.ui.global::<EditorTools>().get_popup() != "action" {
+            rig.press("Action");
+        }
+        for (label, value) in fields {
+            rig.type_and_enter(label, value);
+            rig.until("the action edit", |r| {
+                r.app.ui.global::<EditorTools>().get_error().is_empty()
+            });
+            // Each publication must land before another full Action is edited.
+            rig.until("the field value", |r| {
+                use slint::Model;
+                r.app
+                    .ui
+                    .global::<EditorTools>()
+                    .get_fields()
+                    .iter()
+                    .any(|f| f.label == label && f.value == value)
+            });
+        }
+        // Long action forms scroll; Escape closes without finding a scrolled footer.
+        escape(&rig);
+        rig.press("More");
+        rig.press("Remove Tile");
+        rig.until("the Tile removed", |r| tiles(r).is_empty());
+    }
+    add_at(&rig, 0, 0, "Key");
+    rig.type_and_enter("Label", "Seventeen letters");
+    rig.until("the rejected Label remains visible", |r| {
+        tools(r).label == "Seventeen letters" && !tools(r).problem.is_empty()
+    });
+    rig.press("Action");
+    rig.press("Discard rejected edits");
+    rig.until("the rejection discarded", |r| {
+        tools(r).problem.is_empty() && tools(r).label == "Tile"
+    });
+    let id = tools(&rig).tile;
+    rig.press("Change action");
+    rig.press("No action");
+    rig.until("the action kind changed", |r| {
+        tools(r).action == "No action"
+    });
+    assert_eq!(tools(&rig).tile, id);
+}
+
+#[test]
+fn a_preset_uses_the_same_picker_destination() {
+    let rig = Rig::start(800.0);
+    rig.plug("mock0001", BoardKind::Device);
+    start_blank(&rig);
+    use slint::Model;
+    let presets: Vec<_> = rig
+        .app
+        .ui
+        .global::<EditorTools>()
+        .get_presets()
+        .iter()
+        .collect();
+    assert!(!presets.is_empty(), "mock Integrations offer presets");
+    rig.app.ui.invoke_editor_add_tile(1, 2);
+    rig.press(&presets[0].label);
+    rig.until("the preset Tile", |r| tiles(r).len() == 1);
+    assert_eq!((tiles(&rig)[0].row, tiles(&rig)[0].col), (1, 2));
+    assert_eq!(
+        worker(&rig).view().outcome.unwrap().command,
+        CommandKind::PlacePreset
+    );
+}
+
+#[test]
+fn gif_states_are_per_tile_and_controls_notices_cover_every_variant() {
+    use td_companion::{
+        devices::{ControlLayout as C, ControlLayoutUnavailable as U},
+        editor::{GifProblem, GifWork},
+    };
+    let mut shown = view(vec![grid(
+        "main",
+        "Main",
+        vec![tile("a", "A", 0, 0, 1, 1), tile("b", "B", 0, 1, 1, 1)],
+    )]);
+    shown.tile = Some("a".into());
+    let a = &mut shown.layout.as_mut().unwrap().pages[0].tiles[0];
+    a.gif = Some(GifWork::Queued {
+        file: "animation.gif".into(),
+    });
+    assert_eq!(
+        map(&shown, SCREEN, "Desk", false).tiles[0].gif_status,
+        "Queued: animation.gif"
+    );
+    shown.layout.as_mut().unwrap().pages[0].tiles[0].gif = Some(GifWork::Preparing {
+        file: "animation.gif".into(),
+    });
+    assert_eq!(
+        map(&shown, SCREEN, "Desk", false).tiles[0].gif_status,
+        "Preparing: animation.gif"
+    );
+    shown.layout.as_mut().unwrap().pages[0].tiles[0].gif = Some(GifWork::Failed {
+        file: "animation.gif".into(),
+        problem: GifProblem {
+            text: "Choose another GIF.".into(),
+            detail: String::new(),
+        },
+        retry: true,
+    });
+    let mapped = map(&shown, SCREEN, "Desk", false);
+    assert!(mapped.tiles[0].gif_status.starts_with("GIF failed:"));
+    assert_eq!(mapped.tiles[1].gif_status, "");
+    for (state, text) in [
+        (
+            C::Unavailable {
+                reason: U::Checking,
+            },
+            "Checking Controls…",
+        ),
+        (
+            C::Unavailable { reason: U::Offline },
+            "Controls are paused while the Device is offline.",
+        ),
+        (
+            C::Unavailable {
+                reason: U::Unsupported,
+            },
+            "This Firmware doesn't support Controls.",
+        ),
+        (
+            C::Unavailable {
+                reason: U::ReadFailed,
+            },
+            "Couldn't check Controls. Reconnect the Device to retry.",
+        ),
+        (
+            C::Matches {
+                orientation: Orientation::Landscape,
+                has_controls: true,
+            },
+            "",
+        ),
+        (
+            C::NoPushedCopy {
+                orientation: Orientation::Landscape,
+                has_controls: true,
+            },
+            "Controls are paused. Send this Layout to create a Pushed copy.",
+        ),
+        (
+            C::Differs {
+                orientation: Orientation::Landscape,
+                has_controls: true,
+            },
+            "Controls are paused. The Device's Layout differs from its Pushed copy. Send this Layout again.",
+        ),
+        (
+            C::NoPushedCopy {
+                orientation: Orientation::Landscape,
+                has_controls: false,
+            },
+            "",
+        ),
+        (
+            C::Differs {
+                orientation: Orientation::Landscape,
+                has_controls: false,
+            },
+            "",
+        ),
+    ] {
+        shown.control_layout = state;
+        assert_eq!(
+            map(&shown, SCREEN, "Desk", false).state.controls_notice,
+            text
+        );
+    }
+}
+
+#[test]
+fn preview_shortcut_and_arrows_follow_the_filmstrip_from_the_toolbar() {
+    let rig = Rig::start(800.0);
+    rig.plug("mock0001", BoardKind::Device);
+    start_blank(&rig);
+    rig.press("Add Page");
+    rig.until("Page two", |r| r.app.ui.get_editor().page_index == 1);
+    rig.press("More");
+    rig.press("Preview");
+    rig.until("Preview focuses the canvas", |r| {
+        r.app.ui.global::<crate::EditorFocus>().get_area() == "canvas"
+    });
+    assert!(rig.app.ui.global::<EditorTools>().get_preview());
+    let key = |text: SharedString| {
+        rig.app
+            .ui
+            .window()
+            .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+        rig.app
+            .ui
+            .window()
+            .dispatch_event(WindowEvent::KeyReleased { text });
+    };
+    key(Key::LeftArrow.into());
+    rig.until("Preview Page one", |r| {
+        r.app.ui.get_editor().page_index == 0
+    });
+    key(Key::RightArrow.into());
+    rig.until("Preview Page two", |r| {
+        r.app.ui.get_editor().page_index == 1
+    });
+    key("p".into());
+    assert!(!rig.app.ui.global::<EditorTools>().get_preview());
 }

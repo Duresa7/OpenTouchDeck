@@ -47,6 +47,23 @@ UI tickets copy strings from here. When a screen needs a string this guide doesn
 | Add (a computer or phone) | pair, bond (for the Bluetooth keyboard) | Making a Keyboard host. "Pair" stays for a Pairing with this app over Wi-Fi |
 | Remove | delete | Removing a Tile, a Page or unused Assets |
 
+## Native Layout editor
+
+The toolbar groups are named `Page: {name}` and `Tile: {label}`. Controls use
+**Page name**, **Rows and columns**, **Layout name**, **Full screen**, **Label**,
+**Action**, **Change action**, **Look**, **Position and size**, **Duplicate**, **Remove Tile** and
+**Done**. The picker says `Add at row {row}, column {column}` or
+`Add on a new Page`. Geometry uses rows and columns starting at 1.
+
+GIF work says `Queued: {file}`, `Preparing: {file}`, `GIF failed: {reason}` or
+`GIF ready`. Actions are **Choose GIF**, **Cancel GIF**, **Retry GIF** and
+**Fill Tile with GIF**. Key and media-key actions offer
+**Send to Bluetooth computer or phone**.
+
+Controls status says **Checking Controls…**, then clears when the Pushed copy
+matches. Otherwise it explains that Controls are paused and asks for a send or
+reconnection. The editor never offers approve or deny buttons.
+
 ## Patterns
 
 **Action, progress, result.** Every action that takes time names one verb three ways.

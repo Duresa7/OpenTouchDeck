@@ -89,6 +89,8 @@ export component ActionButton inherits Rectangle {
     // What screen readers call it, when the words alone aren't enough ("Forget Laptop").
     in property <string> label: self.text;
     in property <bool> primary;
+    // Toolbars use compact buttons rather than the dialog button minimum.
+    in property <bool> compact;
     in property <bool> enabled: true;
     // Read when it gets focus, such as the hint below a field.
     in property <string> description;
@@ -109,8 +111,8 @@ export component ActionButton inherits Rectangle {
     horizontal-stretch: 0;
     // As wide as its words on one line, at least 96 px, but it can narrow to fit its space:
     // the words then wrap, as a WinUI button's content does, and the button grows taller.
-    preferred-width: max(96px, label.preferred-width + 24px);
-    min-width: min(96px, self.preferred-width);
+    preferred-width: max(root.compact ? 32px : 96px, label.preferred-width + 24px);
+    min-width: min(root.compact ? 32px : 96px, self.preferred-width);
     min-height: max(32px, content.min-height);
     border-radius: 4px;
     border-width: 1px;
@@ -526,8 +528,10 @@ export component TextField inherits Rectangle {
     // Commit when focus leaves, as Settings does. Setup commits with its Next button.
     in property <bool> commit-on-leave: true;
     out property <string> text <=> input.text;
+    out property <bool> has-focus <=> input.has-focus;
     callback edited(string);
     callback accepted(string);
+    callback escaped();
 
     accessible-role: text-input;
     accessible-label: self.label;
@@ -612,6 +616,7 @@ export component TextField inherits Rectangle {
             if event.text == Key.Escape {
                 self.text = root.value;
                 root.edited(self.text);
+                root.escaped();
                 return accept;
             }
             return reject;

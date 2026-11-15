@@ -1,0 +1,304 @@
+// Bottom toolbar and its popovers. Selection and draft values come from the Worker.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ActionButton, TextField, Body, ToggleSwitch } from "controls.slint";
+
+// Keyboard tests read the focused editor area, including the toolbar.
+export global EditorFocus {
+    in-out property <string> area;
+    public function report(name: string, focused: bool) {
+        if focused {
+            self.area = name;
+        } else if self.area == name {
+            self.area = "";
+        }
+    }
+}
+
+
+export struct EditorField { key: string, label: string, value: string, hint: string }
+export struct PresetChoice { integration: string, id: string, label: string }
+export struct ToolbarState {
+    context: string, page: string, layout: string, rows: int, cols: int, usage: bool,
+    selected: bool, tile: string, label: string, action: string,
+    row: int, col: int, row-span: int, col-span: int,
+    full-screen: bool, portrait: bool, offers-gif: bool,
+    gif-status: string, gif-busy: bool, gif-retry: bool, gif-cover: bool,
+    sink-applicable: bool, bluetooth: bool, input-applicable: bool, input: bool,
+    problem: string, can-add: bool, destination: string,
+}
+export global EditorTools {
+    in property <ToolbarState> state;
+    in property <[EditorField]> fields;
+    in property <[PresetChoice]> presets;
+    in-out property <string> popup;
+    in-out property <string> error;
+    in-out property <bool> preview;
+    in-out property <length> toolbar-height: 52px;
+    callback edit(string, string);
+    callback add(string);
+    callback preset(string, string);
+    callback pick-gif(bool);
+    callback gif(string);
+    callback done();
+    callback open-picker(int, int);
+    public function escape() {
+        if self.popup != "" { self.popup = ""; }
+        else if self.preview { self.preview = false; }
+        else { self.done(); }
+    }
+    public function toggle(name: string) {
+        self.error = "";
+        self.popup = self.popup == name ? "" : name;
+    }
+}
+
+component ToolButton inherits ActionButton {
+    compact: true;
+    changed has-focus => { EditorFocus.report("toolbar", self.has-focus); }
+}
+component ToolField inherits TextField {
+    changed has-focus => { EditorFocus.report("toolbar", self.has-focus); }
+    escaped => { EditorTools.escape(); }
+}
+
+export component EditorToolbar inherits Rectangle {
+    in property <length> window-width;
+    property <bool> compact: root.window-width < 1050px * Theme.text-scale;
+    property <bool> tiny: root.window-width < 800px * Theme.text-scale;
+    accessible-role: groupbox;
+    accessible-label: EditorTools.state.selected ? "Tile: " + EditorTools.state.label : "Page: " + EditorTools.state.page;
+    background: Theme.card;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.card-stroke;
+    height: rows.preferred-height;
+    init => { EditorTools.toolbar-height = self.height; }
+    changed height => { EditorTools.toolbar-height = self.height; }
+    property <string> popup: EditorTools.popup;
+    changed popup => { if root.popup == "" && !EditorTools.preview { keys.focus(); } }
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == "p" || event.text == "P") && !event.repeat {
+                EditorTools.preview = !EditorTools.preview; return accept;
+            }
+            if event.text == Key.Escape { EditorTools.escape(); return accept; }
+            return reject;
+        }
+        rows := VerticalLayout {
+            padding: 8px;
+            spacing: 6px;
+            HorizontalLayout {
+                spacing: 6px;
+                if !root.tiny: Text {
+                    text: EditorTools.state.selected ? "TILE" : "PAGE";
+                    color: Theme.secondary-text;
+                    font-size: Theme.body;
+                    vertical-alignment: center;
+                }
+                if !EditorTools.state.selected: ToolField {
+                    label: "Page name";
+                    value: EditorTools.state.page;
+                    min-width: 60px;
+                    horizontal-stretch: 1;
+                    accepted(value) => { EditorTools.edit("page", value); }
+                }
+                if EditorTools.state.selected: ToolField {
+                    label: "Label";
+                    value: EditorTools.state.label;
+                    min-width: 60px;
+                    horizontal-stretch: 1;
+                    invalid: EditorTools.state.problem != "";
+                    description: EditorTools.state.problem;
+                    accepted(value) => { EditorTools.edit("label", value); }
+                }
+                if !root.tiny: HorizontalLayout {
+                    spacing: 6px;
+                    if !EditorTools.state.selected && !EditorTools.state.usage: ToolButton {
+                        text: EditorTools.state.rows + " × " + EditorTools.state.cols;
+                        label: "Rows and columns";
+                        enabled: !EditorTools.state.usage;
+                        clicked => { EditorTools.toggle("grid"); }
+                    }
+                    if EditorTools.state.selected: ToolButton {
+                        text: EditorTools.state.action;
+                        label: "Action";
+                        description: EditorTools.state.action;
+                        clicked => { EditorTools.toggle("action"); }
+                    }
+                    if EditorTools.state.selected: ToolButton {
+                        text: "Look";
+                        clicked => { EditorTools.toggle("look"); }
+                    }
+                }
+                if !EditorTools.state.selected && !root.compact: HorizontalLayout {
+                    spacing: 6px;
+                    ToolButton {
+                        text: EditorTools.state.portrait ? "Portrait" : "Landscape";
+                        label: "Orientation";
+                        clicked => { EditorTools.edit("orientation", EditorTools.state.portrait ? "landscape" : "portrait"); }
+                    }
+                    ToolButton {
+                        text: EditorTools.preview ? "End preview" : "Preview";
+                        clicked => { EditorTools.preview = !EditorTools.preview; }
+                    }
+                }
+                if !root.tiny: HorizontalLayout {
+                    spacing: 6px;
+                    if !EditorTools.state.selected && !EditorTools.state.usage: ToolButton {
+                        text: "Add Tile";
+                        enabled: EditorTools.state.can-add;
+                        clicked => { EditorTools.open-picker(-1, -1); }
+                    }
+                    if EditorTools.state.selected && !root.compact: ToolButton {
+                        text: "Copy";
+                        label: "Duplicate";
+                        clicked => { EditorTools.edit("duplicate", ""); }
+                    }
+                    if EditorTools.state.selected && !root.compact: ToolButton {
+                        text: "×";
+                        label: "Remove Tile";
+                        clicked => { EditorTools.edit("remove", ""); }
+                    }
+                }
+                ToolButton {
+                    text: "More";
+                    clicked => { EditorTools.toggle("more"); }
+                }
+                if EditorTools.state.selected: ToolButton {
+                    text: "Done";
+                    clicked => { EditorTools.popup = ""; EditorTools.done(); }
+                }
+            }
+            if EditorTools.state.problem != "": Body { text: EditorTools.state.problem; color: Theme.critical; }
+        }
+    }
+}
+
+// One shared popover avoids hidden focusable controls. The caller places it above the toolbar.
+export component EditorPopover inherits Rectangle {
+    in property <length> window-width;
+    accessible-role: groupbox;
+    accessible-label: EditorTools.popup == "add" ? "Add Tile picker" : EditorTools.popup == "action" ? "Tile action" : EditorTools.popup == "look" ? "Tile look" : EditorTools.popup == "grid" ? "Rows and columns" : "Editor options";
+    background: Theme.dialog;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.high-contrast ? Theme.contrast.window-text : Theme.card-stroke;
+    height: min(430px, content.preferred-height + 4px);
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape { EditorTools.escape(); return accept; }
+            return reject;
+        }
+        ScrollView {
+            content := VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                if EditorTools.error != "": Body { text: EditorTools.error; color: Theme.critical; }
+                if EditorTools.popup == "add" || EditorTools.popup == "kind": VerticalLayout {
+                    spacing: 6px;
+                    if EditorTools.popup == "add": Body { text: EditorTools.state.destination; }
+                    if EditorTools.popup == "kind": Body { text: "Choose the Tile's action"; }
+                    for choice in [
+                        {id: "key", name: "Key"}, {id: "consumer", name: "Media key"},
+                        {id: "mod", name: "Modifier"}, {id: "page", name: "Go to Page"},
+                        {id: "launch", name: "Launch program"}, {id: "open", name: "Open URL or file"},
+                        {id: "command", name: "Run command"}, {id: "none", name: "No action"}
+                    ]: ToolButton {
+                        text: choice.name;
+                        clicked => {
+                            if EditorTools.popup == "add" { EditorTools.add(choice.id); EditorTools.popup = ""; }
+                            else { EditorTools.edit("kind", choice.id); EditorTools.popup = "action"; }
+                        }
+                    }
+                    if EditorTools.popup == "add" && EditorTools.state.offers-gif: ToolButton {
+                        text: "GIF Tile";
+                        clicked => { EditorTools.pick-gif(true); EditorTools.popup = ""; }
+                    }
+                    if EditorTools.popup == "add" && EditorTools.presets.length > 0: Body { text: "Preset tiles"; }
+                    if EditorTools.popup == "add": VerticalLayout {
+                        spacing: 6px;
+                        for preset in EditorTools.presets: ToolButton {
+                            text: preset.label;
+                            clicked => { EditorTools.preset(preset.integration, preset.id); EditorTools.popup = ""; }
+                        }
+                    }
+                }
+                if EditorTools.popup == "grid": VerticalLayout {
+                    spacing: 8px;
+                    Body { text: "Rows"; }
+                    ToolField { label: "Rows"; value: EditorTools.state.rows; accepted(value) => { EditorTools.edit("rows", value); } }
+                    Body { text: "Columns"; }
+                    ToolField { label: "Columns"; value: EditorTools.state.cols; accepted(value) => { EditorTools.edit("cols", value); } }
+                }
+                if EditorTools.popup == "action": VerticalLayout {
+                    spacing: 8px;
+                    Body { text: EditorTools.state.action; }
+                    ToolButton { text: "Change action"; clicked => { EditorTools.toggle("kind"); } }
+                    for field in EditorTools.fields: VerticalLayout {
+                        spacing: 4px;
+                        Body { text: field.label; }
+                        ToolField {
+                            label: field.label;
+                            value: field.value;
+                            description: field.hint;
+                            accepted(value) => { EditorTools.edit(field.key, value); }
+                        }
+                        if field.hint != "": Body { text: field.hint; color: Theme.secondary-text; }
+                    }
+                    if EditorTools.state.sink-applicable: ToggleSwitch {
+                        label: "Send to Bluetooth computer or phone";
+                        checked: EditorTools.state.bluetooth;
+                        toggled(on) => { EditorTools.edit("bluetooth", on ? "true" : "false"); }
+                    }
+                    if EditorTools.state.input-applicable: ToggleSwitch {
+                        label: "Drag to set value";
+                        checked: EditorTools.state.input;
+                        toggled(on) => { EditorTools.edit("input", on ? "true" : "false"); }
+                    }
+                    ToolButton { text: "Discard rejected edits"; clicked => { EditorTools.edit("discard", ""); } }
+                }
+                if EditorTools.popup == "look": VerticalLayout {
+                    spacing: 8px;
+                    Body { text: EditorTools.state.gif-status == "" ? "Choose a GIF for this Tile." : EditorTools.state.gif-status; }
+                    ToolButton { text: "Choose GIF"; enabled: EditorTools.state.offers-gif; clicked => { EditorTools.pick-gif(false); } }
+                    if EditorTools.state.gif-busy: ToolButton { text: "Cancel GIF"; clicked => { EditorTools.gif("cancel"); } }
+                    if EditorTools.state.gif-retry: ToolButton { text: "Retry GIF"; clicked => { EditorTools.gif("retry"); } }
+                    ToggleSwitch { label: "Fill Tile with GIF"; checked: EditorTools.state.gif-cover; toggled(on) => { EditorTools.gif(on ? "cover" : "contain"); } }
+                    ToolButton { text: "Plain look"; clicked => { EditorTools.edit("plain", ""); } }
+                }
+                if EditorTools.popup == "more": VerticalLayout {
+                    spacing: 8px;
+                    if !EditorTools.state.selected: VerticalLayout {
+                        spacing: 8px;
+                        Body { text: "Layout name"; }
+                        ToolField { label: "Layout name"; value: EditorTools.state.layout; accepted(value) => { EditorTools.edit("name", value); } }
+                        ToggleSwitch { label: "Full screen"; checked: EditorTools.state.full-screen; toggled(on) => { EditorTools.edit("full-screen", on ? "true" : "false"); } }
+                        ToolButton { text: "Rows and columns"; enabled: !EditorTools.state.usage; clicked => { EditorTools.toggle("grid"); } }
+                        ToolButton { text: "Orientation"; description: EditorTools.state.portrait ? "Portrait" : "Landscape"; clicked => { EditorTools.edit("orientation", EditorTools.state.portrait ? "landscape" : "portrait"); } }
+                        ToolButton { text: EditorTools.preview ? "End preview" : "Preview"; clicked => { EditorTools.preview = !EditorTools.preview; EditorTools.popup = ""; } }
+                        ToolButton { text: "Add Tile"; enabled: EditorTools.state.can-add; clicked => { EditorTools.open-picker(-1, -1); } }
+                    }
+                    if EditorTools.state.selected: VerticalLayout {
+                        spacing: 8px;
+                        if root.window-width < 800px * Theme.text-scale: ToolButton { text: "Action"; clicked => { EditorTools.toggle("action"); } }
+                        if root.window-width < 800px * Theme.text-scale: ToolButton { text: "Look"; clicked => { EditorTools.toggle("look"); } }
+                        Body { text: "Position and size"; }
+                        Body { text: "Row"; }
+                        ToolField { label: "Row"; value: EditorTools.state.row; accepted(value) => { EditorTools.edit("row", value); } }
+                        Body { text: "Column"; }
+                        ToolField { label: "Column"; value: EditorTools.state.col; accepted(value) => { EditorTools.edit("col", value); } }
+                        Body { text: "Row span"; }
+                        ToolField { label: "Row span"; value: EditorTools.state.row-span; accepted(value) => { EditorTools.edit("row-span", value); } }
+                        Body { text: "Column span"; }
+                        ToolField { label: "Column span"; value: EditorTools.state.col-span; accepted(value) => { EditorTools.edit("col-span", value); } }
+                        if root.window-width < 1050px * Theme.text-scale: ToolButton { text: "Duplicate"; clicked => { EditorTools.edit("duplicate", ""); } }
+                        if root.window-width < 1050px * Theme.text-scale: ToolButton { text: "Remove Tile"; clicked => { EditorTools.popup = ""; EditorTools.edit("remove", ""); } }
+                    }
+                }
+                ToolButton { text: "Close"; clicked => { EditorTools.popup = ""; } }
+            }
+        }
+    }
+}

@@ -3,6 +3,7 @@
 //! that view to the window's properties and sends each callback back as one `Command`. Nothing
 //! here waits for the Session, the disk or the Device: `dispatch` only queues.
 use super::{Screens, opening, sync};
+mod toolbar;
 use crate::{
     AppWindow, CanvasCell, CanvasTile, DropTarget, EditorDevice, EditorState, FilmPage, Page,
     ThumbTile,
@@ -42,6 +43,8 @@ struct Models {
     tiles: Rc<VecModel<CanvasTile>>,
     cells: Rc<VecModel<CanvasCell>>,
     devices: Rc<VecModel<EditorDevice>>,
+    fields: Rc<VecModel<crate::EditorField>>,
+    presets: Rc<VecModel<crate::PresetChoice>>,
 }
 
 /// The window's side of the editor: which Worker it shows and what it last showed.
@@ -63,10 +66,12 @@ pub(super) struct Editor {
     resend: Cell<bool>,
     seen: Cell<u64>,
     models: Models,
+    add_target: Cell<Option<AddTarget>>,
 }
 
 impl Screens {
     pub(super) fn wire_editor(self: &Rc<Self>, ui: &AppWindow) {
+        self.wire_toolbar(ui);
         let models = &self.editor.models;
         ui.set_editor_pages(ModelRc::from(models.pages.clone()));
         ui.set_editor_thumbs(ModelRc::from(models.thumbs.clone()));
@@ -125,18 +130,15 @@ impl Screens {
             on_editor_activate_cell,
             |s, row: i32, col: i32| {
                 if let Some(command) = s.with_shown(|view, _| activate(view, row, col)).flatten() {
-                    s.dispatch(command);
+                    match command {
+                        Command::Add { .. } => s.open_picker(row, col),
+                        command => s.dispatch(command),
+                    }
                 }
             }
         );
-        on!(self, ui, on_editor_add_tile, |s, row: i32, col: i32| {
-            if let (Ok(row), Ok(col)) = (u8::try_from(row), u8::try_from(col)) {
-                s.dispatch(Command::Add {
-                    kind: AddKind::Key,
-                    target: AddTarget::Cell { row, col },
-                });
-            }
-        });
+        on!(self, ui, on_editor_add_tile, |s, row: i32, col: i32| s
+            .open_picker(row, col));
         on!(
             self,
             ui,
@@ -338,8 +340,9 @@ impl Screens {
         let screen = screen_of(device, &view);
         let name = device.map_or_else(|| view.device_name.clone(), super::shown_name);
         let reading = editor.reading.get().is_some();
-        self.show_editor(ui, map(&view, screen, &name, reading));
+        let mapped = map(&view, screen, &name, reading);
         *editor.shown.borrow_mut() = Some((view, screen));
+        self.show_editor(ui, mapped);
     }
 
     /// Acts once on each new outcome.
@@ -366,6 +369,7 @@ impl Screens {
 
     fn show_editor(&self, ui: &AppWindow, mapped: Mapped) {
         let models = &self.editor.models;
+        self.show_toolbar(ui);
         ui.set_editor(mapped.state);
         sync(&models.pages, mapped.pages);
         sync(&models.thumbs, mapped.thumbs);
@@ -574,6 +578,11 @@ pub(crate) fn map(view: &EditorView, screen: ScreenSize, name: &str, reading: bo
                 .map(problem_text)
                 .unwrap_or_default()
                 .into(),
+            gif_status: toolbar::gif_status(
+                tile.gif.as_ref(),
+                t.asset.is_some() && t.render == Some(td_core::layout::TileRender::Gif),
+            )
+            .into(),
             name: format!(
                 "{label}, row {}, column {}, {} by {}",
                 t.row + 1,
@@ -645,6 +654,7 @@ pub(crate) fn map(view: &EditorView, screen: ScreenSize, name: &str, reading: bo
     Mapped {
         state: EditorState {
             state: "ready".into(),
+            controls_notice: toolbar::controls_notice(&view.control_layout).into(),
             save_state: save_state.into(),
             save_caution: caution,
             sending: view.save_state == SaveState::Sending,

@@ -20,6 +20,7 @@ use td_core::{
     editing::{Capabilities, Edit},
     layout::{Page, Tile},
 };
+use td_host::integrations::{DataStream, PresetTile};
 use tokio::sync::{mpsc, watch};
 
 /// One editor control's request. Each maps to one Session call.
@@ -41,6 +42,13 @@ pub enum Command {
     AddGif {
         file: String,
         bytes: Vec<u8>,
+        target: AddTarget,
+    },
+    PlacePreset {
+        preset: PresetTile,
+        integration: String,
+        streams: Vec<DataStream>,
+        draws_graphs: bool,
         target: AddTarget,
     },
     Gif {
@@ -67,6 +75,7 @@ pub enum CommandKind {
     DiscardRejected,
     Add,
     AddGif,
+    PlacePreset,
     Gif,
     Resolve,
     Send,
@@ -84,6 +93,7 @@ impl Command {
             Self::DiscardRejected => CommandKind::DiscardRejected,
             Self::Add { .. } => CommandKind::Add,
             Self::AddGif { .. } => CommandKind::AddGif,
+            Self::PlacePreset { .. } => CommandKind::PlacePreset,
             Self::Gif { .. } => CommandKind::Gif,
             Self::Resolve(_) => CommandKind::Resolve,
             Self::Send => CommandKind::Send,
@@ -419,6 +429,16 @@ impl Loop {
                 .add_gif(file, bytes, target)
                 .map(Done::Tile)
                 .map_err(Into::into),
+            Command::PlacePreset {
+                preset,
+                integration,
+                streams,
+                draws_graphs,
+                target,
+            } => session
+                .place_preset(&preset, &integration, &streams, draws_graphs, target)
+                .map(Done::Tile)
+                .map_err(Into::into),
             Command::Gif { tile, edit } => session
                 .gif(&tile, edit)
                 .map(|()| Done::Changed)
@@ -551,5 +571,80 @@ fn refused_tile(rejected: &Rejected) -> Option<&str> {
     match &rejected.edit {
         Edit::Label { tile, .. } | Edit::Action { tile, .. } => Some(tile),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TestCompanion;
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+    use td_core::layout::{Action, StreamType, TileRender};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn place_preset_places_a_preset_tile_at_the_target_cell() {
+        let td = TestCompanion::start().await;
+        let device = td.plug_device("mock0001").await;
+        let worker = td.handle().open_editor_worker(&device).unwrap();
+        let mut view = worker.subscribe();
+
+        worker.dispatch(Command::NewLayout(NewLayout::Blank));
+        let preset = PresetTile {
+            id: "cpu-graph".into(),
+            name: "CPU Load".into(),
+            action: serde_json::json!({
+                "type": "widget",
+                "source": "this_pc",
+                "field": "cpu_load",
+                "account": ""
+            }),
+            render: Some(TileRender::Graph),
+            streams: Some(BTreeMap::from([("value".into(), StreamType::Number)])),
+            input: false,
+        };
+        let streams = vec![DataStream {
+            id: "cpu_load".into(),
+            kind: "numeric".into(),
+            unit: Some("%".into()),
+            settable: false,
+        }];
+        worker.dispatch(Command::PlacePreset {
+            preset,
+            integration: "this_pc".into(),
+            streams,
+            draws_graphs: true,
+            target: AddTarget::Cell { row: 1, col: 2 },
+        });
+
+        let shown = tokio::time::timeout(
+            Duration::from_secs(10),
+            view.wait_for(|v| v.outcome.as_ref().is_some_and(|o| o.number >= 2)),
+        )
+        .await
+        .expect("timed out waiting for PlacePreset")
+        .expect("worker stopped")
+        .clone();
+        let outcome = shown.outcome.as_ref().unwrap();
+        assert_eq!(outcome.command, CommandKind::PlacePreset);
+        let tile_id = match outcome.result.as_ref().unwrap() {
+            Done::Tile(id) => id.clone(),
+            other => panic!("expected Done::Tile, got {other:?}"),
+        };
+        assert_eq!(shown.tile.as_deref(), Some(tile_id.as_str()));
+        let tile = &shown.layout.as_ref().unwrap().pages[0].tiles[0].tile;
+        assert_eq!(tile.id, tile_id);
+        assert_eq!(tile.label, "CPU Load");
+        assert_eq!(tile.row, 1);
+        assert_eq!(tile.col, 2);
+        assert_eq!(tile.render, Some(TileRender::Graph));
+        assert_eq!(
+            tile.action,
+            Action::Widget {
+                source: "this_pc".into(),
+                field: "cpu_load".into(),
+                account: String::new(),
+            }
+        );
     }
 }

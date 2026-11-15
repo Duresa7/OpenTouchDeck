@@ -6,6 +6,17 @@ This is the look of Open TouchDeck: the desktop app and the screens the Firmware
 
 Words follow [`GLOSSARY.md`](../GLOSSARY.md). Every user-visible string comes from [`docs/copy.md`](copy.md). Strings quoted on this page describe a state; where one differs from the copy guide, the copy guide wins.
 
+## Native Layout editor
+
+The 2.0 editor uses a Page filmstrip, Device canvas and bottom toolbar. The
+Session owns Page and Tile selection. The toolbar switches between a Page group
+and a Tile group, named for screen readers. Popovers sit above the toolbar and
+scroll internally; the Device fitting reserves the toolbar's height. At 800 px,
+secondary actions move into More. Below 800 px the Action and Look buttons move
+there too. Orientation and Preview stay in More whenever the canvas is narrow.
+Escape closes the current popover before clearing Tile selection. Controls
+status stays above the canvas, and GIF work belongs to its Tile.
+
 ## The direction: Backlit
 
 **The app is the desk, and each Device is a lit object sitting on it. Only lit things have color.**

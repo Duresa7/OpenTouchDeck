@@ -50,6 +50,28 @@ A supported board without working Open TouchDeck Firmware appears as **New board
 
 ## Edit a Layout
 
+In the native 2.0 editor, choose a Page in the filmstrip. The bottom toolbar shows
+**Page name**, the grid size and **Add Tile**. **More** holds **Layout name** and
+**Full screen**, plus **Orientation** and **Preview** when space is limited.
+Select a Tile to edit its **Label**, **Action**, **Look** or **Position and size**.
+Use **Done** to return to Page mode. Escape closes a popover first, then clears
+the Tile selection. Popovers open above the toolbar; nothing opens on the right.
+
+**Add Tile** offers keys, media keys, modifiers, Page jumps, program launches,
+URLs or files, commands and Tiles without an action. An empty-cell button places
+at that cell; the toolbar uses the next free cell or a new Page when full. Enabled
+Integrations also offer Preset tiles. GIF-capable Devices offer **GIF Tile** and
+**Choose GIF**, with preparation, cancel and retry shown for the affected Tile.
+**Action** includes **Change action** and the Bluetooth destination for keys and media keys.
+
+The native editor's Preview hides editing controls on the Device canvas. Press
+**P** while the canvas has focus, then use Left and Right to change Pages.
+Brandfetch, Icon packs and the approval notice with **Show again** are deferred
+to the 2.0 Integrations milestone. Command approval stays in the Companion's
+native dialog.
+
+The remaining illustrated instructions describe the 1.x editor.
+
 ![Layout editor in light mode with demo Pages](images/app-layout-light.png)
 
 1. Open a Device from Home. At **Start a Layout**, choose **Load from Desk** (using the Device's name), **Starter Layout**, **Blank Layout** or **Import**.

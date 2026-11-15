@@ -444,6 +444,16 @@ fn editor(dir: &Path, width: f32, folded: bool) -> App {
         canvas_description: "Main, 1 rows by 2 columns".into(),
         ..Default::default()
     });
+    app.ui
+        .global::<crate::EditorTools>()
+        .set_state(crate::ToolbarState {
+            page: "Main".into(),
+            layout: "Desk".into(),
+            rows: 1,
+            cols: 2,
+            can_add: true,
+            ..Default::default()
+        });
     let page = |n: i32, title: &str, current: bool| FilmPage {
         id: title.to_lowercase().into(),
         number: n,
@@ -563,6 +573,17 @@ fn the_editor_names_its_parts_for_screen_readers() {
     );
     with_role(&app.ui, "Send to Device", AccessibleRole::Button);
     with_role(&app.ui, "Unsent changes", AccessibleRole::Text);
+    with_role(&app.ui, "Page: Main", AccessibleRole::Groupbox);
+    with_role(&app.ui, "Page name", AccessibleRole::TextInput);
+    let tools = app.ui.global::<crate::EditorTools>();
+    let mut state = tools.get_state();
+    state.selected = true;
+    state.label = "Mute".into();
+    tools.set_state(state);
+    settle(&app.ui);
+    with_role(&app.ui, "Tile: Mute", AccessibleRole::Groupbox);
+    with_role(&app.ui, "Label", AccessibleRole::TextInput);
+    with_role(&app.ui, "Done", AccessibleRole::Button);
 }
 
 #[test]
@@ -571,12 +592,15 @@ fn tab_goes_header_filmstrip_canvas_and_a_folded_filmstrip_leaves_the_order() {
     let app = editor(dir.path(), 960.0, false);
     assert_eq!(
         tab_stops(&app),
-        ["fold", "layout", "send", "filmstrip", "canvas"]
+        ["fold", "layout", "send", "filmstrip", "canvas", "toolbar"]
     );
 
     let dir = tempfile::tempdir().unwrap();
     let app = editor(dir.path(), 960.0, true);
-    assert_eq!(tab_stops(&app), ["fold", "layout", "send", "canvas"]);
+    assert_eq!(
+        tab_stops(&app),
+        ["fold", "layout", "send", "canvas", "toolbar"]
+    );
     assert!(labelled(&app.ui, "Pages").is_empty(), "nor in the tree");
     with_role(&app.ui, "Show Pages", AccessibleRole::Button);
 }
