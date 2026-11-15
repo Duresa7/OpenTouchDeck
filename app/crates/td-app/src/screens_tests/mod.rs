@@ -133,6 +133,16 @@ impl Rig {
             .invoke_accessible_default_action();
     }
 
+    /// Presses a button once it takes input: right after an operation ends, it can still be disabled.
+    fn press_when_enabled(&self, label: &str) {
+        self.until(&format!("{label:?} to be enabled"), |r| {
+            r.one(label, AccessibleRole::Button)
+                .accessible_enabled()
+                .unwrap_or(true)
+        });
+        self.press(label);
+    }
+
     fn text_containing(&self, needle: &str) -> bool {
         let needle = needle.to_owned();
         !self

@@ -309,6 +309,14 @@ with `bootloader.bin`, `partition-table.bin`, `touchdeck.bin`, and a `manifest.j
 that names each file's flash offset, size, and SHA-256 with the image's version and
 `elf_sha256`. `python firmware/tools/make_bundle.py --check <bundle>` reads one back.
 
+The `.tdfw` format carries no signature. In the app, every update from a picked
+file asks for confirmation before writing, regardless of its version or build.
+The native dialog warns that the file isn't signed by Open TouchDeck and will
+replace the Device's Firmware, and compares both versions and builds. Declining
+or cancelling writes nothing. The Firmware bundle embedded in the app keeps
+the existing confirmation rules for downgrades and build switches. Bundle
+signing remains a follow-up.
+
 A flash over the cable writes `ota_0` and resets the boot slot to it, so
 `idf.py flash` always recovers the deck. The local verification harness provides
 `link update <touchdeck.bin> --wait` and `idf build-crashing`, a build that aborts

@@ -105,7 +105,7 @@ Select a Device under **Devices** in **Settings** to open its page:
 Under **Firmware** on a Device's page in **Settings**, the app shows the Device's current Firmware version and status (**Up to date**, `<version> available`, **Not bundled in this build** or **Not reported**), plus a **Restart** button.
 
 - **Bundled update**: when the app carries a newer Firmware build than the connected Device runs, choose **Update** over USB and keep the Device plugged in through transfer, restart and startup verification.
-- **From a file**: under **From a file**, choose **Update from a file…** and pick a `.tdfw` bundle for the Waveshare ESP32-S3-Touch-LCD-5B over USB. Installing an older version than the Device currently runs asks for confirmation in a native dialog on this PC.
+- **From a file**: under **From a file**, choose **Update from a file…** and pick a `.tdfw` bundle for the Waveshare ESP32-S3-Touch-LCD-5B over USB. Every file update asks for confirmation in a native dialog on this PC, even when the file is newer. The dialog says the file isn't signed by Open TouchDeck and will replace the Device's Firmware, and shows the file's version and build next to the Device's. Cancelling leaves the Device untouched. A bundled update still asks only for a downgrade or a build switch.
 - **Firmware build**: when the app carries the other Firmware build, the **Firmware build** section lets you switch the Device between the normal (USB-only) build and the radio build.
 
 Normal updates write the inactive Firmware slot. If the new Firmware fails to confirm a successful start after reboot, the Device rolls back to the previous slot and the page reports the rollback.

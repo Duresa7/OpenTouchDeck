@@ -2,7 +2,9 @@
 //! from a file with the native consent scripted, a decline, a cancel while it waits, the build
 //! switch, and a copy of Open TouchDeck that carries no Firmware.
 use super::*;
+use std::sync::{Arc, Mutex};
 use td_companion::devices::FirmwareChannel;
+use td_companion::features::firmware::{Confirmation, Prompter};
 
 const V1: &[u8] = include_bytes!("../../../td-companion/tests/fixtures/firmware-v1.tdfw");
 const RADIO: &[u8] = include_bytes!("../../../td-link/tests/fixtures/touchdeck-test-radio.tdfw");
@@ -38,7 +40,7 @@ fn on_old_firmware(rig: &Rig) {
 fn the_bundled_update_is_one_click() {
     let rig = Rig::start_with(960.0, |handle| {
         handle.firmware().set_bundles(Some(V1), Some(RADIO));
-        // Any consent dialog would wait for ever: a same-or-newer update never asks.
+        // Any consent dialog would wait for ever: a same-or-newer bundled update never asks.
         handle.firmware().script(vec![]);
     });
     on_old_firmware(&rig);
@@ -51,6 +53,48 @@ fn the_bundled_update_is_one_click() {
 }
 
 #[test]
+fn a_newer_file_opens_the_native_consent_dialog_and_cancel_leaves_the_device_untouched() {
+    #[derive(Default)]
+    struct Prompt(Mutex<Vec<Confirmation>>);
+    impl Prompter for Prompt {
+        fn pick(&self) -> Result<Option<Vec<u8>>, String> {
+            Ok(Some(V1.to_vec()))
+        }
+        fn confirm(&self, confirmation: &Confirmation, closed: &(dyn Fn() -> bool + Sync)) -> bool {
+            self.0.lock().unwrap().push(confirmation.clone());
+            while !closed() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            false
+        }
+    }
+    let prompt = Arc::new(Prompt::default());
+    let rig = Rig::start_with(960.0, |handle| {
+        handle.firmware().set_prompter(prompt.clone())
+    });
+    on_old_firmware(&rig);
+
+    rig.press("Update from a file…");
+    rig.until("the native consent dialog", |r| {
+        r.has("Waiting for confirmation on this PC") && !prompt.0.lock().unwrap().is_empty()
+    });
+    assert_eq!(updates(&rig), 0);
+    let confirmation = prompt.0.lock().unwrap()[0].clone();
+    assert_eq!(confirmation.current, "0.9.0");
+    assert_eq!(confirmation.version, "1.0.0");
+    assert!(confirmation.text().contains(
+        "This file isn't signed by Open TouchDeck. It will replace this Device's Firmware."
+    ));
+
+    rig.press("Cancel the update");
+    rig.until("the update to stop", |r| {
+        result(r) == format!("Update stopped. {DEVICE} still runs 0.9.0.")
+    });
+    assert_eq!(updates(&rig), 0);
+    assert_eq!(rig.deck("mock0001").reboots(), 0);
+}
+
+#[test]
 fn an_update_from_a_file_waits_for_confirmation_on_this_pc() {
     let rig = Rig::start(960.0);
     rig.handle().firmware().script(vec![]);
@@ -59,7 +103,7 @@ fn an_update_from_a_file_waits_for_confirmation_on_this_pc() {
     assert!(!rig.has("Update"), "the mock runs no version to compare");
 
     // Cancelled while the dialog waits: nothing changes.
-    rig.press("Update from a file…");
+    rig.press_when_enabled("Update from a file…");
     rig.until("the consent to wait", |r| {
         r.has("Waiting for confirmation on this PC")
     });
@@ -78,7 +122,7 @@ fn an_update_from_a_file_waits_for_confirmation_on_this_pc() {
     assert_eq!(updates(&rig), 0);
 
     // Confirmed on this PC.
-    rig.press("Update from a file…");
+    rig.press_when_enabled("Update from a file…");
     rig.until("the consent to wait", |r| {
         r.has("Waiting for confirmation on this PC")
     });

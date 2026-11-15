@@ -103,6 +103,106 @@ fn no_writes(td: &InProcessCompanion, serial: &str, reboots: u32) {
 }
 
 #[tokio::test]
+async fn a_newer_file_waits_for_consent_and_declining_or_cancelling_writes_nothing() {
+    for answer in [Some(true), Some(false), None] {
+        let mut td = InProcessCompanion::start().await;
+        td.ports
+            .board("mocka", BoardKind::Device)
+            .set_version("0.9.0");
+        let id = td.plug_device("mocka").await;
+        let current = td.device(&id).unwrap().firmware.unwrap();
+        let prompt = Arc::new(Prompt::new(V1));
+        td.handle.firmware().set_prompter(prompt.clone());
+        let info = td
+            .handle
+            .firmware()
+            .pick(id.clone())
+            .await
+            .unwrap()
+            .bundle
+            .unwrap();
+        assert_eq!(info.version, "1.0.0");
+        let job = td
+            .handle
+            .firmware()
+            .start(Operation::Update, id.clone(), selected(&info.id))
+            .unwrap();
+
+        td.until(|td| {
+            !prompt.seen.lock().unwrap().is_empty()
+                || td.handle.jobs().get(&job.id).unwrap().state.finished()
+        })
+        .await;
+        no_writes(&td, "mocka", 0);
+        assert_eq!(
+            td.handle.jobs().get(&job.id).unwrap().state,
+            JobState::WaitingForConfirmation
+        );
+        {
+            let seen = prompt.seen.lock().unwrap();
+            let c = &seen[0];
+            assert_eq!(c.current, current.version);
+            assert_eq!(c.current_build, current.build);
+            assert_eq!(c.version, info.version);
+            assert_eq!(c.build, info.build);
+            let text = c.text();
+            assert!(text.contains(
+                "This file isn't signed by Open TouchDeck. It will replace this Device's Firmware."
+            ));
+            assert!(text.contains(&format!(
+                "Current: \"0.9.0\"\nCurrent build: \"{}\"",
+                current.build
+            )));
+            assert!(text.contains(&format!(
+                "Bundle: \"1.0.0\" (normal build)\nBuild: \"{}\"",
+                info.build
+            )));
+        }
+        if let Some(answer) = answer {
+            prompt.answer(answer);
+        } else {
+            td.handle.jobs().cancel(&job.id).unwrap();
+        }
+        let done = wait(&td, &job).await;
+        match answer {
+            Some(true) => {
+                assert_eq!(done.state, JobState::Succeeded, "{:?}", done.error);
+                ready(&td, &id, FirmwareChannel::Normal).await;
+                td.until(|td| {
+                    td.device(&id)
+                        .and_then(|d| d.firmware)
+                        .is_some_and(|f| f.build == info.build)
+                })
+                .await;
+                assert_eq!(td.device(&id).unwrap().firmware.unwrap().build, info.build);
+                let result: FirmwareResult = serde_json::from_value(done.result.unwrap()).unwrap();
+                assert_eq!(result.version, "1.0.0");
+                assert!(
+                    td.deck("mocka")
+                        .received()
+                        .iter()
+                        .any(|v| v["m"] == "update.begin")
+                );
+            }
+            _ => {
+                assert_eq!(
+                    done.state,
+                    if answer.is_some() {
+                        JobState::Failed
+                    } else {
+                        JobState::Cancelled
+                    }
+                );
+                no_writes(&td, "mocka", 0);
+                ready(&td, &id, FirmwareChannel::Normal).await;
+                assert_eq!(td.device(&id).unwrap().firmware.unwrap().version, "0.9.0");
+            }
+        }
+        td.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn selection_is_target_bound_consumed_on_start_and_decline_releases_the_hold() {
     let td = InProcessCompanion::start().await;
     let a = td.plug_device("mocka").await;
@@ -279,7 +379,16 @@ async fn downgrade_consent_binds_the_bundle_and_suppresses_input_from_every_devi
     prompted(&td, &prompt, 1).await;
     {
         let seen = prompt.seen.lock().unwrap();
-        assert_eq!(seen[0].question, "Downgrade this Device's Firmware?");
+        assert!(
+            seen[0]
+                .question
+                .starts_with("Downgrade this Device's Firmware?")
+        );
+        assert!(
+            seen[0]
+                .text()
+                .contains("This file isn't signed by Open TouchDeck.")
+        );
         assert_eq!(seen[0].current, "2.0.0");
         assert_eq!(seen[0].version, "1.0.0");
         assert_eq!(seen[0].build, info.build);
