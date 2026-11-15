@@ -103,7 +103,7 @@ fn an_update_from_a_file_waits_for_confirmation_on_this_pc() {
     assert!(!rig.has("Update"), "the mock runs no version to compare");
 
     // Cancelled while the dialog waits: nothing changes.
-    rig.press("Update from a file…");
+    rig.press_when_enabled("Update from a file…");
     rig.until("the consent to wait", |r| {
         r.has("Waiting for confirmation on this PC")
     });
@@ -122,7 +122,7 @@ fn an_update_from_a_file_waits_for_confirmation_on_this_pc() {
     assert_eq!(updates(&rig), 0);
 
     // Confirmed on this PC.
-    rig.press("Update from a file…");
+    rig.press_when_enabled("Update from a file…");
     rig.until("the consent to wait", |r| {
         r.has("Waiting for confirmation on this PC")
     });
