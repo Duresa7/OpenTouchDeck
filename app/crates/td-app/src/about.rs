@@ -79,6 +79,29 @@ pub(crate) fn fill(ui: &AppWindow) {
         })
         .collect();
     ui.set_components(ModelRc::from(Rc::new(VecModel::from(components))));
+    show_update(ui, &td_companion::updates::Status::Idle);
+}
+
+pub(crate) fn show_update(ui: &AppWindow, status: &td_companion::updates::Status) {
+    use td_companion::updates::Status;
+    ui.set_update_ready(matches!(status, Status::Ready { .. }));
+    ui.set_update_installing(matches!(status, Status::Installing));
+    let message = match status {
+        Status::Idle if !cfg!(windows) => {
+            "Automatic app updates are available on Windows. Update this source build manually."
+                .into()
+        }
+        Status::Idle => {
+            "No update is staged. Automatic checks can be changed in Settings > This PC.".into()
+        }
+        Status::UpToDate => "You're up to date.".into(),
+        Status::Ready { version } => format!(
+            "Version {version} is downloaded and verified. Finish any Device transfer before installing. Open TouchDeck will close and reopen after installation."
+        ),
+        Status::Installing => "Checking the update and starting Windows Installer…".into(),
+        Status::Failed { message } => format!("Update unavailable. {message}"),
+    };
+    ui.set_update_status(message.into());
 }
 
 #[cfg(test)]

@@ -149,6 +149,49 @@ fn the_navigation_pane_opens_about_and_home() {
 }
 
 #[test]
+fn about_offers_install_for_staged_updates_and_explains_verification_failure() {
+    use td_companion::updates::Status;
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path(), false);
+    app.ui.set_page(Page::About);
+    app.ui.show().unwrap();
+    let requested = Rc::new(std::cell::Cell::new(false));
+    let clicked = requested.clone();
+    app.ui.on_install_update(move || clicked.set(true));
+    about::show_update(
+        &app.ui,
+        &Status::Ready {
+            version: "2.1.0".into(),
+        },
+    );
+    settle(&app.ui);
+    assert!(text_containing(
+        &app.ui,
+        "Version 2.1.0 is downloaded and verified"
+    ));
+    with_role(&app.ui, "Install and restart", AccessibleRole::Button)
+        .invoke_accessible_default_action();
+    assert!(requested.get());
+
+    about::show_update(&app.ui, &Status::Installing);
+    settle(&app.ui);
+    assert_eq!(
+        with_role(&app.ui, "Install and restart", AccessibleRole::Button).accessible_enabled(),
+        Some(false)
+    );
+    about::show_update(&app.ui, &Status::Failed {
+        message: "Couldn't install the update: invalid or missing updater signature. Keep using this version and try again after reopening Open TouchDeck.".into(),
+    });
+    settle(&app.ui);
+    assert!(text_containing(
+        &app.ui,
+        "invalid or missing updater signature"
+    ));
+    assert!(text_containing(&app.ui, "Keep using this version"));
+    assert!(labelled(&app.ui, "Install and restart").is_empty());
+}
+
+#[test]
 fn one_click_opens_a_page_or_a_link() {
     let dir = tempfile::tempdir().unwrap();
     let app = app(dir.path(), false);
@@ -364,6 +407,13 @@ fn at_the_largest_text_size_every_control_fits_the_narrowest_window() {
 
     app.ui.set_page(Page::About);
     assert_controls_fit(&app.ui, 500.0, "About");
+    about::show_update(
+        &app.ui,
+        &td_companion::updates::Status::Ready {
+            version: "2.1.0".into(),
+        },
+    );
+    assert_controls_fit(&app.ui, 500.0, "About with a staged update");
 
     app.ui.window().dispatch_event(WindowEvent::CloseRequested);
     assert!(app.ui.get_close_notice_open());

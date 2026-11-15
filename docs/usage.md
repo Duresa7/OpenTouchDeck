@@ -156,6 +156,15 @@ At the bottom of **Integrations**, **Icon packs** and **Brandfetch logos** open 
 
 Open **About** in the left rail to see the installed Open TouchDeck version, the GPL-3.0 licence notice for the built program, the Slint credit and the alphabetical list of open-source components and their licences.
 
+### Update the app
+
+On Windows, the app checks for stable 2.x releases after startup, then at most once every 24 hours while it runs, unless **Check for updates** is off under **Settings > This PC** ([PRIVACY](PRIVACY.md)). A newer release's MSI downloads and its signature is verified in the background while you keep working. Linux source builds don't check for or install updates.
+
+1. When **About** says a version is downloaded and verified, finish any Device transfer, then choose **Install and restart**.
+2. The app verifies the staged MSI again, saves queued editor changes, shuts down the Companion and starts Windows Installer for your user account. The installer reopens Open TouchDeck when it finishes.
+
+The installer doesn't need administrator access. If you started the app with **Run as administrator**, close it and open it normally before updating. If verification or the installer launch fails, About says so and the app stays open. An update keeps your data and doesn't update Device Firmware. Closing the app without installing removes the staged download, and the next check downloads it again.
+
 ## Troubleshooting
 
 | What you see | What to do |

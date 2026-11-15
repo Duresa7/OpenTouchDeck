@@ -23,6 +23,10 @@
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer Open TouchDeck is installed on this PC. Uninstall it first to go back." />
     <MediaTemplate EmbedCab="yes" />
+    <!-- Only an explicit in-app update opts into reopening after a successful install.
+         Run as the installing user, after the MSI is committed and cached. -->
+    <CustomAction Id="RestartUpdatedApp" FileRef="AppExe" ExeCommand="--packaged"
+                  Return="asyncNoWait" Impersonate="yes" />
     <Icon Id="AppIcon" SourceFile="$(AppIcon)" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
@@ -63,6 +67,8 @@
                   ExeCommand='&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run&quot; /v &quot;Open TouchDeck&quot; /f'
                   Return="ignore" />
     <InstallExecuteSequence>
+      <Custom Action="RestartUpdatedApp" After="InstallFinalize"
+              Condition='TD_RESTART_APP="1" AND NOT REMOVE' />
       <Custom Action="RemoveAppRun" Before="RemoveFiles" Condition='REMOVE="ALL"' />
       <Custom Action="RemoveAppStartupApproved" After="RemoveAppRun" Condition='REMOVE="ALL"' />
     </InstallExecuteSequence>

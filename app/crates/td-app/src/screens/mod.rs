@@ -9,7 +9,7 @@
 //! the current views in [`Screens::refresh`]. The headless tests call `refresh` themselves.
 use crate::{
     AppWindow, BoardCard, DeliveryProblem, DeviceEntry, IntegrationField, IntegrationRow,
-    IntegrationSecret, PairedApp, SetupLater, UsageAccount, home, window,
+    IntegrationSecret, PairedApp, SetupLater, UsageAccount, about, home, window,
 };
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::{
@@ -224,7 +224,15 @@ impl Screens {
         screens.wire_integrations(ui);
         screens.wire_icon_packs(ui);
         screens.wire_brandfetch(ui);
+        #[cfg(windows)]
+        on!(&screens, ui, on_install_update, |screens| {
+            let handle = screens.handle.clone();
+            screens.runtime.spawn_blocking(move || {
+                let _ = handle.updates().install_now(&handle);
+            });
+        });
         screens.watch("integrations".into(), screens.integrations.subscribe());
+        screens.watch("app-updates".into(), screens.handle.updates().subscribe());
         screens.follow();
         screens.read_start();
         screens.refresh();
@@ -350,6 +358,7 @@ impl Screens {
         self.refresh_integrations(&ui);
         self.refresh_icon_packs(&ui);
         self.refresh_brandfetch(&ui);
+        about::show_update(&ui, &self.handle.updates().snapshot());
         self.refreshing.set(false);
     }
 }

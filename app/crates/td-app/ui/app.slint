@@ -33,6 +33,10 @@ export component AppWindow inherits Window {
     in property <[DeviceRow]> devices;
     in property <string> version;
     in property <[Component]> components;
+    in property <string> update-status;
+    in property <bool> update-ready;
+    in property <bool> update-installing;
+    callback install-update();
     in-out property <bool> close-notice-open;
     // The app's own light or dark choice; `unknown` follows the system.
     in property <ColorScheme> appearance: ColorScheme.unknown;
@@ -397,6 +401,10 @@ export component AppWindow inherits Window {
             if root.page == Page.about: AboutPage {
                 version: root.version;
                 components: root.components;
+                update-status: root.update-status;
+                update-ready: root.update-ready;
+                update-installing: root.update-installing;
+                install-update => { root.install-update(); }
                 open-url(url) => {
                     root.open-url(url);
                 }

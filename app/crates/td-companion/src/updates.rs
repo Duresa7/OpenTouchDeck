@@ -19,15 +19,31 @@ pub enum Status {
 
 #[derive(Default)]
 struct State {
-    status: Status,
     ready: Option<td_updater::UpdateReady>,
 }
 
-#[derive(Clone, Default)]
-pub struct Updates(Arc<Mutex<State>>);
+#[derive(Clone)]
+pub struct Updates {
+    state: Arc<Mutex<State>>,
+    status: tokio::sync::watch::Sender<Status>,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self {
+            state: Arc::default(),
+            status: tokio::sync::watch::channel(Status::Idle).0,
+        }
+    }
+}
+
 impl Updates {
     pub fn snapshot(&self) -> Status {
-        self.0.lock().status.clone()
+        self.status.borrow().clone()
+    }
+
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Status> {
+        self.status.subscribe()
     }
 
     /// Blocking worker operation. Load the preference anew before each poll.
@@ -45,12 +61,12 @@ impl Updates {
             Err(error) => Some(UpdateResult::Failed(td_updater::Failure::Io(error))),
         };
         let Some(result) = result else { return };
-        let mut state = self.0.lock();
-        if cancelled() || matches!(state.status, Status::Installing) {
+        let mut state = self.state.lock();
+        if cancelled() || matches!(self.snapshot(), Status::Installing) {
             return;
         }
         state.ready = None;
-        state.status = match result {
+        let status = match result {
             UpdateResult::UpToDate => Status::UpToDate,
             UpdateResult::Failed(error) => Status::Failed {
                 message: error.to_string(),
@@ -61,48 +77,82 @@ impl Updates {
                 Status::Ready { version }
             }
         };
+        self.status.send_replace(status);
     }
 
-    /// Runs off the UI thread. Keep staging alive until Windows Installer finishes.
+    /// Runs off the UI thread. The host's shutdown request closes the UI event loop,
+    /// flushes editor Workers and then calls Companion::shutdown.
     #[cfg(windows)]
     pub fn install_now(
         &self,
         handle: &crate::companion::Handle,
     ) -> Result<(), td_updater::Failure> {
         let ready = {
-            let mut state = self.0.lock();
-            let ready = state.ready.take().ok_or(td_updater::Failure::Signature)?;
-            state.status = Status::Installing;
+            let mut state = self.state.lock();
+            let Some(ready) = state.ready.take() else {
+                return Ok(());
+            };
+            self.status.send_replace(Status::Installing);
             ready
         };
         let result: Result<(), td_updater::Failure> = (|| {
-            ready.verify()?;
             let system = std::env::var_os("SystemRoot")
                 .ok_or_else(|| std::io::Error::other("missing SystemRoot"))?;
-            let mut child = std::process::Command::new(
-                std::path::PathBuf::from(system).join("System32/msiexec.exe"),
+            ready.install(
+                &std::path::PathBuf::from(system).join("System32/msiexec.exe"),
+                |command| {
+                    require_unelevated()?;
+                    command.spawn().map(|_| ())
+                },
+                || handle.request_shutdown(),
             )
-            .arg("/i")
-            .arg(ready.path())
-            .arg("/passive")
-            .arg("/norestart")
-            .spawn()?;
-            handle.request_shutdown();
-            // The host exits through Companion::shutdown. This thread keeps the private MSI
-            // alive while msiexec reads it; the next start removes the staging left at exit.
-            std::thread::spawn(move || {
-                let _ = child.wait();
-                drop(ready);
-            });
-            Ok(())
         })();
         if let Err(ref error) = result {
-            self.0.lock().status = Status::Failed {
-                message: error.to_string(),
-            };
+            self.status.send_replace(Status::Failed {
+                message: format!("Couldn't install the update: {error}. Keep using this version and try again after reopening Open TouchDeck."),
+            });
         }
         result
     }
+}
+
+/// Command::spawn inherits our token. Refuse an elevated host rather than running
+/// this per-user MSI as administrator. There is no ShellExecute/runas elevation.
+#[cfg(windows)]
+fn require_unelevated() -> std::io::Result<()> {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+    // SAFETY: all out pointers refer to initialized local storage of the stated size.
+    // The token is closed on both paths after a successful OpenProcessToken.
+    unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut elevation: TOKEN_ELEVATION = std::mem::zeroed();
+        let mut length = 0;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut length,
+        );
+        let error = (ok == 0).then(std::io::Error::last_os_error);
+        CloseHandle(token);
+        if let Some(error) = error {
+            return Err(error);
+        }
+        if elevation.TokenIsElevated != 0 {
+            return Err(std::io::Error::other(
+                "Close Open TouchDeck and reopen it without Run as administrator before installing an update",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -128,6 +178,7 @@ mod tests {
             config: temp.path().to_owned(),
         };
         let updates = Updates::default();
+        let mut changes = updates.subscribe();
         let mut updater = Updater::new(
             Http(Default::default()),
             Time,
@@ -141,14 +192,34 @@ mod tests {
         .unwrap();
         updates.poll(&mut updater, &dirs, &|| false);
         assert!(matches!(updates.snapshot(), Status::Idle));
+        assert!(!changes.has_changed().unwrap());
         td_core::settings::AppSettings::default()
             .save(&dirs)
             .unwrap();
         updates.poll(&mut updater, &dirs, &|| false);
         assert!(matches!(updates.snapshot(), Status::UpToDate));
+        assert!(changes.has_changed().unwrap());
+        assert!(matches!(*changes.borrow_and_update(), Status::UpToDate));
         std::fs::write(dirs.app_settings(), b"invalid").unwrap();
         updates.poll(&mut updater, &dirs, &|| false);
         assert!(matches!(updates.snapshot(), Status::Failed { .. }));
+        assert!(changes.has_changed().unwrap());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn install_without_a_staged_update_does_not_quit_or_change_status() {
+        let temp = tempfile::tempdir().unwrap();
+        let companion = crate::companion::Companion::start(crate::companion::Config::mock(
+            temp.path().to_owned(),
+        ))
+        .await
+        .unwrap();
+        let handle = companion.handle();
+        handle.updates().install_now(&handle).unwrap();
+        assert!(!handle.shutdown_requested());
+        assert!(matches!(handle.updates().snapshot(), Status::Idle));
+        companion.shutdown().await;
     }
 
     #[tokio::test]
