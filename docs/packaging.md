@@ -38,26 +38,27 @@ The MSI ships `td-app.exe`, which runs the Companion in-process; there is no sep
 ### Stages
 
 ```text
-build -> sign hook (programs) -> package -> sign hook (installer) -> updater signature -> verify -> publish
+firmware -> build -> sign hook (programs) -> package -> sign hook (installer) -> updater signature -> verify -> publish
 ```
 
 | Stage | Job | What it does |
 |---|---|---|
-| 1. Build | `build`, windows-latest | For a tag: checks that the tag is annotated, is `v` plus the version of `td-app`, and that its commit is on `main`. Installs the Rust toolchain `app/rust-toolchain.toml` pins, runs `cargo build --release --locked -p td-app`, and checks the program's version resource and that it is a Windows GUI program (`app/scripts/check_exe.ps1`) |
-| 2. Upload | same job | Uploads the unsigned program as the workflow artifact `unsigned-binaries` |
-| 3. Sign the programs | `sign hook (programs)` | Has the selected provider sign every program, or passes them through. Uploads `binaries` |
-| 4. Package | `package`, windows-latest | Builds `OpenTouchDeck-X.Y.Z-windows-x64.msi` with WiX from `app/installer/OpenTouchDeck.wxs` and the programs in `binaries`. Uploads `unsigned-installer` |
-| 5. Sign the installer | `sign hook (installer)` | The same hook for the MSI. Uploads `installer` |
-| 6. Update signature | `updater signature`, ubuntu-24.04 | Signs the MSI with the updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)) through `.github/release-signer` |
-| 7. Verify | three jobs | See [What verify proves](#what-verify-proves) |
-| 8. Publish | `publish a draft release`, ubuntu-24.04 | For a tag only: uploads the MSI, its `.sig` and `SHA256SUMS` to a **draft** release with the tag's message as its notes, then checks the uploaded names and sizes. It never publishes the draft |
+| 1. Firmware | `firmware`, ubuntu-24.04 (`espressif/idf:v6.1`) | Builds the normal ESP32-S3 Firmware with no cache, checks it is radio-free (`firmware/tools/radio_guard.py normal` and `firmware/tools/test_radio_guard.py`), packs and checks `touchdeck.tdfw` (`firmware/tools/make_bundle.py`), and uploads it as `firmware-bundle` with its SHA-256 |
+| 2. Build | `build`, windows-latest | For a tag: checks that the tag is annotated, is `v` plus the version of `td-app`, and that its commit is on `main`. Downloads `firmware-bundle`, installs the Rust toolchain `app/rust-toolchain.toml` pins, runs `cargo build --release --locked -p td-app` with `TOUCHDECK_FIRMWARE_BUNDLE` and `TOUCHDECK_FIRMWARE_BUNDLE_SHA256` set so `td-companion` embeds that exact normal bundle (the radio bundle stays unset), and checks the program's version resource and that it is a Windows GUI program (`app/scripts/check_exe.ps1`) |
+| 3. Upload | same job | Uploads the unsigned program as the workflow artifact `unsigned-binaries` |
+| 4. Sign the programs | `sign hook (programs)` | Has the selected provider sign every program, or passes them through. Uploads `binaries` |
+| 5. Package | `package`, windows-latest | Builds `OpenTouchDeck-X.Y.Z-windows-x64.msi` with WiX from `app/installer/OpenTouchDeck.wxs` and the programs in `binaries`. Uploads `unsigned-installer` |
+| 6. Sign the installer | `sign hook (installer)` | The same hook for the MSI. Uploads `installer` |
+| 7. Update signature | `updater signature`, ubuntu-24.04 | Signs the MSI with the updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)) through `.github/release-signer` |
+| 8. Verify | three jobs | See [What verify proves](#what-verify-proves) |
+| 9. Publish | `publish a draft release`, ubuntu-24.04 | For a tag only: uploads the MSI, its `.sig` and `SHA256SUMS` to a **draft** release with the tag's message as its notes, then checks the uploaded names and sizes. It never publishes the draft |
 
 Rules every job keeps, so a signing service can trust the result:
 
 - **GitHub-hosted runners only.** No job runs on anyone's own PC.
 - **No caches.** A release job restores no Rust or tool cache, so nothing from an earlier run reaches a release. The pull request checks use caches; the release doesn't call them with caches on.
 - **Releases come only from tags on `main`.** `build` refuses any other tag.
-- **Third-party actions are pinned to a full commit SHA**, with the version in a comment. `build` uses none besides GitHub's own checkout and artifact actions.
+- **Third-party actions are pinned to a full commit SHA**, with the version in a comment. `firmware` and `build` use none besides GitHub's own checkout and artifact actions.
 - **Each job has the least permissions it needs.** Only `publish` may write to the repository. Only the update signature job, and a sign hook with a provider selected, enter the `release` environment, which holds the secrets, allows only `main` and `v*` tags, and waits for the maintainer's approval.
 
 ### A release and a dry run
@@ -135,5 +136,5 @@ The public half of the updater key is committed at `.github/release-signer/updat
 
 - **The 1.x to 2.0 move.** A 2.0 release has no `latest.json`. Installed 1.x copies read that file and run what it names as the 1.x installer, so publishing one for an MSI would break their updates. The maintainer replaces 1.x by hand as described above.
 - **Update UI.** The native host checks after startup and about daily on Windows, with status in the Companion snapshot. `updates().install_now(&handle)` reverifies the staged MSI, launches Windows Installer and requests the normal bounded shutdown. The update UI is separate work.
-- **Firmware.** The 1.x release builds the Firmware and ships `touchdeck.tdfw`. The 2.0 pipeline doesn't yet.
+- **Firmware assets and the radio build.** `release.yml` builds the normal Firmware bundle and embeds it in `td-app.exe` (verified by SHA-256). Wiring the opt-in radio bundle and uploading standalone `.tdfw` files to the draft release are not in `release.yml` yet.
 - **A signing provider.** Apply to one, then set `CODE_SIGNING_PROVIDER`. Once files are signed, remove the draft notice from the [code signing policy](code-signing.md) and link the policy from the release notes.

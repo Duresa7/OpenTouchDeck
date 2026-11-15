@@ -2,14 +2,14 @@ name: release
 
 # The Open TouchDeck 2.0 release: an MSI for the current user, built with WiX. docs/packaging.md describes it.
 #
-#   build -> sign hook (programs) -> package -> sign hook (installer) -> updater signature -> verify -> publish
+#   firmware -> build -> sign hook (programs) -> package -> sign hook (installer) -> updater signature -> verify -> publish
 #
 # A v2 tag on main runs every stage and ends with a draft release. A run from the Actions tab, or a pull request
 # that touches these files, is a dry run: it builds, packages and verifies the same way, signs the update with a
 # throwaway key, and never publishes.
 #
 # Every job runs on a GitHub-hosted runner and none restores a cache.
-# The MSI ships the native app, including the Companion in-process.
+# The MSI ships the native app, including the Companion in-process with the normal Firmware bundle embedded.
 on:
   push:
     tags: ["v2.*"]
@@ -44,7 +44,84 @@ jobs:
     if: github.event_name == 'push'
     uses: ./.github/workflows/rust.yml
 
+  # Builds the normal, radio-free .tdfw Firmware bundle with no cache and records its SHA-256 for td-companion's build.
+  firmware:
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v6.1
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      revision: ${{ steps.bundle.outputs.revision }}
+      sha256: ${{ steps.bundle.outputs.sha256 }}
+    env:
+      # Relative to the workspace and git-ignored (build/): container jobs see a different absolute path.
+      NORMAL_BUILD: build/firmware
+      NORMAL_BUNDLES: build/bundle
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build the normal firmware
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Source the environment before strict mode: export.sh is not written for set -u.
+          . "$IDF_PATH/export.sh"
+          set -euo pipefail
+          idf.py -C firmware -B "$GITHUB_WORKSPACE/$NORMAL_BUILD" build
+
+      - name: Check the firmware is esp32s3 and radio-free
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          if grep -E '^CONFIG_BT_ENABLED=y' firmware/sdkconfig || grep -E '^#define CONFIG_BT_ENABLED 1' "$NORMAL_BUILD/config/sdkconfig.h"; then
+            echo "::error::The built sdkconfig enables Bluetooth"
+            exit 1
+          fi
+          python -B firmware/tools/radio_guard.py normal "$NORMAL_BUILD"
+          TD_GUARD_NORMAL_BUILD="$NORMAL_BUILD" python -B firmware/tools/test_radio_guard.py
+
+      - name: Pack and check the .tdfw bundle
+        id: bundle
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          python -B firmware/tools/make_bundle.py --build-dir "$NORMAL_BUILD" --out-dir "$NORMAL_BUNDLES"
+          shopt -s nullglob
+          bundles=("$NORMAL_BUNDLES"/*.tdfw)
+          [ "${#bundles[@]}" -eq 1 ]
+          python -B firmware/tools/make_bundle.py --check "${bundles[0]}"
+          bundle="$NORMAL_BUNDLES/touchdeck.tdfw"
+          [ "${bundles[0]}" = "$bundle" ] || mv "${bundles[0]}" "$bundle"
+          sha256=$(sha256sum "$bundle" | cut -d' ' -f1)
+          [[ "$sha256" =~ ^[a-f0-9]{64}$ ]]
+          revision=$(git rev-parse HEAD)
+          {
+            echo "sha256=$sha256"
+            echo "revision=$revision"
+          } >> "$GITHUB_OUTPUT"
+          echo "touchdeck.tdfw sha256 $sha256"
+
+      - name: Check the build left the checkout clean
+        shell: bash
+        run: |
+          git status --porcelain --untracked-files=normal
+          test -z "$(git status --porcelain --untracked-files=normal)"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: firmware-bundle
+          path: ${{ env.NORMAL_BUNDLES }}/touchdeck.tdfw
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 90 || 3 }}
+
   build:
+    needs: firmware
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
@@ -74,6 +151,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.firmware.outputs.revision }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -114,8 +192,16 @@ jobs:
           "revision=$revision" >> $env:GITHUB_OUTPUT
           "Building td-app $version from $revision (release: $env:IS_RELEASE)"
 
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: firmware-bundle
+          path: firmware-bundle
+
       - name: Build the release program
         working-directory: app
+        env:
+          TOUCHDECK_FIRMWARE_BUNDLE: ${{ github.workspace }}\firmware-bundle\touchdeck.tdfw
+          TOUCHDECK_FIRMWARE_BUNDLE_SHA256: ${{ needs.firmware.outputs.sha256 }}
         run: cargo build --release --locked --package td-app
 
       - name: Check the program's version resource and subsystem
