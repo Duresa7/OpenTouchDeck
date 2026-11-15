@@ -153,8 +153,8 @@ struct Inner {
     net: RwLock<Net>,
     client_id: RwLock<Option<String>>,
     /// Mock mode: the key lives in memory and Brand API calls get recorded answers. Only the
-    /// test-hooks environment prefill reads it.
-    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    /// prefill's unit test reads it.
+    #[cfg_attr(not(test), allow(dead_code))]
     mock: bool,
     /// Serializes every read-modify-write of the provenance file.
     book: Mutex<()>,
@@ -238,19 +238,10 @@ impl Brandfetch {
             files: vec![origin],
         };
     }
-    /// Takes the client ID and API key from `TOUCHDECK_BRANDFETCH_CLIENT_ID` and
-    /// `TOUCHDECK_BRANDFETCH_API_KEY`, so a mock-mode run can search and pick live without
-    /// anyone typing the key. Mock mode only: the key goes to memory, never the keyring or a
-    /// file, and with a key Brand API calls go to Brandfetch for real.
-    #[cfg(feature = "test-hooks")]
-    pub(crate) fn prefill_from_env(&self) {
-        let read = |name: &str| std::env::var(name).ok();
-        self.prefill(
-            read("TOUCHDECK_BRANDFETCH_CLIENT_ID"),
-            read("TOUCHDECK_BRANDFETCH_API_KEY"),
-        );
-    }
-    #[cfg(any(test, feature = "test-hooks"))]
+    /// Mock mode only: the key goes to memory, never the keyring or a file, and with a key
+    /// Brand API calls go to Brandfetch for real. Its env-var caller left with the standalone
+    /// Companion program (#358).
+    #[cfg(test)]
     fn prefill(&self, client_id: Option<String>, key: Option<String>) {
         if !self.0.mock {
             return;

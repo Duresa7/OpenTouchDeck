@@ -1010,26 +1010,39 @@ fn ble_discovery_recognizes_only_paired_devices_across_rotation() {
     let slots = payloads("slots");
     assert_eq!(
         ble_discovery::recognise(
-            slots.iter().map(Vec::as_slice),
-            &[("paired", key), ("other", wrong)]
+            slots.iter().map(|data| ("candidate", data.as_slice())),
+            &[("paired", [0; 6], key), ("other", [0; 6], wrong)]
         ),
-        ["paired"].into()
+        [("paired", "candidate")].into()
     );
-    let full_keys: Vec<(usize, [u8; 32])> = d["full_ltks"]
+    let full_keys: Vec<(usize, [u8; 6], [u8; 32])> = d["full_ltks"]
         .as_array()
         .unwrap()
         .iter()
         .map(|ltk| wire::discovery_key(&array(ltk)))
         .enumerate()
+        .map(|(index, key)| (index, [0; 6], key))
         .collect();
     assert_eq!(
-        ble_discovery::recognise(payloads("full").iter().map(Vec::as_slice), &full_keys).len(),
+        ble_discovery::recognise(
+            payloads("full")
+                .iter()
+                .map(|data| ("candidate", data.as_slice())),
+            &full_keys
+        )
+        .len(),
         4
     );
     let unpaired = bytes(&d["unpaired"]);
-    assert!(ble_discovery::recognise([unpaired.as_slice()], &[((), key)]).is_empty());
+    assert!(
+        ble_discovery::recognise([("candidate", unpaired.as_slice())], &[((), [0; 6], key)])
+            .is_empty()
+    );
     let pairing = bytes(&d["pairing"]);
-    assert!(ble_discovery::recognise([pairing.as_slice()], &[((), key)]).is_empty());
+    assert!(
+        ble_discovery::recognise([("candidate", pairing.as_slice())], &[((), [0; 6], key)])
+            .is_empty()
+    );
     assert!(matches!(
         ble_discovery::read(&pairing),
         Some(Advert::Pairing { paired: 1, .. })

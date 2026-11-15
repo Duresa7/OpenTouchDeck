@@ -1,3 +1,4 @@
+mod accept;
 mod in_process;
 pub use in_process::InProcessCompanion;
 
@@ -126,8 +127,8 @@ impl TestCompanion {
         })
         .await
     }
-    /// Starts on mock ports that the Companion treats as real ones, as a Companion without
-    /// `--mock-devices` does, with or without `--test-real-device-console`.
+    /// Starts on mock ports that the Companion treats as real ones, as a Companion on real
+    /// hardware does, with or without the `test.console` route.
     pub async fn start_on_real_ports(device_console: bool) -> Self {
         Self::start_router(StartOptions {
             ports: Ports::Real { device_console },
@@ -190,7 +191,7 @@ impl TestCompanion {
             config.mock = None;
         }
         let companion = crate::companion::Companion::launch(handle.clone(), config);
-        let mut ctx = Ctx::new(handle, port, None, limits);
+        let mut ctx = Ctx::new(handle, port, limits);
         if let Ports::Real { device_console } = mode {
             ctx.real_device_console = device_console;
         }
@@ -200,7 +201,7 @@ impl TestCompanion {
             crate::api::router(ctx.clone())
         };
         let stop = ctx.shutdown.subscribe();
-        let task = tokio::spawn(crate::serve::serve(listener, router, limits, stop));
+        let task = tokio::spawn(accept::serve(listener, router, limits, stop));
         let url = format!("http://127.0.0.1:{port}");
         // Below the 5 s header-read limit, so a pooled connection is never reused as the
         // Companion closes it.
@@ -516,9 +517,9 @@ impl TestCompanion {
     }
     /// Runs one 60 s maintenance step now.
     pub async fn maintain(&self) {
-        // Sweep sessions before yielding to pack eviction, as the process maintenance did.
-        // Otherwise an expired socket can close first and its row is pruned by the sweep.
-        assert!(crate::api::maintain(&self.ctx).await);
+        // Sweep sessions before yielding to pack eviction. Otherwise an expired socket can close
+        // first and its row is pruned by the sweep.
+        self.ctx.sweep_sessions();
         self.ctx.companion_handle().maintain().await;
     }
     /// Whether anything asked the Companion to stop.

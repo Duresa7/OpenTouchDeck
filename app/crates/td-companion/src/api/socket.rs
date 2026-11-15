@@ -1,4 +1,4 @@
-use super::{ClientInfo, CommonError, Ctx, EventInfo};
+use super::{ClientInfo, CommonError, Ctx};
 use axum::{
     Extension,
     extract::{
@@ -79,15 +79,6 @@ impl Event for Lagged {
         Some(&self.device)
     }
 }
-pub(super) fn kernel_events() -> Vec<EventInfo> {
-    let feature = super::Feature::new("kernel")
-        .event::<Hello>()
-        .event::<Sync>()
-        .event::<AuthRevoked>()
-        .event::<CompanionStopping>()
-        .event::<Lagged>();
-    feature.events
-}
 fn frame<E: Event>(event: &E) -> serde_json::Value {
     let mut frame = json!({ "type": E::NAME, "data": event });
     if let Some(device) = event.device() {
@@ -97,6 +88,7 @@ fn frame<E: Event>(event: &E) -> serde_json::Value {
 }
 
 /// JSON framing belongs to this adapter; the Companion only publishes typed changes.
+#[cfg(any(test, feature = "test-hooks"))]
 fn encode(change: &crate::companion::Change) -> Option<(serde_json::Value, Topic, Option<String>)> {
     use crate::companion::Change;
     fn event<E: Event>(value: &E) -> (serde_json::Value, Topic, Option<String>) {
@@ -135,6 +127,7 @@ struct Subscriber {
     queue: Mutex<Queue>,
     topics: Mutex<HashSet<(Topic, String)>>,
     notify: tokio::sync::Notify,
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     gets_state_frames: bool,
 }
 /// What a client may send: `{"op": "subscribe" | "unsubscribe", "topic", "device"}`.
@@ -151,6 +144,7 @@ pub(crate) struct WebEvents {
     _observation: Option<Arc<crate::events::Observer>>,
 }
 impl WebEvents {
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn new(events: &crate::events::Events) -> Self {
         let web = Self::default();
         let subscribers = Arc::downgrade(&web.subscribers);
@@ -175,6 +169,7 @@ impl WebEvents {
             ..web
         }
     }
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn publish_frame(
         &self,
         frame: serde_json::Value,

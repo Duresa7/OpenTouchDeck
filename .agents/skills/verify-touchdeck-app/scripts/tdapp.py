@@ -145,7 +145,7 @@ def main():
     for name in ("run", "screenshot"):
         action = sub.add_parser(name)
         action.add_argument("--out", required=True, help="fresh directory under .verify/")
-        action.add_argument("--page", default="home", help="home, setup, settings, about or device:mock0001")
+        action.add_argument("--page", default="home", help="home, setup, settings, integrations, about, device:mock0001 or integration:<id>")
         if name == "screenshot":
             action.add_argument("--mock", default="device,device")
             action.add_argument("--timeout", type=float, default=30)
@@ -154,7 +154,8 @@ def main():
     if args.command == "identity":
         print(json.dumps(identity()[1], indent=2))
     else:
-        if args.page not in {"home", "setup", "settings", "about", "device:mock0001"}:
+        integrations = {"integration:" + i for i in ("cliproxyapi", "this_pc", "media", "volume", "custom", "icon-packs", "brandfetch")}
+        if args.page not in {"home", "setup", "settings", "integrations", "about", "device:mock0001"} | integrations:
             parser.error("unsupported page")
         if args.command == "screenshot" and (not 0 <= args.settle_seconds < args.timeout or not set(args.mock.split(",")) <= {"device", "radio", "v1", "board", "fresh"}):
             parser.error("require 0 <= settle-seconds < timeout and valid mock kinds")

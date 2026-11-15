@@ -296,3 +296,86 @@ async fn an_unknown_device_is_not_found() {
     let (status, _) = raw(&td, reqwest::Method::GET, "mock9999", None).await;
     assert_eq!(status, 404);
 }
+
+/// Set by the log check below when it runs this test binary again as its child.
+const LOG_CHILD: &str = "TOUCHDECK_WIFI_LOG_CHILD";
+/// A password the log check uses only here, so no other test's output can carry it.
+const LOG_PASSWORD: &str = "dummy-pass-7319";
+
+/// A Wi-Fi password set through the API never reaches the logs. td-app runs this code in its own
+/// process and logs to stderr, so the check runs this test binary again with `--nocapture`: the
+/// child drives the Wi-Fi requests, and this test reads everything the child wrote to stdout and
+/// stderr, from every thread.
+#[tokio::test]
+async fn a_wifi_password_never_reaches_the_logs() {
+    if std::env::var_os(LOG_CHILD).is_some() {
+        return drive_wifi_for_the_log_check().await;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "a_wifi_password_never_reaches_the_logs",
+            "--exact",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env(LOG_CHILD, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("1 passed"),
+        "the child ran the check: {stdout}"
+    );
+    assert!(
+        stderr.contains("log check: a worker thread's stderr is captured"),
+        "the child's stderr from the runtime threads was captured: {stderr}"
+    );
+    for text in [&stdout, &stderr] {
+        assert!(
+            !text.contains(LOG_PASSWORD),
+            "the Wi-Fi password leaked: {text}"
+        );
+    }
+}
+
+/// The child's half of the log check: set, read, reject and delete a password on a mock Device.
+async fn drive_wifi_for_the_log_check() {
+    tokio::spawn(async { eprintln!("log check: a worker thread's stderr is captured") })
+        .await
+        .unwrap();
+    let td = TestCompanion::start().await;
+    let id = td.plug_radio_device("mock0001").await;
+    td.deck("mock0001").add_wifi_network(NETWORK, LOG_PASSWORD);
+    for (method, body, expected) in [
+        (
+            reqwest::Method::PUT,
+            Some(json!({"ssid": MISSING, "password": LOG_PASSWORD})),
+            200,
+        ),
+        (reqwest::Method::GET, None, 200),
+        (
+            reqwest::Method::PUT,
+            Some(json!({"ssid": NETWORK, "password": LOG_PASSWORD})),
+            200,
+        ),
+        (reqwest::Method::GET, None, 200),
+        (
+            reqwest::Method::PUT,
+            Some(json!({"ssid": NETWORK, "password": LOG_PASSWORD, "extra": LOG_PASSWORD})),
+            400,
+        ),
+        (
+            reqwest::Method::PUT,
+            Some(json!({"ssid": "", "password": LOG_PASSWORD})),
+            400,
+        ),
+        (reqwest::Method::DELETE, None, 200),
+    ] {
+        let (status, text) = raw(&td, method, id.as_str(), body).await;
+        assert_eq!(status, expected, "{text}");
+    }
+    assert_eq!(td.deck("mock0001").wifi_network(), None);
+}

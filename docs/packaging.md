@@ -33,7 +33,7 @@ The 1.x uninstaller keeps the app's local and roaming data folders when deletion
 
 Open TouchDeck 2.0 is one Rust program, installed on Windows 11 by an MSI. Its releases come from **release** (`.github/workflows/release.yml`), which a `v2` tag on `main` starts. A 1.x tag starts the 1.x workflow on `release/1.x`.
 
-The MSI ships `td-app.exe`, which runs the Companion in-process; the standalone Companion is not needed. Its Start menu shortcut passes `--packaged` and carries `io.github.duresa7.touchdeck` as its AUMID. The app registers start at sign-in on its first packaged start. Uninstall removes its Run and StartupApproved values and leaves user data alone. The MSI refuses coexistence with 1.x in the shared installation folder.
+The MSI ships `td-app.exe`, which runs the Companion in-process; there is no separate Companion program. Its Start menu shortcut passes `--packaged` and carries `io.github.duresa7.touchdeck` as its AUMID. The app registers start at sign-in on its first packaged start. Uninstall removes its Run and StartupApproved values and leaves user data alone. The MSI refuses coexistence with 1.x in the shared installation folder.
 
 ### Stages
 

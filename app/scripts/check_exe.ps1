@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-Reads the version resource and the Windows subsystem of a built program (td-app.exe or td-companion.exe), prints
+Reads the version resource and the Windows subsystem of a built program (td-app.exe), prints
 them as JSON, and fails when they are not what the build must carry. The resource must name the file it is in.
 
 .DESCRIPTION
 build.rs writes the version resource and main.rs picks the subsystem: GUI for a release build, console for a
-debug build. CI runs this on a GitHub-hosted Windows runner against the program it just built.
+debug build. The release workflow runs this on a GitHub-hosted Windows runner against the program it just built.
 
 .EXAMPLE
-pwsh app/scripts/check_exe.ps1 -Path app/target/release/td-companion.exe -Subsystem gui
+pwsh app/scripts/check_exe.ps1 -Path app/target/release/td-app.exe -Subsystem gui
 #>
 [CmdletBinding()]
 param(

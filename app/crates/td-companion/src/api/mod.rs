@@ -33,9 +33,7 @@ pub struct Ctx {
     pub(crate) uploads: crate::features::uploads::Uploads,
     auth: Arc<Mutex<Auth>>,
     pub(crate) port: u16,
-    pub(crate) runtime: Option<Arc<crate::runtime::Runtime>>,
     pub(crate) limits: crate::Limits,
-    pub(crate) started_ms: u64,
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) handler_hits: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(any(test, feature = "test-hooks"))]
@@ -52,10 +50,10 @@ impl Ctx {
     pub(crate) fn companion_handle(&self) -> crate::companion::Handle {
         self.companion.clone()
     }
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn new(
         companion: crate::companion::Handle,
         port: u16,
-        runtime: Option<Arc<crate::runtime::Runtime>>,
         limits: crate::Limits,
     ) -> Self {
         let auth = Arc::new(Mutex::new(Auth::new()));
@@ -69,10 +67,8 @@ impl Ctx {
             companion,
             auth,
             port,
-            runtime,
             limits,
             uploads: Default::default(),
-            started_ms: crate::now_ms(),
             #[cfg(any(test, feature = "test-hooks"))]
             handler_hits: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -87,6 +83,7 @@ impl Ctx {
     pub(crate) fn browser_token(&self) -> String {
         self.auth.lock().browser_token(self.clock.now())
     }
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn sweep_sessions(&self) {
         let now = self.clock.now();
         let mut auth = self.auth.lock();
@@ -96,17 +93,6 @@ impl Ctx {
         if ended_with_sockets {
             self.web_events.notify();
         }
-    }
-    pub(crate) fn runtime_value(&self) -> serde_json::Value {
-        serde_json::json!({
-            "version": 1,
-            "api": ["v1"],
-            "port": self.port,
-            "token": self.auth.lock().pairing(),
-            "pid": std::process::id(),
-            "build": env!("TD_BUILD"),
-            "started_at_ms": self.started_ms,
-        })
     }
 }
 
@@ -313,10 +299,6 @@ pub fn registry() -> Vec<Feature> {
         feature.endpoints.sort_by_key(|e| e.name);
     }
     merged
-}
-/// The frames the kernel itself sends.
-pub fn kernel_events() -> Vec<EventInfo> {
-    socket::kernel_events()
 }
 
 async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Response {
@@ -530,27 +512,4 @@ pub(crate) fn is_json(headers: &HeaderMap) -> bool {
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.split(';').next().unwrap_or("").trim() == "application/json")
-}
-
-/// Checks the runtime file off the async runtime and rewrites it on drift. Returns false when
-/// it couldn't be secured after retries.
-pub(crate) async fn rewrite_runtime(ctx: &Ctx) -> bool {
-    let Some(runtime) = ctx.runtime.clone() else {
-        return true;
-    };
-    let ctx = ctx.clone();
-    tokio::task::spawn_blocking(move || runtime.repair(&ctx.runtime_value()).is_ok())
-        .await
-        .unwrap_or(false)
-}
-/// The web adapter's 60 s maintenance step: sweeps ended sessions, then
-/// checks the runtime file. Returns false when the Companion must stop.
-pub(crate) async fn maintain(ctx: &Ctx) -> bool {
-    ctx.sweep_sessions();
-    let ok = rewrite_runtime(ctx).await;
-    if !ok {
-        ctx.desktop
-            .notify("The runtime file failed its check. Restart Open TouchDeck.");
-    }
-    ok
 }

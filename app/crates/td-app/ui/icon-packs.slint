@@ -1,0 +1,40 @@
+// Icon packs: their row in the Integrations list and their page. Rust fills the `IconPacks`
+// global from its session (td-app `screens/icon_packs.rs`), so this file and that one are all
+// the Icon packs work touches.
+import { Hint, PageTitle } from "controls.slint";
+import { BackToIntegrations, IntegrationItem } from "integration-item.slint";
+
+export global IconPacks {
+    // The line under its name in the list.
+    in property <string> line: "Icons for the picker, searchable offline.";
+}
+
+// Its row in the Icons group.
+export component IconPacksRow inherits IntegrationItem {
+    name: "Icon packs";
+    monogram: "I";
+    line: IconPacks.line;
+    has-switch: false;
+    settings: true;
+    settings-text: "Open";
+    settings-label: "Open Icon packs";
+}
+
+// Its page.
+export component IconPacksPage inherits VerticalLayout {
+    callback back();
+    spacing: 12px;
+    BackToIntegrations {
+        back => {
+            root.back();
+        }
+    }
+
+    PageTitle {
+        text: "Icon packs";
+    }
+
+    Hint {
+        text: "Downloading and importing icon packs comes in a later 2.0 preview.";
+    }
+}

@@ -59,7 +59,8 @@ and stops the app. Exit 0 means a complete PNG was captured; exit 2 means the
 command failed. Inspect `snapshots/screen.png`, `app.log` and the dimensions in
 `result.json`; a PNG alone does not establish the expected state.
 
-Choose `--page home`, `setup`, `settings`, `about` or `device:mock0001`.
+Choose `--page home`, `setup`, `settings`, `integrations`, `about`, `device:mock0001` or
+`integration:<id>` (`cliproxyapi`, `custom`, `icon-packs`, ...).
 `--mock` accepts comma-separated `device`, `radio`, `v1`, `board`, `fresh` kinds;
 its default is `device,device`. Use `radio` for paired apps and `fresh` for Setup
 following Firmware install. `--settle-seconds` delays the request, default 3;

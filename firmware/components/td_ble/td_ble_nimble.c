@@ -583,7 +583,7 @@ static void signal_gatt_version(void)
 
 static void on_sync(void)
 {
-    if (ble_hs_util_ensure_addr(0) != 0 || ble_hs_id_infer_auto(0, &s->own_addr_type) != 0) {
+    if (ble_hs_util_ensure_addr(0) != 0 || ble_hs_id_infer_auto(1, &s->own_addr_type) != 0) {
         ESP_LOGE(TAG, "no usable address");
         return;
     }
@@ -750,14 +750,8 @@ static int port_stack_start(void *ctx)
     if (td_device_name_get(s->name) != ESP_OK) {
         strcpy(s->name, "Open TouchDeck");
     }
-    char gap_name[MYNEWT_VAL(BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH) + 1];
-    size_t len = strnlen(s->name, sizeof gap_name - 1);
-    while (len > 0 && s->name[len] && ((unsigned char)s->name[len] & 0xC0) == 0x80) {
-        len--;
-    }
-    memcpy(gap_name, s->name, len);
-    gap_name[len] = '\0';
-    ble_svc_gap_device_name_set(gap_name);
+    /* GAP is readable before authentication; only pairing advertisements carry the chosen name. */
+    ble_svc_gap_device_name_set("Open TouchDeck");
     ble_svc_gap_device_appearance_set(APPEARANCE_KEYBOARD);
     ble_store_config_init();
     ble_npl_callout_init(&s->timer, nimble_port_get_dflt_eventq(), on_timer, NULL);

@@ -990,7 +990,7 @@ export component EditorScreen inherits Rectangle {
                     min-width: 0;
                 }
 
-                if root.ready: ActionButton {
+                if root.wide-header && root.ready: ActionButton {
                     text: "Layout ▾";
                     label: "Layout";
                     changed has-focus => {
@@ -1035,18 +1035,23 @@ export component EditorScreen inherits Rectangle {
                 }
             }
 
-            // A narrow header puts the save state and Send on their own line.
+            // A narrow header puts Layout + Send on row 2 and the save state on row 3 so at most two buttons share a line.
             if !root.wide-header && root.ready: HorizontalLayout {
                 spacing: 8px;
-                Text {
-                    accessible-role: text;
-                    accessible-label: root.editor.save-state;
-                    accessible-live-region: polite;
-                    text: root.editor.save-state;
-                    color: root.editor.save-caution ? Theme.caution : Theme.secondary-text;
-                    font-size: Theme.body;
-                    vertical-alignment: center;
-                    wrap: word-wrap;
+                alignment: stretch;
+                ActionButton {
+                    text: "Layout ▾";
+                    label: "Layout";
+                    changed has-focus => {
+                        EditorFocus.report("layout", self.has-focus);
+                    }
+                    clicked => {
+                        root.device-menu = false;
+                        root.layout-menu = !root.layout-menu;
+                    }
+                }
+
+                Rectangle {
                     horizontal-stretch: 1;
                 }
 
@@ -1069,6 +1074,15 @@ export component EditorScreen inherits Rectangle {
                         value-text: root.editor.progress-text;
                     }
                 }
+            }
+            if !root.wide-header && root.ready: Text {
+                accessible-role: text;
+                accessible-label: root.editor.save-state;
+                accessible-live-region: polite;
+                text: root.editor.save-state;
+                color: root.editor.save-caution ? Theme.caution : Theme.secondary-text;
+                font-size: Theme.body;
+                wrap: word-wrap;
             }
         }
 
