@@ -72,6 +72,8 @@ CONFIG_BT_NIMBLE_SM_SC_ONLY=1
 # Privacy: NimBLE gives the controller each bonded host's IRK, and the controller resolves a host's resolvable private
 # address before the accept list, so phones and computers that reconnect from private addresses get in.
 CONFIG_BT_NIMBLE_HS_PVCY=y
+# Rotate our keyboard RPA even during indefinite slow reconnect advertising.
+CONFIG_BT_NIMBLE_RPA_TIMEOUT=900
 # The Peripheral Preferred Connection Parameters match the one request td_ble sends after encryption: 7.5-50 ms,
 # latency 0, a 4 s supervision timeout.
 CONFIG_BT_NIMBLE_SVC_GAP_PPCP_MIN_CONN_INTERVAL=6

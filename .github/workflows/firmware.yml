@@ -37,6 +37,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Guard BLE addresses and emitter inventory
+        run: |
+          python3 .github/scripts/ble_address_guard.py
+          python3 -m unittest discover -s .github/scripts -p 'test_ble_address_guard.py'
+
       # For the layout schema checks and the net-v2 reference client the QEMU check runs.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

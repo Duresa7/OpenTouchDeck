@@ -6,6 +6,7 @@
 //! service UUID, scans for long enough to see all four slots, and feeds every service-data
 //! payload it sees, including changed ones at a known address, to [`recognise`].
 use std::collections::BTreeSet;
+use zeroize::Zeroizing;
 
 use super::{DeviceId, wire};
 
@@ -35,7 +36,7 @@ pub enum Advert {
 
 /// The BLE hint: the first 6 bytes of `MAC(K_disc, "ble-hint" || nonce)`.
 pub fn hint(discovery_key: &[u8; 32], nonce: &[u8; NONCE_LEN]) -> [u8; HINT_LEN] {
-    let mac = wire::hmac(discovery_key, &[b"ble-hint", nonce]);
+    let mac = Zeroizing::new(wire::hmac(discovery_key, &[b"ble-hint", nonce]));
     mac[..HINT_LEN].try_into().expect("6 bytes")
 }
 
@@ -67,21 +68,25 @@ impl Advert {
     }
 }
 
-/// The Pairings whose Device sent one of `seen`, the raw service-data payloads of one scan.
+/// Candidate (Pairing, address) pairs observed in one scan, never authenticated endpoints.
 ///
-/// Every payload is checked against every stored discovery key, without stopping at the first
-/// match, and the result is deduplicated by Pairing. Payloads that fail to parse or match no key
-/// are someone else's Device and are dropped. A match only says where to try a session: the
-/// session still proves the LTK and pins `device_id`.
-pub fn recognise<'a, K: Clone + Ord>(
-    seen: impl IntoIterator<Item = &'a [u8]>,
-    keys: &[(K, [u8; 32])],
-) -> BTreeSet<K> {
+/// Each key entry contains the caller's Pairing handle, pinned Device id and discovery key.
+/// Check every payload against every Pairing and retain competing addresses for bounded
+/// session trials. Only an authenticated session may replace the last working endpoint.
+pub fn recognise<'a, K: Clone + Ord, A: Clone + Ord>(
+    seen: impl IntoIterator<Item = (A, &'a [u8])>,
+    keys: &[(K, DeviceId, [u8; 32])],
+) -> BTreeSet<(K, A)> {
     let mut found = BTreeSet::new();
-    for advert in seen.into_iter().filter_map(read) {
-        for (pairing, key) in keys {
-            if advert.matches(key) {
-                found.insert(pairing.clone());
+    for (address, data) in seen {
+        let Some(advert) = read(data) else { continue };
+        for (pairing, pinned_id, key) in keys {
+            let matches = match &advert {
+                Advert::Private { .. } => advert.matches(key),
+                Advert::Pairing { device_id, .. } => device_id == pinned_id,
+            };
+            if matches {
+                found.insert((pairing.clone(), address.clone()));
             }
         }
     }
@@ -98,11 +103,33 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_device_is_recognised_while_pairing() {
+        let id = [2, 0, 0, 0, 0, 1];
+        let payload = [&[PAIRING][..], &id, &[1], &[9; 5]].concat();
+        assert!(!recognise([("candidate", payload.as_slice())], &[(id, id, [0; 32])]).is_empty());
+    }
+
+    #[test]
+    fn replayed_hints_retain_both_addresses_without_duplicate_trials() {
+        let key = wire::discovery_key(&[0x66; 32]);
+        let payload = private(Some(&key), [4; 6], [0; 6]);
+        let candidates = recognise(
+            [
+                ("real", payload.as_slice()),
+                ("replay", payload.as_slice()),
+                ("real", payload.as_slice()),
+            ],
+            &[(7, [0; 6], key)],
+        );
+        assert_eq!(candidates, BTreeSet::from([(7, "real"), (7, "replay")]));
+    }
+
+    #[test]
     fn a_scan_recognises_only_this_companions_pairings() {
         let mine = wire::discovery_key(&[0x11; 32]);
         let also_mine = wire::discovery_key(&[0x22; 32]);
         let someone_elses = wire::discovery_key(&[0x33; 32]);
-        let keys = [("mine", mine), ("also mine", also_mine)];
+        let keys = [("mine", [0; 6], mine), ("also mine", [0; 6], also_mine)];
         // One Device paired here cycling its slots, and a Device paired elsewhere.
         let scan = [
             private(Some(&mine), [1; 6], [0xa0; 6]),
@@ -110,28 +137,40 @@ mod tests {
             private(Some(&someone_elses), [2; 6], [0xa2; 6]),
             private(None, [2; 6], [0xa3; 6]),
         ];
-        let found = recognise(scan.iter().map(Vec::as_slice), &keys);
-        assert_eq!(found, BTreeSet::from(["mine"]));
+        let found = recognise(
+            scan.iter().map(|data| ("candidate", data.as_slice())),
+            &keys,
+        );
+        assert_eq!(found, BTreeSet::from([("mine", "candidate")]));
         // An unpaired Device sends only fillers and is recognised by nobody.
         let unpaired = [private(None, [3; 6], [0xa4; 6])];
-        assert!(recognise(unpaired.iter().map(Vec::as_slice), &keys).is_empty());
+        assert!(
+            recognise(
+                unpaired.iter().map(|data| ("candidate", data.as_slice())),
+                &keys
+            )
+            .is_empty()
+        );
     }
 
     #[test]
     fn a_device_stays_recognisable_across_rotations_and_is_deduplicated() {
         let key = wire::discovery_key(&[0x44; 32]);
-        let keys = [(7u8, key)];
+        let keys = [(7u8, [0; 6], key)];
         let scan: Vec<Vec<u8>> = (0..4u8)
             .map(|epoch| private(Some(&key), [epoch; 6], [0xb0; 6]))
             .collect();
         assert_eq!(
-            recognise(scan.iter().map(Vec::as_slice), &keys),
-            BTreeSet::from([7])
+            recognise(
+                scan.iter().map(|data| ("candidate", data.as_slice())),
+                &keys
+            ),
+            BTreeSet::from([(7, "candidate")])
         );
         // A hint replayed under another nonce matches nothing.
         let mut replayed = scan[0].clone();
         replayed[1] ^= 1;
-        assert!(recognise([replayed.as_slice()], &keys).is_empty());
+        assert!(recognise([("candidate", replayed.as_slice())], &keys).is_empty());
     }
 
     #[test]
@@ -148,6 +187,15 @@ mod tests {
         let mut legacy = vec![2, 2, 0, 0, 0, 0, 1, 0];
         assert_eq!(read(&legacy), None, "the old proto/id/paired payload");
         legacy.resize(14, 0);
-        assert!(recognise([pairing.as_slice(), &legacy], &[((), key)]).is_empty());
+        assert!(
+            recognise(
+                [
+                    ("candidate", pairing.as_slice()),
+                    ("candidate", legacy.as_slice())
+                ],
+                &[((), [0; 6], key)]
+            )
+            .is_empty()
+        );
     }
 }

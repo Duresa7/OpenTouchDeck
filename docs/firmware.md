@@ -877,7 +877,9 @@ How it behaves on the air, from the crash analysis in #275:
 The logic lives in `td_ble_core.c`, which has no NimBLE in it, and
 `td_ble_nimble.c` is the only file that starts the stack, advertises or writes
 the accept list. `python -B firmware/tools/test_ble.py` compiles the core, the
-messages and the GATT table with a fake radio and runs two host tests:
+messages and the GATT table with a fake radio. It also compiles the production
+sync callback and GAP-name setup against SDK stubs to check private-address
+selection, failure handling and the generic name without starting a radio. The host tests include:
 
 - `tools/host/ble_hid_test.c` decodes the report map and checks the Report IDs,
   every Logical Minimum against its Maximum under the signed rule, each
