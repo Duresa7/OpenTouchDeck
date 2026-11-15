@@ -1,7 +1,6 @@
 //! Brandfetch logos with the user's own keys. The UI searches the Brand Search API itself with
 //! the client ID; the Companion keeps the client ID and the API key, turns a pick into an Asset
 //! through the Brand API, and refreshes each logo before Brandfetch's 30-day cache limit.
-//! See docs/companion-api.md, "Brandfetch".
 mod client;
 mod refresh;
 mod session;

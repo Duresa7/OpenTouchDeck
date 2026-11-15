@@ -1,7 +1,6 @@
 //! Which Integration values each Device needs, and sending them over `v2.live.set`.
 //!
-//! The rules come from `schema/protocol/link-v2.md` § "Layout references and live values" and from
-//! `docs/companion-api.md` § "Live tile bindings". The router is plain state: the caller hands it the Device's
+//! The rules come from `schema/protocol/link-v2.md` § "Layout references and live values". The router is plain state: the caller hands it the Device's
 //! session, its live caps and the newest Integration samples, so tests drive it with a mock Device.
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
