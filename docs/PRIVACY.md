@@ -11,9 +11,10 @@ behalf; those services have their own privacy policies.
 Automatic update checks default to on. The Rust updater checks on its first enabled
 poll, then at most once every 24 hours while the Windows app runs. Linux never checks. Failed checks count
 toward that interval. Restarting the app resets the interval. The Windows host starts the updater on a blocking worker after startup and reloads
-the preference before every poll. Checks download and verify available updates;
-installation requires an explicit install operation. No update UI is included yet;
-Settings > This PC > Check for updates turns the checks on and off.
+the preference before every poll. Checks download and verify available updates.
+About shows the result and offers **Install and restart** once an update is staged.
+Installation requires that explicit action. Settings > This PC > Check for updates
+turns automatic checks on and off; it does not start an immediate check.
 
 An enabled check sends HTTPS GET requests to
 `https://api.github.com/repos/Duresa7/OpenTouchDeck/releases?per_page=100&page=1`.
@@ -36,6 +37,15 @@ signed filename and version with the public key built into the app. Temporary
 downloads are removed when the update result is dropped, and any left by a quit
 during a download are removed the next time the app starts. It refuses unsigned,
 altered, differently signed or older updates.
+
+**Install and restart** verifies the staged MSI's signature again, then starts
+Windows Installer for the current user without requesting administrator access.
+An app running as administrator refuses the operation; reopen it normally first.
+The app saves queued editor changes and shuts down the Companion. After a successful
+installation, the MSI reopens Open TouchDeck. Installation does not make another
+update download request. Staging survives the app's exit so Windows Installer can
+read it, and the next app start removes it. A verification or launch failure leaves
+the current app open and shows an error in About.
 
 ## Turn checks off
 

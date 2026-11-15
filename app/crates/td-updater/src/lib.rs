@@ -1,7 +1,6 @@
 //! Native 2.x update groundwork. Blocking: call from a worker, never the UI thread.
-//! The caller loads AppSettings before every poll. No task or installer
-//! is started here. Keep UpdateReady alive while using its temporary files, and
-//! reverify immediately before any future installer launch.
+//! The caller loads AppSettings before every poll. Keep UpdateReady alive while
+//! using its temporary files. Installation reverifies before the host launches MSI.
 
 mod signature;
 
@@ -66,6 +65,7 @@ pub struct UpdateReady {
     path: PathBuf,
     signature_path: PathBuf,
     version: Version,
+    public_key: &'static str,
 }
 
 impl UpdateReady {
@@ -73,7 +73,35 @@ impl UpdateReady {
     pub fn verify(&self) -> Result<(), Failure> {
         let wrapped = std::fs::read(&self.signature_path)?;
         let filename = format!("OpenTouchDeck-{}-windows-x64.msi", self.version);
-        signature::verify(&self.path, &wrapped, PUBLIC_KEY, &filename, &self.version)
+        signature::verify(
+            &self.path,
+            &wrapped,
+            self.public_key,
+            &filename,
+            &self.version,
+        )
+    }
+
+    /// Reverify, launch the per-user MSI, then ask the host to quit normally.
+    /// `launch` is the process boundary, so tests never need to run Windows Installer.
+    /// Keep staging across process exit: msiexec may not have opened it yet. The
+    /// next app start removes it, after the install has committed and cached its MSI.
+    pub fn install(
+        self,
+        msiexec: &Path,
+        launch: impl FnOnce(&mut std::process::Command) -> io::Result<()>,
+        quit: impl FnOnce(),
+    ) -> Result<(), Failure> {
+        self.verify()?;
+        let mut command = std::process::Command::new(msiexec);
+        command
+            .arg("/i")
+            .arg(&self.path)
+            .args(["/passive", "/norestart", "TD_RESTART_APP=1"]);
+        launch(&mut command)?;
+        let _ = self.directory.keep();
+        quit();
+        Ok(())
     }
 
     pub fn path(&self) -> &Path {
@@ -374,6 +402,7 @@ impl<H: HttpClient, C: Clock> Updater<H, C> {
             path,
             signature_path,
             version,
+            public_key: self.public_key,
         }))
     }
 }

@@ -238,12 +238,32 @@ Browser access is local to this PC, not available to a phone or another PC on th
 
 ### Update the app
 
-1. Export any Layout drafts you want to keep.
-2. Open **Settings > About > Check for updates**, or the **Update available** icon at the bottom of the navigation rail.
-3. Review the release notes and choose **Update**. You can keep working during the download.
-4. At **Ready to restart**, choose **Restart**. Wait for any Device transfer to finish first.
+On Windows, Open TouchDeck 2.0 checks for stable 2.x releases automatically after
+startup, then at most once every 24 hours while it runs. A newer release's MSI is
+downloaded and its signature verified in the background. You can keep working.
+**Settings > This PC > Check for updates** turns automatic checks on or off; it
+does not run an immediate check. See [Privacy and update checks](PRIVACY.md) for
+what these requests send. Linux source builds do not check or install updates.
 
-The app verifies the update signature before running the installer. If verification fails, leave the current version installed and retry later. The update keeps user data and restarts Open TouchDeck. It does not update Device Firmware.
+1. Export any Layout drafts you want to back up.
+2. Open **About** in the navigation pane to see the update result.
+3. When it says a version is downloaded and verified, finish any Device transfer,
+   then choose **Install and restart**.
+4. The app verifies the staged MSI again and starts Windows Installer for your
+   user account. It saves queued editor changes and shuts down the Companion.
+   Wait for installation to finish; the installer reopens Open TouchDeck on success.
+
+The installer does not need administrator access. If you started the app with
+**Run as administrator**, close it and reopen it normally before updating.
+Verification or installer-launch failures appear in About and leave the app open.
+Keep using the current version and reopen it to download and verify the update
+again. If Windows Installer reports a failure after the app closes, reopen Open
+TouchDeck from Start to keep using the installed version and retry later.
+
+An update keeps user data. It does not update Device Firmware. Closing the app
+without installing removes the staged download; the next enabled check can
+download it again. Turning off checks does not cancel a download already in
+progress or prevent installing an update that is already staged.
 
 ### Update Firmware
 

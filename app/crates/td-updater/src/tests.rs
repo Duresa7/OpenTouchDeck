@@ -132,6 +132,97 @@ fn verifies_a_disposable_signature_and_cleans_downloads_on_drop() {
 }
 
 #[test]
+fn verified_update_launches_msi_then_quits_and_keeps_staging_across_exit() {
+    let root = tempfile::tempdir().unwrap();
+    let mut updater = fixture();
+    updater.staging_root = root.path().join("staged updates");
+    std::fs::create_dir(&updater.staging_root).unwrap();
+    let UpdateResult::UpdateReady(ready) = poll(&mut updater) else {
+        panic!("expected verified MSI")
+    };
+    let msi = ready.path().to_owned();
+    let directory = ready.directory().to_owned();
+    let events = std::cell::RefCell::new(Vec::new());
+    // A relative executable is enough for this fake launcher; no process runs.
+    let executable = Path::new("msiexec.exe");
+    ready
+        .install(
+            executable,
+            |command| {
+                assert_eq!(command.get_program(), executable);
+                assert_eq!(
+                    command.get_args().collect::<Vec<_>>(),
+                    [
+                        std::ffi::OsStr::new("/i"),
+                        msi.as_os_str(),
+                        std::ffi::OsStr::new("/passive"),
+                        std::ffi::OsStr::new("/norestart"),
+                        std::ffi::OsStr::new("TD_RESTART_APP=1"),
+                    ]
+                );
+                events.borrow_mut().push("installer started");
+                Ok(())
+            },
+            || {
+                assert!(msi.is_file(), "staging must survive the host quitting");
+                events.borrow_mut().push("quit requested");
+            },
+        )
+        .unwrap();
+    assert_eq!(*events.borrow(), ["installer started", "quit requested"]);
+    assert!(msi.is_file());
+    // Do not run the broad startup sweeper in the shared temp folder in a test.
+    assert!(is_stale_staging(&directory));
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn changed_staged_msi_or_signature_never_launches_or_quits() {
+    for alter_signature in [false, true] {
+        let UpdateResult::UpdateReady(ready) = poll(&mut fixture()) else {
+            panic!("expected verified MSI")
+        };
+        let path = if alter_signature {
+            ready.signature_path()
+        } else {
+            ready.path()
+        };
+        std::fs::write(path, b"changed after staging").unwrap();
+        let directory = ready.directory().to_owned();
+        let error = ready
+            .install(
+                Path::new("msiexec.exe"),
+                |_| panic!("must not launch an unverified MSI"),
+                || panic!("verification failure must leave the app open"),
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "invalid or missing updater signature");
+        assert!(!directory.exists());
+    }
+}
+
+#[test]
+fn installer_launch_failure_leaves_app_open_and_cleans_staging() {
+    let UpdateResult::UpdateReady(ready) = poll(&mut fixture()) else {
+        panic!("expected verified MSI")
+    };
+    let directory = ready.directory().to_owned();
+    let error = ready
+        .install(
+            Path::new("msiexec.exe"),
+            |_| Err(io::Error::other("Windows Installer could not start")),
+            || panic!("launch failure must leave the app open"),
+        )
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Windows Installer could not start")
+    );
+    assert!(!directory.exists());
+}
+
+#[test]
 fn embeds_the_durable_committed_public_key() {
     let updater = Updater::new(
         FakeHttp::default(),

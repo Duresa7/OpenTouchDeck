@@ -2,7 +2,7 @@
 // components it uses directly. The notice covers what GPL-3.0 section 0 asks an interactive
 // program to show: a copyright notice, no warranty, the right to convey, and the licence text.
 import { Theme } from "theme.slint";
-import { Body, Card, Link, PageTitle, SectionTitle } from "controls.slint";
+import { ActionButton, Body, Card, Link, PageTitle, SectionTitle } from "controls.slint";
 import { ScrollingPage } from "page.slint";
 
 export struct Component {
@@ -52,6 +52,10 @@ component ComponentRow inherits Rectangle {
 export component AboutPage inherits ScrollingPage {
     in property <string> version;
     in property <[Component]> components;
+    in property <string> update-status;
+    in property <bool> update-ready;
+    in property <bool> update-installing;
+    callback install-update();
     callback open-url(string);
     title: "About";
 
@@ -82,6 +86,16 @@ export component AboutPage inherits ScrollingPage {
                 color: Theme.secondary-text;
             }
         }
+    }
+
+    SectionTitle { text: "App updates"; }
+
+    Body { text: root.update-status; }
+
+    if root.update-ready || root.update-installing: ActionButton {
+        text: "Install and restart";
+        enabled: root.update-ready && !root.update-installing;
+        clicked => { root.install-update(); }
     }
 
     SectionTitle {
