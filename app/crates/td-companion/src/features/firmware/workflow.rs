@@ -143,17 +143,25 @@ impl Firmware {
         let (name, port, current) = self.target(&id, install)?;
         // The build the Device runs, from its last hello. A Device under repair may have sent none, so its build is
         // unknown; an update needs a linked Device, which has always sent one.
-        let running = if install {
-            None
+        let (running, current_build) = if install {
+            (None, "unknown".into())
         } else {
             let device = self
                 .devices
                 .get(&id)
                 .ok_or(crate::link::DeviceLinkError::NotFound)?;
-            device
+            let current_build = device
                 .firmware
-                .map(|f| f.channel)
-                .or((!recovery).then(FirmwareChannel::default))
+                .as_ref()
+                .map_or("unknown", |f| f.build.as_str())
+                .to_owned();
+            (
+                device
+                    .firmware
+                    .map(|f| f.channel)
+                    .or((!recovery).then(FirmwareChannel::default)),
+                current_build,
+            )
         };
         // The Device's own build picks the bundle, and an unknown build gets the normal one. Only a request that names
         // the other build switches.
@@ -178,20 +186,33 @@ impl Firmware {
                 bundle: built,
             });
         }
-        let consent = recovery || switching || !same_or_newer(&bundle.manifest.version, &current);
-        let question = question(
-            install,
-            recovery,
-            running,
-            channel,
-            older(&bundle.manifest.version, &current),
-        );
+        // Picked files are unsigned. Version and build checks cannot establish their origin.
+        let from_file = selection != "bundled";
+        let same_or_newer = same_or_newer(&bundle.manifest.version, &current);
+        let consent = from_file || recovery || switching || !same_or_newer;
+        let mut question = if from_file && !recovery && !switching && same_or_newer {
+            "Install Firmware from this file?".into()
+        } else {
+            question(
+                install,
+                recovery,
+                running,
+                channel,
+                older(&bundle.manifest.version, &current),
+            )
+        };
+        if from_file {
+            question.push_str(
+                "\nThis file isn't signed by Open TouchDeck. It will replace this Device's Firmware.",
+            );
+        }
         let confirmation = Confirmation {
             question,
             target: id.to_string(),
             name,
             port,
             current,
+            current_build,
             version: bundle.manifest.version.clone(),
             build: bundle.manifest.elf_sha256.clone(),
             channel,

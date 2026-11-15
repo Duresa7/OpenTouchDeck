@@ -43,6 +43,7 @@ pub struct Confirmation {
     pub name: String,
     pub port: String,
     pub current: String,
+    pub current_build: String,
     pub version: String,
     pub build: String,
     /// The build the bundle is: the normal build or the radio build.
@@ -51,12 +52,13 @@ pub struct Confirmation {
 impl Confirmation {
     pub fn text(&self) -> String {
         format!(
-            "{}\nTarget: {} ({})\nPort: {}\nCurrent: {}\nBundle: {} ({} build)\nBuild: {}",
+            "{}\nTarget: {} ({})\nPort: {}\nCurrent: {}\nCurrent build: {}\nBundle: {} ({} build)\nBuild: {}",
             self.question,
             shown(&self.name),
             shown(&self.target),
             shown(&self.port),
             shown(&self.current),
+            shown(&self.current_build),
             shown(&self.version),
             channel_word(self.channel),
             shown(&self.build)
@@ -405,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_versions_require_consent_only_for_downgrades() {
+    fn bundled_semantic_versions_require_consent_only_for_downgrades() {
         assert!(same_or_newer("v2.0.0", "1.0.0"));
         assert!(same_or_newer("1.0.0", "1.0.0"));
         assert!(!same_or_newer("1.0.0", "2.0.0"));

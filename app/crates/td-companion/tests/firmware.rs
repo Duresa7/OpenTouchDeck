@@ -582,6 +582,7 @@ async fn overlapping_file_pickers_are_rejected() {
                     name: String::new(),
                     port: String::new(),
                     current: String::new(),
+                    current_build: String::new(),
                     version: String::new(),
                     build: String::new(),
                     channel: Default::default(),

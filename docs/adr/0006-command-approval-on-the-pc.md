@@ -6,7 +6,9 @@ The API can push a Layout, and a Layout can hold a command Tile. If a session co
 
 Approval covers every action that starts a process: commands, program launches, and opening anything other than an `http`, `https` or `mailto` URL. An approval is tied to the exact program, arguments, working folder and shell, so changing any of them asks again. Sessions may remove an approval, because that only takes access away.
 
-The same native dialog confirms Firmware writes that cannot be undone: installing on a New board, repair, and downgrades. It names the target, its port, the current Firmware if known and the bundle version; consent binds to that target and bundle. The Job waits for confirmation, and declining writes nothing. Same-or-newer bundled updates stay one click. While a native approval or Firmware confirmation dialog shows, the Companion suppresses key input from every Device so it cannot answer the dialog.
+The same native dialog confirms Firmware writes that cannot be undone: installing on a New board, repair, downgrades and build switches. Every update from a picked `.tdfw` file also requires confirmation, regardless of its version or build. These files carry no signature. The dialog says the file isn't signed by Open TouchDeck and will replace the Device's Firmware. It names the target and its port, and shows the current Firmware version and build if known alongside the bundle's version and build. Consent binds to that target and bundle. The Job waits for confirmation, and declining or cancelling writes nothing. Same-or-newer updates from the bundle embedded in the app stay one click. While a native approval or Firmware confirmation dialog shows, the Companion suppresses key input from every Device so it cannot answer the dialog.
+
+For 2.0, this consent requirement addresses the unsigned-file release blocker in [#422](https://github.com/Duresa7/OpenTouchDeck/issues/422). Bundle signing remains a follow-up.
 
 ## Considered options
 

@@ -257,7 +257,7 @@ Open the Device's page in **Settings**. If newer Firmware is offered, choose **U
 
 If the same Firmware is already installed, the result says **Already on Firmware** with its version. No transfer or restart is needed.
 
-To use a release's `.tdfw` bundle, open **Settings > Troubleshooting > Update from a file** and choose the file for the intended Device. Use a bundle for the supported board, not the desktop installer. A downgrade requires confirmation in the native dialog on this PC.
+To use a release's `.tdfw` bundle, open **Settings > Troubleshooting > Update from a file** and choose the file for the intended Device. Use a bundle for the supported board, not the desktop installer. Every file update requires confirmation in the native dialog on this PC, even if its version is newer. The dialog says the file isn't signed by Open TouchDeck and will replace the Device's Firmware, and shows the file's version and build alongside the Device's. Declining or cancelling leaves the Device untouched. Updates from the Firmware bundle embedded in the app keep the existing confirmation rules for downgrades and build switches.
 
 Normal updates write the inactive Firmware slot. If the new Firmware fails to confirm a successful start, the Device can roll back to the previous slot. Read the result after the restart: reaching 100% transfer does not prove the new Firmware started. If the app reports rollback, the previous Firmware still runs; check **Details** before retrying.
 
