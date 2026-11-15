@@ -76,7 +76,17 @@ fn the_rail_opens_integrations_between_settings_and_about() {
         .into_iter()
         .map(|tab| tab.accessible_label().unwrap().into())
         .collect();
-    assert_eq!(tabs, ["Home", "Setup", "Settings", "Integrations", "About"]);
+    assert_eq!(
+        tabs,
+        [
+            "Home",
+            "Layout",
+            "Setup",
+            "Settings",
+            "Integrations",
+            "About"
+        ]
+    );
     rig.one("Integrations", AccessibleRole::Tab)
         .invoke_accessible_default_action();
     assert_eq!(rig.app.ui.get_page(), Page::Integrations);

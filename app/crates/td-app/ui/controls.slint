@@ -92,6 +92,7 @@ export component ActionButton inherits Rectangle {
     in property <bool> enabled: true;
     // Read when it gets focus, such as the hint below a field.
     in property <string> description;
+    out property <bool> has-focus: keys.has-focus;
     callback clicked();
 
     accessible-role: button;

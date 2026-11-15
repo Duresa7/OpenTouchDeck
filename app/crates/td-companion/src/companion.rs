@@ -234,6 +234,12 @@ impl Handle {
     pub fn devices(&self) -> &crate::devices::DeviceManager {
         &self.devices
     }
+    /// Test builds only: the points where a test holds Device work, for crates that start
+    /// the Companion themselves rather than through `testing::TestCompanion`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn checkpoints(&self) -> &crate::checkpoints::Checkpoints {
+        &self.checkpoints
+    }
     /// Blocking: reads the saved drafts, and the Session writes them on every change. A window
     /// uses `open_editor_worker` instead, which keeps that disk work off the UI thread.
     pub fn open_editor(

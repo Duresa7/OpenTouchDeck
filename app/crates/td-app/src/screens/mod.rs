@@ -1,7 +1,8 @@
-//! Setup, Settings and Integrations, fed from the Companion. Every rule they follow lives in
-//! td-companion (`setup`, the Device settings and Pairings sessions, Firmware tasks, the
-//! Integrations session) or td-core (the update setting); this module only turns those views into
-//! the window's properties and sends the window's callbacks back as typed operations.
+//! Setup, Settings, Integrations and the Layout editor, fed from the Companion. Every rule they
+//! follow lives in td-companion (`setup`, the Device settings and Pairings sessions, Firmware
+//! tasks, the Integrations session, the editor `Worker`) or td-core (the update setting); this
+//! module only turns those views into the window's properties and sends the window's callbacks back
+//! as typed operations.
 //!
 //! The Companion's work runs on Tokio. Each session publishes its view on a `watch` channel; a
 //! small task per channel wakes the UI thread, which then rebuilds the window's properties from
@@ -41,10 +42,15 @@ macro_rules! on {
 }
 
 mod brandfetch;
+mod editor;
 mod icon_packs;
 mod integrations;
 mod settings;
 mod setup;
+
+pub(crate) use editor::CLOSE_LIMIT;
+#[cfg(test)]
+pub(crate) use editor::{MAX_PAGES, drop_target, failure_text, map, problem_text};
 
 pub(crate) use settings::{FolderPicker, scheme};
 use settings::{StartAtSignIn, UpdateChecks};
@@ -149,6 +155,7 @@ pub(crate) struct Screens {
     /// Secrets whose Replace was chosen, so their field shows instead of "Saved".
     replacing: RefCell<BTreeSet<String>>,
     models: Models,
+    editor: editor::Editor,
     refreshing: Cell<bool>,
 }
 
@@ -200,6 +207,7 @@ impl Screens {
             integrations,
             replacing: RefCell::default(),
             models: Models::default(),
+            editor: editor::Editor::default(),
             refreshing: Cell::new(false),
         });
         SCREENS.with(|s| *s.borrow_mut() = Rc::downgrade(&screens));
@@ -212,6 +220,7 @@ impl Screens {
         ui.set_appearance(scheme(screens.window.appearance()));
         screens.wire_setup(ui);
         screens.wire_settings(ui);
+        screens.wire_editor(ui);
         screens.wire_integrations(ui);
         screens.wire_icon_packs(ui);
         screens.wire_brandfetch(ui);
@@ -337,6 +346,7 @@ impl Screens {
         }
         self.refresh_setup(&ui, &devices, &boards);
         self.refresh_settings(&ui, &devices);
+        self.refresh_editor(&ui, &devices);
         self.refresh_integrations(&ui);
         self.refresh_icon_packs(&ui);
         self.refresh_brandfetch(&ui);

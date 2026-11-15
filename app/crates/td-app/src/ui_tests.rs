@@ -422,3 +422,177 @@ fn a_contrast_theme_replaces_every_colour_with_the_system_ones() {
     assert!([text, background].contains(&colour(0, 0, 0)));
     assert!([text, background].contains(&colour(0xff, 0xff, 0xff)));
 }
+
+/// The editor with a two-Page Layout, filled in directly as `screens::editor` would.
+fn editor(dir: &Path, width: f32, folded: bool) -> App {
+    use crate::{CanvasCell, CanvasTile, EditorState, FilmPage};
+    use slint::{ModelRc, VecModel};
+    let app = app(dir, false);
+    app.ui.set_editor(EditorState {
+        state: "ready".into(),
+        device_id: "mock0001".into(),
+        device_name: "Desk".into(),
+        aspect: 1024.0 / 600.0,
+        save_state: "Unsent changes".into(),
+        page_id: "main".into(),
+        page_title: "Main".into(),
+        page_count: 2,
+        rows: 1,
+        cols: 2,
+        can_add_page: true,
+        can_remove_page: true,
+        canvas_description: "Main, 1 rows by 2 columns".into(),
+        ..Default::default()
+    });
+    let page = |n: i32, title: &str, current: bool| FilmPage {
+        id: title.to_lowercase().into(),
+        number: n,
+        title: title.into(),
+        current,
+        label: format!(
+            "Page {n} of 2, {title}{}",
+            if current { ", current" } else { "" }
+        )
+        .into(),
+        ..Default::default()
+    };
+    app.ui.set_editor_pages(ModelRc::new(VecModel::from(vec![
+        page(1, "Main", true),
+        page(2, "Media", false),
+    ])));
+    app.ui
+        .set_editor_tiles(ModelRc::new(VecModel::from(vec![CanvasTile {
+            id: "mute".into(),
+            label: "Mute".into(),
+            x: 0.05,
+            y: 0.2,
+            w: 0.4,
+            h: 0.6,
+            name: "Mute, row 1, column 1, 1 by 1".into(),
+            problem: "Give the Tile a name.".into(),
+            ..Default::default()
+        }])));
+    app.ui.set_editor_cells(ModelRc::new(VecModel::from(vec![
+        CanvasCell {
+            x: 0.05,
+            y: 0.2,
+            w: 0.4,
+            h: 0.6,
+            name: "Add Tile, row 1, column 1".into(),
+            ..Default::default()
+        },
+        CanvasCell {
+            col: 1,
+            x: 0.55,
+            y: 0.2,
+            w: 0.4,
+            h: 0.6,
+            empty: true,
+            name: "Add Tile, row 1, column 2".into(),
+            ..Default::default()
+        },
+    ])));
+    app.ui.set_filmstrip_folded(folded);
+    app.ui.window().set_size(LogicalSize::new(width, 700.0));
+    app.ui.set_page(Page::Layout);
+    app.ui.show().unwrap();
+    settle(&app.ui);
+    app
+}
+
+/// The editor tab stops in the order Tab reaches them.
+fn tab_stops(app: &App) -> Vec<String> {
+    use slint::platform::Key;
+    let mut seen: Vec<String> = Vec::new();
+    for _ in 0..16 {
+        app.ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Tab.into(),
+        });
+        app.ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Tab.into(),
+        });
+        let area = app.ui.global::<crate::EditorFocus>().get_area().to_string();
+        if !area.is_empty() && seen.last() != Some(&area) {
+            if seen.contains(&area) {
+                break;
+            }
+            seen.push(area);
+        }
+    }
+    seen
+}
+
+#[test]
+fn the_editor_names_its_parts_for_screen_readers() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = editor(dir.path(), 960.0, false);
+    with_role(&app.ui, "Sections", AccessibleRole::TabList);
+    let layout = with_role(&app.ui, "Layout", AccessibleRole::Tab);
+    assert_eq!(layout.accessible_item_selected(), Some(true));
+
+    let pages = with_role(&app.ui, "Pages", AccessibleRole::List);
+    assert_eq!(pages.accessible_item_count(), Some(2));
+    let main = with_role(
+        &app.ui,
+        "Page 1 of 2, Main, current",
+        AccessibleRole::ListItem,
+    );
+    assert_eq!(main.accessible_item_selected(), Some(true));
+    with_role(&app.ui, "Page 2 of 2, Media", AccessibleRole::ListItem);
+    with_role(&app.ui, "Add Page", AccessibleRole::Button);
+    with_role(&app.ui, "More for Media", AccessibleRole::Button);
+
+    let canvas = with_role(&app.ui, "Device canvas", AccessibleRole::Groupbox);
+    assert_eq!(
+        canvas.accessible_description().unwrap(),
+        "Main, 1 rows by 2 columns"
+    );
+    let mute = with_role(
+        &app.ui,
+        "Mute, row 1, column 1, 1 by 1",
+        AccessibleRole::Button,
+    );
+    assert_eq!(
+        mute.accessible_description().unwrap(),
+        "Give the Tile a name."
+    );
+    with_role(&app.ui, "Add Tile, row 1, column 2", AccessibleRole::Button);
+    assert!(
+        labelled(&app.ui, "Add Tile, row 1, column 1").is_empty(),
+        "a cell under a Tile offers nothing"
+    );
+    with_role(&app.ui, "Send to Device", AccessibleRole::Button);
+    with_role(&app.ui, "Unsent changes", AccessibleRole::Text);
+}
+
+#[test]
+fn tab_goes_header_filmstrip_canvas_and_a_folded_filmstrip_leaves_the_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = editor(dir.path(), 960.0, false);
+    assert_eq!(
+        tab_stops(&app),
+        ["fold", "layout", "send", "filmstrip", "canvas"]
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = editor(dir.path(), 960.0, true);
+    assert_eq!(tab_stops(&app), ["fold", "layout", "send", "canvas"]);
+    assert!(labelled(&app.ui, "Pages").is_empty(), "nor in the tree");
+    with_role(&app.ui, "Show Pages", AccessibleRole::Button);
+}
+
+#[test]
+fn below_720_px_the_filmstrip_folds_by_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = editor(dir.path(), 719.0, false);
+    assert!(labelled(&app.ui, "Pages").is_empty());
+    with_role(&app.ui, "Show Pages", AccessibleRole::Button);
+
+    app.ui.window().set_size(LogicalSize::new(720.0, 700.0));
+    settle(&app.ui);
+    // The column widens over 200 ms; the testing backend's clock moves only when told to.
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(250));
+    settle(&app.ui);
+    with_role(&app.ui, "Pages", AccessibleRole::List);
+    with_role(&app.ui, "Hide Pages", AccessibleRole::Button);
+}

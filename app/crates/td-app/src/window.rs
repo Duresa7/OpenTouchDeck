@@ -35,6 +35,8 @@ pub(crate) fn close_action(close_to_tray: bool, notice_shown: bool) -> Close {
 pub(crate) struct State {
     prefs: RefCell<Prefs>,
     close_to_tray: bool,
+    /// Writes `window.json` off the UI thread, newest value last.
+    writer: std::sync::Arc<Writer>,
     /// Saves a moment after the window stops moving, so a killed process loses little.
     save_soon: Timer,
     quit_requested: Cell<bool>,
@@ -65,14 +67,10 @@ impl State {
         }
     }
 
+    /// Saves now, on this thread, after any background save in progress. It drops a queued
+    /// background save, which holds an older copy, so this is the last word until the next change.
     pub(crate) fn save(&self) {
-        let prefs = self.prefs.borrow();
-        if let Err(error) = prefs.save() {
-            eprintln!(
-                "Open TouchDeck: could not save {}: {error}",
-                prefs.path().display()
-            );
-        }
+        self.writer.write_now(&self.prefs.borrow());
     }
 
     pub(crate) fn appearance(&self) -> crate::prefs::Appearance {
@@ -82,6 +80,37 @@ impl State {
     pub(crate) fn set_appearance(&self, appearance: crate::prefs::Appearance) {
         self.prefs.borrow_mut().value.appearance = appearance;
         self.save();
+    }
+
+    pub(crate) fn filmstrip_folded(&self) -> bool {
+        self.prefs.borrow().value.filmstrip_folded
+    }
+
+    pub(crate) fn set_filmstrip_folded(&self, folded: bool, runtime: &tokio::runtime::Handle) {
+        self.prefs.borrow_mut().value.filmstrip_folded = folded;
+        self.save_in_background(runtime);
+    }
+
+    pub(crate) fn editor_device(&self) -> Option<String> {
+        self.prefs.borrow().value.editor_device.clone()
+    }
+
+    pub(crate) fn set_editor_device(&self, device: &str, runtime: &tokio::runtime::Handle) {
+        let mut prefs = self.prefs.borrow_mut();
+        if prefs.value.editor_device.as_deref() == Some(device) {
+            return;
+        }
+        prefs.value.editor_device = Some(device.to_owned());
+        drop(prefs);
+        self.save_in_background(runtime);
+    }
+
+    /// Saves on a blocking thread, so a click never waits for the disk. Saves that overlap
+    /// write one after another, and the newest value is written last.
+    fn save_in_background(&self, runtime: &tokio::runtime::Handle) {
+        self.writer.queue(self.prefs.borrow().clone());
+        let writer = self.writer.clone();
+        runtime.spawn_blocking(move || writer.write_queued());
     }
 
     fn notice_seen(&self) {
@@ -101,6 +130,53 @@ impl State {
     }
 }
 
+/// The one way `window.json` is written. Every write, on the UI thread or a blocking one,
+/// takes `turn`, so writes never overlap (they share one temporary file name) and an older
+/// copy never lands after a newer one.
+#[derive(Default)]
+struct Writer {
+    /// The newest preferences a background save hasn't written yet.
+    pending: std::sync::Mutex<Option<Prefs>>,
+    /// Held while writing.
+    turn: std::sync::Mutex<()>,
+}
+impl Writer {
+    fn queue(&self, prefs: Prefs) {
+        *lock(&self.pending) = Some(prefs);
+    }
+
+    /// A background save: writes the queued copy, unless a later save already wrote.
+    fn write_queued(&self) {
+        let _turn = lock(&self.turn);
+        let queued = lock(&self.pending).take();
+        if let Some(prefs) = queued {
+            report(&prefs);
+        }
+    }
+
+    /// A save on the caller's thread. The queued copy is older than `prefs`, so it's dropped.
+    fn write_now(&self, prefs: &Prefs) {
+        let _turn = lock(&self.turn);
+        lock(&self.pending).take();
+        report(prefs);
+    }
+}
+
+fn report(prefs: &Prefs) {
+    if let Err(error) = prefs.save() {
+        eprintln!(
+            "Open TouchDeck: could not save {}: {error}",
+            prefs.path().display()
+        );
+    }
+}
+
+fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 thread_local! {
     /// The window's state, for `reveal`. An `Opener` crosses threads, so it can't hold the `Rc`.
     static STATE: RefCell<Weak<State>> = const { RefCell::new(Weak::new()) };
@@ -111,6 +187,7 @@ pub(crate) fn attach(ui: &AppWindow, prefs: Prefs, close_to_tray: bool) -> Rc<St
     let state = Rc::new(State {
         prefs: RefCell::new(prefs),
         close_to_tray,
+        writer: Default::default(),
         save_soon: Timer::default(),
         quit_requested: Cell::new(false),
     });
@@ -350,6 +427,30 @@ mod tests {
             width: 960,
             height: 640,
         }
+    }
+
+    #[test]
+    fn a_background_save_that_runs_late_never_overwrites_a_newer_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = Writer::default();
+        let mut older = Prefs::load(dir.path());
+        older.value.filmstrip_folded = true;
+        // Folding queued a background save, whose blocking task hasn't run yet.
+        writer.queue(older.clone());
+        // Quitting then saves the window's last place on the UI thread.
+        let mut newer = older.clone();
+        newer.value.placement = Some(crate::prefs::Placement {
+            x: 10,
+            y: 20,
+            width: 800.0,
+            height: 600.0,
+            maximized: false,
+        });
+        writer.write_now(&newer);
+        // The late background task finds nothing older to write.
+        writer.write_queued();
+        let saved = Prefs::load(dir.path()).value;
+        assert_eq!(saved, newer.value);
     }
 
     #[test]
